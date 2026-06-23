@@ -1,0 +1,5 @@
+node_modules/
+.vite/
+dist/
+*.pyc
+.DS_Store
