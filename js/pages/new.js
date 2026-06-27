@@ -80,5 +80,5 @@ window.createPhone = function(){
   const author = document.getElementById("phAuthor")?.value.trim()||""
   const work = createWork({type:WORK_TYPE.PHONE, title, desc, author})
   showToast("作品已创建")
-  navigate("/edit/"+work.id)
+  navigate("/phone/"+work.id)
 }

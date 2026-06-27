@@ -32,8 +32,6 @@ function renderWorkList(works){
   
   return `<div class="work-grid">${works.map(w=>`
     <div class="card work-card" data-id="${w.id}">
-      <div class="work-card-cover" style="background:${w.coverColor||"#6366f1"}">${w.type===WORK_TYPE.PHONE?"N":"N"}
-      </div>
       <div class="work-card-body">
         <div class="work-card-title">${escHtml(w.title)}</div>
         <div class="work-card-desc">${escHtml(w.desc||"无描述")}</div>
@@ -44,11 +42,11 @@ function renderWorkList(works){
         </div>
       </div>
       <div class="work-card-actions">
-        <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();navigate('/edit/${w.id}')">编辑</button>
-        <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();navigate('/read/${w.id}')">阅读</button>
-        <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();prompt('复制作品ID:', '${w.id}')"></button>
-        <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();dupWork('${w.id}')"></button>
-        <button class="btn btn-sm btn-ghost" style="color:var(--c-danger)" onclick="event.stopPropagation();delWork('${w.id}')"></button>
+<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();navigate('/${w.type===WORK_TYPE.PHONE?'phone':'edit'}/${w.id}')">编辑</button>
+<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();navigate('/read/${w.id}')"${w.type===WORK_TYPE.PHONE?' style="display:none"':''}>阅读</button>
+<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();editWorkInfo('${w.id}')">信息</button>
+<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();dupWork('${w.id}')">复制</button>
+<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();delWork('${w.id}')">删除</button>
       </div>
     </div>
   `).join("")}</div>`
@@ -84,6 +82,27 @@ window.dupWork = function(id){
   showToast("已复制","info")
   const list = document.getElementById("workList")
   if(list) list.innerHTML = renderWorkList(getWorks())
+}
+
+window.editWorkInfo = function(id){
+  var w = getWorks().find(function(x){ return x.id === id })
+  if (!w) return
+  var title = prompt('作品标题:', w.title || '')
+  if (title === null) return
+  var desc = prompt('作品简介:', w.desc || '')
+  if (desc === null) return
+  var author = prompt('作者署名:', w.author || '')
+  if (author === null) return
+  w.title = title
+  w.desc = desc
+  w.author = author
+  w.updatedAt = Date.now()
+  var db = JSON.parse(localStorage.getItem('tuuru_works'))
+  var idx = db.works.findIndex(function(x){ return x.id === id })
+  if (idx >= 0) { db.works[idx] = w; localStorage.setItem('tuuru_works', JSON.stringify(db)) }
+  showToast('作品信息已更新')
+  var list = document.getElementById('workList')
+  if (list) list.innerHTML = renderWorkList(getWorks())
 }
 
 // Re-export for dynamic reload

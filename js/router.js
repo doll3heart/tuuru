@@ -1,4 +1,4 @@
-﻿// ==================== Simple Hash Router ====================
+// ==================== Simple Hash Router ====================
 let routes = {}
 let currentRoute = null
 let currentParams = {}

@@ -1,4 +1,4 @@
-﻿import { navigate, initRouter, router } from "./router.js"
+import { navigate, initRouter, router } from "./router.js"
 import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork } from "./data.js"
 
 // ==================== Render helpers ====================
@@ -47,10 +47,10 @@ export function modal(title, bodyHtml, footerHtml, onClose){
 window.__toast = showToast
 
 // ==================== Header ====================
-function renderHeader(){
+export function renderHeader(){
   const path = location.hash.slice(1).split("?")[0]||"/"
   return `<header class="app-header">
-    <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">RW Tuuru</a>
+    <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru</a>
     <nav>
       <a href="#/" class="${path==="/"?"active":""}">首页</a>
       <a href="#/new" class="${path==="/new"?"active":""}">新建</a>
@@ -63,6 +63,7 @@ import { renderHome } from "./pages/home.js"
 import { renderNew } from "./pages/new.js"
 import { renderEditor } from "./pages/editor.js"
 import { renderReader } from "./pages/reader.js"
+import { renderPhoneEditor } from "./pages/phone.js"
 
 // ==================== Init ====================
 export function init(){
@@ -82,6 +83,10 @@ export function init(){
   
   router("/read/:id", (container, p) => {
     app.innerHTML = renderHeader() + '<main class="app-main narrow">'+renderReader(p.id)+'</main>'
+  })
+
+  router("/phone/:id", (container, p) => {
+    app.innerHTML = renderHeader() + renderPhoneEditor(p.id)
   })
   
   // Expose navigate globally
