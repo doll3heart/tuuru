@@ -367,7 +367,7 @@ ul,ol{list-style:none}
 
 /* Phone editor */
 .phone-editor-wrap{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 56px);padding:20px;background:var(--c-bg)}
-.phone-frame{width:360px;min-height:680px;background:var(--phone-bg, #1a1a2e);border-radius:var(--phone-radius, 28px);border:5px solid var(--phone-frame, #444);overflow:hidden;display:flex;flex-direction:column;position:relative;box-shadow:0 8px 40px rgba(0,0,0,0.3);font-family:var(--phone-font, sans-serif);font-size:var(--phone-fontsize, 12px);color:#e0e0e0;user-select:none}
+.phone-frame{width:360px;min-height:680px;background:var(--phone-bg, var(--c-bg));border-radius:var(--phone-radius, 28px);border:5px solid var(--phone-frame, #444);overflow:hidden;display:flex;flex-direction:column;position:relative;box-shadow:0 8px 40px rgba(0,0,0,0.3);font-family:var(--phone-font, sans-serif);font-size:var(--phone-fontsize, 12px);color:var(--c-text);user-select:none}
 
 /* Dynamic Island */
 .phone-island{display:flex;justify-content:center;padding:10px 0 4px}

@@ -449,7 +449,7 @@ function renderPhoneReader() {
   var h = '<button class="reader-back" onclick="renderHome()" title="返回">←</button>'
   h += '<div class="phone-reader">'
   h += '<div class="phone-frame"'
-  h += ' style="--phone-bg:' + (skin.wallpaper || '#d0e8f5') + ';'
+  h += ' style="--phone-bg:' + ((skin.wallpaper && skin.wallpaper !== '#d0e8f5') ? skin.wallpaper : '') + ';'
   h += '--phone-radius:' + (skin.borderRadius || 28) + 'px;'
   h += '--phone-font:\'' + (skin.fontFamily || 'Noto Sans SC').replace(/'/g, '') + '\', sans-serif;'
   h += '--phone-fontsize:' + (skin.fontSize || 12) + 'px;'

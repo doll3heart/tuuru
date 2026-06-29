@@ -214,7 +214,7 @@ export function renderPhoneEditor(wid) {
 
   var h = '<div class="phone-editor-wrap">'
   h += '<div class="phone-frame" id="phoneFrame"'
-  h += ' style="--phone-bg:' + skin.wallpaper + ';'
+  h += ' style="--phone-bg:' + (skin.wallpaper !== '#d0e8f5' ? skin.wallpaper : '') + ';'
   h += '--phone-radius:' + skin.borderRadius + 'px;'
   h += '--phone-font:\'' + (skin.fontFamily || '').replace(/'/g,"") + '\', sans-serif;'
   h += '--phone-fontsize:' + skin.fontSize + 'px;'
