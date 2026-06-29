@@ -4254,7 +4254,7 @@ function openSettingsEditor(wid) {
     var closeBtn = frame.querySelector('#settingsClose')
     var restore = function() {
       frame.style.pointerEvents = 'none'
-      frame.innerHTML = origHTML
+      delete frame.dataset._origHTML
       frame.style.transform = 'translateZ(0)'
       void frame.offsetHeight
       requestAnimationFrame(function() {
@@ -4287,6 +4287,7 @@ function openSettingsEditor(wid) {
         dragIdx = parseInt(item.dataset.flowIdx)
         item.classList.add('dragging')
         e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', String(dragIdx))
       })
       item.addEventListener('dragend', function() { item.classList.remove('dragging'); dragIdx = -1 })
       item.addEventListener('dragover', function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' })
