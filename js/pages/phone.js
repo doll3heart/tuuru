@@ -4306,7 +4306,6 @@ function openSettingsEditor(wid) {
       })
       items.forEach(function(item) {
         item._ds = function(e) {
-          if (animating) return
           dragIdx = parseInt(item.dataset.flowIdx)
           item.classList.add('dragging')
           e.dataTransfer.effectAllowed = 'move'
@@ -4334,4 +4333,5 @@ function openSettingsEditor(wid) {
     refreshHandles()
   }
 }
+
 
