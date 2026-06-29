@@ -4157,4 +4157,181 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
       }
     })
   }
+
+
+// ===== Settings Editor - Reading Flow =====
+function openSettingsEditor(wid) {
+  var w = getWork(wid)
+  if (!w || !w.phoneData) return
+  var pd = w.phoneData
+  if (!pd.readingFlow) pd.readingFlow = { enabled: false, sequence: [] }
+  var flow = pd.readingFlow
+
+  var frame = document.getElementById('phoneFrame')
+  if (!frame) return
+  var origHTML = frame.innerHTML
+  frame.dataset._origHTML = origHTML
+
+  var typeLabels = {
+    messages: '\u6d88\u606f', forum: '\u8bba\u575b', memo: '\u5907\u5fd8\u5f55',
+    gallery: '\u76f8\u518c', browser: '\u6d4f\u89c8\u8bb0\u5f55', shopping: '\u8d2d\u7269',
+    moments: '\u52a8\u6001'
+  }
+  var typeColors = {
+    messages: '#6366f1', forum: '#10b981', memo: '#f59e0b',
+    gallery: '#ec4899', browser: '#3b82f6', shopping: '#f97316',
+    moments: '#8b5cf6'
+  }
+
+  function buildFlowSequence() {
+    var seq = []
+    // Memos
+    (pd.memos || []).forEach(function(m) {
+      var contact = (pd.contacts || []).find(function(c) { return c.id === m.contactId })
+      seq.push({ type: 'memo', itemId: m.id, contactId: m.contactId, label: (contact ? contact.name + ' - ' : '') + (m.content || '').replace(/<[^>]*>/g, '').substring(0, 30) })
+    })
+    // Shopping
+    (pd.shoppingItems || []).forEach(function(s) {
+      var contact = (pd.contacts || []).find(function(c) { return c.id === s.contactId })
+      seq.push({ type: 'shopping', itemId: s.id, contactId: s.contactId, label: (contact ? contact.name + ' - ' : '') + (s.name || '') })
+    })
+    // Forum posts
+    (pd.forumPosts || []).forEach(function(p) {
+      seq.push({ type: 'forum', itemId: p.id, contactId: p.contactId, label: (p.contactName || '') + ' - ' + (p.title || '').substring(0, 30) })
+    })
+    // Moments
+    (pd.moments || []).forEach(function(m) {
+      seq.push({ type: 'moments', itemId: m.id, contactId: m.contactId, label: (m.content || '').substring(0, 30) })
+    })
+    // Chat rounds
+    (pd.chats || []).forEach(function(ch) {
+      if (ch.rounds) {
+        ch.rounds.forEach(function(round, ri) {
+          var contact = (pd.contacts || []).find(function(c) { return c.id === ch.contactIds[0] })
+          seq.push({ type: 'messages', itemId: round.id, chatId: ch.id, contactId: ch.contactIds[0], label: (contact ? contact.name : '') + ' - \u7b2c' + (ri + 1) + '\u8f6e' })
+        })
+      }
+    })
+    // Photos
+    (pd.photos || []).forEach(function(p) {
+      var contact = (pd.contacts || []).find(function(c) { return c.id === p.contactId })
+      seq.push({ type: 'gallery', itemId: p.id, contactId: p.contactId, label: (contact ? contact.name + ' - ' : '') + (p.caption || '').substring(0, 30) })
+    })
+    // Browser history
+    (pd.browserHistory || []).forEach(function(h) {
+      var contact = (pd.contacts || []).find(function(c) { return c.id === h.contactId })
+      seq.push({ type: 'browser', itemId: h.id, contactId: h.contactId, label: (contact ? contact.name + ' - ' : '') + (h.title || '').substring(0, 30) })
+    })
+    return seq
+  }
+
+  function renderSeqItem(item, idx) {
+    var color = typeColors[item.type] || '#64748b'
+    var typeLabel = typeLabels[item.type] || item.type
+    return '<div class="flow-item" data-flow-idx="' + idx + '" draggable="true">' +
+      '<div class="flow-icon" style="background:' + color + '">' + typeLabel.charAt(0) + '</div>' +
+      '<div class="flow-label"><div class="flow-title">' + esc(item.label || '') + '</div>' +
+      '<div class="flow-meta">' + typeLabel + '</div></div>' +
+      '<div class="flow-handle" draggable="true"></div></div>'
+  }
+
+  function renderPanel() {
+    var h = '<div class="cu-panel cu-panel-embedded" id="settingsPanel">'
+    h += '<div class="cu-header"><span class="cu-title">\u8bbe\u7f6e</span><button id="settingsClose" class="cu-close-btn">&times;</button></div>'
+    h += '<div class="cu-body">'
+    // Toggle
+    h += '<div class="st-row"><div><div class="st-label">\u9605\u8bfb\u8282\u594f\u63a7\u5236</div><div class="st-desc">\u542f\u7528\u540e\u53ef\u62d6\u62fd\u6392\u5e8f\u5361\u7247\uff0c\u5bfc\u51fa\u540e\u8bfb\u8005\u5c06\u6309\u5e8f\u6d4f\u89c8</div></div>'
+    h += '<label class="tgl-switch"><input type="checkbox" id="flowToggle"' + (flow.enabled ? ' checked' : '') + '><span class="tgl-slider"></span></label></div>'
+    // Flow list
+    var seq = flow.sequence.length > 0 ? flow.sequence : buildFlowSequence()
+    h += '<div style="margin-top:12px"><div style="font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--c-text)">\u5361\u7247\u5e8f\u5217 (' + seq.length + ')</div>'
+    h += '<div class="flow-list" id="flowList">'
+    if (seq.length === 0) {
+      h += '<div class="flow-empty">\u6682\u65e0\u5361\u7247\uff0c\u8bf7\u5148\u5728\u5404\u5b50 App \u4e2d\u6dfb\u52a0\u5185\u5bb9</div>'
+    } else {
+      seq.forEach(function(item, idx) { h += renderSeqItem(item, idx) })
+    }
+    h += '</div></div>'
+    h += '</div>'
+    h += '<div class="cu-footer"><button class="btn btn-sm btn-outline" id="flowRebuild">\u91cd\u5efa\u5e8f\u5217</button><button class="btn btn-sm btn-primary" id="flowSave">\u4fdd\u5b58</button><button class="btn btn-sm btn-ghost" id="flowCancel">\u53d6\u6d88</button></div>'
+    h += '</div>'
+    frame.innerHTML = h
+
+    // Toggle
+    var toggle = frame.querySelector('#flowToggle')
+    if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
+
+    // Rebuild
+    var rebuildBtn = frame.querySelector('#flowRebuild')
+    if (rebuildBtn) rebuildBtn.onclick = function() {
+      flow.sequence = buildFlowSequence()
+      renderPanel()
+    }
+
+    // Cancel
+    var cancelBtn = frame.querySelector('#flowCancel')
+    var closeBtn = frame.querySelector('#settingsClose')
+    var restore = function() {
+      frame.style.pointerEvents = 'none'
+      frame.innerHTML = origHTML
+      frame.style.transform = 'translateZ(0)'
+      void frame.offsetHeight
+      requestAnimationFrame(function() {
+        frame.style.transform = ''
+        frame.style.pointerEvents = ''
+        attachDrag(wid)
+      })
+    }
+    if (closeBtn) closeBtn.onclick = restore
+    if (cancelBtn) cancelBtn.onclick = restore
+
+    // Save
+    var saveBtn = frame.querySelector('#flowSave')
+    if (saveBtn) saveBtn.onclick = function() {
+      pd.readingFlow = flow
+      updateWork(wid, { phoneData: pd })
+      showToast('\u8bbe\u7f6e\u5df2\u4fdd\u5b58')
+      restore()
+    }
+
+    // Drag sort
+    bindFlowDrag(frame, flow)
+  }
+
+  function bindFlowDrag(frame, flow) {
+    var list = frame.querySelector('#flowList')
+    if (!list) return
+    var items = list.querySelectorAll('.flow-item')
+    var dragIdx = -1
+
+    items.forEach(function(item) {
+      item.addEventListener('dragstart', function(e) {
+        dragIdx = parseInt(item.dataset.flowIdx)
+        item.classList.add('dragging')
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', dragIdx)
+      })
+      item.addEventListener('dragend', function() {
+        item.classList.remove('dragging')
+        dragIdx = -1
+      })
+      item.addEventListener('dragover', function(e) {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+      })
+      item.addEventListener('drop', function(e) {
+        e.preventDefault()
+        var targetIdx = parseInt(item.dataset.flowIdx)
+        if (dragIdx >= 0 && dragIdx !== targetIdx) {
+          var seq = flow.sequence
+          var moved = seq.splice(dragIdx, 1)[0]
+          seq.splice(targetIdx, 0, moved)
+          renderPanel()
+        }
+      })
+    })
+  }
+
+  renderPanel()
 }
+
