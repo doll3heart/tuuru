@@ -4160,7 +4160,7 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
 }
 
 
-// ===== Settings Editor - Reading Flow =====
+// ===== Settings Editor - Reading Flow (exact same pattern as Customize panel) =====
 function openSettingsEditor(wid) {
   var w = getWork(wid)
   if (!w || !w.phoneData) return
@@ -4172,19 +4172,55 @@ function openSettingsEditor(wid) {
   if (!frame) return
   var origHTML = frame.innerHTML
   frame.dataset._origHTML = origHTML
+  frame.dataset._wid = wid
 
-  var typeLabels = { messages: '消息', forum: '论坛', memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物', moments: '动态' }
-  var typeColors = { messages: '#6366f1', forum: '#10b981', memo: '#f59e0b', gallery: '#ec4899', browser: '#3b82f6', shopping: '#f97316', moments: '#8b5cf6' }
+  function buildPanel() {
+    // Build sequence from actual data
+    var seq = flow.sequence.length > 0 ? flow.sequence : []
+    if (seq.length === 0) {
+      seq = flow.sequence = buildFlowSequence()
+    }
+
+    var typeLabels = { messages: '消息', forum: '论坛', memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物', moments: '动态' }
+    var typeColors = { messages: '#6366f1', forum: '#10b981', memo: '#f59e0b', gallery: '#ec4899', browser: '#3b82f6', shopping: '#f97316', moments: '#8b5cf6' }
+
+    var h = '<div class="cu-panel cu-panel-embedded" id="settingsPanel">'
+    h += '<div class="cu-header"><span class="cu-title">设置</span><button id="settingsClose" class="cu-close-btn">&times;</button></div>'
+    h += '<div class="cu-body">'
+    h += '<div class="st-row"><div><div class="st-label">阅读节奏控制</div><div class="st-desc">启用后可拖拽排序卡片，导出后读者将按序浏览</div></div>'
+    h += '<label class="tgl-switch"><input type="checkbox" id="flowToggle"' + (flow.enabled ? ' checked' : '') + '><span class="tgl-slider"></span></label></div>'
+    h += '<div style="margin-top:12px"><div style="font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--c-text)">卡片序列 (' + seq.length + ')</div>'
+    h += '<div class="flow-list" id="flowList">'
+    if (seq.length === 0) {
+      h += '<div class="flow-empty">暂无卡片，请先在各子 App 中添加内容</div>'
+    } else {
+      for (var si = 0; si < seq.length; si++) {
+        var item = seq[si]
+        var color = typeColors[item.type] || '#64748b'
+        var typeLabel = typeLabels[item.type] || item.type
+        h += '<div class="flow-item" data-flow-idx="' + si + '" draggable="true">'
+        h += '<div class="flow-icon" style="background:' + color + '">' + typeLabel.charAt(0) + '</div>'
+        h += '<div class="flow-label"><div class="flow-title">' + esc(item.label || '') + '</div>'
+        h += '<div class="flow-meta">' + typeLabel + '</div></div>'
+        h += '<div class="flow-handle" draggable="true"></div></div>'
+      }
+    }
+    h += '</div></div>'
+    h += '</div>'
+    h += '<div class="cu-footer"><button class="btn btn-sm btn-outline" id="flowRebuild">重建序列</button><button class="btn btn-sm btn-primary" id="flowSave">保存</button><button class="btn btn-sm btn-ghost" id="flowCancel">取消</button></div>'
+    h += '</div>'
+    return h
+  }
 
   function buildFlowSequence() {
     var seq = []
     ;(pd.memos || []).forEach(function(m) {
-      var contact = (pd.contacts || []).find(function(c) { return c.id === m.contactId })
-      seq.push({ type: 'memo', itemId: m.id, contactId: m.contactId, label: (contact ? contact.name + ' - ' : '') + (m.content || '').replace(/<[^>]*>/g, '').substring(0, 30) })
+      var c = (pd.contacts || []).find(function(x) { return x.id === m.contactId })
+      seq.push({ type: 'memo', itemId: m.id, contactId: m.contactId, label: (c ? c.name + ' - ' : '') + (m.content || '').replace(/<[^>]*>/g, '').substring(0, 30) })
     })
     ;(pd.shoppingItems || []).forEach(function(s) {
-      var contact = (pd.contacts || []).find(function(c) { return c.id === s.contactId })
-      seq.push({ type: 'shopping', itemId: s.id, contactId: s.contactId, label: (contact ? contact.name + ' - ' : '') + (s.name || '') })
+      var c = (pd.contacts || []).find(function(x) { return x.id === s.contactId })
+      seq.push({ type: 'shopping', itemId: s.id, contactId: s.contactId, label: (c ? c.name + ' - ' : '') + (s.name || '') })
     })
     ;(pd.forumPosts || []).forEach(function(p) {
       seq.push({ type: 'forum', itemId: p.id, contactId: p.contactId, label: (p.contactName || '') + ' - ' + (p.title || '').substring(0, 30) })
@@ -4193,117 +4229,109 @@ function openSettingsEditor(wid) {
       seq.push({ type: 'moments', itemId: m.id, contactId: m.contactId, label: (m.content || '').substring(0, 30) })
     })
     ;(pd.chats || []).forEach(function(ch) {
-      if (ch.rounds) {
-        ch.rounds.forEach(function(round, ri) {
-          var contact = (pd.contacts || []).find(function(c) { return c.id === ch.contactIds[0] })
-          seq.push({ type: 'messages', itemId: round.id, chatId: ch.id, contactId: ch.contactIds[0], label: (contact ? contact.name : '') + ' - 第' + (ri + 1) + '轮' })
-        })
-      }
+      if (ch.rounds) ch.rounds.forEach(function(round, ri) {
+        var c = (pd.contacts || []).find(function(x) { return x.id === ch.contactIds[0] })
+        seq.push({ type: 'messages', itemId: round.id, chatId: ch.id, contactId: ch.contactIds[0], label: (c ? c.name : '') + ' - 第' + (ri + 1) + '轮' })
+      })
     })
     ;(pd.photos || []).forEach(function(p) {
-      var contact = (pd.contacts || []).find(function(c) { return c.id === p.contactId })
-      seq.push({ type: 'gallery', itemId: p.id, contactId: p.contactId, label: (contact ? contact.name + ' - ' : '') + (p.caption || '').substring(0, 30) })
+      var c = (pd.contacts || []).find(function(x) { return x.id === p.contactId })
+      seq.push({ type: 'gallery', itemId: p.id, contactId: p.contactId, label: (c ? c.name + ' - ' : '') + (p.caption || '').substring(0, 30) })
     })
     ;(pd.browserHistory || []).forEach(function(h) {
-      var contact = (pd.contacts || []).find(function(c) { return c.id === h.contactId })
-      seq.push({ type: 'browser', itemId: h.id, contactId: h.contactId, label: (contact ? contact.name + ' - ' : '') + (h.title || '').substring(0, 30) })
+      var c = (pd.contacts || []).find(function(x) { return x.id === h.contactId })
+      seq.push({ type: 'browser', itemId: h.id, contactId: h.contactId, label: (c ? c.name + ' - ' : '') + (h.title || '').substring(0, 30) })
     })
     return seq
   }
 
-  function renderSeqItem(item, idx) {
-    var color = typeColors[item.type] || '#64748b'
-    var typeLabel = typeLabels[item.type] || item.type
-    return '<div class="flow-item" data-flow-idx="' + idx + '" draggable="true">' +
-      '<div class="flow-icon" style="background:' + color + '">' + typeLabel.charAt(0) + '</div>' +
-      '<div class="flow-label"><div class="flow-title">' + esc(item.label || '') + '</div>' +
-      '<div class="flow-meta">' + typeLabel + '</div></div>' +
-      '<div class="flow-handle" draggable="true"></div></div>'
+  frame.innerHTML = buildPanel()
+
+  // ---- Bind events (same pattern as bindCuEmbedded) ----
+  var panel = frame.querySelector('#settingsPanel')
+  if (!panel) return
+
+  // Toggle
+  var toggle = frame.querySelector('#flowToggle')
+  if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
+
+  // Rebuild
+  var rebuildBtn = frame.querySelector('#flowRebuild')
+  if (rebuildBtn) rebuildBtn.onclick = function() {
+    flow.sequence = buildFlowSequence()
+    frame.innerHTML = buildPanel()
   }
 
-  function renderPanel() {
-    var h = '<div class="cu-panel cu-panel-embedded" id="settingsPanel">'
-    h += '<div class="cu-header"><span class="cu-title">设置</span><button id="settingsClose" class="cu-close-btn">&times;</button></div>'
-    h += '<div class="cu-body">'
-    h += '<div class="st-row"><div><div class="st-label">阅读节奏控制</div><div class="st-desc">启用后可拖拽排序卡片，导出后读者将按序浏览</div></div>'
-    h += '<label class="tgl-switch"><input type="checkbox" id="flowToggle"' + (flow.enabled ? ' checked' : '') + '><span class="tgl-slider"></span></label></div>'
-    var seq = flow.sequence.length > 0 ? flow.sequence : buildFlowSequence()
-    h += '<div style="margin-top:12px"><div style="font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--c-text)">卡片序列 (' + seq.length + ')</div>'
-    h += '<div class="flow-list" id="flowList">'
-    if (seq.length === 0) {
-      h += '<div class="flow-empty">暂无卡片，请先在各自 App 中添加内容</div>'
-    } else {
-      seq.forEach(function(item, idx) { h += renderSeqItem(item, idx) })
-    }
-    h += '</div></div>'
-    h += '</div>'
-    h += '<div class="cu-footer"><button class="btn btn-sm btn-outline" id="flowRebuild">重建序列</button><button class="btn btn-sm btn-primary" id="flowSave">保存</button><button class="btn btn-sm btn-ghost" id="flowCancel">取消</button></div>'
-    h += '</div>'
-    frame.innerHTML = h
-
-    var toggle = frame.querySelector('#flowToggle')
-    if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
-
-    var rebuildBtn = frame.querySelector('#flowRebuild')
-    if (rebuildBtn) rebuildBtn.onclick = function() {
-      flow.sequence = buildFlowSequence()
-      renderPanel()
-    }
-
-    var cancelBtn = frame.querySelector('#flowCancel')
-    var closeBtn = frame.querySelector('#settingsClose')
-    var restore = function() {
-      frame.style.pointerEvents = 'none'
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        attachDrag(wid)
-      })
-    }
-    if (closeBtn) closeBtn.onclick = restore
-    if (cancelBtn) cancelBtn.onclick = restore
-
-    var saveBtn = frame.querySelector('#flowSave')
-    if (saveBtn) saveBtn.onclick = function() {
-      pd.readingFlow = flow
-      updateWork(wid, { phoneData: pd })
-      showToast('设置已保存')
-      restore()
-    }
-
-    bindFlowDrag(frame, flow)
-  }
-
-  function bindFlowDrag(frame, flow) {
-    var list = frame.querySelector('#flowList')
-    if (!list) return
-    var items = list.querySelectorAll('.flow-item')
-    var dragIdx = -1
-    items.forEach(function(item) {
-      item.addEventListener('dragstart', function(e) {
-        dragIdx = parseInt(item.dataset.flowIdx)
-        item.classList.add('dragging')
-        e.dataTransfer.effectAllowed = 'move'
-        e.dataTransfer.setData('text/plain', String(dragIdx))
-      })
-      item.addEventListener('dragend', function() { item.classList.remove('dragging'); dragIdx = -1 })
-      item.addEventListener('dragover', function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' })
-      item.addEventListener('drop', function(e) {
-        e.preventDefault()
-        var targetIdx = parseInt(item.dataset.flowIdx)
-        if (dragIdx >= 0 && dragIdx !== targetIdx) {
-          var seq = flow.sequence
-          var moved = seq.splice(dragIdx, 1)[0]
-          seq.splice(targetIdx, 0, moved)
-          renderPanel()
-        }
-      })
+  // Close / Cancel
+  var closeBtn = frame.querySelector('#settingsClose')
+  var cancelBtn = frame.querySelector('#flowCancel')
+  var restore = function() {
+    if (document.activeElement) document.activeElement.blur()
+    frame.style.pointerEvents = 'none'
+    frame.style.display = 'none'
+    frame.innerHTML = frame.dataset._origHTML || ''
+    delete frame.dataset._origHTML
+    frame.style.overflow = ''
+    frame.style.padding = ''
+    void frame.offsetHeight
+    frame.style.display = ''
+    requestAnimationFrame(function() {
+      frame.style.pointerEvents = ''
+      attachDrag(wid)
     })
   }
+  if (closeBtn) closeBtn.onclick = restore
+  if (cancelBtn) cancelBtn.onclick = restore
 
-  renderPanel()
+  // Save
+  var saveBtn = frame.querySelector('#flowSave')
+  if (saveBtn) saveBtn.onclick = function() {
+    pd.readingFlow = flow
+    updateWork(wid, { phoneData: pd })
+    showToast('设置已保存')
+    restore()
+  }
+
+  // ---- Drag-sort (direct DOM manipulation, no rebuild) ----
+  var list = frame.querySelector('#flowList')
+  if (list) {
+    var dragIdx = -1
+    function refreshHandles() {
+      var items = list.querySelectorAll('.flow-item')
+      items.forEach(function(item) {
+        item.removeEventListener('dragstart', item._ds)
+        item.removeEventListener('dragend', item._de)
+        item.removeEventListener('dragover', item._do)
+        item.removeEventListener('drop', item._dp)
+      })
+      items.forEach(function(item) {
+        item._ds = function(e) {
+          if (animating) return
+          dragIdx = parseInt(item.dataset.flowIdx)
+          item.classList.add('dragging')
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('text/plain', '')
+        }
+        item._de = function() { item.classList.remove('dragging') }
+        item._do = function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+        item._dp = function(e) {
+          e.preventDefault()
+          var targetIdx = parseInt(item.dataset.flowIdx)
+          if (dragIdx >= 0 && dragIdx !== targetIdx) {
+            var moved = flow.sequence.splice(dragIdx, 1)[0]
+            flow.sequence.splice(targetIdx, 0, moved)
+            // Rebuild to re-render with correct indices
+            frame.innerHTML = buildPanel()
+          }
+          dragIdx = -1
+        }
+        item.addEventListener('dragstart', item._ds)
+        item.addEventListener('dragend', item._de)
+        item.addEventListener('dragover', item._do)
+        item.addEventListener('drop', item._dp)
+      })
+    }
+    refreshHandles()
+  }
 }
 
