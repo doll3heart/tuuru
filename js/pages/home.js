@@ -1,4 +1,4 @@
-﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, WORK_TYPE, uid } from "../data.js"
+﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast } from "../app.js"
 
@@ -42,11 +42,20 @@ function renderWorkList(works){
         </div>
       </div>
       <div class="work-card-actions">
-<button class="btn btn-sm btn-primary" onclick="event.stopPropagation();navigate('/${w.type===WORK_TYPE.PHONE?'phone':'edit'}/${w.id}')">编辑</button>
-<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();navigate('/read/${w.id}')"${w.type===WORK_TYPE.PHONE?' style="display:none"':''}>阅读</button>
-<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();editWorkInfo('${w.id}')">信息</button>
-<button class="btn btn-sm btn-outline" onclick="event.stopPropagation();dupWork('${w.id}')">复制</button>
-<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();delWork('${w.id}')">删除</button>
+        <div class="work-card-actions-left">
+          <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();navigate('/${w.type===WORK_TYPE.PHONE?'phone':'edit'}/${w.id}')">编辑</button>
+          <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();navigate('/read/${w.id}')"${w.type===WORK_TYPE.PHONE?' style="display:none"':''}>阅读</button>
+          <button class="btn btn-sm btn-danger" onclick="event.stopPropagation();delWork('${w.id}')">删除</button>
+        </div>
+        <div class="work-card-more-wrap">
+          <button class="btn btn-sm btn-ghost work-card-more-btn" onclick="event.stopPropagation();toggleWorkMenu(event,'${w.id}')">更多</button>
+          <div class="work-card-more-popover" id="workMenu-${w.id}">
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();editWorkInfo('${w.id}');closeWorkMenu('${w.id}')">作品信息</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出 JSON</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出 PNG</button>
+          </div>
+        </div>
       </div>
     </div>
   `).join("")}</div>`
@@ -77,6 +86,74 @@ window.delWork = function(id){
   if(list) list.innerHTML = renderWorkList(getWorks())
 }
 
+window.expPNG = function(id){
+  try {
+    var json = exportWorkAsJSON(id)
+    if (!json) { alert('导出失败'); return }
+    var w = getWorks().find(function(x) { return x.id === id })
+    // Offer to use a cover image
+    var title = w ? w.title : '作品'
+    var ov = document.createElement('div')
+    ov.className = 'modal-overlay'
+    ov.style.cssText = 'z-index:2000'
+    ov.innerHTML = '<div class="modal"><div class="modal-header"><span class="modal-title">PNG 隐写导出</span><button class="modal-close" style="border:none;background:transparent;cursor:pointer;font-size:1.2rem">&times;</button></div><div class="modal-body"><p style="font-size:.85rem;color:var(--c-text2);margin-bottom:12px">可选：选择一张封面图片作为 PNG 宿主图（不选则使用默认渐变图）</p><button id="pngCoverBtn" class="btn btn-sm btn-outline" style="width:100%;margin-bottom:12px">选择封面图片</button><div style="text-align:center;margin:8px 0"><span style="font-size:.75rem;color:var(--c-text2)" id="pngCoverLabel">未选择封面</span></div><button id="pngExportBtn" class="btn btn-sm btn-primary" style="width:100%">导出 PNG</button></div></div>'
+    document.body.appendChild(ov)
+    var coverUrl = ''
+    var label = ov.querySelector('#pngCoverLabel')
+    ov.querySelector('.modal-close').onclick = function() { ov.remove() }
+    ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
+    ov.querySelector('#pngCoverBtn').onclick = function() {
+      var input = document.createElement('input')
+      input.type = 'file'
+      input.accept = 'image/*'
+      input.onchange = function() {
+        var file = input.files[0]
+        if (!file) return
+        var reader = new FileReader()
+        reader.onload = function() {
+          coverUrl = reader.result
+          label.textContent = file.name
+          label.style.color = 'var(--c-primary-hover)'
+        }
+        reader.readAsDataURL(file)
+      }
+      input.click()
+    }
+    ov.querySelector('#pngExportBtn').onclick = function() {
+      ov.querySelector('#pngExportBtn').textContent = '编码中...'
+      ov.querySelector('#pngExportBtn').disabled = true
+      encodeSteganoPNG(json, coverUrl, function(dataUrl) {
+        var a = document.createElement('a')
+        a.href = dataUrl
+        a.download = title + '.png'
+        a.click()
+        showToast('PNG 已导出', 'success')
+        ov.remove()
+      })
+    }
+  } catch(e) {
+    alert('导出失败：' + e.message)
+  }
+}
+
+window.expWork = function(id){
+  try {
+    var json = exportWorkAsJSON(id)
+    if (!json) { alert('导出失败'); return }
+    var blob = new Blob([json], { type: 'application/json' })
+    var url = URL.createObjectURL(blob)
+    var a = document.createElement('a')
+    a.href = url
+    var w = getWorks().find(function(x) { return x.id === id })
+    a.download = (w ? w.title : '作品') + '.json'
+    a.click()
+    URL.revokeObjectURL(url)
+    showToast('已导出', 'success')
+  } catch(e) {
+    alert('导出失败：' + e.message)
+  }
+}
+
 window.dupWork = function(id){
   duplicateWork(id)
   showToast("已复制","info")
@@ -105,6 +182,30 @@ window.editWorkInfo = function(id){
   if (list) list.innerHTML = renderWorkList(getWorks())
 }
 
+
+// Work card dropdown menu handlers
+window.toggleWorkMenu = function(event, id) {
+  var menu = document.getElementById('workMenu-' + id)
+  if (!menu) return
+  document.querySelectorAll('.work-card-more-popover.open').forEach(function(m) {
+    if (m !== menu) m.classList.remove('open')
+  })
+  menu.classList.toggle('open')
+}
+
+window.closeWorkMenu = function(id) {
+  var menu = document.getElementById('workMenu-' + id)
+  if (menu) menu.classList.remove('open')
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.work-card-more-wrap')) {
+    document.querySelectorAll('.work-card-more-popover.open').forEach(function(m) {
+      m.classList.remove('open')
+    })
+  }
+})
 // Re-export for dynamic reload
 window.renderWorkList = renderWorkList
 window.getWorks = getWorks

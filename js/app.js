@@ -46,15 +46,121 @@ export function modal(title, bodyHtml, footerHtml, onClose){
 // ==================== Toast system ====================
 window.__toast = showToast
 
+
+// ==================== Theme ====================
+
+// ---- Color utilities ----
+function hexToRgb(h) {
+  var r=0,g=0,b=0
+  if(h.length===4){r=parseInt(h[1]+h[1],16);g=parseInt(h[2]+h[2],16);b=parseInt(h[3]+h[3],16)}
+  else{r=parseInt(h.substring(1,3),16);g=parseInt(h.substring(3,5),16);b=parseInt(h.substring(5,7),16)}
+  return{r:r,g:g,b:b}
+}
+function rgbToHex(r,g,b){return'#'+((1<<24)|(r<<16)|(g<<8)|b).toString(16).slice(1)}
+function luminance(h){var c=hexToRgb(h);return 0.299*c.r+0.587*c.g+0.114*c.b}
+function mix(a,b,t){var ca=hexToRgb(a),cb=hexToRgb(b);return rgbToHex(Math.round(ca.r+(cb.r-ca.r)*t),Math.round(ca.g+(cb.g-ca.g)*t),Math.round(ca.b+(cb.b-ca.b)*t))}
+function rgba(h,a){var c=hexToRgb(h);return'rgba('+c.r+','+c.g+','+c.b+','+a+')'}
+
+// ---- Preset definitions ----
+var THEME_PRESETS = [
+  {id:'sky',name:'水色',dot:'#A4C6EB'},
+  {id:'sakura',name:'樱花',dot:'#F0D9E4',bg:'#F0D9E4',text:'#16131F',primary:'#C1A0AC',accent3:'#4A3F4B'},
+  {id:'deep',name:'苍闇',dot:'#07080C',bg:'#07080C',surface:'#333C50',text:'#CAD9F5',primary:'#546282',text2:'#9CB2E8'},
+  {id:'coastal',name:'海岸',dot:'#E3D6BF',bg:'#E3D6BF',text:'#933B5B',primary:'#B5728A',surface2:'#AABAAE',text2:'#9F9679'},
+  {id:'fairisle',name:'费尔岛',dot:'#DEC6A7',bg:'#DEC6A7',text:'#352C29',primary:'#258986',accent3:'#143247'},
+  {id:'mint',name:'薄荷生巧',dot:'#D5EAE3',bg:'#D5EAE3',text:'#775C55',primary:'#F8F4E9',accent3:'#FDD3D5'}
+]
+
+// ---- Generate all 15 CSS variables from a preset ----
+function generateVars(p) {
+  if (!p.bg) return null
+  var isLight = luminance(p.bg) > 128
+  var s = p.surface || mix(p.bg,'#ffffff',isLight?0.15:0.06)
+  var s2 = p.surface2 || mix(s,p.bg,0.5)
+  var t2 = p.text2 || rgba(p.text,0.5)
+  var ph = luminance(p.primary)>128 ? mix(p.primary,'#000000',0.08) : mix(p.primary,'#ffffff',0.15)
+  var b = p.border || mix(s,'#000000',isLight?0.12:0.25)
+  var b2 = mix(b,'#000000',0.08)
+  var a3 = p.accent3 || (isLight?'#b04040':'#d07070')
+  var a = mix(p.bg,a3,0.08)
+  var a2 = mix(p.bg,a3,0.04)
+  return {
+    '--c-bg':p.bg, '--c-surface':s, '--c-surface2':s2,
+    '--c-primary':p.primary, '--c-primary-hover':ph,
+    '--c-text':p.text, '--c-text2':t2,
+    '--c-border':b, '--c-border2':b2,
+    '--c-accent':a, '--c-accent2':a2, '--c-accent3':a3,
+    '--c-msg-self':isLight?'#555':'#3a3a3a', '--c-msg-other':s,
+    '--shadow':isLight?'0 1px 3px rgba(0,0,0,.08)':'0 1px 4px rgba(0,0,0,.5)',
+    '--shadow-md':isLight?'0 4px 12px rgba(0,0,0,.1)':'0 4px 16px rgba(0,0,0,.45)',
+    '--c-btn-text':luminance(p.primary)>160?p.text:'#fff'
+  }
+}
+
+// ---- Apply a preset by key ----
+function getTheme() { return localStorage.getItem('tuuru_theme') || 'sky' }
+function applyTheme(key) {
+  var p = THEME_PRESETS.find(function(x){return x.id===key})
+  var vars = p ? generateVars(p) : null
+  var root = document.documentElement
+  root.removeAttribute('data-theme')
+  THEME_PRESETS.forEach(function(pr){
+    if(!pr.bg)return
+    var v=generateVars(pr)
+    if(v)Object.keys(v).forEach(function(k){root.style.removeProperty(k)})
+  })
+  if (vars) {
+    Object.keys(vars).forEach(function(k){root.style.setProperty(k,vars[k])})
+  }
+}
+applyTheme(getTheme())
+
+window.setTheme = function(key) {
+  localStorage.setItem('tuuru_theme', key)
+  applyTheme(key)
+  var pop = document.getElementById('themePopover')
+  if (pop) pop.classList.remove('open')
+  setTimeout(function(){
+    var btns = document.querySelectorAll('.theme-option')
+    btns.forEach(function(b){b.classList.toggle('active',b.dataset.theme===key)})
+  },50)
+}
+
+window.toggleThemePopover = function(e) {
+  e.stopPropagation()
+  var pop = document.getElementById('themePopover')
+  if(pop)pop.classList.toggle('open')
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.theme-wrap')) {
+    var pop = document.getElementById('themePopover')
+    if (pop) pop.classList.remove('open')
+  }
+})
+
 // ==================== Header ====================
 export function renderHeader(){
   const path = location.hash.slice(1).split("?")[0]||"/"
   return `<header class="app-header">
     <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru</a>
-    <nav>
-      <a href="#/" class="${path==="/"?"active":""}">首页</a>
-      <a href="#/new" class="${path==="/new"?"active":""}">新建</a>
-    </nav>
+    <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+      <div class="theme-wrap">
+        <button class="btn btn-sm btn-ghost" onclick="toggleThemePopover(event)" title="外观">外观</button>
+        <div class="theme-popover" id="themePopover">
+          <button class="theme-option active" data-theme="sky" onclick="event.preventDefault();setTheme('sky')"><span class="dot" style="background:#A4C6EB"></span>水色</button>
+          <button class="theme-option" data-theme="sakura" onclick="event.preventDefault();setTheme('sakura')"><span class="dot" style="background:#F0D9E4"></span>樱花</button>
+          <button class="theme-option" data-theme="deep" onclick="event.preventDefault();setTheme('deep')"><span class="dot" style="background:#07080C"></span>苍闇</button>
+          <button class="theme-option" data-theme="coastal" onclick="event.preventDefault();setTheme('coastal')"><span class="dot" style="background:#E3D6BF"></span>海岸</button>
+          <button class="theme-option" data-theme="fairisle" onclick="event.preventDefault();setTheme('fairisle')"><span class="dot" style="background:#DEC6A7"></span>费尔岛</button>
+          <button class="theme-option" data-theme="mint" onclick="event.preventDefault();setTheme('mint')"><span class="dot" style="background:#F8F4E9"></span>薄荷生巧</button>
+        </div>
+      </div>
+      <nav>
+        <a href="#/" class="${path==="/"?"active":""}">首页</a>
+        <a href="#/new" class="${path==="/new"?"active":""}">新建</a>
+      </nav>
+    </div>
   </header>`
 }
 

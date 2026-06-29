@@ -229,6 +229,158 @@ function rv(ph,mode,scene,nodeScene,scenes){
   return v[Math.floor(Math.random()*v.length)]
 }
 
+export function exportWorkAsJSON(wid) {
+  var w = getWork(wid)
+  if (!w) return null
+  // Deep clone to avoid mutating original
+  var copy = JSON.parse(JSON.stringify(w))
+  // Remove editor-specific fields
+  delete copy.password
+  delete copy.locked
+  delete copy.editorSettings
+  delete copy.updatedAt
+  if (copy.phoneData) {
+    // Remove author-only apps
+    if (copy.phoneData.apps) {
+      copy.phoneData.apps = copy.phoneData.apps.filter(function(a) {
+        return a.type !== 'settings' && a.type !== 'customize'
+      })
+    }
+  }
+  return JSON.stringify(copy, null, 2)
+}
+
+export function encodeSteganoPNG(jsonStr, coverImageUrl, callback) {
+  // jsonStr: JSON string to hide
+  // coverImageUrl: optional cover image data URL
+  // callback: function(dataUrl) called with the result PNG data URL
+  
+  var encoder = new TextEncoder()
+  var data = encoder.encode(jsonStr)
+  var totalBytes = 4 + data.length
+  var pixelCount = Math.ceil(totalBytes / 3)
+  var size = Math.max(240, Math.ceil(Math.sqrt(pixelCount)))
+  
+  // Ensure enough pixels
+  while (size * size < pixelCount) size++
+  
+  var canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  var ctx = canvas.getContext('2d')
+  
+  function encodeOnCanvas() {
+    // Get pixel data
+    var imageData = ctx.getImageData(0, 0, size, size)
+    var pixels = imageData.data
+    
+    // Write 4-byte length header (big-endian)
+    var len = data.length
+    var header = [ (len >> 24) & 0xFF, (len >> 16) & 0xFF, (len >> 8) & 0xFF, len & 0xFF ]
+    
+    // Write bytes into RGB channels (skip alpha)
+    for (var i = 0; i < totalBytes; i++) {
+      var byteVal = i < 4 ? header[i] : data[i - 4]
+      var pixelIdx = Math.floor(i / 3) * 4 + (i % 3)
+      pixels[pixelIdx] = byteVal
+    }
+    
+    ctx.putImageData(imageData, 0, 0)
+    callback(canvas.toDataURL('image/png'))
+  }
+  
+  if (coverImageUrl) {
+    var img = new Image()
+    img.onload = function() {
+      // Draw cover image scaled to fill
+      var scale = Math.max(size / img.width, size / img.height)
+      var sw = img.width * scale
+      var sh = img.height * scale
+      var sx = (size - sw) / 2
+      var sy = (size - sh) / 2
+      ctx.fillStyle = '#1a1a2e'
+      ctx.fillRect(0, 0, size, size)
+      ctx.drawImage(img, sx, sy, sw, sh)
+      encodeOnCanvas()
+    }
+    img.onerror = function() {
+      // Fallback to gradient
+      drawDefaultBg(ctx, size)
+      encodeOnCanvas()
+    }
+    img.src = coverImageUrl
+  } else {
+    drawDefaultBg(ctx, size)
+    encodeOnCanvas()
+  }
+}
+
+function drawDefaultBg(ctx, size) {
+  var grad = ctx.createLinearGradient(0, 0, size, size)
+  grad.addColorStop(0, '#667eea')
+  grad.addColorStop(0.5, '#764ba2')
+  grad.addColorStop(1, '#f093fb')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, size, size)
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'
+  ctx.font = 'bold ' + (size / 8) + 'px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('Tuuru', size / 2, size / 2 - size / 20)
+  ctx.font = (size / 18) + 'px sans-serif'
+  ctx.fillText('隐写作品', size / 2, size / 2 + size / 12)
+}
+
+export function decodeSteganoPNG(pngDataUrl) {
+  // Returns the hidden JSON string, or null
+  return new Promise(function(resolve, reject) {
+    var img = new Image()
+    img.onload = function() {
+      var canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      var ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      var imageData = ctx.getImageData(0, 0, img.width, img.height)
+      var pixels = imageData.data
+      
+      // Read 4-byte length header
+      var header = [0, 0, 0, 0]
+      for (var i = 0; i < 4; i++) {
+        var pixelIdx = Math.floor(i / 3) * 4 + (i % 3)
+        header[i] = pixels[pixelIdx]
+      }
+      var dataLen = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3]
+      
+      // Sanity check
+      var maxBytes = img.width * img.height * 3
+      if (dataLen <= 0 || dataLen > maxBytes || dataLen > 10 * 1024 * 1024) {
+        resolve(null)
+        return
+      }
+      
+      // Read data bytes
+      var bytes = new Uint8Array(dataLen)
+      for (var i2 = 0; i2 < dataLen; i2++) {
+        var byteIdx = 4 + i2
+        var pixelIdx2 = Math.floor(byteIdx / 3) * 4 + (byteIdx % 3)
+        bytes[i2] = pixels[pixelIdx2]
+      }
+      
+      try {
+        var decoder = new TextDecoder()
+        var json = decoder.decode(bytes)
+        // Verify it's valid JSON
+        JSON.parse(json)
+        resolve(json)
+      } catch(e) {
+        resolve(null)
+      }
+    }
+    img.onerror = function() { resolve(null) }
+    img.src = pngDataUrl
+  })
+}
+
 export function exportWorkAsHTML(wid){
   var w = getWork(wid);
   if (!w) return null;

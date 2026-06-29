@@ -4,6 +4,7 @@ import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
 var _dragState = null
+var _wasDrag = false
 
 // Grid constants
 var CELL_W = 80
@@ -243,7 +244,7 @@ export function renderPhoneEditor(wid) {
     var y = OFFSET_Y + (app.desktopY || 0) * CELL_H
     h += '<div class="phone-app-icon" data-app-id="' + app.id + '" data-app-type="' + app.type + '" onselectstart="return false"'
     h += ' style="left:' + x + 'px;top:' + y + 'px;border:none!important;outline:none!important;box-shadow:none!important">'
-    h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
+    h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || 'var(--c-surface2)') + ';">'
     h += '<span class="phone-icon-char">' + (app.icon || '?') + '</span>'
     h += '</div>'
     if (skin.showAppLabels !== false) {
@@ -357,6 +358,7 @@ function startDrag(wid, icon, mx, my) {
     origLeft: parseFloat(icon.style.left) || 0, origTop: parseFloat(icon.style.top) || 0,
     deskLeft: deskRect.left, deskTop: deskRect.top
   }
+  _wasDrag = false
   icon.classList.add('dragging')
   icon.style.zIndex = '100'
   icon.style.transition = 'none'
@@ -364,6 +366,7 @@ function startDrag(wid, icon, mx, my) {
 
 function moveDrag(mx, my) {
   if (!_dragState) return
+  _wasDrag = true
   var icon = _dragState.icon
   icon.style.left = (mx - _dragState.deskLeft - _dragState.offsetX) + 'px'
   icon.style.top = (my - _dragState.deskTop - _dragState.offsetY) + 'px'
@@ -444,7 +447,7 @@ function findEmptyCell(apps, excludeId, prefX, prefY) {
 document.addEventListener('click', function(e) {
   var icon = e.target.closest('.phone-app-icon')
   if (!icon) return
-  if (_dragState) return
+  if (_wasDrag) { _wasDrag = false; return }
 
     e.preventDefault()
     // Clear any text selection & focus before opening panel
@@ -554,7 +557,7 @@ function renderAppIconsTab(skin, apps) {
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
     h += '<div class="cu-app-row">'
-    h += '<div class="cu-app-preview" style="background:' + (app.color || '#f0f0f0') + ';"><span style="color:#333">' + (app.icon || '?') + '</span></div>'
+    h += '<div class="cu-app-preview" style="background:' + (app.color || 'var(--c-surface2)') + ';"><span style="color: var(--c-text)">' + (app.icon || '?') + '</span></div>'
     h += '<div class="cu-app-fields">'
     h += '<input class="cu-input cu-input-sm" data-cu-app="icon" data-cu-idx="' + i + '" value="' + esc(app.icon || '') + '" placeholder="图标(SVG/文字)">'
     h += '<input class="cu-input cu-input-sm" data-cu-app="name" data-cu-idx="' + i + '" value="' + esc(app.name || '') + '" placeholder="名称">'
@@ -1238,7 +1241,7 @@ function openTarotPanel(wid, type) {
     if (faceUrl) {
       h += '<div class="tarot-front" style="background-image:url(' + esc(faceUrl) + ');background-size:cover;background-position:center">'
     } else {
-      h += '<div class="tarot-front" style="background:#fff">'
+      h += '<div class="tarot-front" style="background: var(--c-surface)">'
     }
     h += '<div class="tarot-front-label">' + esc(contact.name || '?') + '</div>'
     h += '</div>'
@@ -3509,7 +3512,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative' + (extraStyle ? ';' + extraStyle : '') + '">'
     if (msg.senderId !== 'self') {
       var sc = contacts.find(function(c) { return c.id === msg.senderId })
-      var avatarBg = sc ? (sc.avatarUrl ? 'background-image:url(' + esc(sc.avatarUrl) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:#ccc'
+      var avatarBg = sc ? (sc.avatarUrl ? 'background-image:url(' + esc(sc.avatarUrl) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:var(--c-border)'
       h += '<div class="chat-avatar" style="' + avatarBg + '">'
       if (!sc || !sc.avatarUrl) h += '<span>' + esc(senderName.charAt(0)) + '</span>'
       h += '</div>'
