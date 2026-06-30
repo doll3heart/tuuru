@@ -5,6 +5,12 @@ import { showToast, renderHeader, modal } from "../app.js"
 var _workId = null
 var _dragState = null
 var _wasDrag = false
+var _flowDragItem = null
+var _flowDragStartY = 0
+var _flowDragOrigIdx = -1
+var _flowFrame = null
+var _flowWid = null
+var _flowPd = null
 
 // Grid constants
 var CELL_W = 80
@@ -4260,6 +4266,7 @@ function openSettingsEditor(wid) {
   if (rebuildBtn) rebuildBtn.onclick = function() {
     flow.sequence = buildFlowSequence()
     frame.innerHTML = buildPanel()
+    bindDragHandles() // re-bind after rebuild
   }
 
   // Close / Cancel
@@ -4292,45 +4299,100 @@ function openSettingsEditor(wid) {
     restore()
   }
 
-  // ---- Drag-sort (direct DOM manipulation, no rebuild) ----
-  var list = frame.querySelector('#flowList')
-  if (list) {
-    var dragIdx = -1
-    function refreshHandles() {
-      var items = list.querySelectorAll('.flow-item')
-      items.forEach(function(item) {
-        item.removeEventListener('dragstart', item._ds)
-        item.removeEventListener('dragend', item._de)
-        item.removeEventListener('dragover', item._do)
-        item.removeEventListener('drop', item._dp)
-      })
-      items.forEach(function(item) {
-        item._ds = function(e) {
-          dragIdx = parseInt(item.dataset.flowIdx)
-          item.classList.add('dragging')
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('text/plain', '')
-        }
-        item._de = function() { item.classList.remove('dragging') }
-        item._do = function(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
-        item._dp = function(e) {
-          e.preventDefault()
-          var targetIdx = parseInt(item.dataset.flowIdx)
-          if (dragIdx >= 0 && dragIdx !== targetIdx) {
-            var moved = flow.sequence.splice(dragIdx, 1)[0]
-            flow.sequence.splice(targetIdx, 0, moved)
-            // Rebuild to re-render with correct indices
-            frame.innerHTML = buildPanel()
+  // ---- Drag-sort (global variables attached to window) ----
+  _flowFrame = frame
+  _flowWid = wid
+  _flowPd = pd
+  _flowDragItem = null
+
+  function refreshHandles() {
+    var list = frame.querySelector('#flowList')
+    if (!list) return
+    var items = list.querySelectorAll('.flow-item')
+    items.forEach(function(item) {
+      item.onmousedown = function(e) {
+        if (e.button !== 0) return
+        e.preventDefault()
+        _flowDragItem = item
+        _flowDragStartY = e.clientY
+        _flowDragOrigIdx = parseInt(item.dataset.flowIdx)
+        item.classList.add('dragging')
+        item.style.zIndex = '10'
+      }
+    })
+  }
+  refreshHandles()
+
+  // Global move/up handlers — only registered once
+  if (!window.__flowDragInit) {
+    window.__flowDragInit = true
+    document.addEventListener('mousemove', function(e) {
+      if (!_flowDragItem || !_flowFrame) return
+      var dy = e.clientY - _flowDragStartY
+      if (Math.abs(dy) > 5) {
+        _flowDragItem.style.transform = 'translateY(' + dy + 'px)'
+        var list = _flowFrame.querySelector('#flowList')
+        if (!list) return
+        var itemHeight = _flowDragItem.offsetHeight + 4
+        var offset = Math.round(dy / itemHeight)
+        var flow = _flowPd.readingFlow
+        var targetIdx = Math.max(0, Math.min(flow.sequence.length - 1, _flowDragOrigIdx + offset))
+        var allItems = list.querySelectorAll('.flow-item')
+        allItems.forEach(function(it, i) {
+          if (i === _flowDragOrigIdx) return
+          var shift = false
+          if (dy > 0 && i > _flowDragOrigIdx && i <= targetIdx) shift = true
+          if (dy < 0 && i < _flowDragOrigIdx && i >= targetIdx) shift = true
+          if (shift) {
+            it.style.transform = 'translateY(' + (dy > 0 ? -itemHeight : itemHeight) + 'px)'
+            it.style.transition = 'transform .15s'
+          } else {
+            it.style.transform = ''
+            it.style.transition = ''
           }
-          dragIdx = -1
+        })
+      }
+    })
+    document.addEventListener('mouseup', function() {
+      if (!_flowDragItem || !_flowFrame) return
+      var frame = _flowFrame
+      var list = frame.querySelector('#flowList')
+      var actualDy = 0
+      var currentTransform = _flowDragItem.style.transform
+      if (currentTransform) {
+        var match = currentTransform.match(/translateY\((-?\d+)px\)/)
+        if (match) actualDy = parseInt(match[1])
+      }
+      if (list) {
+        var allItems = list.querySelectorAll('.flow-item')
+        allItems.forEach(function(it) {
+          it.style.transform = ''
+          it.style.transition = ''
+          it.classList.remove('dragging')
+          it.style.zIndex = ''
+        })
+      }
+      if (Math.abs(actualDy) > 5 && _flowPd && _flowPd.readingFlow) {
+        var flow = _flowPd.readingFlow
+        var itemHeight = _flowDragItem.offsetHeight + 4
+        var targetIdx = Math.round(actualDy / itemHeight) + _flowDragOrigIdx
+        targetIdx = Math.max(0, Math.min(flow.sequence.length - 1, targetIdx))
+        if (targetIdx !== _flowDragOrigIdx) {
+          var moved = flow.sequence.splice(_flowDragOrigIdx, 1)[0]
+          flow.sequence.splice(targetIdx, 0, moved)
         }
-        item.addEventListener('dragstart', item._ds)
-        item.addEventListener('dragend', item._de)
-        item.addEventListener('dragover', item._do)
-        item.addEventListener('drop', item._dp)
-      })
-    }
-    refreshHandles()
+        // Rebuild
+        frame.innerHTML = null // clear
+        frame.innerHTML = openSettingsEditor(_flowWid) ? '' : ''
+        // Actually just rebuild panel inline
+        buildPanel()
+        frame.innerHTML = buildPanel()
+        // re-bind
+        refreshHandles()
+      }
+      _flowDragItem = null
+      _flowDragOrigIdx = -1
+    })
   }
 }
 
