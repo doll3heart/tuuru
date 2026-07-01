@@ -7,6 +7,23 @@ export function renderHome(){
   const articles = works.filter(w=>w.type===WORK_TYPE.ARTICLE)
   const phones = works.filter(w=>w.type===WORK_TYPE.PHONE)
   
+  // Bind tab switching after DOM is ready
+  setTimeout(function() {
+    var tabs = document.querySelectorAll('#workTabs .tab')
+    var list = document.getElementById('workList')
+    if (!tabs.length || !list) return
+    tabs.forEach(function(t) {
+      t.onclick = function() {
+        tabs.forEach(function(x) { x.classList.remove('active') })
+        t.classList.add('active')
+        var filter = t.dataset.tab
+        var filtered = filter === 'all' ? getWorks()
+          : getWorks().filter(function(w) { return w.type === (filter === 'phone' ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE) })
+        list.innerHTML = renderWorkList(filtered)
+      }
+    })
+  }, 50)
+
   return `
     <div class="flex-between mb-4">
       <h2 style="font-size:1.2rem;font-weight:600">我的作品</h2>

@@ -684,8 +684,8 @@ function bindCuEmbedded(desktop, wid, skin, apps) {
     desktop.style.display = ''
     requestAnimationFrame(function() {
       desktop.style.pointerEvents = ''
-      attachDrag(wid)
-    })
+      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+      })
   }
   if (closeBtn) closeBtn.onclick = restore
   if (cancelBtn) cancelBtn.onclick = restore
@@ -956,8 +956,8 @@ function bindPfSimple(desktop, wid, skin) {
       desktop.style.transform = ''
       desktop.style.pointerEvents = ''
       if (document.activeElement) document.activeElement.blur()
-      attachDrag(wid)
-    })
+      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+      })
   }
   if (closeBtn) closeBtn.onclick = restore
   if (cancelBtn) cancelBtn.onclick = restore
@@ -1367,7 +1367,7 @@ function bindTarotEvents(frame, wid, type, contacts, activeIdx, origHTML, title)
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -1410,8 +1410,8 @@ function bindTarotClose(desktop, wid) {
     requestAnimationFrame(function() {
       desktop.style.transform = ''
       desktop.style.pointerEvents = ''
-      attachDrag(wid)
-    })
+      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+      })
   }
 }
 
@@ -1501,7 +1501,7 @@ function openTarotDetail(frame, wid, type, contact) {
       void frame.offsetHeight
       requestAnimationFrame(function() {
         frame.style.transform = ''
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -1629,7 +1629,7 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -1874,7 +1874,7 @@ function openGalleryEditor(frame, wid, contact, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -2229,7 +2229,7 @@ function openShoppingEditor(frame, wid, contact, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -2888,7 +2888,7 @@ function openForumEditor(frame, wid, contact, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -3332,7 +3332,7 @@ function bindMsgEvents() {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -4105,7 +4105,7 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
       })
     }
   }
@@ -4284,8 +4284,8 @@ function openSettingsEditor(wid) {
     frame.style.display = ''
     requestAnimationFrame(function() {
       frame.style.pointerEvents = ''
-      attachDrag(wid)
-    })
+      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+      })
   }
   if (closeBtn) closeBtn.onclick = restore
   if (cancelBtn) cancelBtn.onclick = restore

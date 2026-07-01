@@ -8,6 +8,155 @@ import { openPhoneAppModal } from "./phone.js"
 var _workId = null
 var _nodeId = null
 
+
+// ---- Inline flow card helpers ----
+// Snapshot phoneData for detecting new cards added inside sub-apps
+var _inlineSnapshot = null
+function _snapPhoneData() {
+  var w = getWork(_workId)
+  if (!w || !w.phoneData) { _inlineSnapshot = null; return }
+  var pd = w.phoneData
+  _inlineSnapshot = { _snappedChats: (pd.chats || []).map(function(ch) { return { id: ch.id, rounds: (ch.rounds || []).length } }),
+    memos: (pd.memos || []).length,
+    shoppingItems: (pd.shoppingItems || []).length,
+    forumPosts: (pd.forumPosts || []).length,
+    moments: (pd.moments || []).length,
+    chatRounds: 0,
+    photos: (pd.photos || []).length,
+    browserHistory: (pd.browserHistory || []).length,
+    contacts: (pd.contacts || []).length
+  }
+  ;(pd.chats || []).forEach(function(ch) {
+    _inlineSnapshot.chatRounds += (ch.rounds || []).length
+  })
+}
+
+// Detect new cards and insert inline card HTML into active contentEditable
+function _detectAndInsertCard(type) {
+  if (!_inlineSnapshot || !_nodeId) return
+  var w = getWork(_workId)
+  if (!w || !w.phoneData) return
+  var pd = w.phoneData
+  var prev = _inlineSnapshot
+  var curr = {
+    contacts: (pd.contacts || []).length,
+    memos: (pd.memos || []).length,
+    shoppingItems: (pd.shoppingItems || []).length,
+    forumPosts: (pd.forumPosts || []).length,
+    moments: (pd.moments || []).length,
+    photos: (pd.photos || []).length,
+    browserHistory: (pd.browserHistory || []).length
+  }
+  var chatRoundsNow = 0
+  ;(pd.chats || []).forEach(function(ch) { chatRoundsNow += (ch.rounds || []).length })
+  curr.chatRounds = chatRoundsNow
+
+  var addedLabel = ''
+  var newType = ''
+  var flowIdx = -1
+  var itemId = ''
+  var contactId = ''
+
+  // Determine what was newly added
+  if (type === 'memo' && curr.memos > prev.memos) {
+    var lastMemo = (pd.memos || [])[curr.memos - 1]
+    if (lastMemo) {
+      newType = 'memo'; itemId = lastMemo.id; contactId = lastMemo.contactId
+      addedLabel = (lastMemo.content || '').replace(/<[^>]*>/g, '').substring(0, 30)
+    }
+  } else if (type === 'shopping' && curr.shoppingItems > prev.shoppingItems) {
+    var lastShop = (pd.shoppingItems || [])[curr.shoppingItems - 1]
+    if (lastShop) {
+      newType = 'shopping'; itemId = lastShop.id; contactId = lastShop.contactId
+      addedLabel = lastShop.name || ''
+    }
+  } else if (type === 'forum' && curr.forumPosts > prev.forumPosts) {
+    var lastPost = (pd.forumPosts || [])[curr.forumPosts - 1]
+    if (lastPost) {
+      newType = 'forum'; itemId = lastPost.id; contactId = lastPost.contactId
+      addedLabel = (lastPost.title || '').substring(0, 30)
+    }
+  } else if (type === 'messages' && chatRoundsNow > prev.chatRounds) {
+    // Chat rounds increased — find which chat has new round
+    var found = false
+    ;(pd.chats || []).forEach(function(ch) {
+      if (found) return
+      var n = (ch.rounds || []).length
+      var prevRounds = 0
+      var oldChat = (prev._snappedChats || []).find(function(oc) { return oc.id === ch.id })
+      if (oldChat) prevRounds = oldChat.rounds
+      if (n > prevRounds) {
+        newType = 'messages'; itemId = ch.rounds[n-1].id
+        contactId = ch.contactIds[0]; found = true
+        addedLabel = '第' + n + '轮'
+      }
+    })
+  } else if (type === 'gallery' && curr.photos > prev.photos) {
+    var lastPhoto = (pd.photos || [])[curr.photos - 1]
+    if (lastPhoto) {
+      newType = 'gallery'; itemId = lastPhoto.id; contactId = lastPhoto.contactId
+      addedLabel = (lastPhoto.caption || '').substring(0, 30)
+    }
+  } else if (type === 'browser' && curr.browserHistory > prev.browserHistory) {
+    var lastHistory = (pd.browserHistory || [])[curr.browserHistory - 1]
+    if (lastHistory) {
+      newType = 'browser'; itemId = lastHistory.id; contactId = lastHistory.contactId
+      addedLabel = (lastHistory.title || '').substring(0, 30)
+    }
+  } else if (type === 'contacts' && curr.contacts > prev.contacts) {
+    var lastContact = (pd.contacts || [])[curr.contacts - 1]
+    if (lastContact) {
+      newType = 'contacts'; itemId = lastContact.id; contactId = lastContact.id
+      addedLabel = lastContact.name || ''
+    }
+  }
+
+  if (!newType || !addedLabel) return
+
+  // Insert inline card HTML into the editor
+  var ce = document.getElementById('ce_' + _nodeId)
+  if (!ce) return
+
+  // Save current node content
+  var content = ce.innerHTML
+
+  // Build inline card HTML
+  var typeLabels = { messages: '消息', forum: '论坛', memo: '备忘', gallery: '相册', browser: '浏览', shopping: '购物', contacts: '联系人' }
+  var typeColors = { messages: '#6366f1', forum: '#10b981', memo: '#f59e0b', gallery: '#ec4899', browser: '#3b82f6', shopping: '#f97316', contacts: '#64748b' }
+  var color = typeColors[newType] || '#64748b'
+  var typeLabel = typeLabels[newType] || newType
+
+  // Use the next index from readingFlow if available
+  flowIdx = (pd.readingFlow && pd.readingFlow.sequence) ? pd.readingFlow.sequence.length : 0
+  // Actually just use a local index
+  flowIdx = content.split('data-card-type').length - 1
+
+  var cardHtml = '<span class="ifc-wrap" contenteditable="false" data-card-type="' + newType + '" data-item-id="' + itemId + '" data-contact-id="' + (contactId || '') + '" data-flow-idx="' + flowIdx + '">'
+  cardHtml += '<span class="ifc-card">'
+  cardHtml += '<span class="ifc-icon" style="background:' + color + '">' + typeLabel.charAt(0) + '</span>'
+  cardHtml += '<span class="ifc-label">' + escHtml(addedLabel) + '</span>'
+  cardHtml += '<span class="ifc-meta">' + typeLabel + '</span>'
+  cardHtml += '<span class="ifc-hamburger"></span>'
+  cardHtml += '</span></span>&nbsp;'
+
+  // Append card at the end of editor content
+  ce.innerHTML = content + '<p>' + cardHtml + '</p>'
+
+  // Save the new content back to the node
+  var n = getWork(_workId).nodes.find(function(x) { return x.id === _nodeId })
+  if (n) {
+    n.content = ce.innerHTML
+    updateWork(_workId, { nodes: getWork(_workId).nodes })
+  }
+}
+
+function escHtml(s) {
+  if (!s) return ''
+  var d = document.createElement('div')
+  d.textContent = s
+  return d.innerHTML
+}
+
 function esc(s) {
   if (!s) return ""
   var d = document.createElement("div")
@@ -355,13 +504,13 @@ function handleClick(e) {
     return
   }
   // Phone app shortcuts
-  if (a === "pa-msg") { openPhoneAppModal(w, 'messages'); return }
-  if (a === "pa-forum") { openPhoneAppModal(w, 'forum'); return }
-  if (a === "pa-memo") { openPhoneAppModal(w, 'memo'); return }
-  if (a === "pa-gallery") { openPhoneAppModal(w, 'gallery'); return }
-  if (a === "pa-browser") { openPhoneAppModal(w, 'browser'); return }
-  if (a === "pa-shop") { openPhoneAppModal(w, 'shopping'); return }
-  if (a === "pa-contacts") { openPhoneAppModal(w, 'contacts'); return }
+  if (a === "pa-msg") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("messages"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "messages"); return }
+  if (a === "pa-forum") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("forum"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "forum"); return }
+  if (a === "pa-memo") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("memo"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "memo"); return }
+  if (a === "pa-gallery") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("gallery"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "gallery"); return }
+  if (a === "pa-browser") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("browser"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "browser"); return }
+  if (a === "pa-shop") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("shopping"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "shopping"); return }
+  if (a === "pa-contacts") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("contacts"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "contacts"); return }
   // Navigate to target node via choice card
   if (a === "ch-go") {
     var target = b.dataset.target
