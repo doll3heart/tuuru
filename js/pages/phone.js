@@ -319,28 +319,40 @@ function patchApps(apps, pd, wid) {
 }
 
 // ===== Drag-to-reorder =====
+var _dragHandlers = null
+
 function attachDrag(wid) {
-  // Always clear any lingering focus BEFORE re-binding,
-  // since every panel‑close path ends with attachDrag(wid)
   if (document.activeElement) document.activeElement.blur()
   var desktop = document.getElementById('phoneDesktop')
   if (!desktop) return
+
+  // Remove old handlers to prevent accumulation
+  if (_dragHandlers) {
+    _dragHandlers.forEach(function(h) {
+      h.el.removeEventListener('mousedown', h.onDown)
+    })
+    _dragHandlers = null
+  }
+  _dragHandlers = []
+
   var icons = desktop.querySelectorAll('.phone-app-icon')
   icons.forEach(function(icon) {
-    icon.addEventListener('mousedown', function(e) {
+    // Use onmousedown property instead of addEventListener to avoid accumulation
+    icon.onmouseenter = function() {
+      if (!icon.classList.contains('dragging')) icon.classList.add('hover-on')
+    }
+    icon.onmouseleave = function() {
+      icon.classList.remove('hover-on')
+    }
+    icon.onfocus = function() { icon.blur() }
+
+    var onDown = function(e) {
       e.preventDefault()
       e.target.blur()
       startDrag(wid, icon, e.clientX, e.clientY)
-    })
-    icon.addEventListener('mouseenter', function() {
-      if (!icon.classList.contains('dragging')) icon.classList.add('hover-on')
-    })
-    icon.addEventListener('mouseleave', function() {
-      icon.classList.remove('hover-on')
-    })
-    icon.addEventListener('focus', function() {
-      icon.blur()
-    })
+    }
+    icon.addEventListener('mousedown', onDown)
+    _dragHandlers.push({ el: icon, onDown: onDown })
   })
 }
 
@@ -357,9 +369,11 @@ document.addEventListener('mouseup', function() {
 function startDrag(wid, icon, mx, my) {
   var rect = icon.getBoundingClientRect()
   var desktop = document.getElementById('phoneDesktop')
+  if (!desktop) return
   var deskRect = desktop.getBoundingClientRect()
   _dragState = {
     icon: icon, wid: wid,
+    startX: mx, startY: my,
     offsetX: mx - rect.left, offsetY: my - rect.top,
     origLeft: parseFloat(icon.style.left) || 0, origTop: parseFloat(icon.style.top) || 0,
     deskLeft: deskRect.left, deskTop: deskRect.top
@@ -372,6 +386,9 @@ function startDrag(wid, icon, mx, my) {
 
 function moveDrag(mx, my) {
   if (!_dragState) return
+  var dx = mx - _dragState.startX
+  var dy = my - _dragState.startY
+  if (!_wasDrag && Math.abs(dx) < 5 && Math.abs(dy) < 5) return
   _wasDrag = true
   var icon = _dragState.icon
   icon.style.left = (mx - _dragState.deskLeft - _dragState.offsetX) + 'px'
@@ -684,8 +701,8 @@ function bindCuEmbedded(desktop, wid, skin, apps) {
     desktop.style.display = ''
     requestAnimationFrame(function() {
       desktop.style.pointerEvents = ''
-      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
-      })
+      attachDrag(wid)
+    })
   }
   if (closeBtn) closeBtn.onclick = restore
   if (cancelBtn) cancelBtn.onclick = restore
@@ -956,8 +973,8 @@ function bindPfSimple(desktop, wid, skin) {
       desktop.style.transform = ''
       desktop.style.pointerEvents = ''
       if (document.activeElement) document.activeElement.blur()
-      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
-      })
+      attachDrag(wid)
+    })
   }
   if (closeBtn) closeBtn.onclick = restore
   if (cancelBtn) cancelBtn.onclick = restore
@@ -1367,7 +1384,7 @@ function bindTarotEvents(frame, wid, type, contacts, activeIdx, origHTML, title)
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -1410,8 +1427,8 @@ function bindTarotClose(desktop, wid) {
     requestAnimationFrame(function() {
       desktop.style.transform = ''
       desktop.style.pointerEvents = ''
-      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
-      })
+      attachDrag(wid)
+    })
   }
 }
 
@@ -1501,7 +1518,7 @@ function openTarotDetail(frame, wid, type, contact) {
       void frame.offsetHeight
       requestAnimationFrame(function() {
         frame.style.transform = ''
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -1629,7 +1646,7 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -1874,7 +1891,7 @@ function openGalleryEditor(frame, wid, contact, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -2229,7 +2246,7 @@ function openShoppingEditor(frame, wid, contact, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -2888,7 +2905,7 @@ function openForumEditor(frame, wid, contact, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -3332,7 +3349,7 @@ function bindMsgEvents() {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -3402,6 +3419,38 @@ function openChatEditor(frame, wid, chatId, pd) {
     ov.querySelector('#amCancel').onclick = function() { ov.remove() }
   }
 
+  function addVoiceMessage() {
+    var senderIds = ch.type === 'group' ? ch.contactIds.concat(['self']) : [ch.contactIds[0], 'self']
+    var optionsHtml = senderIds.map(function(id) {
+      if (id === 'self') return '<option value="self">读者</option>'
+      var c = contacts.find(function(x) { return x.id === id })
+      return '<option value="' + id + '">' + esc(c ? c.name : '未知') + '</option>'
+    }).join('')
+
+    var ov = modal('语音消息',
+      '<div class="form-group"><label class="form-label">语音内容（文字）</label><textarea id="vmText" class="form-textarea" placeholder="填写语音对应的文字内容" style="min-height:60px"></textarea></div>' +
+      '<div class="form-group"><label class="form-label">发送者</label><select id="vmSender" class="form-select">' + optionsHtml + '</select></div>',
+      '<button id="vmSave" class="btn btn-primary btn-sm">添加</button><button id="vmCancel" class="btn btn-ghost btn-sm">取消</button>')
+
+    ov.querySelector('#vmSave').onclick = function() {
+      var text = ov.querySelector('#vmText').value.trim()
+      if (!text) return
+      var duration = Math.max(1, Math.round(text.length * 0.3))
+      var msg = {
+        id: uid(), senderId: ov.querySelector('#vmSender').value,
+        text: text, time: new Date().toLocaleString(), type: 'voice',
+        duration: duration
+      }
+      var currentRound = ch.rounds[ch.rounds.length - 1]
+      if (!currentRound) { currentRound = { id: uid(), label: '第1轮', messages: [] }; ch.rounds.push(currentRound) }
+      currentRound.messages.push(msg)
+      save()
+      ov.remove()
+      renderChat()
+    }
+    ov.querySelector('#vmCancel').onclick = function() { ov.remove() }
+  }
+
   function showPlusMenu() {
     var ov = modal('添加类型',
       '<div style="padding:4px 0">' +
@@ -3410,6 +3459,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmRp">红包</button>' +
       '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmTr">转账</button>' +
       '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmFc">亲属卡</button>' +
+      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmVoice">语音</button>' +
       '<button class="btn btn-sm btn-ghost w-full" style="display:block;width:100%;color:var(--c-accent3)" id="pmEnd">结束此轮</button>' +
       '</div>', '')
     ov.querySelector('#pmImage').onclick = function() { ov.remove(); addMsg('image') }
@@ -3417,6 +3467,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     ov.querySelector('#pmRp').onclick = function() { ov.remove(); addMsg('redpacket') }
     ov.querySelector('#pmTr').onclick = function() { ov.remove(); addMsg('transfer') }
     ov.querySelector('#pmFc').onclick = function() { ov.remove(); addMsg('familycard') }
+    ov.querySelector('#pmVoice').onclick = function() { ov.remove(); addVoiceMessage() }
     ov.querySelector('#pmEnd').onclick = function() {
       ov.remove()
       var num = ch.rounds.length + 1
@@ -3544,6 +3595,19 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '<div class="chat-bubble fc-card">'
       h += '<div class="fc-head"><div class="fc-badge">亲属卡</div></div>'
       h += '<div class="fc-body"><div class="fc-rel">' + esc(msg.fcRelation || '亲人') + '</div><div class="fc-amount">&yen;' + ((msg.fcAmount || 0)).toFixed(2) + '</div></div>'
+      h += '</div>'
+    } else if (msg.type === 'voice') {
+      var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
+      var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))
+      var bars = ''
+      for (var bi = 0; bi < barCount; bi++) {
+        var bh = 4 + Math.abs(Math.sin(bi * 0.7 + 1.5)) * 14
+        bars += '<rect x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
+      }
+      h += '<div class="chat-bubble chat-voice-bubble" onclick="var t=this.querySelector(\'.chat-voice-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'" style="cursor:pointer;min-width:100px">'
+      h += '<svg class="chat-voice-wave" width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
+      h += '<span class="chat-voice-dur" style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
+      h += '<span class="chat-voice-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(msg.text || '') + '</span>'
       h += '</div>'
     } else {
       h += '<div class="chat-bubble">'
@@ -4105,7 +4169,7 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
         frame.style.transform = ''
         frame.style.pointerEvents = ''
         if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
+        attachDrag(wid)
       })
     }
   }
@@ -4253,25 +4317,7 @@ function openSettingsEditor(wid) {
 
   frame.innerHTML = buildPanel()
 
-  // ---- Bind events (same pattern as bindCuEmbedded) ----
-  var panel = frame.querySelector('#settingsPanel')
-  if (!panel) return
-
-  // Toggle
-  var toggle = frame.querySelector('#flowToggle')
-  if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
-
-  // Rebuild
-  var rebuildBtn = frame.querySelector('#flowRebuild')
-  if (rebuildBtn) rebuildBtn.onclick = function() {
-    flow.sequence = buildFlowSequence()
-    frame.innerHTML = buildPanel()
-    bindDragHandles() // re-bind after rebuild
-  }
-
-  // Close / Cancel
-  var closeBtn = frame.querySelector('#settingsClose')
-  var cancelBtn = frame.querySelector('#flowCancel')
+  // ---- Bind all events (reusable after DOM rebuild) ----
   var restore = function() {
     if (document.activeElement) document.activeElement.blur()
     frame.style.pointerEvents = 'none'
@@ -4284,50 +4330,64 @@ function openSettingsEditor(wid) {
     frame.style.display = ''
     requestAnimationFrame(function() {
       frame.style.pointerEvents = ''
-      attachDrag(wid); if(window.__phonePanelClosed)window.__phonePanelClosed()
-      })
-  }
-  if (closeBtn) closeBtn.onclick = restore
-  if (cancelBtn) cancelBtn.onclick = restore
-
-  // Save
-  var saveBtn = frame.querySelector('#flowSave')
-  if (saveBtn) saveBtn.onclick = function() {
-    pd.readingFlow = flow
-    updateWork(wid, { phoneData: pd })
-    showToast('设置已保存')
-    restore()
+      attachDrag(wid)
+    })
   }
 
-  // ---- Drag-sort (global variables attached to window) ----
   _flowFrame = frame
   _flowWid = wid
   _flowPd = pd
   _flowDragItem = null
 
-  function refreshHandles() {
+  function bindAll() {
+    var toggle = frame.querySelector('#flowToggle')
+    if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
+
+    var rebuildBtn = frame.querySelector('#flowRebuild')
+    if (rebuildBtn) rebuildBtn.onclick = function() {
+      flow.sequence = buildFlowSequence()
+      frame.innerHTML = buildPanel()
+      bindAll()
+    }
+
+    var closeBtn = frame.querySelector('#settingsClose')
+    var cancelBtn = frame.querySelector('#flowCancel')
+    if (closeBtn) closeBtn.onclick = restore
+    if (cancelBtn) cancelBtn.onclick = restore
+
+    var saveBtn = frame.querySelector('#flowSave')
+    if (saveBtn) saveBtn.onclick = function() {
+      pd.readingFlow = flow
+      updateWork(wid, { phoneData: pd })
+      showToast('设置已保存')
+      restore()
+    }
+
+    // Drag handles
     var list = frame.querySelector('#flowList')
-    if (!list) return
-    var items = list.querySelectorAll('.flow-item')
-    items.forEach(function(item) {
-      item.onmousedown = function(e) {
-        if (e.button !== 0) return
-        e.preventDefault()
-        _flowDragItem = item
-        _flowDragStartY = e.clientY
-        _flowDragOrigIdx = parseInt(item.dataset.flowIdx)
-        item.classList.add('dragging')
-        item.style.zIndex = '10'
-      }
-    })
+    if (list) {
+      var items = list.querySelectorAll('.flow-item')
+      items.forEach(function(item) {
+        item.onmousedown = function(e) {
+          if (e.button !== 0) return
+          if (!flow.enabled) return
+          e.preventDefault()
+          _flowDragItem = item
+          _flowDragStartY = e.clientY
+          _flowDragOrigIdx = parseInt(item.dataset.flowIdx)
+          item.classList.add('dragging')
+          item.style.zIndex = '10'
+        }
+      })
+    }
   }
-  refreshHandles()
+  bindAll()
 
   // Global move/up handlers — only registered once
   if (!window.__flowDragInit) {
     window.__flowDragInit = true
     document.addEventListener('mousemove', function(e) {
-      if (!_flowDragItem || !_flowFrame) return
+      if (!_flowDragItem || !_flowFrame || !_flowPd) return
       var dy = e.clientY - _flowDragStartY
       if (Math.abs(dy) > 5) {
         _flowDragItem.style.transform = 'translateY(' + dy + 'px)'
@@ -4335,8 +4395,9 @@ function openSettingsEditor(wid) {
         if (!list) return
         var itemHeight = _flowDragItem.offsetHeight + 4
         var offset = Math.round(dy / itemHeight)
-        var flow = _flowPd.readingFlow
-        var targetIdx = Math.max(0, Math.min(flow.sequence.length - 1, _flowDragOrigIdx + offset))
+        var fl = _flowPd.readingFlow
+        if (!fl) return
+        var targetIdx = Math.max(0, Math.min(fl.sequence.length - 1, _flowDragOrigIdx + offset))
         var allItems = list.querySelectorAll('.flow-item')
         allItems.forEach(function(it, i) {
           if (i === _flowDragOrigIdx) return
@@ -4354,15 +4415,13 @@ function openSettingsEditor(wid) {
       }
     })
     document.addEventListener('mouseup', function() {
-      if (!_flowDragItem || !_flowFrame) return
-      var frame = _flowFrame
-      var list = frame.querySelector('#flowList')
+      if (!_flowDragItem || !_flowFrame || !_flowPd) return
       var actualDy = 0
-      var currentTransform = _flowDragItem.style.transform
-      if (currentTransform) {
-        var match = currentTransform.match(/translateY\((-?\d+)px\)/)
+      if (_flowDragItem.style.transform) {
+        var match = _flowDragItem.style.transform.match(/translateY\((-?\d+)px\)/)
         if (match) actualDy = parseInt(match[1])
       }
+      var list = _flowFrame.querySelector('#flowList')
       if (list) {
         var allItems = list.querySelectorAll('.flow-item')
         allItems.forEach(function(it) {
@@ -4372,23 +4431,17 @@ function openSettingsEditor(wid) {
           it.style.zIndex = ''
         })
       }
-      if (Math.abs(actualDy) > 5 && _flowPd && _flowPd.readingFlow) {
-        var flow = _flowPd.readingFlow
+      var fl = _flowPd.readingFlow
+      if (fl && Math.abs(actualDy) > 5 && _flowDragOrigIdx >= 0) {
         var itemHeight = _flowDragItem.offsetHeight + 4
         var targetIdx = Math.round(actualDy / itemHeight) + _flowDragOrigIdx
-        targetIdx = Math.max(0, Math.min(flow.sequence.length - 1, targetIdx))
+        targetIdx = Math.max(0, Math.min(fl.sequence.length - 1, targetIdx))
         if (targetIdx !== _flowDragOrigIdx) {
-          var moved = flow.sequence.splice(_flowDragOrigIdx, 1)[0]
-          flow.sequence.splice(targetIdx, 0, moved)
+          var moved = fl.sequence.splice(_flowDragOrigIdx, 1)[0]
+          fl.sequence.splice(targetIdx, 0, moved)
         }
-        // Rebuild
-        frame.innerHTML = null // clear
-        frame.innerHTML = openSettingsEditor(_flowWid) ? '' : ''
-        // Actually just rebuild panel inline
-        buildPanel()
-        frame.innerHTML = buildPanel()
-        // re-bind
-        refreshHandles()
+        _flowFrame.innerHTML = buildPanel()
+        bindAll()
       }
       _flowDragItem = null
       _flowDragOrigIdx = -1

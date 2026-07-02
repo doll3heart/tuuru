@@ -581,7 +581,7 @@ ul,ol{list-style:none}
 .editor-content .content-editable{width:100%;min-height:400px;padding:0;font-size:1rem;line-height:1.9;color:var(--c-text);background:transparent;outline:none;font-family:var(--font)}
 .editor-content .content-editable:focus{outline:none}
 .editor-content .content-editable:empty::before{content:attr(data-placeholder);color:#c0c8d8;pointer-events:none}
-.editor-content .content-editable img{max-width:100%;border-radius:4px;margin:8px 0}
+.editor-content .content-editable img{max-width:100%;height:auto;display:block;border-radius:4px;margin:8px auto;box-sizing:border-box}
 .world-tree .wt-body{flex:1;overflow-y:auto;padding:4px 0}
 .world-tree .wt-empty{text-align:center;padding:20px;font-size:.75rem;color:var(--c-text2)}
 .world-tree .wt-node .del{color:var(--c-accent3)}
@@ -857,21 +857,6 @@ ul,ol{list-style:none}
 .st-label{font-size:.85rem;color:var(--c-text);font-weight:500}
 .st-desc{font-size:.75rem;color:var(--c-text2);margin-top:2px}
 
-/* ===== Inline Flow Card (article body) ===== */
-.ifc-wrap{display:inline-block;vertical-align:middle;margin:4px 2px;position:relative}
-.ifc-card{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 10px;background:var(--c-surface);border:1px solid var(--c-border);border-radius:6px;font-size:.82rem;cursor:pointer;transition:box-shadow .15s,border-color .15s;user-select:none;white-space:nowrap}
-.ifc-card:hover{border-color:var(--c-primary);box-shadow:0 0 0 2px rgba(164,198,235,.15)}
-.ifc-icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.7rem;font-weight:600;flex-shrink:0}
-.ifc-label{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--c-text);font-size:.8rem}
-.ifc-meta{font-size:.68rem;color:var(--c-text2);margin-left:2px}
-.ifc-hamburger{width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:grab;color:var(--c-text2);flex-shrink:0;border-radius:4px;transition:background .12s;margin-left:4px;position:relative}
-.ifc-hamburger:hover{background:var(--c-surface2);color:var(--c-text)}
-.ifc-hamburger:active{cursor:grabbing}
-.ifc-hamburger::after{content:"\2261";font-size:1rem;line-height:1}
-.ifc-wrap.dragging{opacity:.5;z-index:100}
-.ifc-wrap.dragging .ifc-card{box-shadow:0 4px 16px rgba(0,0,0,.15);border-color:var(--c-primary)}
-.ifc-drop-indicator{position:absolute;height:2px;background:var(--c-primary);left:0;right:0;pointer-events:none;z-index:50}
-
 /* Badge dot for reader */
 .phone-icon-badge{position:absolute;top:-2px;right:-2px;width:16px;height:16px;border-radius:50%;background:var(--c-accent3);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;z-index:5;pointer-events:none;box-shadow:0 1px 2px rgba(0,0,0,.2)}
 
@@ -884,3 +869,129 @@ ul,ol{list-style:none}
 .theme-option:hover{background:var(--c-surface2);border-color:var(--c-border)}
 .theme-option.active{color:var(--c-primary-hover);font-weight:600}
 .theme-option .dot{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid var(--c-border);margin-right:8px;vertical-align:middle}
+
+/* ====== Phone Module Inline Cards (Editor) ====== */
+.pm-inline-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  margin: 4px 2px;
+  background: var(--c-surface);
+  border: 1.5px solid var(--c-primary);
+  border-radius: 6px;
+  cursor: grab;
+  user-select: none;
+  vertical-align: middle;
+  font-size: .8rem;
+  color: var(--c-text);
+  transition: box-shadow .15s, border-color .15s, opacity .15s;
+  position: relative;
+  line-height: 1.4;
+}
+.pm-inline-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  border-color: var(--c-primary-hover);
+}
+/* Drop indicator for phone module card drag */
+.pm-drop-indicator {
+  position: fixed;
+  width: 2px;
+  background: var(--c-primary-hover);
+  pointer-events: none;
+  z-index: 9998;
+  animation: pmBlink .45s ease-in-out infinite alternate;
+}
+@keyframes pmBlink {
+  from { opacity: 1; transform: scaleY(1.2); }
+  to { opacity: .2; transform: scaleY(0.8); }
+}
+
+.pm-inline-card.pm-card-dragging {
+  opacity: .65;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  border-style: dashed;
+  cursor: grabbing;
+  z-index: 999;
+}
+.pm-card-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--c-primary-hover);
+}
+.pm-card-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.pm-card-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pm-card-hamburger {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--c-text2);
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 0;
+  line-height: 1;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  transition: color .15s, background .15s;
+}
+.pm-card-hamburger:hover {
+  color: var(--c-primary-hover);
+  background: var(--c-surface2);
+}
+
+/* Context menu for phone module cards */
+.pm-context-menu {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  overflow: hidden;
+  min-width: 100px;
+}
+.pm-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: .82rem;
+  color: var(--c-text);
+  text-align: left;
+  font-family: inherit;
+  transition: background .12s;
+}
+.pm-menu-item:hover {
+  background: var(--c-surface2);
+}
+.pm-menu-danger {
+  color: var(--c-accent3);
+}
+.pm-menu-danger:hover {
+  background: var(--c-accent2);
+}
+
+/* ====== Work Info Form (Home page) ====== */
+.wi-form { display: flex; flex-direction: column; gap: 14px; }
+.wi-row { display: flex; flex-direction: column; gap: 4px; }
+.wi-label { font-size: .8rem; font-weight: 500; color: var(--c-text2); }
+.wi-input { padding: 8px 12px; border: 1px solid var(--c-border); font-size: .85rem; outline: none; background: var(--c-surface); color: var(--c-text); line-height: 1.4; }
+.wi-input:focus { border-color: var(--c-primary); }
+.wi-textarea { padding: 8px 12px; border: 1px solid var(--c-border); font-size: .85rem; outline: none; background: var(--c-surface); color: var(--c-text); resize: vertical; font-family: inherit; line-height: 1.6; min-height: 60px; }
+.wi-textarea:focus { border-color: var(--c-primary); }

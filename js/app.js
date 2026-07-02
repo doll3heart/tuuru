@@ -143,7 +143,7 @@ document.addEventListener('click', function(e) {
 export function renderHeader(){
   const path = location.hash.slice(1).split("?")[0]||"/"
   return `<header class="app-header">
-    <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru</a>
+    <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>
     <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
       <div class="theme-wrap">
         <button class="btn btn-sm btn-ghost" onclick="toggleThemePopover(event)" title="外观">外观</button>

@@ -1,5 +1,5 @@
 // Tuuru Works - Article Editor (clean rewrite)
-import { getWork, updateWork, addNode, updateNode, deleteNode, addChoice, updateChoice, deleteChoice, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS } from "../data.js"
+import { getWork, updateWork, addNode, updateNode, deleteNode, addChoice, updateChoice, deleteChoice, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, addPhoneModule, updatePhoneModule, deletePhoneModule, getPhoneModulesByNode, getPhoneModule } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast, renderHeader, modal } from "../app.js"
 import { openPhoneAppModal } from "./phone.js"
@@ -7,155 +7,6 @@ import { openPhoneAppModal } from "./phone.js"
 // State
 var _workId = null
 var _nodeId = null
-
-
-// ---- Inline flow card helpers ----
-// Snapshot phoneData for detecting new cards added inside sub-apps
-var _inlineSnapshot = null
-function _snapPhoneData() {
-  var w = getWork(_workId)
-  if (!w || !w.phoneData) { _inlineSnapshot = null; return }
-  var pd = w.phoneData
-  _inlineSnapshot = { _snappedChats: (pd.chats || []).map(function(ch) { return { id: ch.id, rounds: (ch.rounds || []).length } }),
-    memos: (pd.memos || []).length,
-    shoppingItems: (pd.shoppingItems || []).length,
-    forumPosts: (pd.forumPosts || []).length,
-    moments: (pd.moments || []).length,
-    chatRounds: 0,
-    photos: (pd.photos || []).length,
-    browserHistory: (pd.browserHistory || []).length,
-    contacts: (pd.contacts || []).length
-  }
-  ;(pd.chats || []).forEach(function(ch) {
-    _inlineSnapshot.chatRounds += (ch.rounds || []).length
-  })
-}
-
-// Detect new cards and insert inline card HTML into active contentEditable
-function _detectAndInsertCard(type) {
-  if (!_inlineSnapshot || !_nodeId) return
-  var w = getWork(_workId)
-  if (!w || !w.phoneData) return
-  var pd = w.phoneData
-  var prev = _inlineSnapshot
-  var curr = {
-    contacts: (pd.contacts || []).length,
-    memos: (pd.memos || []).length,
-    shoppingItems: (pd.shoppingItems || []).length,
-    forumPosts: (pd.forumPosts || []).length,
-    moments: (pd.moments || []).length,
-    photos: (pd.photos || []).length,
-    browserHistory: (pd.browserHistory || []).length
-  }
-  var chatRoundsNow = 0
-  ;(pd.chats || []).forEach(function(ch) { chatRoundsNow += (ch.rounds || []).length })
-  curr.chatRounds = chatRoundsNow
-
-  var addedLabel = ''
-  var newType = ''
-  var flowIdx = -1
-  var itemId = ''
-  var contactId = ''
-
-  // Determine what was newly added
-  if (type === 'memo' && curr.memos > prev.memos) {
-    var lastMemo = (pd.memos || [])[curr.memos - 1]
-    if (lastMemo) {
-      newType = 'memo'; itemId = lastMemo.id; contactId = lastMemo.contactId
-      addedLabel = (lastMemo.content || '').replace(/<[^>]*>/g, '').substring(0, 30)
-    }
-  } else if (type === 'shopping' && curr.shoppingItems > prev.shoppingItems) {
-    var lastShop = (pd.shoppingItems || [])[curr.shoppingItems - 1]
-    if (lastShop) {
-      newType = 'shopping'; itemId = lastShop.id; contactId = lastShop.contactId
-      addedLabel = lastShop.name || ''
-    }
-  } else if (type === 'forum' && curr.forumPosts > prev.forumPosts) {
-    var lastPost = (pd.forumPosts || [])[curr.forumPosts - 1]
-    if (lastPost) {
-      newType = 'forum'; itemId = lastPost.id; contactId = lastPost.contactId
-      addedLabel = (lastPost.title || '').substring(0, 30)
-    }
-  } else if (type === 'messages' && chatRoundsNow > prev.chatRounds) {
-    // Chat rounds increased — find which chat has new round
-    var found = false
-    ;(pd.chats || []).forEach(function(ch) {
-      if (found) return
-      var n = (ch.rounds || []).length
-      var prevRounds = 0
-      var oldChat = (prev._snappedChats || []).find(function(oc) { return oc.id === ch.id })
-      if (oldChat) prevRounds = oldChat.rounds
-      if (n > prevRounds) {
-        newType = 'messages'; itemId = ch.rounds[n-1].id
-        contactId = ch.contactIds[0]; found = true
-        addedLabel = '第' + n + '轮'
-      }
-    })
-  } else if (type === 'gallery' && curr.photos > prev.photos) {
-    var lastPhoto = (pd.photos || [])[curr.photos - 1]
-    if (lastPhoto) {
-      newType = 'gallery'; itemId = lastPhoto.id; contactId = lastPhoto.contactId
-      addedLabel = (lastPhoto.caption || '').substring(0, 30)
-    }
-  } else if (type === 'browser' && curr.browserHistory > prev.browserHistory) {
-    var lastHistory = (pd.browserHistory || [])[curr.browserHistory - 1]
-    if (lastHistory) {
-      newType = 'browser'; itemId = lastHistory.id; contactId = lastHistory.contactId
-      addedLabel = (lastHistory.title || '').substring(0, 30)
-    }
-  } else if (type === 'contacts' && curr.contacts > prev.contacts) {
-    var lastContact = (pd.contacts || [])[curr.contacts - 1]
-    if (lastContact) {
-      newType = 'contacts'; itemId = lastContact.id; contactId = lastContact.id
-      addedLabel = lastContact.name || ''
-    }
-  }
-
-  if (!newType || !addedLabel) return
-
-  // Insert inline card HTML into the editor
-  var ce = document.getElementById('ce_' + _nodeId)
-  if (!ce) return
-
-  // Save current node content
-  var content = ce.innerHTML
-
-  // Build inline card HTML
-  var typeLabels = { messages: '消息', forum: '论坛', memo: '备忘', gallery: '相册', browser: '浏览', shopping: '购物', contacts: '联系人' }
-  var typeColors = { messages: '#6366f1', forum: '#10b981', memo: '#f59e0b', gallery: '#ec4899', browser: '#3b82f6', shopping: '#f97316', contacts: '#64748b' }
-  var color = typeColors[newType] || '#64748b'
-  var typeLabel = typeLabels[newType] || newType
-
-  // Use the next index from readingFlow if available
-  flowIdx = (pd.readingFlow && pd.readingFlow.sequence) ? pd.readingFlow.sequence.length : 0
-  // Actually just use a local index
-  flowIdx = content.split('data-card-type').length - 1
-
-  var cardHtml = '<span class="ifc-wrap" contenteditable="false" data-card-type="' + newType + '" data-item-id="' + itemId + '" data-contact-id="' + (contactId || '') + '" data-flow-idx="' + flowIdx + '">'
-  cardHtml += '<span class="ifc-card">'
-  cardHtml += '<span class="ifc-icon" style="background:' + color + '">' + typeLabel.charAt(0) + '</span>'
-  cardHtml += '<span class="ifc-label">' + escHtml(addedLabel) + '</span>'
-  cardHtml += '<span class="ifc-meta">' + typeLabel + '</span>'
-  cardHtml += '<span class="ifc-hamburger"></span>'
-  cardHtml += '</span></span>&nbsp;'
-
-  // Append card at the end of editor content
-  ce.innerHTML = content + '<p>' + cardHtml + '</p>'
-
-  // Save the new content back to the node
-  var n = getWork(_workId).nodes.find(function(x) { return x.id === _nodeId })
-  if (n) {
-    n.content = ce.innerHTML
-    updateWork(_workId, { nodes: getWork(_workId).nodes })
-  }
-}
-
-function escHtml(s) {
-  if (!s) return ''
-  var d = document.createElement('div')
-  d.textContent = s
-  return d.innerHTML
-}
 
 function esc(s) {
   if (!s) return ""
@@ -479,8 +330,9 @@ function handleClick(e) {
   }
   if (a === "rn2") {
     var nd = getNode(w, n)
-    var nn = prompt("新名称:", nd ? nd.title : "")
-    if (nn) { updateNode(w, n, {title: nn}); refreshEditor(w) }
+    showPrompt("重命名节点", nd ? nd.title : "", function(nn) {
+      if (nn) { updateNode(w, n, {title: nn}); refreshEditor(w) }
+    })
     return
   }
   if (a === "ss") {
@@ -503,14 +355,20 @@ function handleClick(e) {
     openImagePanel()
     return
   }
-  // Phone app shortcuts
-  if (a === "pa-msg") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("messages"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "messages"); return }
-  if (a === "pa-forum") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("forum"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "forum"); return }
-  if (a === "pa-memo") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("memo"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "memo"); return }
-  if (a === "pa-gallery") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("gallery"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "gallery"); return }
-  if (a === "pa-browser") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("browser"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "browser"); return }
-  if (a === "pa-shop") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("shopping"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "shopping"); return }
-  if (a === "pa-contacts") { _snapPhoneData(); window.__phonePanelClosed = function() { _detectAndInsertCard("contacts"); window.__phonePanelClosed = null; }; openPhoneAppModal(w, "contacts"); return }
+  // Phone app shortcuts - create inline cards
+  if (a === "pa-msg") { insertPhoneModuleCard(w, _nodeId, 'messages'); return }
+  if (a === "pa-forum") { insertPhoneModuleCard(w, _nodeId, 'forum'); return }
+  if (a === "pa-memo") { insertPhoneModuleCard(w, _nodeId, 'memo'); return }
+  if (a === "pa-gallery") { insertPhoneModuleCard(w, _nodeId, 'gallery'); return }
+  if (a === "pa-browser") { insertPhoneModuleCard(w, _nodeId, 'browser'); return }
+  if (a === "pa-shop") { insertPhoneModuleCard(w, _nodeId, 'shopping'); return }
+  if (a === "pa-contacts") { openPhoneAppModal(w, 'contacts'); return }
+  // Phone module card hamburger click
+  if (a === "pm-hamburger") {
+    var pmid = b.dataset.pmId
+    if (pmid) showPhoneModuleMenu(w, _nodeId, pmid, b)
+    return
+  }
   // Navigate to target node via choice card
   if (a === "ch-go") {
     var target = b.dataset.target
@@ -579,6 +437,14 @@ function handleChange(e) {
   var b = e.target.closest("[data-a]")
   if (!b) return
   var a = b.dataset.a
+
+  // Node title rename (from editor header input)
+  if (a === "rn") {
+    var w = b.dataset.w || _workId
+    var n = b.dataset.n || _nodeId
+    updateNode(w, n, {title: b.value})
+    return
+  }
 
   // Chapter move
   if (a === "mc") {
@@ -1335,6 +1201,392 @@ document.addEventListener("keydown", function(e) {
       // Selection covers content, let default handle it
     }
   }
+})
+
+// ====== Phone Module Inline Cards ======
+
+function buildPhoneModuleCardHTML(pm) {
+  var def = PHONE_APP_DEFS[pm.type] || PHONE_APP_DEFS.messages
+  var h = '<div class="pm-inline-card" contenteditable="false" data-pm-id="' + pm.id + '" data-pm-type="' + pm.type + '" draggable="false">'
+  h += '<span class="pm-card-icon">' + (def.icon || '?') + '</span>'
+  h += '<span class="pm-card-label">' + esc(def.label || '模块') + '</span>'
+  h += '<button class="pm-card-hamburger" data-a="pm-hamburger" data-pm-id="' + pm.id + '" title="编辑/删除">\u2261</button>'
+  h += '</div>'
+  return h
+}
+
+function insertPhoneModuleCard(wid, nid, type) {
+  var ce = document.getElementById('ce_' + nid)
+  if (!ce) { showToast('请先选择一个节点', 'error'); return }
+
+  var def = PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages
+  // Step 1: Open modal FIRST. Card will be inserted AFTER the modal closes.
+  openPhoneAppModalForCard(wid, nid, null, type, def, function(savedPm) {
+    // Step 2: Modal closed → insert card into contenteditable
+    var ce2 = document.getElementById('ce_' + nid)
+    if (!ce2) return
+
+    var cardHTML = buildPhoneModuleCardHTML(savedPm)
+    ce2.focus()
+
+    var sel = window.getSelection()
+    var range
+    if (sel && sel.rangeCount > 0) {
+      range = sel.getRangeAt(0)
+      if (!ce2.contains(range.commonAncestorContainer)) {
+        range = document.createRange()
+        range.selectNodeContents(ce2)
+        range.collapse(false)
+      }
+    } else {
+      range = document.createRange()
+      range.selectNodeContents(ce2)
+      range.collapse(false)
+    }
+
+    var frag = range.createContextualFragment(cardHTML)
+    range.insertNode(frag)
+
+    range.setStartAfter(ce2.querySelector('[data-pm-id="' + savedPm.id + '"]'))
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+
+    updateNode(_workId, nid, {content: ce2.innerHTML})
+    showToast(def.label + ' 卡片已创建')
+  })
+}
+
+function openPhoneAppModalForCard(wid, nid, pmid, type, def, onClose) {
+  var w = getWork(wid)
+  if (!w) return
+
+  // Build a temporary phoneData for this modal session
+  var tempPd = {}
+  if (pmid) {
+    var existingPm = getPhoneModule(wid, pmid)
+    if (existingPm) tempPd = JSON.parse(JSON.stringify(existingPm.data || {}))
+  }
+  // Fill defaults for all data arrays so editors work correctly
+  // Preserve existing contacts from localStorage so they're shared across all modules
+  if (!tempPd.contacts) {
+    var latestW = getWork(wid)
+    tempPd.contacts = (latestW && latestW.phoneData && latestW.phoneData.contacts)
+      ? JSON.parse(JSON.stringify(latestW.phoneData.contacts))
+      : []
+  }
+  if (!tempPd.chats) tempPd.chats = []
+  if (!tempPd.moments) tempPd.moments = []
+  if (!tempPd.forumPosts) tempPd.forumPosts = []
+  if (!tempPd.forumNpcs) tempPd.forumNpcs = []
+  if (!tempPd.memos) tempPd.memos = []
+  if (!tempPd.photos) tempPd.photos = []
+  if (!tempPd.albums) tempPd.albums = []
+  if (!tempPd.browserHistory) tempPd.browserHistory = []
+  if (!tempPd.shoppingItems) tempPd.shoppingItems = []
+  if (!tempPd.skin) tempPd.skin = JSON.parse(JSON.stringify({}))
+  if (!tempPd.apps) tempPd.apps = []
+
+  // Save original phoneData so we can restore it later
+  var originalPd = w.phoneData ? JSON.parse(JSON.stringify(w.phoneData)) : null
+
+  // KEY FIX: persist tempPd to localStorage BEFORE opening the modal.
+  // openPhoneAppModal calls getWork(wid) which does JSON.parse and gets a
+  // fresh object — without this step it would see w.phoneData = undefined.
+  updateWork(wid, { phoneData: tempPd })
+
+  openPhoneAppModal(wid, type)
+
+  // Watch for modal removal to read the edited data back
+  setTimeout(function() {
+    var modal = document.querySelector('.phone-app-modal-overlay')
+    if (!modal) {
+      if (originalPd !== null) updateWork(wid, { phoneData: originalPd })
+      return
+    }
+
+    var observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        if (!mutation.removedNodes) return
+        for (var r = 0; r < mutation.removedNodes.length; r++) {
+          var removed = mutation.removedNodes[r]
+          if (removed === modal || (removed.contains && removed.contains(modal))) {
+            observer.disconnect()
+
+            // Read the edited data from localStorage (picks up changes made inside the modal)
+            var editedW = getWork(wid)
+            var editedPd = editedW ? editedW.phoneData : tempPd
+            var pmData = {}
+            if (type === 'messages') { pmData.chats = editedPd.chats || []; pmData.contacts = editedPd.contacts || [] }
+            else if (type === 'forum') { pmData.forumPosts = editedPd.forumPosts || [] }
+            else if (type === 'memo') { pmData.memos = editedPd.memos || [] }
+            else if (type === 'gallery') { pmData.photos = editedPd.photos || []; pmData.albums = editedPd.albums || [] }
+            else if (type === 'browser') { pmData.browserHistory = editedPd.browserHistory || [] }
+            else if (type === 'shopping') { pmData.shoppingItems = editedPd.shoppingItems || [] }
+            else if (type === 'contacts') { pmData.contacts = editedPd.contacts || [] }
+
+            // Restore original phoneData
+            if (originalPd !== null) updateWork(wid, { phoneData: originalPd })
+
+            // Check if user actually added any content
+            var hasContent = false
+            if (type === 'messages') hasContent = (pmData.chats || []).length > 0
+            else if (type === 'forum') hasContent = (pmData.forumPosts || []).length > 0
+            else if (type === 'memo') hasContent = (pmData.memos || []).length > 0
+            else if (type === 'gallery') hasContent = (pmData.photos || []).length > 0 || (pmData.albums || []).length > 0
+            else if (type === 'browser') hasContent = (pmData.browserHistory || []).length > 0
+            else if (type === 'shopping') hasContent = (pmData.shoppingItems || []).length > 0
+            else if (type === 'contacts') hasContent = (pmData.contacts || []).length > 0
+
+            if (!hasContent) {
+              // Nothing was added; silently skip — don't create an empty card
+              if (!pmid) showToast('未添加内容，卡片未创建', 'info')
+              return
+            }
+
+            if (pmid) {
+              // Editing existing module
+              updatePhoneModule(wid, pmid, { data: pmData })
+              showToast(def.label + ' 已保存')
+              if (onClose) onClose(getPhoneModule(wid, pmid))
+            } else {
+              // Creating new module
+              var newPm = addPhoneModule(wid, { type: type, nodeId: nid, data: pmData })
+              if (newPm && onClose) onClose(newPm)
+            }
+            return
+          }
+        }
+      })
+    })
+    if (modal.parentNode) observer.observe(modal.parentNode, { childList: true })
+  }, 200)
+}
+
+function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
+  // Remove any existing menu
+  var existing = document.querySelector('.pm-context-menu')
+  if (existing) existing.remove()
+
+  var menu = document.createElement('div')
+  menu.className = 'pm-context-menu'
+  menu.innerHTML = '<button class="pm-menu-item" data-pm-act="edit">编辑</button><button class="pm-menu-item pm-menu-danger" data-pm-act="delete">删除</button>'
+  menu.style.position = 'absolute'
+  menu.style.zIndex = '9999'
+
+  // Position near the hamburger button
+  var rect = btnEl.getBoundingClientRect()
+  menu.style.left = rect.left + 'px'
+  menu.style.top = (rect.bottom + 4) + 'px'
+  document.body.appendChild(menu)
+
+  menu.addEventListener('click', function(ev) {
+    var act = ev.target.dataset.pmAct
+    if (act === 'edit') {
+      menu.remove()
+      var pm = getPhoneModule(wid, pmid)
+      if (pm) {
+        var type = pm.type
+        var def = PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages
+        openPhoneAppModalForCard(wid, nid, pmid, type, def, function(updatedPm) {
+          // Update card label in content if still exists
+          var card = document.querySelector('[data-pm-id="' + pmid + '"]')
+          if (card) {
+            var label = card.querySelector('.pm-card-label')
+            if (label) label.textContent = (PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages).label || '模块'
+          }
+        })
+      }
+    } else if (act === 'delete') {
+      menu.remove()
+      if (confirm('确定删除此手机模块？')) {
+        deletePhoneModule(wid, pmid)
+        var card = document.querySelector('[data-pm-id="' + pmid + '"]')
+        if (card) {
+          card.parentNode.removeChild(card)
+          var ce = document.getElementById('ce_' + nid)
+          if (ce) updateNode(_workId, nid, {content: ce.innerHTML})
+        }
+        showToast('已删除')
+      }
+    }
+  })
+
+  // Close menu on outside click
+  setTimeout(function() {
+    document.addEventListener('click', function closeMenu(ev2) {
+      if (!menu.contains(ev2.target)) {
+        menu.remove()
+        document.removeEventListener('click', closeMenu)
+      }
+    })
+  }, 0)
+}
+
+// ====== Phone Module Card Event Delegation (document-level) ======
+var _pmDragState = null
+var _pmIndicator = null
+
+function ensureDropIndicator() {
+  if (!_pmIndicator) {
+    _pmIndicator = document.createElement('div')
+    _pmIndicator.className = 'pm-drop-indicator'
+    _pmIndicator.style.display = 'none'
+    document.body.appendChild(_pmIndicator)
+  }
+  return _pmIndicator
+}
+
+function updateDropIndicator(x, y) {
+  var ce = document.getElementById('ce_' + _nodeId)
+  if (!ce) ce = document.querySelector('.content-editable')
+  if (!ce) return
+  var ind = ensureDropIndicator()
+  var dropRange = null
+  if (document.caretRangeFromPoint) {
+    dropRange = document.caretRangeFromPoint(x, y)
+  } else if (document.caretPositionFromPoint) {
+    var pos = document.caretPositionFromPoint(x, y)
+    if (pos) { dropRange = document.createRange(); dropRange.setStart(pos.offsetNode, pos.offset); dropRange.collapse(true) }
+  }
+  if (dropRange && ce.contains(dropRange.startContainer)) {
+    var rect = dropRange.getBoundingClientRect()
+    ind.style.display = 'block'
+    ind.style.left = rect.left + 'px'
+    ind.style.top = (rect.top + 2) + 'px'
+    ind.style.height = (rect.height - 4) + 'px'
+  } else {
+    ind.style.display = 'none'
+  }
+}
+
+document.addEventListener('mousedown', function(e) {
+  var card = e.target.closest('.pm-inline-card')
+  if (!card) { _pmDragState = null; return }
+  if (e.target.closest('.pm-card-hamburger')) { _pmDragState = null; return }
+  e.preventDefault()
+
+  _pmDragState = {
+    card: card,
+    startX: e.clientX,
+    startY: e.clientY,
+    moved: false,
+    rafId: null
+  }
+})
+
+document.addEventListener('mousemove', function(e) {
+  if (!_pmDragState) return
+  var dx = e.clientX - _pmDragState.startX
+  var dy = e.clientY - _pmDragState.startY
+  if (!_pmDragState.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return
+
+  if (!_pmDragState.moved) {
+    _pmDragState.moved = true
+    var card = _pmDragState.card
+    card.classList.add('pm-card-dragging')
+    card.style.opacity = '0.7'
+    card.style.cursor = 'grabbing'
+    // Remove from contenteditable, attach to body for smooth fixed-position tracking
+    _pmDragState.placeholder = document.createComment('pm-placeholder')
+    card.parentNode.insertBefore(_pmDragState.placeholder, card)
+    card.parentNode.removeChild(card)
+    document.body.appendChild(card)
+    card.style.position = 'fixed'
+    card.style.zIndex = '9999'
+    card.style.pointerEvents = 'none'
+    card.style.willChange = 'transform'
+    card.style.left = '0'
+    card.style.top = '0'
+  }
+
+  // Use rAF + translate3d for GPU-accelerated smooth movement
+  if (_pmDragState.rafId) cancelAnimationFrame(_pmDragState.rafId)
+  var self = _pmDragState
+  _pmDragState.rafId = requestAnimationFrame(function() {
+    self.card.style.transform = 'translate3d(' + (e.clientX - 70) + 'px,' + (e.clientY - 16) + 'px,0) scale(0.95)'
+    updateDropIndicator(e.clientX, e.clientY)
+  })
+})
+
+document.addEventListener('mouseup', function(e) {
+  if (!_pmDragState) return
+  if (_pmDragState.rafId) cancelAnimationFrame(_pmDragState.rafId)
+  var card = _pmDragState.card
+  var moved = _pmDragState.moved
+
+  // Hide indicator
+  if (_pmIndicator) _pmIndicator.style.display = 'none'
+
+  // Restore card styles
+  card.classList.remove('pm-card-dragging')
+  card.style.opacity = ''
+  card.style.cursor = ''
+  card.style.position = ''
+  card.style.left = ''
+  card.style.top = ''
+  card.style.zIndex = ''
+  card.style.pointerEvents = ''
+  card.style.willChange = ''
+  card.style.transform = ''
+
+  if (moved) {
+    var ce = document.getElementById('ce_' + _nodeId)
+    if (!ce) ce = document.querySelector('.content-editable')
+    if (ce) {
+      var dropRange = null
+      if (document.caretRangeFromPoint) {
+        dropRange = document.caretRangeFromPoint(e.clientX, e.clientY)
+      } else if (document.caretPositionFromPoint) {
+        var pos = document.caretPositionFromPoint(e.clientX, e.clientY)
+        if (pos) { dropRange = document.createRange(); dropRange.setStart(pos.offsetNode, pos.offset); dropRange.collapse(true) }
+      }
+
+      // Clean up placeholder
+      if (_pmDragState.placeholder && _pmDragState.placeholder.parentNode) {
+        _pmDragState.placeholder.parentNode.removeChild(_pmDragState.placeholder)
+      }
+
+      if (dropRange && ce.contains(dropRange.startContainer)) {
+        // Anti-overlap: check if dropping inside another card
+        var nearbyCard = dropRange.startContainer.nodeType === 1
+          ? dropRange.startContainer.closest('.pm-inline-card')
+          : dropRange.startContainer.parentElement?.closest?.('.pm-inline-card')
+        if (nearbyCard && nearbyCard !== card) {
+          nearbyCard.parentNode.insertBefore(card, nearbyCard.nextSibling)
+        } else {
+          dropRange.insertNode(card)
+        }
+      } else {
+        // Fallback: put card back at original placeholder position
+        if (_pmDragState.placeholder && _pmDragState.placeholder.parentNode) {
+          // placeholder already removed above, use ce as fallback
+        }
+        ce.appendChild(card)
+      }
+      updateNode(_workId, ce.dataset.n, {content: ce.innerHTML})
+    } else {
+      if (_pmDragState.placeholder && _pmDragState.placeholder.parentNode) {
+        _pmDragState.placeholder.parentNode.insertBefore(card, _pmDragState.placeholder.nextSibling)
+        _pmDragState.placeholder.parentNode.removeChild(_pmDragState.placeholder)
+      }
+    }
+    if (window.getSelection) window.getSelection().removeAllRanges()
+  } else {
+    if (!e.target.closest('.pm-card-hamburger')) {
+      var pmid = card.dataset.pmId
+      var type = card.dataset.pmType
+      openPhoneAppModalForCard(_workId, _nodeId, pmid, type, PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages, function() {
+        var card2 = document.querySelector('[data-pm-id="' + pmid + '"]')
+        if (card2) {
+          var label = card2.querySelector('.pm-card-label')
+          if (label) label.textContent = (PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages).label || '模块'
+        }
+      })
+    }
+  }
+
+  _pmDragState = null
 })
 
 // Auto-save content on input

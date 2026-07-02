@@ -137,6 +137,7 @@ export function createWork(data){
     desc:data.desc||"",
     coverColor:data.coverColor||avatarColor(uid()),
     author:data.author||"",
+    authorNote:data.authorNote||"",
     createdAt:Date.now(),
     updatedAt:Date.now(),
     password:data.password||"",
@@ -146,7 +147,8 @@ export function createWork(data){
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
     placeholderMode:data.placeholderMode||PLACEHOLDER_MODE.RANDOM_EACH,
-  phoneData:data.type===WORK_TYPE.PHONE?{
+   phoneModules:data.type===WORK_TYPE.ARTICLE?[]:undefined,
+   phoneData:data.type===WORK_TYPE.PHONE?{
       contacts:[],
       chats:[],
       moments:[],
@@ -229,14 +231,63 @@ function rv(ph,mode,scene,nodeScene,scenes){
   return v[Math.floor(Math.random()*v.length)]
 }
 
+export function addPhoneModule(wid, data) {
+  var db = rd()
+  var w = db.works.find(function(x) { return x.id === wid })
+  if (!w) return null
+  w.phoneModules = w.phoneModules || []
+  var pm = {
+    id: uid(),
+    type: data.type || 'messages',
+    nodeId: data.nodeId || '',
+    data: data.data || {}
+  }
+  w.phoneModules.push(pm)
+  w.updatedAt = Date.now()
+  wr(db)
+  return pm
+}
+export function updatePhoneModule(wid, pmid, data) {
+  var db = rd()
+  var w = db.works.find(function(x) { return x.id === wid })
+  if (!w) return null
+  var pm = (w.phoneModules || []).find(function(x) { return x.id === pmid })
+  if (!pm) return null
+  Object.assign(pm, data)
+  w.updatedAt = Date.now()
+  wr(db)
+  return pm
+}
+export function deletePhoneModule(wid, pmid) {
+  var db = rd()
+  var w = db.works.find(function(x) { return x.id === wid })
+  if (!w) return
+  w.phoneModules = (w.phoneModules || []).filter(function(x) { return x.id !== pmid })
+  w.updatedAt = Date.now()
+  wr(db)
+}
+export function getPhoneModulesByNode(wid, nid) {
+  var w = rd().works.find(function(x) { return x.id === wid })
+  if (!w) return []
+  return (w.phoneModules || []).filter(function(x) { return x.nodeId === nid })
+}
+export function getPhoneModulesByType(wid, nid, type) {
+  var w = rd().works.find(function(x) { return x.id === wid })
+  if (!w) return []
+  return (w.phoneModules || []).filter(function(x) { return x.nodeId === nid && x.type === type })
+}
+export function getPhoneModule(wid, pmid) {
+  var w = rd().works.find(function(x) { return x.id === wid })
+  if (!w) return null
+  return (w.phoneModules || []).find(function(x) { return x.id === pmid })
+}
+
 export function exportWorkAsJSON(wid) {
   var w = getWork(wid)
   if (!w) return null
   // Deep clone to avoid mutating original
   var copy = JSON.parse(JSON.stringify(w))
   // Remove editor-specific fields
-  delete copy.password
-  delete copy.locked
   delete copy.editorSettings
   delete copy.updatedAt
   if (copy.phoneData) {

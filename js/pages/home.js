@@ -55,7 +55,7 @@ function renderWorkList(works){
         <div class="work-card-meta">
           <span>${w.type===WORK_TYPE.PHONE?"小手机":"互动文章"}</span>
           <span>${timeAgo(w.updatedAt)}</span>
-          ${w.locked?`<span style="color:var(--c-accent)">🔒 已加密</span>`:""}
+${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> 已加密</span>`:""}
         </div>
       </div>
       <div class="work-card-actions">
@@ -181,22 +181,34 @@ window.dupWork = function(id){
 window.editWorkInfo = function(id){
   var w = getWorks().find(function(x){ return x.id === id })
   if (!w) return
-  var title = prompt('作品标题:', w.title || '')
-  if (title === null) return
-  var desc = prompt('作品简介:', w.desc || '')
-  if (desc === null) return
-  var author = prompt('作者署名:', w.author || '')
-  if (author === null) return
-  w.title = title
-  w.desc = desc
-  w.author = author
-  w.updatedAt = Date.now()
-  var db = JSON.parse(localStorage.getItem('tuuru_works'))
-  var idx = db.works.findIndex(function(x){ return x.id === id })
-  if (idx >= 0) { db.works[idx] = w; localStorage.setItem('tuuru_works', JSON.stringify(db)) }
-  showToast('作品信息已更新')
-  var list = document.getElementById('workList')
-  if (list) list.innerHTML = renderWorkList(getWorks())
+  var body = '<div class="wi-form">'
+  body += '<div class="wi-row"><label class="wi-label">作品标题</label><input class="wi-input" id="wiTitle" value="' + escHtml(w.title || '') + '" placeholder="作品标题"></div>'
+  body += '<div class="wi-row"><label class="wi-label">作者署名</label><input class="wi-input" id="wiAuthor" value="' + escHtml(w.author || '') + '" placeholder="作者署名"></div>'
+  body += '<div class="wi-row"><label class="wi-label">作者有话说</label><textarea class="wi-textarea" id="wiNote" rows="3" placeholder="想对读者说的话...">' + escHtml(w.authorNote || '') + '</textarea></div>'
+  body += '<div class="wi-row"><label class="wi-label">阅读密码（选填）</label><input class="wi-input" id="wiPwd" value="' + escHtml(w.password || '') + '" placeholder="设置后读者需输入密码"></div>'
+  body += '</div>'
+  var ov = document.createElement('div')
+  ov.className = 'modal-overlay'
+  ov.style.cssText = 'z-index:2000'
+  ov.innerHTML = '<div class="modal" style="max-width:480px"><div class="modal-header"><span class="modal-title">作品信息</span><button class="btn-icon" style="font-size:1.2rem;cursor:pointer;border:none;background:transparent;color:var(--c-text2)" onclick="this.closest(\'.modal-overlay\').remove()">&times;</button></div><div class="modal-body">' + body + '</div><div class="modal-footer"><button class="btn btn-primary" id="wiSaveBtn">保存</button><button class="btn btn-ghost" onclick="this.closest(\'.modal-overlay\').remove()">取消</button></div></div>'
+  document.body.appendChild(ov)
+  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
+  ov.querySelector('#wiSaveBtn').onclick = function(){
+    var db = JSON.parse(localStorage.getItem('tuuru_works'))
+    var idx = db.works.findIndex(function(x){ return x.id === id })
+    if (idx < 0) { ov.remove(); return }
+    db.works[idx].title = (document.getElementById('wiTitle')?.value || '').trim() || w.title
+    db.works[idx].author = (document.getElementById('wiAuthor')?.value || '').trim()
+    db.works[idx].authorNote = (document.getElementById('wiNote')?.value || '').trim()
+    db.works[idx].password = (document.getElementById('wiPwd')?.value || '').trim()
+    db.works[idx].locked = !!(db.works[idx].password)
+    db.works[idx].updatedAt = Date.now()
+    localStorage.setItem('tuuru_works', JSON.stringify(db))
+    showToast('作品信息已更新')
+    ov.remove()
+    var list = document.getElementById('workList')
+    if (list) list.innerHTML = renderWorkList(getWorks())
+  }
 }
 
 
