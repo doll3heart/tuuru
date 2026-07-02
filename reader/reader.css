@@ -509,6 +509,78 @@ body {
   color: var(--c-text);
 }
 
+.reader-settings-btn {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  cursor: pointer;
+  font-size: 1.1rem;
+  color: var(--c-text2);
+  z-index: 100;
+  transition: .12s;
+}
+.reader-settings-btn:hover {
+  background: var(--c-surface2);
+  color: var(--c-text);
+}
+
+/* ====== Reading Settings Panel ====== */
+.rs-panel-body { padding: 0 18px 20px; }
+.rs-section { margin-bottom: 14px; }
+.rs-section-title { font-size: .78rem; font-weight: 500; color: #333; margin-bottom: 6px; }
+.rs-range { width: 100%; accent-color: var(--c-primary); }
+.rs-font-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.rs-font-btn {
+  padding: 5px 12px; font-size: .75rem; border: 1px solid #ddd;
+  background: #fff; color: #555; cursor: pointer; border-radius: 4px; transition: .12s;
+}
+.rs-font-btn.active { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }
+.rs-font-btn:hover:not(.active) { border-color: var(--c-primary); color: var(--c-primary-hover); }
+.rs-theme-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.rs-theme-btn {
+  padding: 8px 16px; font-size: .78rem; border: 2px solid #ddd;
+  cursor: pointer; border-radius: 6px; transition: .12s; font-weight: 500;
+}
+.rs-theme-btn.active { border-color: var(--c-primary); box-shadow: 0 0 0 2px rgba(164,198,235,.4); }
+.rs-theme-btn:hover:not(.active) { border-color: var(--c-primary); }
+.rs-reset-wrap { text-align: center; padding-top: 8px; }
+.rs-reset-btn {
+  padding: 6px 20px; font-size: .75rem; border: 1px solid #ddd;
+  background: transparent; color: #999; cursor: pointer; border-radius: 4px; transition: .12s;
+}
+.rs-reset-btn:hover { border-color: var(--c-accent3); color: var(--c-accent3); }
+
+/* ====== Reading Themes ====== */
+.rd-theme-dark body, body.rd-theme-dark { background: #1a1a2e; color: #ccc; }
+body.rd-theme-dark .article-reader,
+body.rd-theme-dark .article-title,
+body.rd-theme-dark .article-meta { color: #ccc; }
+body.rd-theme-dark .article-choice-btn { background: #2a2a3e; border-color: #444; color: #ccc; }
+body.rd-theme-dark .article-choice-btn:hover { border-color: var(--c-primary); }
+
+body.rd-theme-green { background: #c8dcc8; }
+body.rd-theme-green .article-reader,
+body.rd-theme-green .article-title,
+body.rd-theme-green .article-meta { color: #333; }
+
+body.rd-theme-parchment { background: #f5e6c8; }
+body.rd-theme-parchment .article-reader,
+body.rd-theme-parchment .article-title { color: #4a3a2a; }
+body.rd-theme-parchment .article-meta { color: #8a7a6a; }
+body.rd-theme-parchment .article-choice-btn { background: #faf0dc; border-color: #d4c4a0; color: #4a3a2a; }
+
+body.rd-theme-gray { background: #e8e8e8; }
+body.rd-theme-gray .article-reader,
+body.rd-theme-gray .article-title,
+body.rd-theme-gray .article-meta { color: #333; }
+
 /* ====== Phone Module Notification Triggers (Reader) ====== */
 .rd-pm-trigger {
   display: flex;
@@ -682,6 +754,20 @@ body {
     margin-bottom: -40px;
   }
   .reader-back { top: 8px; left: 8px; }
-  .rd-home { padding: 0 12px; }
-  .rd-tab { padding: 10px 16px; font-size: .85rem; }
+  .rd-home { padding: 0 7px; }
+  .rd-tab { padding: 8px 12px; font-size: .8rem; }
+  .rd-tabs { margin-bottom: 12px; }
+  .rd-profile-card { padding: 20px 12px; margin-bottom: 16px; }
+  .rd-preset-section { padding: 14px; }
+  .rd-preset-field { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .rd-preset-field label { min-width: auto; }
+  .drop-zone-inner { padding: 40px 20px; border-radius: 8px; }
+  .rd-landing-modal { max-width: calc(100vw - 28px); margin: 0 14px; }
+  .rd-pm-trigger { padding: 8px 10px; }
+  .rd-custom { padding: 0; }
+  .cu-section { margin-bottom: 10px; }
+  .cu-section-title { font-size: .72rem; }
+  .rd-input-row { flex-direction: column; align-items: stretch; }
+  .rd-input-row .btn, .rd-input-row button { align-self: flex-start; }
+  .rd-input-sm { max-width: 100% !important; }
 }

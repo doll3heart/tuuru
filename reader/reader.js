@@ -361,7 +361,7 @@ function showLandingPage(work, callback) {
       values[inp.dataset.phId] = [inp.value || '']
     })
     work.readerPhValues = values
-    lsSet('placeholders', values)
+    lsSet('readerPhValues', values)
     document.body.removeChild(overlay)
     callback()
   }
@@ -397,6 +397,196 @@ function timeAgo(ts) {
 }
 
 // ====== ARTICLE READER ======
+// ====== Reader Typography Settings ======
+function getReaderSettings() {
+  return lsGet('readerSettings') || {
+    fontSize: 18,
+    lineHeight: 1.9,
+    letterSpacing: 0,
+    paragraphSpacing: 16,
+    marginSize: 20,
+    fontFamily: "'Noto Sans SC', sans-serif",
+    theme: 'light',
+    typingEffect: false,
+    typingSpeed: 50
+  }
+}
+
+function saveReaderSettings(data) {
+  lsSet('readerSettings', data)
+}
+
+function applyReaderSettings(el) {
+  if (!el) return
+  var rs = getReaderSettings()
+  el.style.fontSize = rs.fontSize + 'px'
+  el.style.lineHeight = rs.lineHeight
+  el.style.letterSpacing = (rs.letterSpacing || 0) + 'px'
+  el.style.padding = '0 ' + (rs.marginSize || 20) + 'px'
+  // Paragraph spacing
+  el.querySelectorAll('p').forEach(function(p) {
+    p.style.marginBottom = (rs.paragraphSpacing || 16) + 'px'
+  })
+  // Font family
+  if (rs.fontFamily && rs.fontFamily !== "'Noto Sans SC', sans-serif") {
+    el.style.fontFamily = rs.fontFamily
+  } else {
+    el.style.fontFamily = ''
+  }
+  // Theme
+  document.body.className = (document.body.className || '').replace(/\s*rd-theme-\S+/g, '')
+  if (rs.theme && rs.theme !== 'light') {
+    document.body.classList.add('rd-theme-' + rs.theme)
+  }
+}
+
+function openReaderSettingsPanel() {
+  var rs = getReaderSettings()
+  var fonts = [
+    { name: '默认', family: "'Noto Sans SC', sans-serif" },
+    { name: '宋体', family: "'Noto Serif SC', serif" },
+    { name: '黑体', family: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
+    { name: '楷体', family: "'KaiTi', serif" },
+    { name: '圆体', family: "'PingFang SC', sans-serif" },
+    { name: '英文衬线', family: "'Georgia', serif" }
+  ]
+  var themes = [
+    { id: 'light', name: '白色', bg: '#f5f5f5', text: '#333' },
+    { id: 'dark', name: '暗夜', bg: '#1a1a2e', text: '#ccc' },
+    { id: 'green', name: '护眼', bg: '#c8dcc8', text: '#333' },
+    { id: 'parchment', name: '羊皮纸', bg: '#f5e6c8', text: '#4a3a2a' },
+    { id: 'gray', name: '浅灰', bg: '#e8e8e8', text: '#333' }
+  ]
+
+  var body = '<div class="rs-panel-body">'
+
+  // Font size
+  body += '<div class="rs-section"><div class="rs-section-title">字号 <span id="rsFontSizeVal">' + rs.fontSize + '</span>px</div>'
+  body += '<input type="range" id="rsFontSize" class="rs-range" min="12" max="32" value="' + rs.fontSize + '"></div>'
+
+  // Line height
+  body += '<div class="rs-section"><div class="rs-section-title">行间距 <span id="rsLineHVal">' + rs.lineHeight.toFixed(1) + '</span></div>'
+  body += '<input type="range" id="rsLineH" class="rs-range" min="1.4" max="3.0" step="0.1" value="' + rs.lineHeight + '"></div>'
+
+  // Letter spacing
+  body += '<div class="rs-section"><div class="rs-section-title">字间距 <span id="rsLetterSVal">' + (rs.letterSpacing || 0) + '</span>px</div>'
+  body += '<input type="range" id="rsLetterS" class="rs-range" min="0" max="10" step="0.5" value="' + (rs.letterSpacing || 0) + '"></div>'
+
+  // Paragraph spacing
+  body += '<div class="rs-section"><div class="rs-section-title">段间距 <span id="rsParaSVal">' + (rs.paragraphSpacing || 16) + '</span>px</div>'
+  body += '<input type="range" id="rsParaS" class="rs-range" min="0" max="40" step="2" value="' + (rs.paragraphSpacing || 16) + '"></div>'
+
+  // Margin
+  body += '<div class="rs-section"><div class="rs-section-title">页边距 <span id="rsMarginVal">' + (rs.marginSize || 20) + '</span>px</div>'
+  body += '<input type="range" id="rsMargin" class="rs-range" min="4" max="40" step="2" value="' + (rs.marginSize || 20) + '"></div>'
+
+  // Font
+  body += '<div class="rs-section"><div class="rs-section-title">字体</div>'
+  body += '<div class="rs-font-grid">'
+  for (var fi = 0; fi < fonts.length; fi++) {
+    var f = fonts[fi]
+    body += '<button class="rs-font-btn' + (rs.fontFamily === f.family ? ' active' : '') + '" data-rs-font="' + esc(f.family) + '">' + f.name + '</button>'
+  }
+  body += '</div></div>'
+
+  // Theme
+  body += '<div class="rs-section"><div class="rs-section-title">主题</div>'
+  body += '<div class="rs-theme-grid">'
+  for (var ti = 0; ti < themes.length; ti++) {
+    var th = themes[ti]
+    body += '<button class="rs-theme-btn' + (rs.theme === th.id ? ' active' : '') + '" data-rs-theme="' + th.id + '" style="background:' + th.bg + ';color:' + th.text + '">' + th.name + '</button>'
+  }
+  body += '</div></div>'
+
+  // Typing effect
+  body += '<div class="rs-section">'
+  body += '<label class="rd-checkbox"><input type="checkbox" id="rsTyping"' + (rs.typingEffect ? ' checked' : '') + '> 打字机效果</label>'
+  body += '<div class="rs-section-title" style="margin-top:8px">速度: <span id="rsTypingSpeedVal">' + (rs.typingSpeed || 50) + '</span>ms</div>'
+  body += '<input type="range" id="rsTypingSpeed" class="rs-range" min="10" max="500" step="5" value="' + (rs.typingSpeed || 50) + '"></div>'
+
+  body += '<div class="rs-reset-wrap"><button class="rs-reset-btn" id="rsReset">恢复默认</button></div>'
+  body += '</div>'
+
+  // Build overlay + bottom sheet
+  var ov = document.createElement('div')
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:2000;display:flex;align-items:flex-end;justify-content:center'
+  ov.innerHTML = '<div style="background:#fff;max-width:520px;width:100%;max-height:75vh;border-radius:16px 16px 0 0;overflow-y:auto;box-shadow:0 -4px 24px rgba(0,0,0,.15);padding:0 0 env(safe-area-inset-bottom)">' +
+    '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #eee;position:sticky;top:0;background:#fff;z-index:1">' +
+    '<span style="font-size:1rem;font-weight:600;color:#333">排版设置</span>' +
+    '<button style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="rsClose">×</button>' +
+    '</div>' +
+    body +
+    '</div>'
+  document.body.appendChild(ov)
+
+  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
+  ov.querySelector('#rsClose').onclick = function() { ov.remove() }
+
+  // Slider binds
+  function bindSlider(id, key, valEl, format) {
+    var el = ov.querySelector(id)
+    if (!el) return
+    el.oninput = function() {
+      var v = parseFloat(this.value)
+      rs[key] = v
+      if (valEl) { var lbl = ov.querySelector(valEl); if (lbl) lbl.textContent = format ? format(v) : v }
+      saveReaderSettings(rs)
+      var content = document.querySelector('.article-content')
+      if (content) applyReaderSettings(content)
+    }
+  }
+  bindSlider('#rsFontSize', 'fontSize', '#rsFontSizeVal', function(v){return v})
+  bindSlider('#rsLineH', 'lineHeight', '#rsLineHVal', function(v){return v.toFixed(1)})
+  bindSlider('#rsLetterS', 'letterSpacing', '#rsLetterSVal', function(v){return v})
+  bindSlider('#rsParaS', 'paragraphSpacing', '#rsParaSVal', function(v){return v})
+  bindSlider('#rsMargin', 'marginSize', '#rsMarginVal', function(v){return v})
+
+  // Font buttons
+  var fontBtns = ov.querySelectorAll('[data-rs-font]')
+  fontBtns.forEach(function(b) {
+    b.onclick = function() {
+      rs.fontFamily = b.dataset.rsFont
+      saveReaderSettings(rs)
+      ov.querySelectorAll('[data-rs-font]').forEach(function(x){x.classList.remove('active')})
+      b.classList.add('active')
+      var content = document.querySelector('.article-content')
+      if (content) applyReaderSettings(content)
+    }
+  })
+
+  // Typing checkbox
+  var typingCb = ov.querySelector('#rsTyping')
+  if (typingCb) typingCb.onchange = function() {
+    rs.typingEffect = this.checked
+    saveReaderSettings(rs)
+  }
+  bindSlider('#rsTypingSpeed', 'typingSpeed', '#rsTypingSpeedVal', function(v){return v})
+
+  // Theme buttons
+  var themeBtns = ov.querySelectorAll('[data-rs-theme]')
+  themeBtns.forEach(function(b) {
+    b.onclick = function() {
+      rs.theme = b.dataset.rsTheme
+      saveReaderSettings(rs)
+      ov.querySelectorAll('[data-rs-theme]').forEach(function(x){x.classList.remove('active')})
+      b.classList.add('active')
+      var content = document.querySelector('.article-content')
+      if (content) applyReaderSettings(content)
+    }
+  })
+
+  // Reset
+  var resetBtn = ov.querySelector('#rsReset')
+  if (resetBtn) resetBtn.onclick = function() {
+    var defaults = { fontSize: 18, lineHeight: 1.9, letterSpacing: 0, paragraphSpacing: 16, marginSize: 20, fontFamily: "'Noto Sans SC', sans-serif", theme: 'light' }
+    saveReaderSettings(defaults)
+    ov.remove()
+    var content = document.querySelector('.article-content')
+    if (content) applyReaderSettings(content)
+    renderArticleReader()
+  }
+}
+
 function renderArticleReader() {
   if (!_work || _work.type === 'phone') return renderPhoneReader()
   var nodes = _work.nodes || []
@@ -421,6 +611,7 @@ function renderArticleReader() {
   _visitedNodes.forEach(function(id) { visitedSet[id] = true })
   visitedSet[_nodeId] = true
   var h = '<button class="reader-back" onclick="renderHome()" title="返回">←</button>'
+  h += '<button class="reader-settings-btn" title="排版设置">⚙</button>'
   h += '<div class="article-reader">'
   h += '<div class="article-progress">'
   for (var ni = 0; ni < nodes.length; ni++) {
@@ -483,6 +674,43 @@ function renderArticleReader() {
   }
 
   render('app', h)
+
+  // Apply reader settings + typing effect + bind settings button
+  setTimeout(function() {
+    var rs = getReaderSettings()
+    var ac = document.querySelector('.article-content')
+    if (ac) applyReaderSettings(ac)
+    var sb = document.querySelector('.reader-settings-btn')
+    if (sb) sb.onclick = function() { openReaderSettingsPanel() }
+
+    // Typing effect
+    if (ac && rs.typingEffect) {
+      var fullHTML = ac.innerHTML
+      ac.innerHTML = ''
+      var i = 0
+      var textLen = fullHTML.length
+      var speed = rs.typingSpeed || 50
+
+      function typeNext() {
+        if (i >= textLen) return
+        // Find next chunk: if we're at a '<', skip to the matching '>'
+        if (fullHTML.charAt(i) === '<') {
+          var end = fullHTML.indexOf('>', i)
+          if (end >= 0) {
+            ac.insertAdjacentHTML('beforeend', fullHTML.substring(i, end + 1))
+            i = end + 1
+            setTimeout(typeNext, 5)
+            return
+          }
+        }
+        // Type one character
+        ac.insertAdjacentHTML('beforeend', fullHTML.charAt(i))
+        i++
+        setTimeout(typeNext, speed)
+      }
+      typeNext()
+    }
+  }, 50)
 
   // Bind choices
   var btns = document.querySelectorAll('.article-choice-btn')
@@ -1239,7 +1467,7 @@ function openReaderCustomizePanel() {
 
   var ov = document.createElement('div')
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px'
-  ov.innerHTML = '<div style="background:#fff;max-width:420px;width:100%;max-height:85vh;overflow-y:auto;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.15)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #ddd"><span style="font-size:1rem;font-weight:600;color:#333">美化</span><button style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="cuCloseX">×</button></div><div style="padding:14px 16px">' + body + '</div><div style="display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;border-top:1px solid #ddd"><button style="padding:6px 16px;font-size:.8rem;border:none;background:#A4C6EB;color:#fff;cursor:pointer;border-radius:4px" id="cuSave">保存</button><button style="padding:6px 16px;font-size:.8rem;border:1px solid #ddd;background:#fff;color:#666;cursor:pointer;border-radius:4px" id="cuCancel">取消</button></div></div>'
+ov.innerHTML = '<div style="background:#fff;max-width:420px;max-width:min(420px,calc(100vw - 40px));width:100%;max-height:85vh;overflow-y:auto;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.15)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #ddd"><span style="font-size:1rem;font-weight:600;color:#333">美化</span><button style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="cuCloseX">×</button></div><div style="padding:14px 16px">' + body + '</div><div style="display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;border-top:1px solid #ddd"><button style="padding:6px 16px;font-size:.8rem;border:none;background:#A4C6EB;color:#fff;cursor:pointer;border-radius:4px" id="cuSave">保存</button><button style="padding:6px 16px;font-size:.8rem;border:1px solid #ddd;background:#fff;color:#666;cursor:pointer;border-radius:4px" id="cuCancel">取消</button></div></div>'
   document.body.appendChild(ov)
   ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
   ov.querySelector('#cuCloseX').onclick = function() { ov.remove() }

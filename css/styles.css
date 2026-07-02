@@ -572,10 +572,54 @@ ul,ol{list-style:none}
   .editor-content{padding:16px}
 }
 @media(max-width:480px){
+  .app-header{padding:0 8px;height:48px}
+  .app-header .logo{font-size:.95rem}
+  .app-header .logo span{display:none}
+  .app-header nav a{padding:6px 10px;font-size:.78rem}
+  .app-main{padding:12px 7px 60px}
+  .app-main.wide{max-width:100%}
+  .app-main.narrow{max-width:100%}
+  .grid-2,.grid-3{grid-template-columns:1fr}
+  .work-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+  .flex-between{flex-direction:column;align-items:stretch;gap:8px}
+  .flex-row{flex-direction:column;align-items:stretch;gap:8px}
+  .card{padding:12px}
+  .btn{padding:6px 12px;font-size:.8rem}
+  .btn-sm{padding:3px 8px;font-size:.75rem}
+  .modal{max-width:100%;max-height:92vh;border-radius:0;border-left:none;border-right:none}
+  .modal-header{padding:12px 14px}
+  .modal-body{padding:14px}
+  .modal-footer{padding:10px 14px;flex-wrap:wrap}
+  .modal-footer .btn{flex:1;min-width:80px}
+  .tabs{overflow-x:auto}
+  .tab{padding:8px 12px;font-size:.8rem;white-space:nowrap}
   .editor-body-area{flex-direction:column}
-  .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border)}
+  .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border);overflow-x:auto}
   .editor-iconbar .divider{width:1px;height:20px}
+  .editor-iconbar button{width:32px;height:32px;font-size:.7rem;flex-shrink:0}
   .world-tree{width:100%;border-left:none;border-top:2px double var(--c-border)}
+  .editor-content{padding:16px 12px}
+  .editor-header{padding:8px 12px}
+  .editor-header .node-name{font-size:.9rem}
+  .editor-toolbar{padding:4px 8px;gap:1px}
+  .editor-toolbar button{padding:2px 6px;font-size:.7rem;min-width:24px}
+  .phone-editor-wrap{padding:10px 0}
+  .phone-frame{width:100%;max-width:360px;min-height:600px;border-width:3px}
+  .cu-header{padding:10px 14px}
+  .cu-body{padding:12px}
+  .cu-footer{padding:10px 14px;flex-wrap:wrap}
+  .cu-footer .btn{flex:1}
+  .cu-tabs{padding:6px 10px;gap:3px}
+  .cu-tab{padding:4px 10px;font-size:.72rem}
+  .cu-color-grid{gap:8px}
+  .cu-color-btn{width:28px;height:28px}
+  .cu-app-row{flex-direction:column;gap:8px}
+  .cu-app-preview{width:40px;height:40px}
+  .editor-sidebar-item{font-size:.78rem;padding:8px 12px}
+  .reader-container{padding:24px 12px}
+  .theme-popover{right:-60px}
+  .work-card-actions{flex-direction:column;gap:6px}
+  .work-card-actions-left{flex-wrap:wrap}
 }
 /* Missing editor CSS classes */
 .editor-content .content-editable{width:100%;min-height:400px;padding:0;font-size:1rem;line-height:1.9;color:var(--c-text);background:transparent;outline:none;font-family:var(--font)}
