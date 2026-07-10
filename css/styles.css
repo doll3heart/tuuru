@@ -283,7 +283,8 @@ ul,ol{list-style:none}
 .editor-header .word-count span{font-weight:600;color:var(--c-text)}
 
 /* Toolbar */
-.editor-toolbar{display:flex;align-items:center;gap:2px;padding:6px 16px;border-bottom:1px solid var(--c-border);flex-shrink:0;flex-wrap:wrap}
+.editor-toolbar{display:block;position:relative;padding:0;margin-bottom:0;border-bottom:1px solid var(--c-border);flex-shrink:0}
+.editor-toolbar-scroll{display:flex;align-items:center;gap:2px;padding:6px 16px;flex-wrap:wrap;width:100%}
 .editor-toolbar button{padding:3px 8px;font-size:.75rem;border:1px solid transparent;background:transparent;color:var(--c-text2);cursor:pointer;transition:.1s;min-width:28px;text-align:center}
 .editor-toolbar button:hover{background:var(--c-surface2);color:var(--c-text);border-color:var(--c-border)}
 .editor-toolbar button.bold{font-weight:700}
@@ -302,10 +303,9 @@ ul,ol{list-style:none}
 .editor-toolbar .toolbar-checkbox input{width:13px;height:13px;cursor:pointer}
 
 /* Margin popover */
-.toolbar-margin-wrap{position:relative}
-.toolbar-margin-wrap > button{padding:3px 8px;font-size:.75rem;border:1px solid transparent;background:transparent;color:var(--c-text2);cursor:pointer;transition:.1s;min-width:28px;text-align:center}
-.toolbar-margin-wrap > button:hover{background:var(--c-surface2);color:var(--c-text);border-color:var(--c-border)}
-.margin-popover{display:none;position:absolute;top:100%;left:0;margin-top:6px;background:var(--c-surface);border:2px double var(--c-border);box-shadow:var(--shadow-md);padding:10px;z-index:50;white-space:nowrap}
+.toolbar-margin-trigger{padding:3px 8px;font-size:.75rem;border:1px solid transparent;background:transparent;color:var(--c-text2);cursor:pointer;transition:.1s;min-width:28px;text-align:center}
+.toolbar-margin-trigger:hover{background:var(--c-surface2);color:var(--c-text);border-color:var(--c-border)}
+.margin-popover{display:none;position:absolute;top:100%;left:var(--margin-popover-left,0px);right:auto;margin-top:6px;background:var(--c-surface);border:2px double var(--c-border);box-shadow:var(--shadow-md);padding:10px;z-index:50;white-space:nowrap}
 .margin-popover.open{display:block}
 .margin-grid{display:grid;grid-template-columns:50px 50px 50px;grid-template-rows:auto auto auto;gap:4px;align-items:center;justify-items:center}
 .margin-grid .margin-empty{width:50px;height:20px}
@@ -313,7 +313,7 @@ ul,ol{list-style:none}
 .margin-grid .margin-cell{display:flex;flex-direction:column;align-items:center;gap:1px}
 .margin-grid .margin-cell label{font-size:.6rem;color:var(--c-text2);line-height:1}
 .margin-grid .margin-cell .margin-num{width:42px;padding:2px 3px;font-size:.7rem;border:1px solid var(--c-border);background:var(--c-surface);color:var(--c-text);text-align:center;line-height:1.3}
-.margin-grid .margin-cell .margin-num:focus{outline:none;border-color:var(--c-primary)}
+.margin-grid .margin-cell .margin-num:focus{border-color:var(--c-primary)}
 
 /* Placeholder panel */
 .ph-panel{max-width:600px;margin:0 auto}
@@ -615,8 +615,6 @@ ul,ol{list-style:none}
   .editor-content{padding:16px 12px}
   .editor-header{padding:8px 12px}
   .editor-header .node-name{font-size:.9rem}
-  .editor-toolbar{padding:4px 8px;gap:1px}
-  .editor-toolbar button{padding:2px 6px;font-size:.7rem;min-width:24px}
   .phone-app-modal-overlay{padding:0}
   .phone-app-modal-inner{width:100%;height:100%;border-radius:0}
   .phone-editor-wrap{padding:10px 0}
@@ -641,13 +639,23 @@ ul,ol{list-style:none}
 /* Article editor bounded mobile workspace */
 @media(max-width:480px),(max-height:480px) and (pointer:coarse){
   .editor-body-area{flex-direction:column;min-height:0}
-  .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border);overflow-x:auto;overflow-y:hidden}
+  .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border);overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
   .editor-iconbar .divider{width:1px;height:20px}
-  .editor-iconbar button{width:32px;height:32px;font-size:.7rem;flex-shrink:0}
+  .editor-iconbar button{width:44px;height:44px;min-width:44px;min-height:44px;font-size:.7rem;flex-shrink:0}
   .editor-mobile-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:4px 8px;gap:4px;border-bottom:1px solid var(--c-border);background:var(--c-surface);flex-shrink:0}
   .editor-mobile-view-switch button{min-height:44px;border:1px solid transparent;background:transparent;color:var(--c-text2);cursor:pointer}
   .editor-mobile-view-switch button[aria-pressed="true"]{background:var(--c-surface2);border-color:var(--c-border);color:var(--c-text);font-weight:600}
   .editor-mobile-view-switch button:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
+  .editor-toolbar{padding:0;gap:0}
+  .editor-toolbar-scroll{display:flex;align-items:center;gap:2px;padding:4px 8px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
+  .editor-toolbar-scroll > *{flex-shrink:0}
+  .editor-toolbar button{min-width:44px;min-height:44px;padding:4px 8px;font-size:.7rem}
+  .editor-toolbar .toolbar-setting{min-height:44px;padding:4px 8px}
+  .editor-toolbar .toolbar-setting-group{min-height:44px}
+  .editor-toolbar .toolbar-number{min-height:44px}
+  .editor-toolbar .toolbar-checkbox{min-height:44px;padding:0 8px}
+  .margin-popover{left:8px;right:8px;max-width:calc(100% - 16px);max-height:calc(var(--app-viewport-height) - var(--app-header-height) - 120px);overflow-y:auto;white-space:normal}
+  .editor-iconbar button:focus-visible,.editor-toolbar button:focus-visible,.editor-toolbar .toolbar-setting:focus-visible,.editor-toolbar .toolbar-number:focus-visible,.editor-toolbar .margin-num:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
   .editor-area,.world-tree{width:100%;min-height:0;flex:1 1 0}
   .world-tree{border-left:none;border-top:2px double var(--c-border)}
   .editor-body-area[data-mobile-pane="editor"] .world-tree{display:none}

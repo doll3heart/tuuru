@@ -80,18 +80,18 @@ function restorePendingMobilePaneFocus(root) {
 
 function buildIconbar(wid) {
   var h = '<div class="editor-iconbar">'
-  h += '<button data-a="ph" data-w="' + wid + '" title="占位符">{}</button>'
-  h += '<button data-a="ch" data-w="' + wid + '" title="选项">⇄</button>'
+  h += '<button type="button" data-a="ph" data-w="' + wid + '" title="占位符" aria-label="插入占位符">{}</button>'
+  h += '<button type="button" data-a="ch" data-w="' + wid + '" title="选项" aria-label="编辑选项">⇄</button>'
   h += '<div class="divider"></div>'
-  h += '<button data-a="im" title="图片">+</button>'
+  h += '<button type="button" data-a="im" title="图片" aria-label="插入图片">+</button>'
   h += '<div class="divider"></div>'
-  h += '<button data-a="pa-msg" data-w="' + wid + '" title="消息">' + PHONE_APP_DEFS.messages.icon + '</button>'
-  h += '<button data-a="pa-forum" data-w="' + wid + '" title="论坛">' + PHONE_APP_DEFS.forum.icon + '</button>'
-  h += '<button data-a="pa-memo" data-w="' + wid + '" title="备忘">' + PHONE_APP_DEFS.memo.icon + '</button>'
-  h += '<button data-a="pa-gallery" data-w="' + wid + '" title="相册">' + PHONE_APP_DEFS.gallery.icon + '</button>'
-  h += '<button data-a="pa-browser" data-w="' + wid + '" title="浏览">' + PHONE_APP_DEFS.browser.icon + '</button>'
-  h += '<button data-a="pa-shop" data-w="' + wid + '" title="购物">' + PHONE_APP_DEFS.shopping.icon + '</button>'
-  h += '<button data-a="pa-contacts" data-w="' + wid + '" title="联系人">' + PHONE_APP_DEFS.contacts.icon + '</button>'
+  h += '<button type="button" data-a="pa-msg" data-w="' + wid + '" title="消息" aria-label="插入消息模块">' + PHONE_APP_DEFS.messages.icon + '</button>'
+  h += '<button type="button" data-a="pa-forum" data-w="' + wid + '" title="论坛" aria-label="插入论坛模块">' + PHONE_APP_DEFS.forum.icon + '</button>'
+  h += '<button type="button" data-a="pa-memo" data-w="' + wid + '" title="备忘" aria-label="插入备忘模块">' + PHONE_APP_DEFS.memo.icon + '</button>'
+  h += '<button type="button" data-a="pa-gallery" data-w="' + wid + '" title="相册" aria-label="插入相册模块">' + PHONE_APP_DEFS.gallery.icon + '</button>'
+  h += '<button type="button" data-a="pa-browser" data-w="' + wid + '" title="浏览" aria-label="插入浏览器模块">' + PHONE_APP_DEFS.browser.icon + '</button>'
+  h += '<button type="button" data-a="pa-shop" data-w="' + wid + '" title="购物" aria-label="插入购物模块">' + PHONE_APP_DEFS.shopping.icon + '</button>'
+  h += '<button type="button" data-a="pa-contacts" data-w="' + wid + '" title="联系人" aria-label="编辑联系人">' + PHONE_APP_DEFS.contacts.icon + '</button>'
   h += '</div>'
   return h
 }
@@ -138,21 +138,21 @@ function buildToolbar(nid) {
   var w = getWork(_workId)
   var es = getSettings(_workId)
 
-  var h = '<div class="editor-toolbar">'
+  var h = '<div class="editor-toolbar"><div class="editor-toolbar-scroll">'
   // Text style buttons
-  h += '<button data-a="bold" data-n="' + nid + '" title="加粗"><b>B</b></button>'
-  h += '<button data-a="italic" data-n="' + nid + '" title="斜体"><i>I</i></button>'
-  h += '<button data-a="underline" data-n="' + nid + '" title="下划线"><u>U</u></button>'
+  h += '<button type="button" data-a="bold" data-n="' + nid + '" title="加粗" aria-label="加粗"><b>B</b></button>'
+  h += '<button type="button" data-a="italic" data-n="' + nid + '" title="斜体" aria-label="斜体"><i>I</i></button>'
+  h += '<button type="button" data-a="underline" data-n="' + nid + '" title="下划线" aria-label="下划线"><u>U</u></button>'
   h += '<div class="tb-divider"></div>'
 
   // Alignment
-  h += '<button data-a="left" data-n="' + nid + '" title="左对齐">左</button>'
-  h += '<button data-a="center" data-n="' + nid + '" title="居中">中</button>'
-  h += '<button data-a="right" data-n="' + nid + '" title="右对齐">右</button>'
+  h += '<button type="button" data-a="left" data-n="' + nid + '" title="左对齐" aria-label="左对齐">左</button>'
+  h += '<button type="button" data-a="center" data-n="' + nid + '" title="居中" aria-label="居中对齐">中</button>'
+  h += '<button type="button" data-a="right" data-n="' + nid + '" title="右对齐" aria-label="右对齐">右</button>'
   h += '<div class="tb-divider"></div>'
 
   // Font family
-  h += '<select class="toolbar-setting" data-a="fs-font" title="字体"><option value="">字体</option>'
+  h += '<select class="toolbar-setting" data-a="fs-font" title="字体" aria-label="字体"><option value="">字体</option>'
   // Built-in fonts
   for (var fi = 0; fi < BUILTIN_FONTS.length; fi++) {
     var bf = BUILTIN_FONTS[fi]
@@ -170,7 +170,7 @@ function buildToolbar(nid) {
   h += '</select>'
 
   // Font size
-  h += '<select class="toolbar-setting" data-a="fs-size" title="字号"><option value="">字号</option>'
+  h += '<select class="toolbar-setting" data-a="fs-size" title="字号" aria-label="字号"><option value="">字号</option>'
   var sizes = [12,14,16,18,20,22,24,28,32]
   for (var si = 0; si < sizes.length; si++) {
     var sz = sizes[si]
@@ -179,7 +179,7 @@ function buildToolbar(nid) {
   h += '</select>'
 
   // Line height
-  h += '<select class="toolbar-setting" data-a="fs-lh" title="行间距"><option value="">行距</option>'
+  h += '<select class="toolbar-setting" data-a="fs-lh" title="行间距" aria-label="行间距"><option value="">行距</option>'
   var lhs = [1.4,1.6,1.8,1.9,2.0,2.2,2.5]
   for (var li = 0; li < lhs.length; li++) {
     var lh = lhs[li]
@@ -190,7 +190,7 @@ function buildToolbar(nid) {
   // Letter spacing
   h += '<span class="toolbar-setting-group" title="字间距">'
   h += '<span class="toolbar-label">字距</span>'
-  h += '<input class="toolbar-number" data-a="fs-ls" type="number" min="0" max="10" step="0.5" value="' + (es.letterSpacing || 0) + '">px'
+  h += '<input class="toolbar-number" data-a="fs-ls" type="number" min="0" max="10" step="0.5" aria-label="字间距" value="' + (es.letterSpacing || 0) + '">px'
   h += '</span>'
 
   // Indent checkbox
@@ -198,26 +198,35 @@ function buildToolbar(nid) {
   h += '<input type="checkbox" data-a="fs-indent"' + (es.indentFirstLine ? ' checked' : '') + '> 缩进'
   h += '</label>'
 
-  // Margin toggle button + popover
-  h += '<span class="toolbar-margin-wrap">'
-  h += '<button data-a="fs-margin-toggle" title="页边距">边距</button>'
-  h += '<span class="margin-popover" id="marginPopover">'
+  // Margin trigger stays in the horizontal rail; its panel is a sibling outside the clipping layer.
+  h += '<button type="button" class="toolbar-margin-trigger" data-a="fs-margin-toggle" title="页边距" aria-label="页边距" aria-controls="marginPopover" aria-expanded="false">边距</button>'
+  h += '</div>'
+  h += '<div class="margin-popover" id="marginPopover" role="group" aria-label="页边距设置">'
   h += '<span class="margin-grid">'
   h += '<span class="margin-empty"></span>'
-  h += '<span class="margin-cell"><label>上</label><input class="margin-num" data-a="fs-mt" type="number" min="0" max="120" value="' + (es.marginTop || 24) + '"></span>'
+  h += '<span class="margin-cell"><label>上</label><input class="margin-num" data-a="fs-mt" type="number" min="0" max="120" aria-label="上边距" value="' + (es.marginTop || 24) + '"></span>'
   h += '<span class="margin-empty"></span>'
-  h += '<span class="margin-cell"><label>左</label><input class="margin-num" data-a="fs-ml" type="number" min="0" max="120" value="' + (es.marginLeft || 32) + '"></span>'
+  h += '<span class="margin-cell"><label>左</label><input class="margin-num" data-a="fs-ml" type="number" min="0" max="120" aria-label="左边距" value="' + (es.marginLeft || 32) + '"></span>'
   h += '<span class="margin-center">边距</span>'
-  h += '<span class="margin-cell"><label>右</label><input class="margin-num" data-a="fs-mr" type="number" min="0" max="120" value="' + (es.marginRight || 32) + '"></span>'
+  h += '<span class="margin-cell"><label>右</label><input class="margin-num" data-a="fs-mr" type="number" min="0" max="120" aria-label="右边距" value="' + (es.marginRight || 32) + '"></span>'
   h += '<span class="margin-empty"></span>'
-  h += '<span class="margin-cell"><label>下</label><input class="margin-num" data-a="fs-mb" type="number" min="0" max="120" value="' + (es.marginBottom || 24) + '"></span>'
+  h += '<span class="margin-cell"><label>下</label><input class="margin-num" data-a="fs-mb" type="number" min="0" max="120" aria-label="下边距" value="' + (es.marginBottom || 24) + '"></span>'
   h += '<span class="margin-empty"></span>'
   h += '</span>'
-  h += '</span>'
-  h += '</span>'
-
+  h += '</div>'
   h += '</div>'
   return h
+}
+
+function positionMarginPopover(trigger, popover) {
+  var toolbar = trigger?.closest(".editor-toolbar")
+  if (!toolbar || !popover) return
+  var triggerRect = trigger.getBoundingClientRect()
+  var toolbarRect = toolbar.getBoundingClientRect()
+  var edge = 8
+  var maxLeft = Math.max(edge, toolbarRect.width - popover.offsetWidth - edge)
+  var left = Math.min(Math.max(triggerRect.left - toolbarRect.left, edge), maxLeft)
+  popover.style.setProperty("--margin-popover-left", Math.round(left) + "px")
 }
 
 function buildContent(n) {
@@ -464,7 +473,11 @@ function handleClick(e) {
   }
   if (a === "fs-margin-toggle") {
     var popover = document.getElementById("marginPopover")
-    if (popover) popover.classList.toggle("open")
+    if (popover) {
+      var isOpen = popover.classList.toggle("open")
+      b.setAttribute("aria-expanded", String(isOpen))
+      if (isOpen) positionMarginPopover(b, popover)
+    }
     return
   }
   // Formatting

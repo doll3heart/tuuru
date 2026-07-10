@@ -303,3 +303,89 @@ test("the editor height and scroll chain follow the usable application viewport"
   assert.doesNotMatch(documentBody, /min-height\s*:\s*100vh/)
   assert.doesNotMatch(documentBody, /overflow(?:-x|-y)?\s*:\s*hidden/)
 })
+
+test("article action rails expose named native controls and an unclipped margin panel", async () => {
+  const work = article("action-rail-work", [{ id: "action-rail-node" }])
+  seed(work)
+  const root = await render(work.id)
+  const iconButtons = [...root.querySelectorAll(".editor-iconbar button")]
+  const toolbarButtons = [...root.querySelectorAll(".editor-toolbar button")]
+  const toolbarSettings = [...root.querySelectorAll(".editor-toolbar .toolbar-setting")]
+  const toolbar = root.querySelector(".editor-toolbar")
+  const scroller = root.querySelector(".editor-toolbar-scroll")
+  const marginTrigger = root.querySelector('[data-a="fs-margin-toggle"]')
+  const marginPanel = root.querySelector("#marginPopover")
+
+  assert.ok(iconButtons.length >= 10)
+  for (const button of iconButtons) {
+    assert.equal(button.type, "button")
+    assert.ok(button.getAttribute("aria-label")?.trim())
+  }
+  for (const button of toolbarButtons) {
+    assert.equal(button.type, "button")
+    assert.ok(button.getAttribute("aria-label")?.trim())
+  }
+  for (const setting of toolbarSettings) {
+    assert.ok(setting.getAttribute("aria-label")?.trim())
+  }
+
+  assert.equal(root.querySelector('[data-a="bold"]').getAttribute("aria-label"), "加粗")
+  assert.equal(root.querySelector('[data-a="im"]').getAttribute("aria-label"), "插入图片")
+  assert.ok(scroller)
+  assert.ok(scroller.contains(marginTrigger))
+  assert.equal(marginPanel.parentElement, toolbar)
+  assert.equal(scroller.contains(marginPanel), false)
+  assert.equal(marginTrigger.getAttribute("aria-controls"), "marginPopover")
+  assert.equal(marginTrigger.getAttribute("aria-expanded"), "false")
+  toolbar.getBoundingClientRect = () => ({ left: 10, width: 500 })
+  marginTrigger.getBoundingClientRect = () => ({ left: 410 })
+  Object.defineProperty(marginPanel, "offsetWidth", { configurable: true, value: 120 })
+  marginTrigger.click()
+  assert.equal(marginPanel.classList.contains("open"), true)
+  assert.equal(marginTrigger.getAttribute("aria-expanded"), "true")
+  assert.equal(marginPanel.style.getPropertyValue("--margin-popover-left"), "372px")
+})
+
+test("bounded action rails scroll horizontally with touch-safe targets", () => {
+  const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
+  assert.ok(bounded)
+
+  const iconRail = ruleBodiesFor(bounded, ".editor-iconbar")
+  const iconButton = ruleBodiesFor(bounded, ".editor-iconbar button")
+  const toolbar = ruleBodiesFor(cssWithoutComments, ".editor-toolbar")
+  const toolbarScroller = ruleBodiesFor(bounded, ".editor-toolbar-scroll")
+  const toolbarButton = ruleBodiesFor(bounded, ".editor-toolbar button")
+  const toolbarSetting = ruleBodiesFor(bounded, ".editor-toolbar .toolbar-setting")
+  const toolbarNumber = ruleBodiesFor(bounded, ".editor-toolbar .toolbar-number")
+  const toolbarCheckbox = ruleBodiesFor(bounded, ".editor-toolbar .toolbar-checkbox")
+  const checkboxGlyph = ruleBodiesFor(cssWithoutComments, ".editor-toolbar .toolbar-checkbox input")
+  const marginPanel = ruleBodiesFor(bounded, ".margin-popover")
+  const allMarginPanelRules = ruleBodiesFor(cssWithoutComments, ".margin-popover")
+  const marginInputFocus = ruleBodiesFor(cssWithoutComments, ".margin-grid .margin-cell .margin-num:focus")
+  const iconFocus = ruleBodiesFor(bounded, ".editor-iconbar button:focus-visible")
+  const toolbarFocus = ruleBodiesFor(bounded, ".editor-toolbar button:focus-visible")
+
+  assert.match(toolbar, /position\s*:\s*relative/)
+  assert.match(iconRail, /overflow-x\s*:\s*auto/)
+  assert.match(iconRail, /touch-action\s*:\s*pan-x/)
+  assert.match(iconButton, /(?:width|min-width)\s*:\s*44px/)
+  assert.match(iconButton, /(?:height|min-height)\s*:\s*44px/)
+  assert.match(toolbarScroller, /flex-wrap\s*:\s*nowrap/)
+  assert.match(toolbarScroller, /overflow-x\s*:\s*auto/)
+  assert.match(toolbarScroller, /touch-action\s*:\s*pan-x/)
+  assert.match(toolbarButton, /min-width\s*:\s*44px/)
+  assert.match(toolbarButton, /min-height\s*:\s*44px/)
+  for (const rule of [toolbarSetting, toolbarNumber, toolbarCheckbox]) {
+    assert.match(rule, /min-height\s*:\s*44px/)
+  }
+  assert.match(checkboxGlyph, /width\s*:\s*13px/)
+  assert.match(checkboxGlyph, /height\s*:\s*13px/)
+  assert.match(marginPanel, /left\s*:\s*8px/)
+  assert.match(marginPanel, /right\s*:\s*8px/)
+  assert.match(marginPanel, /max-width\s*:\s*calc\(100%\s*-\s*16px\)/)
+  assert.match(allMarginPanelRules, /left\s*:\s*var\(--margin-popover-left\s*,\s*0px\)/)
+  assert.doesNotMatch(allMarginPanelRules, /right\s*:\s*16px/)
+  assert.doesNotMatch(marginInputFocus, /outline\s*:\s*none/)
+  assert.match(iconFocus, /outline\s*:\s*2px\s+solid/)
+  assert.match(toolbarFocus, /outline\s*:\s*2px\s+solid/)
+})
