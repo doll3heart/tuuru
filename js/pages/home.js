@@ -1,6 +1,8 @@
 ﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, updateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast } from "../app.js"
+import { downloadBlob } from "../download.js"
+import { serializeLocalDatabaseBackup } from "../storage.js"
 
 export function renderHome(){
   const works = getWorks()
@@ -28,6 +30,7 @@ export function renderHome(){
     <div class="flex-between mb-4">
       <h2 style="font-size:1.2rem;font-weight:600">我的作品</h2>
       <div class="flex-row">
+        <button class="btn btn-outline" onclick="backupLibrary()" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机">备份全部作品</button>
         <button class="btn btn-primary" onclick="navigate('/new')"> 新建作品</button>
       </div>
     </div>
@@ -95,6 +98,19 @@ function timeAgo(ts){
 }
 
 // Global handlers for inline onclick
+window.backupLibrary = function(){
+  try {
+    var exportedAt = new Date()
+    var json = serializeLocalDatabaseBackup(localStorage, exportedAt)
+    var blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    var filename = 'tuuru-library-backup-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json'
+    downloadBlob(blob, filename)
+    showToast('备份已下载；文件包含私密内容，请妥善保管', 'success')
+  } catch(e) {
+    alert('备份失败：' + (e instanceof Error ? e.message : '未知错误'))
+  }
+}
+
 window.delWork = function(id){
   if(!confirm("确定删除这个作品吗？")) return
   deleteWork(id)

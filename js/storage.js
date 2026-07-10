@@ -1,5 +1,8 @@
 const DATABASE_KEY = "tuuru_works"
 
+export const LOCAL_DATABASE_BACKUP_FORMAT = "tuuru-local-library-backup"
+export const LOCAL_DATABASE_BACKUP_VERSION = 1
+
 function createEmptyDatabase() {
   return { works: [], contacts: [], groups: [] }
 }
@@ -94,6 +97,25 @@ export function writeLocalDatabase(data, storage = localStorage) {
     throw new LocalDatabaseError(
       "作品保存失败。请检查浏览器存储空间并立即导出备份。",
       "write-failed",
+      error,
+    )
+  }
+}
+
+export function serializeLocalDatabaseBackup(storage = localStorage, exportedAt = new Date()) {
+  const database = readLocalDatabase(storage)
+
+  try {
+    return JSON.stringify({
+      format: LOCAL_DATABASE_BACKUP_FORMAT,
+      backupVersion: LOCAL_DATABASE_BACKUP_VERSION,
+      exportedAt: exportedAt.toISOString(),
+      database,
+    }, null, 2)
+  } catch (error) {
+    throw new LocalDatabaseError(
+      "无法创建完整创作库备份。请确认浏览器仍有足够可用内存。",
+      "backup-failed",
       error,
     )
   }

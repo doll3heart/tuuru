@@ -6,6 +6,7 @@ import {
   discardCorruptLocalDatabase,
   inspectLocalDatabase,
   readLocalDatabase,
+  serializeLocalDatabaseBackup,
   writeLocalDatabase,
 } from "../js/storage.js"
 
@@ -99,6 +100,61 @@ test("write failures are wrapped without replacing the previous value", () => {
     error => error instanceof LocalDatabaseError && error.code === "write-failed",
   )
   assert.equal(storage.value, raw)
+})
+
+test("a full library backup has a versioned envelope without writing", () => {
+  const exportedAt = new Date("2026-07-10T05:30:00.000Z")
+  const storage = createStorage()
+
+  const backup = JSON.parse(serializeLocalDatabaseBackup(storage, exportedAt))
+
+  assert.deepEqual(backup, {
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-10T05:30:00.000Z",
+    database: { works: [], contacts: [], groups: [] },
+  })
+  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.calls.remove, 0)
+})
+
+test("a full library backup preserves private editor and future fields", () => {
+  const database = {
+    works: [{
+      id: "work-1",
+      password: "private",
+      editorSettings: { fontSize: 18 },
+      phoneData: { apps: [{ type: "settings" }, { type: "customize" }] },
+    }],
+    contacts: [{ id: "contact-1" }],
+    groups: [{ id: "group-1" }],
+    futureField: { enabled: true },
+  }
+  const storage = createStorage(JSON.stringify(database))
+
+  const backup = JSON.parse(serializeLocalDatabaseBackup(
+    storage,
+    new Date("2026-07-10T05:30:00.000Z"),
+  ))
+
+  assert.deepEqual(backup.database, database)
+  assert.equal(storage.calls.set, 0)
+})
+
+test("a full library backup refuses corrupt or unavailable storage", () => {
+  const corruptStorage = createStorage("not-json")
+  const unavailableStorage = createStorage(null, { getError: new Error("denied") })
+
+  assert.throws(
+    () => serializeLocalDatabaseBackup(corruptStorage),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-json",
+  )
+  assert.throws(
+    () => serializeLocalDatabaseBackup(unavailableStorage),
+    error => error instanceof LocalDatabaseError && error.code === "storage-unavailable",
+  )
+  assert.equal(corruptStorage.calls.set, 0)
+  assert.equal(unavailableStorage.calls.set, 0)
 })
 
 test("unavailable storage blocks reads, writes, and destructive reset", () => {
