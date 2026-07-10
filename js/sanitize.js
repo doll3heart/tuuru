@@ -123,7 +123,8 @@ export function sanitizeIconHtml(icon, windowObject = window) {
     USE_PROFILES: { svg: true, svgFilters: false },
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
-    FORBID_TAGS: ["foreignObject", "script"],
+    FORBID_TAGS: ["a", "foreignObject", "script"],
+    FORBID_ATTR: ["focusable", "tabindex"],
   })
 }
 

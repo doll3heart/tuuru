@@ -76,13 +76,17 @@ test("memo profile preserves only the known checklist structure", () => {
 
 test("SVG icons keep safe shapes and remove scriptable content", () => {
   const clean = sanitizeIconHtml(
-    '<svg viewBox="0 0 24 24" onload="alert(1)"><path d="M0 0h1v1z"></path><script>alert(1)</script></svg>',
+    '<svg viewBox="0 0 24 24" onload="alert(1)">' +
+      '<a href="https://example.com"><path d="M0 0h1v1z"></path></a>' +
+      '<circle cx="2" cy="2" r="1" tabindex="0" focusable="true"></circle>' +
+      '<script>alert(1)</script></svg>',
     windowObject,
   )
 
   assert.match(clean, /<svg/)
   assert.match(clean, /<path/)
-  assert.doesNotMatch(clean, /onload|script|alert/i)
+  assert.match(clean, /<circle/)
+  assert.doesNotMatch(clean, /<a\b|href|tabindex|focusable|onload|script|alert/i)
 })
 
 test("import sanitation is immutable and covers articles, memos, icons, and media", () => {

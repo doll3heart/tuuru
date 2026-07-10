@@ -14,6 +14,26 @@ function esc(s) {
   return d.innerHTML
 }
 
+function readerAppName(app) {
+  var name = String(app && app.name != null ? app.name : '').trim()
+  return name || 'App'
+}
+
+function readerCustomIconUrl(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function focusReaderAppIcon(root, type) {
+  var scope = root && typeof root.querySelectorAll === 'function' ? root : document
+  var icons = scope.querySelectorAll('.phone-app-icon[data-app-type]')
+  for (var i = 0; i < icons.length; i++) {
+    if (icons[i].dataset.appType !== type) continue
+    icons[i].focus()
+    return true
+  }
+  return false
+}
+
 function avatarColor(id) {
   var AC = ["#6366f1","#8b5cf6","#a855f7","#d946ef","#ec4899","#f43f5e","#ef4444","#f97316","#f59e0b","#84cc16","#22c55e","#10b981","#14b8a6","#06b6d4","#0ea5e9","#3b82f6","#64748b","#78716c"]
   if (!id) return AC[0]
@@ -937,11 +957,12 @@ function buildPhoneHTML(pd, custom) {
     if (app.enabled === false) continue
     if (app.type === 'settings' || app.type === 'customize') continue
     var gridStyle = phoneGridItemStyle(app.desktopX || 0, app.desktopY || 0)
-    h += '<div class="phone-app-icon" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
-    var customIcon = rc.customIcons && rc.customIcons[app.type]
-    h += '<div class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';position:relative">'
+    var appName = readerAppName(app)
+    h += '<button type="button" class="phone-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;border:none!important;box-shadow:none!important">'
+    var customIcon = readerCustomIconUrl(rc.customIcons && rc.customIcons[app.type])
+    h += '<span class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';position:relative">'
     if (customIcon) {
-      h += '<img src="' + esc(customIcon) + '" style="width:56px;height:56px;object-fit:cover;border-radius:14px" onerror="this.style.display=\'none\'">'
+      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:14px" onerror="this.style.display=\'none\'">'
       h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
     } else {
       h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
@@ -949,11 +970,11 @@ function buildPhoneHTML(pd, custom) {
     if (app.hasUpdate) {
       h += '<span style="position:absolute;top:2px;right:2px;width:14px;height:14px;background:#ef4444;border-radius:50%;border:2px solid #fff"></span>'
     }
-    h += '</div>'
+    h += '</span>'
     if (skin.showAppLabels !== false) {
-      h += '<span style="font-size:10px;color:#555;text-align:center;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3">' + esc(app.name || 'App') + '</span>'
+      h += '<span class="phone-icon-label">' + esc(appName) + '</span>'
     }
-    h += '</div>'
+    h += '</button>'
   }
   h += '</div>'
   if (skin.showHomeIndicator !== false) {
@@ -1010,22 +1031,28 @@ function openReaderApp(type) {
     if (inOverlay && _work._overlayWrapper) {
       _work._overlayWrapper.innerHTML = buildPhoneHTML(pd, rc)
       bindOverlayApps(_work._overlayWrapper)
+      focusReaderAppIcon(_work._overlayWrapper, type)
     } else {
       renderPhoneReader()
+      focusReaderAppIcon(document, type)
     }
   }
 
   function wrapPanel(title, bodyHtml) {
     var h = '<div class="cu-panel cu-panel-embedded" style="z-index:10">'
     h += '<div class="cu-header" style="justify-content:flex-start;gap:8px">'
-    h += '<button class="rd-back-btn" style="border:none;background:transparent;font-size:1rem;cursor:pointer;color:var(--c-text2);padding:4px 8px">←</button>'
+    h += '<button type="button" class="rd-back-btn" aria-label="返回手机桌面" style="color:var(--c-text2)">←</button>'
     h += '<span class="cu-title" style="flex:1;text-align:center">' + esc(title) + '</span>'
+    h += '<span class="rd-back-spacer" aria-hidden="true"></span>'
     h += '</div>'
     h += '<div class="cu-body" style="padding:8px 10px">' + bodyHtml + '</div>'
     h += '</div>'
     phoneFrame.innerHTML = h
     var backBtn = phoneFrame.querySelector('.rd-back-btn')
-    if (backBtn) backBtn.onclick = backToDesktop
+    if (backBtn) {
+      backBtn.onclick = backToDesktop
+      backBtn.focus()
+    }
   }
 
   if (type === 'messages') {
@@ -1361,9 +1388,9 @@ function openReaderForumPost(frame, w, pd, postId) {
 
   var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;background:#fff">'
   h += '<div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #ddd;flex-shrink:0">'
-  h += '<button class="rd-back-btn" style="border:none;background:transparent;font-size:1rem;cursor:pointer;color:#888;padding:4px 8px">←</button>'
+  h += '<button type="button" class="rd-back-btn" aria-label="返回论坛列表" style="color:#888">←</button>'
   h += '<span style="font-size:.85rem;font-weight:600;flex:1;text-align:center;color:#555">帖子详情</span>'
-  h += '<span style="width:36px"></span>'
+  h += '<span class="rd-back-spacer" aria-hidden="true"></span>'
   h += '</div>'
   h += '<div style="flex:1;overflow-y:auto;padding:12px">'
   h += '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px">'
@@ -1383,7 +1410,10 @@ function openReaderForumPost(frame, w, pd, postId) {
   h += '</div>'
   frame.innerHTML = h
   var backBtn = frame.querySelector('.rd-back-btn')
-  if (backBtn) backBtn.onclick = backToList
+  if (backBtn) {
+    backBtn.onclick = backToList
+    backBtn.focus()
+  }
 }
 
 // ====== Reader Phone Custom (Beautification Panel) ======
@@ -1445,21 +1475,22 @@ function renderPhonePreview(ct) {
     ]
     var app = apps[i]
     if (!app) continue
-    var customIcon = ct.customIcons && ct.customIcons[app.type]
-    h += '<div class="phone-app-icon rd-app-icon" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
-    h += ' style="' + phoneGridItemStyle(i % 4, Math.floor(i / 4)) + 'border:none!important;outline:none!important;box-shadow:none!important">'
-    h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
+    var customIcon = readerCustomIconUrl(ct.customIcons && ct.customIcons[app.type])
+    var appName = readerAppName(app)
+    h += '<button type="button" class="phone-app-icon rd-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
+    h += ' style="' + phoneGridItemStyle(i % 4, Math.floor(i / 4)) + 'border:none!important;box-shadow:none!important">'
+    h += '<span class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
     if (customIcon) {
-      h += '<img src="' + esc(customIcon) + '" style="width:36px;height:36px;object-fit:contain" onerror="this.style.display=\'none\'">'
+      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:36px;height:36px;object-fit:contain" onerror="this.style.display=\'none\'">'
       h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:none;align-items:center;justify-content:center">' + app.icon + '</span>'
     } else {
       h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:flex;align-items:center;justify-content:center">' + app.icon + '</span>'
     }
-    h += '</div>'
+    h += '</span>'
     if (ct.showAppLabels !== false) {
       h += '<span class="phone-icon-label">' + esc(app.name) + '</span>'
     }
-    h += '</div>'
+    h += '</button>'
   }
   h += '</div>'
 
