@@ -65,6 +65,15 @@ test("a 320px phone desktop keeps all four legacy columns in bounds", () => {
   assert.equal(leftMargin, rightMargin)
 })
 
+test("a 314px bordered editor desktop keeps all four columns in bounds", () => {
+  const positions = Array.from({ length: PHONE_GRID_METRICS.columns }, (_, column) => (
+    getPhoneGridPosition(314, column, 0)
+  ))
+
+  assert.deepEqual(positions.map(position => position.left), [1, 81, 161, 241])
+  assert.equal(positions.at(-1).left + PHONE_GRID_METRICS.iconWidth, 313)
+})
+
 test("legacy framed phone widths preserve their exact column positions", () => {
   const frame = ruleBodiesFor(cssWithoutComments, ".phone-frame")
   const preview = ruleBodiesFor(cssWithoutComments, ".phone-frame.custom-preview")
@@ -107,7 +116,7 @@ test("grid styles use container-relative lengths without CSS multiplication", ()
   const container = phoneGridContainerStyle()
   const item = phoneGridItemStyle(3, 1)
 
-  assert.match(container, /--phone-grid-origin-x\s*:\s*clamp\(4px,\s*max\(calc\(50% - 156px\),\s*calc\(100% - 330px\)\),\s*20px\)/)
+  assert.match(container, /--phone-grid-origin-x\s*:\s*clamp\(0px,\s*max\(calc\(50% - 156px\),\s*calc\(100% - 330px\)\),\s*20px\)/)
   assert.match(item, /--phone-grid-x\s*:\s*240px/)
   assert.match(item, /--phone-grid-y\s*:\s*131px/)
   assert.doesNotMatch(item, /var\([^)]*\)\s*\*/)

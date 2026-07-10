@@ -2,7 +2,13 @@
 import { uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
 import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
-import { PHONE_GRID_METRICS } from "../phone-grid.js"
+import {
+  PHONE_GRID_METRICS,
+  getPhoneGridCell,
+  getPhoneGridItemOffset,
+  phoneGridContainerStyle,
+  phoneGridItemStyle,
+} from "../phone-grid.js"
 import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
@@ -15,13 +21,6 @@ var _flowFrame = null
 var _flowWid = null
 var _flowPd = null
 
-// Grid constants
-var CELL_W = PHONE_GRID_METRICS.cellWidth
-var CELL_H = PHONE_GRID_METRICS.cellHeight
-var GRID_COLS = PHONE_GRID_METRICS.columns
-var GRID_ROWS = PHONE_GRID_METRICS.rows
-var OFFSET_X = PHONE_GRID_METRICS.legacyOriginX
-var OFFSET_Y = PHONE_GRID_METRICS.offsetY
 var PHONE_APP_TYPES_WITH_OWN_HEADER = new Set(['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping'])
 
 function esc(s) {
@@ -29,6 +28,16 @@ function esc(s) {
   var d = document.createElement("div")
   d.textContent = s
   return d.innerHTML
+}
+
+function applyPhoneGridItemPosition(icon, desktopX, desktopY) {
+  var offset = getPhoneGridItemOffset(desktopX, desktopY)
+  icon.style.removeProperty('left')
+  icon.style.removeProperty('top')
+  icon.style.setProperty('--phone-grid-x', offset.left + 'px')
+  icon.style.setProperty('--phone-grid-y', offset.top + 'px')
+  icon.dataset.desktopX = String(desktopX)
+  icon.dataset.desktopY = String(desktopY)
 }
 
 function requestPhoneAppModalClose(frame, reason) {
@@ -392,14 +401,16 @@ export function renderPhoneEditor(wid) {
   h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
   h += '</div>'
 
-  h += '<div class="phone-desktop" id="phoneDesktop">'
+  h += '<div class="phone-desktop" id="phoneDesktop" style="' + phoneGridContainerStyle() + '">'
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
     if (!app.enabled) continue
-    var x = OFFSET_X + (app.desktopX || 0) * CELL_W
-    var y = OFFSET_Y + (app.desktopY || 0) * CELL_H
-    h += '<div class="phone-app-icon" data-app-id="' + app.id + '" data-app-type="' + app.type + '" onselectstart="return false"'
-    h += ' style="left:' + x + 'px;top:' + y + 'px;border:none!important;outline:none!important;box-shadow:none!important">'
+    var desktopX = Number(app.desktopX)
+    var desktopY = Number(app.desktopY)
+    if (!Number.isFinite(desktopX)) desktopX = 0
+    if (!Number.isFinite(desktopY)) desktopY = 0
+    h += '<div class="phone-app-icon" data-app-id="' + app.id + '" data-app-type="' + app.type + '" data-desktop-x="' + desktopX + '" data-desktop-y="' + desktopY + '" onselectstart="return false"'
+    h += ' style="' + phoneGridItemStyle(desktopX, desktopY) + 'border:none!important;outline:none!important;box-shadow:none!important">'
     h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || 'var(--c-surface2)') + ';">'
     h += '<span class="phone-icon-char">' + (app.icon || '?') + '</span>'
     h += '</div>'
@@ -432,7 +443,7 @@ function ensureApps(pd) {
       var slot = apps.length
       apps.push({
         id: uid(), type: t, name: def.label, icon: def.icon, color: def.color,
-        desktopX: slot % GRID_COLS, desktopY: Math.floor(slot / GRID_COLS), enabled: true
+        desktopX: slot % PHONE_GRID_METRICS.columns, desktopY: Math.floor(slot / PHONE_GRID_METRICS.columns), enabled: true
       })
       added = true
     }
@@ -452,8 +463,8 @@ function patchApps(apps, pd, wid) {
       if (!app.name) { app.name = def.label; dirty = true }
     }
     if (app.desktopX === undefined || app.desktopY === undefined) {
-      app.desktopX = i % GRID_COLS
-      app.desktopY = Math.floor(i / GRID_COLS)
+      app.desktopX = i % PHONE_GRID_METRICS.columns
+      app.desktopY = Math.floor(i / PHONE_GRID_METRICS.columns)
       dirty = true
     }
     if (app.enabled === undefined) { app.enabled = true; dirty = true }
@@ -525,8 +536,11 @@ function startDrag(wid, icon, mx, my) {
     icon: icon, wid: wid,
     startX: mx, startY: my,
     offsetX: mx - rect.left, offsetY: my - rect.top,
-    origLeft: parseFloat(icon.style.left) || 0, origTop: parseFloat(icon.style.top) || 0,
-    deskLeft: deskRect.left, deskTop: deskRect.top
+    origLeft: rect.left - deskRect.left, origTop: rect.top - deskRect.top,
+    origCol: parseInt(icon.dataset.desktopX) || 0,
+    origRow: parseInt(icon.dataset.desktopY) || 0,
+    deskLeft: deskRect.left, deskTop: deskRect.top,
+    containerWidth: deskRect.width
   }
   _wasDrag = false
   icon.classList.add('dragging')
@@ -550,10 +564,11 @@ function endDrag() {
   var icon = _dragState.icon
   var left = parseFloat(icon.style.left)
   var top = parseFloat(icon.style.top)
-  var col = Math.round((left - OFFSET_X) / CELL_W)
-  var row = Math.round((top - OFFSET_Y) / CELL_H)
-  col = Math.max(0, Math.min(GRID_COLS - 1, col))
-  row = Math.max(0, Math.min(GRID_ROWS - 1, row))
+  if (!Number.isFinite(left)) left = _dragState.origLeft
+  if (!Number.isFinite(top)) top = _dragState.origTop
+  var cell = getPhoneGridCell(_dragState.containerWidth, left, top)
+  var col = Math.max(0, Math.min(PHONE_GRID_METRICS.columns - 1, cell.x))
+  var row = Math.max(0, Math.min(PHONE_GRID_METRICS.rows - 1, cell.y))
 
   var wid = _dragState.wid
   var w = getWork(wid)
@@ -564,14 +579,11 @@ function endDrag() {
       var a = apps[i]
       if (a.id === appId || !a.enabled) continue
       if (a.desktopX === col && a.desktopY === row) {
-        var ec = findEmptyCell(apps, appId,
-          Math.round((_dragState.origLeft - OFFSET_X) / CELL_W),
-          Math.round((_dragState.origTop - OFFSET_Y) / CELL_H))
+        var ec = findEmptyCell(apps, appId, _dragState.origCol, _dragState.origRow)
         a.desktopX = ec.x; a.desktopY = ec.y
         var oi = document.querySelector('[data-app-id="' + a.id + '"]')
         if (oi) {
-          oi.style.left = (OFFSET_X + a.desktopX * CELL_W) + 'px'
-          oi.style.top = (OFFSET_Y + a.desktopY * CELL_H) + 'px'
+          applyPhoneGridItemPosition(oi, a.desktopX, a.desktopY)
           oi.style.transition = 'left .15s, top .15s'
           setTimeout(function() { if (oi) oi.style.transition = '' }, 200)
         }
@@ -582,8 +594,7 @@ function endDrag() {
     if (app) { app.desktopX = col; app.desktopY = row; updateWork(wid, { phoneData: w.phoneData }) }
   }
 
-  icon.style.left = (OFFSET_X + col * CELL_W) + 'px'
-  icon.style.top = (OFFSET_Y + row * CELL_H) + 'px'
+  applyPhoneGridItemPosition(icon, col, row)
   icon.style.transition = 'left .15s, top .15s'
   setTimeout(function() {
     icon.classList.remove('dragging')
@@ -593,8 +604,8 @@ function endDrag() {
 }
 
 function findEmptyCell(apps, excludeId, prefX, prefY) {
-  var px = Math.max(0, Math.min(GRID_COLS - 1, prefX))
-  var py = Math.max(0, Math.min(GRID_ROWS - 1, prefY))
+  var px = Math.max(0, Math.min(PHONE_GRID_METRICS.columns - 1, prefX))
+  var py = Math.max(0, Math.min(PHONE_GRID_METRICS.rows - 1, prefY))
   var occupied = false
   for (var i = 0; i < apps.length; i++) {
     var a = apps[i]
@@ -602,8 +613,8 @@ function findEmptyCell(apps, excludeId, prefX, prefY) {
     if (a.desktopX === px && a.desktopY === py) { occupied = true; break }
   }
   if (!occupied) return { x: px, y: py }
-  for (var r = 0; r < GRID_ROWS + 5; r++) {
-    for (var c = 0; c < GRID_COLS; c++) {
+  for (var r = 0; r < PHONE_GRID_METRICS.rows + 5; r++) {
+    for (var c = 0; c < PHONE_GRID_METRICS.columns; c++) {
       var found = true
       for (var j = 0; j < apps.length; j++) {
         var b = apps[j]

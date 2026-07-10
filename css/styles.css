@@ -396,10 +396,10 @@ ul,ol{list-style:none}
 .phone-avatar::after{display:none}
 
 /* Desktop area */
-.phone-desktop{flex:1;position:relative;min-height:420px;padding:10px 20px}
+.phone-desktop{flex:1;position:relative;min-height:420px;padding:10px 20px;--phone-grid-origin-x:20px}
 
 /* App icon (absolute positioned) */
-.phone-app-icon{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;transition:none;outline:none}
+.phone-app-icon{display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;left:calc(var(--phone-grid-origin-x,20px) + var(--phone-grid-x,0px));top:var(--phone-grid-y,36px);transition:none;outline:none}
 .phone-app-icon,.phone-app-icon *,.phone-desktop,.phone-desktop *{outline:0!important;border:0!important;box-shadow:none!important;-webkit-tap-highlight-color:transparent!important;-webkit-focus-ring-color:transparent!important}
 .phone-app-icon,.phone-frame{-webkit-tap-highlight-color:transparent;-webkit-focus-ring-color:transparent}
 .phone-app-icon.hover-on{transform:scale(1.05);transition:transform .12s}
