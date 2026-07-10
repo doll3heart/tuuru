@@ -29,6 +29,33 @@ function esc(s) {
   return d.innerHTML
 }
 
+function requestPhoneAppModalClose(frame, reason) {
+  var requestClose = frame && frame._requestPhoneAppModalClose
+  if (typeof requestClose !== 'function') return false
+  requestClose(reason)
+  return true
+}
+
+function exitPhoneAppEditor(frame, wid, beforeExit) {
+  var active = document.activeElement
+  if (active && frame.contains(active) && typeof active.blur === 'function') {
+    active.blur()
+  }
+  if (beforeExit) beforeExit()
+  if (requestPhoneAppModalClose(frame, 'app-back')) return
+
+  frame.style.pointerEvents = 'none'
+  frame.innerHTML = frame.dataset._origHTML || ''
+  delete frame.dataset._origHTML
+  frame.style.transform = 'translateZ(0)'
+  void frame.offsetHeight
+  requestAnimationFrame(function() {
+    frame.style.transform = ''
+    frame.style.pointerEvents = ''
+    attachDrag(wid)
+  })
+}
+
 export function openPhoneAppModal(wid, appType, options = {}) {
   var w = getWork(wid)
   if (!w) { showToast('作品未找到'); return }
@@ -80,9 +107,13 @@ export function openPhoneAppModal(wid, appType, options = {}) {
       }
       return options.beforeClose ? options.beforeClose(reason) : undefined
     },
-    remove: function() { ov.remove() },
+    remove: function() {
+      delete content._requestPhoneAppModalClose
+      ov.remove()
+    },
     afterClose: options.afterClose
   })
+  content._requestPhoneAppModalClose = close
   closeBtn.addEventListener('click', function() { close('button') })
   ov.addEventListener('click', function(e) { if (e.target === ov) close('backdrop') })
 
@@ -128,6 +159,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
         break
     }
   } catch (error) {
+    delete content._requestPhoneAppModalClose
     ov.remove()
     throw error
   }
@@ -1655,20 +1687,7 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
   // Back button
   var backBtn = frame.querySelector('#browserBack')
   if (backBtn) {
-    backBtn.onclick = function() {
-      saveAll()
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
-      })
-    }
+    backBtn.onclick = function() { exitPhoneAppEditor(frame, wid, saveAll) }
   }
 
   // Add button
@@ -1901,19 +1920,7 @@ function openGalleryEditor(frame, wid, contact, pd) {
   // Back button
   var backBtn = frame.querySelector('#galleryBack')
   if (backBtn) {
-    backBtn.onclick = function() {
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
-      })
-    }
+    backBtn.onclick = function() { exitPhoneAppEditor(frame, wid) }
   }
 }
 
@@ -2256,19 +2263,7 @@ function openShoppingEditor(frame, wid, contact, pd) {
   // Back button
   var backBtn = frame.querySelector('#shopBack')
   if (backBtn) {
-    backBtn.onclick = function() {
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
-      })
-    }
+    backBtn.onclick = function() { exitPhoneAppEditor(frame, wid) }
   }
 }
 
@@ -2915,19 +2910,7 @@ function openForumEditor(frame, wid, contact, pd) {
   // Back button (close)
   var backBtn = frame.querySelector('#forumBack')
   if (backBtn) {
-    backBtn.onclick = function() {
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
-      })
-    }
+    backBtn.onclick = function() { exitPhoneAppEditor(frame, wid) }
   }
 }
 
@@ -3359,19 +3342,7 @@ function bindMsgEvents() {
 
   var backBtn = frame.querySelector('#msgBack')
   if (backBtn) {
-    backBtn.onclick = function() {
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
-      })
-    }
+    backBtn.onclick = function() { exitPhoneAppEditor(frame, wid) }
   }
 }
 
@@ -4178,20 +4149,7 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
   // Back button
   var backBtn = frame.querySelector('#memoBack')
   if (backBtn) {
-    backBtn.onclick = function() {
-      saveAll()
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
-      })
-    }
+    backBtn.onclick = function() { exitPhoneAppEditor(frame, wid, saveAll) }
   }
 
   // Add button
