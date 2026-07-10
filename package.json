@@ -4,10 +4,14 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev": "vite --config vite.config.ts",
+    "dev:reader": "vite --config vite.reader.config.ts",
+    "build": "npm run build:editor && npm run build:reader",
+    "build:editor": "tsc -b && vite build --config vite.config.ts",
+    "build:reader": "vite build --config vite.reader.config.ts",
     "test": "node --test",
-    "preview": "vite preview"
+    "preview": "vite preview --config vite.config.ts",
+    "preview:reader": "vite preview --config vite.reader.config.ts"
   },
   "dependencies": {
     "react": "^19.0.0",
