@@ -3,14 +3,24 @@ let routes = {}
 let currentRoute = null
 let currentParams = {}
 
-function parseHash(){
-  const hash = location.hash.slice(1)||"/"
-  const [path, ...rest] = hash.split("?")
+function safeDecode(value){
+  try{return decodeURIComponent(value)}catch{return value}
+}
+
+export function parseHash(hashValue=location.hash){
+  const hash = (hashValue.startsWith("#")?hashValue.slice(1):hashValue)||"/"
+  const queryStart = hash.indexOf("?")
+  const path = queryStart >= 0 ? hash.slice(0,queryStart) : hash
+  const query = queryStart >= 0 ? hash.slice(queryStart+1) : ""
   const params = {}
-  if(rest.length){
-    rest.join("?").split("&").forEach(p=>{
-      const [k,v]=p.split("=").map(decodeURIComponent)
-      if(k) params[k]=v
+  if(query){
+    query.split("&").forEach(part=>{
+      if(!part)return
+      const separator = part.indexOf("=")
+      const rawKey = separator >= 0 ? part.slice(0,separator) : part
+      const rawValue = separator >= 0 ? part.slice(separator+1) : ""
+      const key = safeDecode(rawKey)
+      if(key) params[key]=safeDecode(rawValue)
     })
   }
   return {path:path||"/", params}
@@ -23,24 +33,28 @@ export function navigate(path, params={}){
   location.hash = "#"+path+(qs?"?"+qs:"")
 }
 
+export function matchRoutePattern(pattern,path){
+  const parts = pattern.split("/")
+  const pathParts = path.split("/")
+  if(parts.length!==pathParts.length)return null
+  const params = {}
+  for(let i=0;i<parts.length;i++){
+    if(parts[i].startsWith(":")){
+      params[parts[i].slice(1)] = safeDecode(pathParts[i])
+    }else if(parts[i]!==pathParts[i]){
+      return null
+    }
+  }
+  return params
+}
+
 function matchRoute(path){
   // Exact match first
   if(routes[path]) return {route:routes[path], params:{}}
   // Pattern match :param
   for(const [pattern, fn] of Object.entries(routes)){
-    const parts = pattern.split("/")
-    const pathParts = path.split("/")
-    if(parts.length!==pathParts.length) continue
-    const params = {}
-    let match = true
-    for(let i=0;i<parts.length;i++){
-      if(parts[i].startsWith(":")){
-        params[parts[i].slice(1)] = decodeURIComponent(pathParts[i])
-      }else if(parts[i]!==pathParts[i]){
-        match = false; break
-      }
-    }
-    if(match) return {route:fn, params}
+    const params = matchRoutePattern(pattern,path)
+    if(params) return {route:fn, params}
   }
   return null
 }
