@@ -992,6 +992,7 @@ ul,ol{list-style:none}
   border-radius: 6px;
   cursor: grab;
   user-select: none;
+  touch-action: none;
   vertical-align: middle;
   font-size: .8rem;
   color: var(--c-text);
@@ -1063,6 +1064,12 @@ ul,ol{list-style:none}
 .pm-card-hamburger:hover {
   color: var(--c-primary-hover);
   background: var(--c-surface2);
+}
+
+/* Phone module bounded touch targets */
+@media(max-width:480px),(max-height:480px) and (pointer:coarse) {
+  .pm-inline-card { min-height: 44px; }
+  .pm-card-hamburger { min-width: 44px; min-height: 44px; width: 44px; height: 44px; }
 }
 
 /* Context menu for phone module cards */

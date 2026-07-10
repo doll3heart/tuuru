@@ -6,6 +6,7 @@ import { createPhoneWorkDraft } from "../phone-work-access.js"
 import { createPhoneModuleCloseHandlers, createPhoneModuleDraftData } from "../phone-module-draft.js"
 import { applyEditorMobilePane, isBoundedEditorViewport } from "../editor-mobile-pane.js"
 import { createEditorOutlineMenuController } from "../editor-outline-menu.js"
+import { createEditorPhoneModuleDragController } from "../editor-phone-module-drag.js"
 import { openPhoneAppModal } from "./phone.js"
 
 // State
@@ -14,6 +15,7 @@ var _nodeId = null
 var _mobilePane = "editor"
 var _pendingMobileFocus = null
 var _outlineActionMenu = createEditorOutlineMenuController(document)
+var _phoneModuleDragController = null
 
 function esc(s) {
   if (!s) return ""
@@ -46,6 +48,7 @@ function showConfirm(title, msg, cb, onCancel) {
 
 
 export function renderEditor(wid) {
+  _phoneModuleDragController?.reset("refresh")
   _outlineActionMenu.reset()
   if (_workId !== wid) {
     _mobilePane = "editor"
@@ -372,6 +375,25 @@ document.addEventListener("click", handleClick)
 document.addEventListener("change", handleChange)
 
 function handleClick(e) {
+  var phoneModuleCard = e.target.closest(".pm-inline-card")
+  if (phoneModuleCard && !e.target.closest(".pm-card-hamburger")) {
+    if (_phoneModuleDragController?.consumeClick(phoneModuleCard, e)) {
+      e.preventDefault()
+      return
+    }
+    var phoneModuleId = phoneModuleCard.dataset.pmId
+    var phoneModuleType = phoneModuleCard.dataset.pmType
+    var phoneModuleEditable = phoneModuleCard.closest(".content-editable")
+    var phoneModuleNodeId = phoneModuleEditable?.dataset.n || _nodeId
+    if (phoneModuleId && phoneModuleType && phoneModuleNodeId) {
+      openPhoneAppModalForCard(_workId, phoneModuleNodeId, phoneModuleId, phoneModuleType, PHONE_APP_DEFS[phoneModuleType] || PHONE_APP_DEFS.messages, function() {
+        var updatedCard = document.querySelector('[data-pm-id="' + phoneModuleId + '"]')
+        var updatedLabel = updatedCard?.querySelector(".pm-card-label")
+        if (updatedLabel) updatedLabel.textContent = (PHONE_APP_DEFS[phoneModuleType] || PHONE_APP_DEFS.messages).label || "模块"
+      })
+    }
+    return
+  }
   var b = e.target.closest("[data-a]")
   if (!b) return
   var outlineActionTrigger = b.tagName === "BUTTON" ? _outlineActionMenu.closeForAction(b) : null
@@ -1323,7 +1345,7 @@ function buildPhoneModuleCardHTML(pm) {
   var h = '<div class="pm-inline-card" contenteditable="false" data-pm-id="' + pm.id + '" data-pm-type="' + pm.type + '" draggable="false">'
   h += '<span class="pm-card-icon">' + (def.icon || '?') + '</span>'
   h += '<span class="pm-card-label">' + esc(def.label || '模块') + '</span>'
-  h += '<button class="pm-card-hamburger" data-a="pm-hamburger" data-pm-id="' + pm.id + '" title="编辑/删除">\u2261</button>'
+  h += '<button class="pm-card-hamburger" data-a="pm-hamburger" data-pm-id="' + pm.id + '" type="button" aria-label="编辑或删除手机模块" title="编辑/删除">\u2261</button>'
   h += '</div>'
   return h
 }
@@ -1477,170 +1499,14 @@ function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
   }, 0)
 }
 
-// ====== Phone Module Card Event Delegation (document-level) ======
-var _pmDragState = null
-var _pmIndicator = null
-
-function ensureDropIndicator() {
-  if (!_pmIndicator) {
-    _pmIndicator = document.createElement('div')
-    _pmIndicator.className = 'pm-drop-indicator'
-    _pmIndicator.style.display = 'none'
-    document.body.appendChild(_pmIndicator)
+// ====== Phone Module Card Pointer Events ======
+_phoneModuleDragController = createEditorPhoneModuleDragController({
+  documentObject: document,
+  windowObject: window,
+  getWorkId: function() { return _workId },
+  onCommit: function({workId, nodeId, content}) {
+    updateNode(workId, nodeId, {content: content})
   }
-  return _pmIndicator
-}
-
-function updateDropIndicator(x, y) {
-  var ce = document.getElementById('ce_' + _nodeId)
-  if (!ce) ce = document.querySelector('.content-editable')
-  if (!ce) return
-  var ind = ensureDropIndicator()
-  var dropRange = null
-  if (document.caretRangeFromPoint) {
-    dropRange = document.caretRangeFromPoint(x, y)
-  } else if (document.caretPositionFromPoint) {
-    var pos = document.caretPositionFromPoint(x, y)
-    if (pos) { dropRange = document.createRange(); dropRange.setStart(pos.offsetNode, pos.offset); dropRange.collapse(true) }
-  }
-  if (dropRange && ce.contains(dropRange.startContainer)) {
-    var rect = dropRange.getBoundingClientRect()
-    ind.style.display = 'block'
-    ind.style.left = rect.left + 'px'
-    ind.style.top = (rect.top + 2) + 'px'
-    ind.style.height = (rect.height - 4) + 'px'
-  } else {
-    ind.style.display = 'none'
-  }
-}
-
-document.addEventListener('mousedown', function(e) {
-  var card = e.target.closest('.pm-inline-card')
-  if (!card) { _pmDragState = null; return }
-  if (e.target.closest('.pm-card-hamburger')) { _pmDragState = null; return }
-  e.preventDefault()
-
-  _pmDragState = {
-    card: card,
-    startX: e.clientX,
-    startY: e.clientY,
-    moved: false,
-    rafId: null
-  }
-})
-
-document.addEventListener('mousemove', function(e) {
-  if (!_pmDragState) return
-  var dx = e.clientX - _pmDragState.startX
-  var dy = e.clientY - _pmDragState.startY
-  if (!_pmDragState.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return
-
-  if (!_pmDragState.moved) {
-    _pmDragState.moved = true
-    var card = _pmDragState.card
-    card.classList.add('pm-card-dragging')
-    card.style.opacity = '0.7'
-    card.style.cursor = 'grabbing'
-    // Remove from contenteditable, attach to body for smooth fixed-position tracking
-    _pmDragState.placeholder = document.createComment('pm-placeholder')
-    card.parentNode.insertBefore(_pmDragState.placeholder, card)
-    card.parentNode.removeChild(card)
-    document.body.appendChild(card)
-    card.style.position = 'fixed'
-    card.style.zIndex = '9999'
-    card.style.pointerEvents = 'none'
-    card.style.willChange = 'transform'
-    card.style.left = '0'
-    card.style.top = '0'
-  }
-
-  // Use rAF + translate3d for GPU-accelerated smooth movement
-  if (_pmDragState.rafId) cancelAnimationFrame(_pmDragState.rafId)
-  var self = _pmDragState
-  _pmDragState.rafId = requestAnimationFrame(function() {
-    self.card.style.transform = 'translate3d(' + (e.clientX - 70) + 'px,' + (e.clientY - 16) + 'px,0) scale(0.95)'
-    updateDropIndicator(e.clientX, e.clientY)
-  })
-})
-
-document.addEventListener('mouseup', function(e) {
-  if (!_pmDragState) return
-  if (_pmDragState.rafId) cancelAnimationFrame(_pmDragState.rafId)
-  var card = _pmDragState.card
-  var moved = _pmDragState.moved
-
-  // Hide indicator
-  if (_pmIndicator) _pmIndicator.style.display = 'none'
-
-  // Restore card styles
-  card.classList.remove('pm-card-dragging')
-  card.style.opacity = ''
-  card.style.cursor = ''
-  card.style.position = ''
-  card.style.left = ''
-  card.style.top = ''
-  card.style.zIndex = ''
-  card.style.pointerEvents = ''
-  card.style.willChange = ''
-  card.style.transform = ''
-
-  if (moved) {
-    var ce = document.getElementById('ce_' + _nodeId)
-    if (!ce) ce = document.querySelector('.content-editable')
-    if (ce) {
-      var dropRange = null
-      if (document.caretRangeFromPoint) {
-        dropRange = document.caretRangeFromPoint(e.clientX, e.clientY)
-      } else if (document.caretPositionFromPoint) {
-        var pos = document.caretPositionFromPoint(e.clientX, e.clientY)
-        if (pos) { dropRange = document.createRange(); dropRange.setStart(pos.offsetNode, pos.offset); dropRange.collapse(true) }
-      }
-
-      // Clean up placeholder
-      if (_pmDragState.placeholder && _pmDragState.placeholder.parentNode) {
-        _pmDragState.placeholder.parentNode.removeChild(_pmDragState.placeholder)
-      }
-
-      if (dropRange && ce.contains(dropRange.startContainer)) {
-        // Anti-overlap: check if dropping inside another card
-        var nearbyCard = dropRange.startContainer.nodeType === 1
-          ? dropRange.startContainer.closest('.pm-inline-card')
-          : dropRange.startContainer.parentElement?.closest?.('.pm-inline-card')
-        if (nearbyCard && nearbyCard !== card) {
-          nearbyCard.parentNode.insertBefore(card, nearbyCard.nextSibling)
-        } else {
-          dropRange.insertNode(card)
-        }
-      } else {
-        // Fallback: put card back at original placeholder position
-        if (_pmDragState.placeholder && _pmDragState.placeholder.parentNode) {
-          // placeholder already removed above, use ce as fallback
-        }
-        ce.appendChild(card)
-      }
-      updateNode(_workId, ce.dataset.n, {content: ce.innerHTML})
-    } else {
-      if (_pmDragState.placeholder && _pmDragState.placeholder.parentNode) {
-        _pmDragState.placeholder.parentNode.insertBefore(card, _pmDragState.placeholder.nextSibling)
-        _pmDragState.placeholder.parentNode.removeChild(_pmDragState.placeholder)
-      }
-    }
-    if (window.getSelection) window.getSelection().removeAllRanges()
-  } else {
-    if (!e.target.closest('.pm-card-hamburger')) {
-      var pmid = card.dataset.pmId
-      var type = card.dataset.pmType
-      openPhoneAppModalForCard(_workId, _nodeId, pmid, type, PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages, function() {
-        var card2 = document.querySelector('[data-pm-id="' + pmid + '"]')
-        if (card2) {
-          var label = card2.querySelector('.pm-card-label')
-          if (label) label.textContent = (PHONE_APP_DEFS[type] || PHONE_APP_DEFS.messages).label || '模块'
-        }
-      })
-    }
-  }
-
-  _pmDragState = null
 })
 
 // Auto-save content on input
