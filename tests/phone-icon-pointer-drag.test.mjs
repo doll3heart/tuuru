@@ -237,7 +237,11 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     assert.equal(dragged.style.getPropertyValue("--phone-grid-x"), "80px")
 
     await delay(10)
-    dragged.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }))
+    dragged.dispatchEvent(new dom.window.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      detail: 1,
+    }))
     assert.equal(document.getElementById("settingsPanel"), null)
 
     other.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }))
@@ -263,8 +267,33 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
 
     await delay(10)
-    icon.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }))
+    icon.dispatchEvent(new dom.window.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      detail: 1,
+    }))
     assert.equal(document.getElementById("settingsPanel"), null)
+    draft.dispose()
+  })
+
+  await t.test("a keyboard-style click bypasses a stale pointer suppression token", async () => {
+    const { draft, desktop } = await mount("pointer-keyboard-click")
+    const icon = desktop.querySelector('[data-app-type="settings"]')
+
+    dispatchGesture(icon, [
+      ["pointerdown", { pointerId: 10, clientX: 11, clientY: 46 }],
+      ["pointermove", { pointerId: 10, clientX: 91, clientY: 46 }],
+      ["pointerup", { pointerId: 10, clientX: 91, clientY: 46 }],
+    ])
+
+    await delay(10)
+    icon.dispatchEvent(new dom.window.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      detail: 0,
+    }))
+
+    assert.ok(document.getElementById("settingsPanel"))
     draft.dispose()
   })
 

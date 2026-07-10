@@ -31,6 +31,15 @@ function esc(s) {
   return d.innerHTML
 }
 
+function escAttr(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 function applyPhoneGridItemPosition(icon, desktopX, desktopY) {
   var offset = getPhoneGridItemOffset(desktopX, desktopY)
   icon.style.removeProperty('left')
@@ -410,15 +419,17 @@ export function renderPhoneEditor(wid) {
     var desktopY = Number(app.desktopY)
     if (!Number.isFinite(desktopX)) desktopX = 0
     if (!Number.isFinite(desktopY)) desktopY = 0
-    h += '<div class="phone-app-icon" data-app-id="' + app.id + '" data-app-type="' + app.type + '" data-desktop-x="' + desktopX + '" data-desktop-y="' + desktopY + '" onselectstart="return false"'
-    h += ' style="' + phoneGridItemStyle(desktopX, desktopY) + 'border:none!important;outline:none!important;box-shadow:none!important">'
-    h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || 'var(--c-surface2)') + ';">'
+    var appName = String(app.name ?? '').trim()
+    if (!appName) appName = String(PHONE_APP_DEFS[app.type]?.label || 'App')
+    h += '<button type="button" class="phone-app-icon" aria-label="' + escAttr(appName) + '" data-app-id="' + app.id + '" data-app-type="' + app.type + '" data-desktop-x="' + desktopX + '" data-desktop-y="' + desktopY + '" onselectstart="return false"'
+    h += ' style="' + phoneGridItemStyle(desktopX, desktopY) + 'border:none!important;box-shadow:none!important">'
+    h += '<span class="phone-icon-body icon-shadow" style="background:' + (app.color || 'var(--c-surface2)') + ';">'
     h += '<span class="phone-icon-char">' + (app.icon || '?') + '</span>'
-    h += '</div>'
+    h += '</span>'
     if (skin.showAppLabels !== false) {
-      h += '<span class="phone-icon-label">' + esc(app.name || 'App') + '</span>'
+      h += '<span class="phone-icon-label">' + esc(appName) + '</span>'
     }
-    h += '</div>'
+    h += '</button>'
   }
   h += '</div>'
 
@@ -492,10 +503,10 @@ function suppressNextPhoneIconClick(icon) {
   _suppressedClickIcon = icon
 }
 
-function consumeSuppressedPhoneIconClick(icon) {
+function consumeSuppressedPhoneIconClick(icon, event) {
   if (_suppressedClickIcon !== icon) return false
   clearSuppressedPhoneIconClick()
-  return true
+  return !event || event.detail !== 0
 }
 
 function releasePhoneIconPointer(state) {
@@ -565,7 +576,6 @@ function rememberPhoneIconDragHandler(el, type, listener) {
 function attachDrag(wid) {
   cancelPhoneIconDrag()
   removePhoneIconDragHandlers()
-  if (document.activeElement) document.activeElement.blur()
   var desktop = document.getElementById('phoneDesktop')
   if (!desktop) return
 
@@ -579,12 +589,10 @@ function attachDrag(wid) {
     icon.onmouseleave = function() {
       icon.classList.remove('hover-on')
     }
-    icon.onfocus = function() { icon.blur() }
 
     var onPointerDown = function(e) {
       if (_dragState || e.isPrimary === false || e.button !== 0) return
       clearSuppressedPhoneIconClick()
-      if (e.target && typeof e.target.blur === 'function') e.target.blur()
       startDrag(wid, icon, e)
     }
     var onPointerMove = function(e) {
@@ -750,13 +758,11 @@ function findEmptyCell(apps, excludeId, prefX, prefY) {
 document.addEventListener('click', function(e) {
   var icon = e.target.closest('.phone-app-icon')
   if (!icon) return
-  if (consumeSuppressedPhoneIconClick(icon)) { e.preventDefault(); return }
+  if (consumeSuppressedPhoneIconClick(icon, e)) { e.preventDefault(); return }
   clearSuppressedPhoneIconClick()
 
-    e.preventDefault()
-    // Clear any text selection & focus before opening panel
-    if (window.getSelection) window.getSelection().removeAllRanges()
-    if (document.activeElement) document.activeElement.blur()
+  e.preventDefault()
+  if (window.getSelection) window.getSelection().removeAllRanges()
 
   var type = icon.dataset.appType
   switch (type) {
