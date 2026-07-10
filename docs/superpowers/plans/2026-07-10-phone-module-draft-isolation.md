@@ -295,14 +295,14 @@ git commit -m "refactor(phone): make modal closure explicit"
 
 **Interfaces:**
 - Consumes: `createPhoneWorkDraft(initialWork)` from Task 1 and the modal callback options from Task 2.
-- Produces: `createPhoneModuleDraftData(work, moduleData)`, `pickPhoneModuleData(type, phoneData)`, and `hasPhoneModuleContent(type, data)`.
+- Produces: `createPhoneModuleDraftData(work, moduleData)`, `pickPhoneModuleData(type, phoneData)`, `hasPhoneModuleContent(type, data)`, and `createPhoneModuleCloseHandlers(options)`.
 
 - [ ] **Step 1: Write failing pure-data tests**
 
 ```js
 import test from "node:test"
 import assert from "node:assert/strict"
-import { createPhoneModuleDraftData, hasPhoneModuleContent, pickPhoneModuleData } from "../js/phone-module-draft.js"
+import { createPhoneModuleCloseHandlers, createPhoneModuleDraftData, hasPhoneModuleContent, pickPhoneModuleData } from "../js/phone-module-draft.js"
 
 test("building a module draft does not add phoneData to the article", () => {
   const article = { id: "article-1", type: "article" }
@@ -329,6 +329,24 @@ test("content detection matches each module primary collection", () => {
   assert.equal(hasPhoneModuleContent("messages", { chats: [{ id: "chat-1" }] }), true)
   assert.equal(hasPhoneModuleContent("gallery", { photos: [], albums: [{ id: "album-1" }] }), true)
 })
+
+test("a failed formal module commit keeps the draft available", () => {
+  let disposed = 0
+  const errors = []
+  const draft = {
+    snapshot: () => ({ phoneData: { chats: [{ id: "chat-1" }], contacts: [] } }),
+    dispose: () => { disposed += 1 },
+  }
+  const handlers = createPhoneModuleCloseHandlers({
+    type: "messages",
+    draft,
+    commit: () => null,
+    onError: error => errors.push(error),
+  })
+  assert.equal(handlers.beforeClose(), false)
+  assert.equal(disposed, 0)
+  assert.equal(errors.length, 1)
+})
 ```
 
 - [ ] **Step 2: Run the test and verify RED**
@@ -341,9 +359,11 @@ Expected: FAIL with `ERR_MODULE_NOT_FOUND`.
 
 Use a fixed collection registry matching the current persisted module payloads. `createPhoneModuleDraftData` clones `moduleData`, copies shared contacts only when absent, and initializes every phone collection plus `skin` and `apps`. `pickPhoneModuleData` returns cloned values so a post-close callback cannot mutate the disposed draft. `hasPhoneModuleContent` checks the same primary collections as the current editor.
 
+`createPhoneModuleCloseHandlers` returns `{ beforeClose, afterClose }`. `beforeClose` snapshots and projects the virtual draft, calls an injected formal module `commit`, and disposes only after a successful commit or an intentionally empty close. A thrown or null commit calls `onError` and returns `false` without disposing. `afterClose` sends a successful module to `onSaved` or an empty result to `onEmpty`.
+
 - [ ] **Step 4: Replace formal temporary writes in `editor.js`**
 
-Import `createPhoneWorkDraft` and the three helpers. In `openPhoneAppModalForCard`:
+Import `createPhoneWorkDraft`, `createPhoneModuleDraftData`, and `createPhoneModuleCloseHandlers`. In `openPhoneAppModalForCard`:
 
 1. Build draft data without mutating `w`.
 2. Create a virtual work draft from `{ ...w, phoneData: tempPd }`.

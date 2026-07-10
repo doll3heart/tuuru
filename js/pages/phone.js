@@ -77,7 +77,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
     remove: function() { ov.remove() },
     afterClose: options.afterClose
   })
-  closeBtn.onclick = function() { close('button') }
+  closeBtn.addEventListener('click', function() { close('button') })
   ov.addEventListener('click', function(e) { if (e.target === ov) close('backdrop') })
 
   document.body.appendChild(ov)

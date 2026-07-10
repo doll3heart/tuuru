@@ -2,6 +2,8 @@
 import { getWork, updateWork, addNode, updateNode, deleteNode, addChoice, updateChoice, deleteChoice, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, addPhoneModule, updatePhoneModule, deletePhoneModule, getPhoneModulesByNode, getPhoneModule } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast, renderHeader, modal } from "../app.js"
+import { createPhoneWorkDraft } from "../phone-work-access.js"
+import { createPhoneModuleCloseHandlers, createPhoneModuleDraftData } from "../phone-module-draft.js"
 import { openPhoneAppModal } from "./phone.js"
 
 // State
@@ -1261,106 +1263,47 @@ function openPhoneAppModalForCard(wid, nid, pmid, type, def, onClose) {
   var w = getWork(wid)
   if (!w) return
 
-  // Build a temporary phoneData for this modal session
-  var tempPd = {}
-  if (pmid) {
-    var existingPm = getPhoneModule(wid, pmid)
-    if (existingPm) tempPd = JSON.parse(JSON.stringify(existingPm.data || {}))
-  }
-  // Fill defaults for all data arrays so editors work correctly
-  // Preserve existing contacts from localStorage so they're shared across all modules
-  if (!tempPd.contacts) {
-    var latestW = getWork(wid)
-    tempPd.contacts = (latestW && latestW.phoneData && latestW.phoneData.contacts)
-      ? JSON.parse(JSON.stringify(latestW.phoneData.contacts))
-      : []
-  }
-  if (!tempPd.chats) tempPd.chats = []
-  if (!tempPd.moments) tempPd.moments = []
-  if (!tempPd.forumPosts) tempPd.forumPosts = []
-  if (!tempPd.forumNpcs) tempPd.forumNpcs = []
-  if (!tempPd.memos) tempPd.memos = []
-  if (!tempPd.photos) tempPd.photos = []
-  if (!tempPd.albums) tempPd.albums = []
-  if (!tempPd.browserHistory) tempPd.browserHistory = []
-  if (!tempPd.shoppingItems) tempPd.shoppingItems = []
-  if (!tempPd.skin) tempPd.skin = JSON.parse(JSON.stringify({}))
-  if (!tempPd.apps) tempPd.apps = []
+  var existingPm = pmid ? getPhoneModule(wid, pmid) : null
+  var tempPd = createPhoneModuleDraftData(w, existingPm ? existingPm.data : null)
+  var draft = createPhoneWorkDraft(Object.assign({}, w, { phoneData: tempPd }))
 
-  // Save original phoneData so we can restore it later
-  var originalPd = w.phoneData ? JSON.parse(JSON.stringify(w.phoneData)) : null
-
-  // KEY FIX: persist tempPd to localStorage BEFORE opening the modal.
-  // openPhoneAppModal calls getWork(wid) which does JSON.parse and gets a
-  // fresh object — without this step it would see w.phoneData = undefined.
-  updateWork(wid, { phoneData: tempPd })
-
-  openPhoneAppModal(wid, type)
-
-  // Watch for modal removal to read the edited data back
-  setTimeout(function() {
-    var modal = document.querySelector('.phone-app-modal-overlay')
-    if (!modal) {
-      if (originalPd !== null) updateWork(wid, { phoneData: originalPd })
-      return
+  var handlers = createPhoneModuleCloseHandlers({
+    type: type,
+    draft: draft,
+    commit: function(pmData) {
+      if (pmid) {
+        var updatedPm = updatePhoneModule(wid, pmid, { data: pmData })
+        if (updatedPm) showToast(def.label + ' 已保存')
+        return updatedPm
+      }
+      return addPhoneModule(wid, { type: type, nodeId: nid, data: pmData })
+    },
+    onSaved: function(savedPm) {
+      if (onClose) onClose(savedPm)
+    },
+    onEmpty: function() {
+      if (!pmid) showToast('未添加内容，卡片未创建', 'info')
+    },
+    onError: function(error) {
+      console.error('Failed to save phone module', error)
+      showToast('保存失败，请重试', 'error')
     }
+  })
 
-    var observer = new MutationObserver(function(mutations) {
-      mutations.forEach(function(mutation) {
-        if (!mutation.removedNodes) return
-        for (var r = 0; r < mutation.removedNodes.length; r++) {
-          var removed = mutation.removedNodes[r]
-          if (removed === modal || (removed.contains && removed.contains(modal))) {
-            observer.disconnect()
-
-            // Read the edited data from localStorage (picks up changes made inside the modal)
-            var editedW = getWork(wid)
-            var editedPd = editedW ? editedW.phoneData : tempPd
-            var pmData = {}
-            if (type === 'messages') { pmData.chats = editedPd.chats || []; pmData.contacts = editedPd.contacts || [] }
-            else if (type === 'forum') { pmData.forumPosts = editedPd.forumPosts || [] }
-            else if (type === 'memo') { pmData.memos = editedPd.memos || [] }
-            else if (type === 'gallery') { pmData.photos = editedPd.photos || []; pmData.albums = editedPd.albums || [] }
-            else if (type === 'browser') { pmData.browserHistory = editedPd.browserHistory || [] }
-            else if (type === 'shopping') { pmData.shoppingItems = editedPd.shoppingItems || [] }
-            else if (type === 'contacts') { pmData.contacts = editedPd.contacts || [] }
-
-            // Restore original phoneData
-            if (originalPd !== null) updateWork(wid, { phoneData: originalPd })
-
-            // Check if user actually added any content
-            var hasContent = false
-            if (type === 'messages') hasContent = (pmData.chats || []).length > 0
-            else if (type === 'forum') hasContent = (pmData.forumPosts || []).length > 0
-            else if (type === 'memo') hasContent = (pmData.memos || []).length > 0
-            else if (type === 'gallery') hasContent = (pmData.photos || []).length > 0 || (pmData.albums || []).length > 0
-            else if (type === 'browser') hasContent = (pmData.browserHistory || []).length > 0
-            else if (type === 'shopping') hasContent = (pmData.shoppingItems || []).length > 0
-            else if (type === 'contacts') hasContent = (pmData.contacts || []).length > 0
-
-            if (!hasContent) {
-              // Nothing was added; silently skip — don't create an empty card
-              if (!pmid) showToast('未添加内容，卡片未创建', 'info')
-              return
-            }
-
-            if (pmid) {
-              // Editing existing module
-              updatePhoneModule(wid, pmid, { data: pmData })
-              showToast(def.label + ' 已保存')
-              if (onClose) onClose(getPhoneModule(wid, pmid))
-            } else {
-              // Creating new module
-              var newPm = addPhoneModule(wid, { type: type, nodeId: nid, data: pmData })
-              if (newPm && onClose) onClose(newPm)
-            }
-            return
-          }
-        }
-      })
+  try {
+    var overlay = openPhoneAppModal(draft.id, type, {
+      beforeClose: handlers.beforeClose,
+      afterClose: handlers.afterClose
     })
-    if (modal.parentNode) observer.observe(modal.parentNode, { childList: true })
-  }, 200)
+    if (!overlay) {
+      draft.dispose()
+      showToast('手机模块编辑器打开失败', 'error')
+    }
+  } catch (error) {
+    draft.dispose()
+    console.error('Failed to open phone module editor', error)
+    showToast('手机模块编辑器打开失败', 'error')
+  }
 }
 
 function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
