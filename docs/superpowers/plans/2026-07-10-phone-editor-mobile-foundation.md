@@ -189,6 +189,51 @@ git commit -m "fix(phone): restore app icon keyboard access"
 - [ ] Reassess the next phase: an explicit non-drag App move control, App-specific long-press alternatives, or the article editor mobile shell. Update the plan before editing any of them.
 - [ ] Record the nested global modal keyboard/viewport hardening and per-App coarse-pointer target audit as later atomic work, not hidden scope in this foundation.
 
+## Execution handoff (2026-07-11)
+
+The automated foundation is complete on `codex/phone-runtime-overhaul`. The task checklists above are retained as the original implementation instructions; this section is the live completion record. Real-device verification remains intentionally open because JSDOM and source-contract tests cannot prove operating-system keyboard, touch-capture, safe-area, or assistive-technology behavior.
+
+### Atomic implementation record
+
+| Scope | Commit |
+| --- | --- |
+| Flush focused App edits before close | `740732a` |
+| Route embedded App Back through one lifecycle | `2965598` |
+| Bound App modals to the Visual Viewport | `e1eba3b` |
+| Add dialog semantics and topmost Escape handling | `c6266a9` |
+| Share reader/editor grid geometry | `d916a2a` |
+| Fit the bordered editor grid on narrow screens | `078d994` |
+| Migrate App arrangement to Pointer Events | `a407799` |
+| Restore editor App icon keyboard access | `0877c34` |
+| Correct reader App controls, Back focus, and nested SVG focusability | `3e18ea0` |
+
+Cross-commit specification, code-quality, test, and accessibility reviews report zero Critical and zero Important findings after corrections. The latest clean-tree gate passes 127/127 Node tests, TypeScript project validation, and both editor and reader Vite production builds written to `%TEMP%`.
+
+### Real-device matrix still required
+
+| Viewport | Primary checks |
+| --- | --- |
+| 320x568 portrait | Four-column edge fit, 44px controls, one App-panel scroller, no horizontal clipping |
+| 360x640 portrait | Legacy framed geometry, focused-field close, touch tap/drag separation |
+| 390x844 portrait | Software keyboard reachability, long App content, text scaling, screen-reader order |
+| 844x390 landscape | Coarse-pointer media query, rotation recovery, safe-area/cutout spacing, drag cancellation |
+
+On iOS Safari and Android Chrome, also verify Visual Viewport changes while the keyboard opens, inertial scrolling and overscroll containment, Pointer Capture/cancel/lost-capture behavior, synthetic-click suppression, IME composition, 200% text, VoiceOver, and TalkBack. Rotate once during an active gesture and confirm that cancellation never persists a partial move.
+
+### Deferred follow-up, kept outside this phase
+
+- Build a shared stack-aware modal boundary before adding `aria-modal`, background `inert`, or a focus trap to phone and generic nested modals.
+- Extend the Visual Viewport bridge to width and `offsetLeft` if horizontal zoom/pan support becomes a product requirement.
+- Decide whether unsupported Pointer Capture needs a document-listener fallback; the current target-browser assumption is that capture exists, the implementation fails closed when it does not, and the real-device matrix must verify that assumption.
+- Separate successful commit/removal from exceptional `afterClose` cleanup in the modal lifecycle if external finalizers are introduced.
+- Audit App-specific coarse-pointer targets, long-press alternatives, and a non-drag cell/directional move control.
+- Recompute or cancel an active drag on resize/orientation change instead of relying on its opening geometry.
+- Add update state to reader App accessible names and consider sorting Tab order by visual desktop coordinates.
+
+### Next phase
+
+The next highest-impact mobile problem is the article editor shell. On narrow screens its tree and editor are stacked inside a clipped body region, so the navigation pane can consume the usable height and make article content difficult or impossible to reach. That shell should receive its own design and implementation plan before code changes. It must preserve explicit single-scroll ownership, existing desktop split-pane and scroll behavior, editor state, and the local-only architecture; phone App feature expansion remains lower priority until the authoring shell is dependable.
+
 ## Validation commands
 
 ```powershell
