@@ -2,9 +2,16 @@ const DATABASE_KEY = "tuuru_works"
 
 export const LOCAL_DATABASE_BACKUP_FORMAT = "tuuru-local-library-backup"
 export const LOCAL_DATABASE_BACKUP_VERSION = 1
+export const MAX_LOCAL_DATABASE_BACKUP_BYTES = 25 * 1024 * 1024
+
+const SUPPORTED_LOCAL_DATABASE_BACKUP_VERSIONS = new Set([1])
 
 function createEmptyDatabase() {
   return { works: [], contacts: [], groups: [] }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
 function describeError(error, fallback) {
@@ -119,6 +126,108 @@ export function serializeLocalDatabaseBackup(storage = localStorage, exportedAt 
       error,
     )
   }
+}
+
+function backupValidationError(message, code) {
+  return new LocalDatabaseError(message, code)
+}
+
+export function parseLocalDatabaseBackup(raw) {
+  if (typeof raw !== "string") {
+    throw backupValidationError("备份内容必须是 JSON 文本。", "invalid-backup-input")
+  }
+
+  let backup
+  try {
+    backup = JSON.parse(raw.replace(/^\uFEFF/, ""))
+  } catch (error) {
+    throw new LocalDatabaseError("备份文件不是有效的 JSON。", "invalid-backup-json", error)
+  }
+
+  if (!isRecord(backup)) {
+    throw backupValidationError("备份文件缺少有效的顶层对象。", "invalid-backup-structure")
+  }
+
+  if (!Object.hasOwn(backup, "format") || backup.format !== LOCAL_DATABASE_BACKUP_FORMAT) {
+    throw backupValidationError("该文件不是 Tuuru 完整创作库备份。", "invalid-backup-format")
+  }
+
+  if (!Object.hasOwn(backup, "backupVersion")
+    || !Number.isSafeInteger(backup.backupVersion)
+    || backup.backupVersion < 1) {
+    throw backupValidationError("备份文件缺少有效的格式版本。", "invalid-backup-version")
+  }
+  if (backup.backupVersion > LOCAL_DATABASE_BACKUP_VERSION) {
+    throw backupValidationError("该备份由更新版本的 Tuuru 创建，请升级后再检查。", "backup-version-newer")
+  }
+  if (!SUPPORTED_LOCAL_DATABASE_BACKUP_VERSIONS.has(backup.backupVersion)) {
+    throw backupValidationError("当前版本不支持该备份格式。", "backup-version-unsupported")
+  }
+
+  const exportedAt = Object.hasOwn(backup, "exportedAt") && typeof backup.exportedAt === "string"
+    ? new Date(backup.exportedAt)
+    : null
+  if (!exportedAt || Number.isNaN(exportedAt.getTime()) || exportedAt.toISOString() !== backup.exportedAt) {
+    throw backupValidationError("备份文件包含无效的导出时间。", "invalid-backup-date")
+  }
+
+  const database = Object.hasOwn(backup, "database") ? backup.database : null
+  const validCollections = isRecord(database)
+    && ["works", "contacts", "groups"].every(key => {
+      return Object.hasOwn(database, key) && Array.isArray(database[key])
+    })
+  const validEntries = validCollections
+    && ["works", "contacts", "groups"].every(key => database[key].every(isRecord))
+  if (!validEntries) {
+    throw backupValidationError("备份文件中的创作库结构无效。", "invalid-backup-database")
+  }
+
+  const articleCount = database.works.filter(work => isRecord(work) && work.type === "article").length
+  const phoneCount = database.works.filter(work => isRecord(work) && work.type === "phone").length
+
+  return {
+    format: backup.format,
+    backupVersion: backup.backupVersion,
+    exportedAt: backup.exportedAt,
+    database,
+    summary: {
+      workCount: database.works.length,
+      articleCount,
+      phoneCount,
+      otherCount: database.works.length - articleCount - phoneCount,
+      contactCount: database.contacts.length,
+      groupCount: database.groups.length,
+    },
+  }
+}
+
+export async function readLocalDatabaseBackupFile(file) {
+  const validFile = file !== null
+    && typeof file === "object"
+    && Number.isSafeInteger(file.size)
+    && file.size >= 0
+    && typeof file.text === "function"
+  if (!validFile) {
+    throw backupValidationError("请选择有效的 JSON 备份文件。", "invalid-backup-file")
+  }
+  if (file.size === 0) {
+    throw backupValidationError("备份文件为空。", "empty-backup-file")
+  }
+  if (file.size > MAX_LOCAL_DATABASE_BACKUP_BYTES) {
+    throw backupValidationError("备份文件超过 25 MB 安全读取上限。", "backup-file-too-large")
+  }
+
+  let raw
+  try {
+    raw = await file.text()
+  } catch (error) {
+    throw new LocalDatabaseError(
+      "无法读取备份文件；文件可能已被移动或浏览器权限已失效。",
+      "backup-file-unreadable",
+      error,
+    )
+  }
+  return parseLocalDatabaseBackup(raw)
 }
 
 export function discardCorruptLocalDatabase(storage = localStorage) {

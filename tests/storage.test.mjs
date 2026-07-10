@@ -5,6 +5,8 @@ import {
   LocalDatabaseError,
   discardCorruptLocalDatabase,
   inspectLocalDatabase,
+  parseLocalDatabaseBackup,
+  readLocalDatabaseBackupFile,
   readLocalDatabase,
   serializeLocalDatabaseBackup,
   writeLocalDatabase,
@@ -155,6 +157,158 @@ test("a full library backup refuses corrupt or unavailable storage", () => {
   )
   assert.equal(corruptStorage.calls.set, 0)
   assert.equal(unavailableStorage.calls.set, 0)
+})
+
+test("a full library backup can be parsed into a read-only summary", () => {
+  const database = {
+    works: [
+      { id: "article-1", type: "article" },
+      { id: "phone-1", type: "phone" },
+      { id: "legacy-1" },
+    ],
+    contacts: [{ id: "contact-1" }],
+    groups: [{ id: "group-1" }, { id: "group-2" }],
+    futureField: true,
+  }
+  const raw = serializeLocalDatabaseBackup(
+    createStorage(JSON.stringify(database)),
+    new Date("2026-07-10T05:30:00.000Z"),
+  )
+
+  const parsed = parseLocalDatabaseBackup("\uFEFF" + raw)
+
+  assert.equal(parsed.exportedAt, "2026-07-10T05:30:00.000Z")
+  assert.deepEqual(parsed.database, database)
+  assert.deepEqual(parsed.summary, {
+    workCount: 3,
+    articleCount: 1,
+    phoneCount: 1,
+    otherCount: 1,
+    contactCount: 1,
+    groupCount: 2,
+  })
+})
+
+test("backup parsing rejects invalid input and malformed JSON", () => {
+  assert.throws(
+    () => parseLocalDatabaseBackup(null),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-input",
+  )
+  assert.throws(
+    () => parseLocalDatabaseBackup("{not-json"),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-json",
+  )
+  for (const value of ["null", "[]", '"backup"']) {
+    assert.throws(
+      () => parseLocalDatabaseBackup(value),
+      error => error instanceof LocalDatabaseError && error.code === "invalid-backup-structure",
+    )
+  }
+})
+
+test("backup parsing distinguishes unrelated and newer backup formats", () => {
+  const base = {
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-10T05:30:00.000Z",
+    database: { works: [], contacts: [], groups: [] },
+  }
+
+  assert.throws(
+    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, format: "other-format" })),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-format",
+  )
+  assert.throws(
+    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, backupVersion: 2 })),
+    error => error instanceof LocalDatabaseError && error.code === "backup-version-newer",
+  )
+  for (const backupVersion of [undefined, "1", 1.5, 0, -1, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => parseLocalDatabaseBackup(JSON.stringify({ ...base, backupVersion })),
+      error => error instanceof LocalDatabaseError && error.code === "invalid-backup-version",
+    )
+  }
+})
+
+test("backup parsing rejects invalid dates and database collections", () => {
+  const base = {
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-10T05:30:00.000Z",
+    database: { works: [], contacts: [], groups: [] },
+  }
+
+  assert.throws(
+    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, exportedAt: "yesterday" })),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-date",
+  )
+  assert.throws(
+    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, exportedAt: "2026-07-10T05:30:00+00:00" })),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-date",
+  )
+  assert.throws(
+    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, database: { works: [], contacts: {} } })),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-database",
+  )
+
+  for (const database of [
+    { works: [null], contacts: [], groups: [] },
+    { works: [], contacts: [null], groups: [] },
+    { works: [], contacts: [], groups: ["bad"] },
+  ]) {
+    assert.throws(
+      () => parseLocalDatabaseBackup(JSON.stringify({ ...base, database })),
+      error => error instanceof LocalDatabaseError && error.code === "invalid-backup-database",
+    )
+  }
+})
+
+test("backup file reading accepts valid content without relying on MIME type", async () => {
+  const raw = JSON.stringify({
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-10T05:30:00.000Z",
+    database: { works: [], contacts: [], groups: [] },
+  })
+  const file = {
+    name: "backup.json",
+    size: raw.length,
+    type: "",
+    async text() { return raw },
+  }
+
+  const parsed = await readLocalDatabaseBackupFile(file)
+
+  assert.equal(parsed.summary.workCount, 0)
+})
+
+test("empty and oversized backup files are rejected before reading", async () => {
+  let readCount = 0
+  const text = async () => { readCount += 1; return "{}" }
+
+  await assert.rejects(
+    readLocalDatabaseBackupFile({ size: 0, text }),
+    error => error instanceof LocalDatabaseError && error.code === "empty-backup-file",
+  )
+  await assert.rejects(
+    readLocalDatabaseBackupFile({ size: 25 * 1024 * 1024 + 1, text }),
+    error => error instanceof LocalDatabaseError && error.code === "backup-file-too-large",
+  )
+  assert.equal(readCount, 0)
+})
+
+test("backup file read failures use a stable local error", async () => {
+  const cause = new Error("permission revoked")
+
+  await assert.rejects(
+    readLocalDatabaseBackupFile({
+      size: 10,
+      async text() { throw cause },
+    }),
+    error => error instanceof LocalDatabaseError
+      && error.code === "backup-file-unreadable"
+      && error.cause === cause,
+  )
 })
 
 test("unavailable storage blocks reads, writes, and destructive reset", () => {
