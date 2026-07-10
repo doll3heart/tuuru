@@ -2,6 +2,7 @@ import { validateWorkForImport } from '../js/work-schema.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
+import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -738,10 +739,13 @@ function renderArticleReader() {
     var def = PH_APP_DEFS[pt.type] || PH_APP_DEFS.messages
     var hasUnread = !visitedPm[pt.pmid]
     triggerIndex++
-    return '<div class="rd-pm-trigger" data-pm-id="' + pt.pmid + '" data-pm-type="' + pt.type + '" style="cursor:pointer">' +
-      '<span class="rd-pm-dot' + (hasUnread ? ' has-unread' : '') + '"></span>' +
-      '<span class="rd-pm-trigger-icon">' + (def.icon || '?') + '</span>' +
-      '<span class="rd-pm-trigger-label">查看' + (def.label || '模块') + '</span></div>'
+    return buildReaderPhoneModuleTrigger({
+      pmid: pt.pmid,
+      type: pt.type,
+      label: def.label,
+      trustedIconHtml: def.icon,
+      hasUnread: hasUnread
+    })
   })
 
   h += '<h1 class="article-title">' + esc(node.title || '') + '</h1>'
@@ -820,8 +824,7 @@ function renderArticleReader() {
       var type = trig.dataset.pmType
       visitedPm[pmid] = true
       try { sessionStorage.setItem('rd_pm_visited_' + _work.id, JSON.stringify(visitedPm)) } catch(e) {}
-      var dot = trig.querySelector('.rd-pm-dot')
-      if (dot) dot.classList.remove('has-unread')
+      markReaderPhoneModuleTriggerRead(trig)
 
       var pm = null
       var pms = _work.phoneModules || []

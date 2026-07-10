@@ -622,21 +622,32 @@ body.rd-theme-gray .article-meta { color: #333; }
 
 /* ====== Phone Module Notification Triggers (Reader) ====== */
 .rd-pm-trigger {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
   padding: 10px 14px;
   margin: 8px 0;
   background: var(--c-surface);
   border: 2px double var(--c-border);
   border-radius: 8px;
   cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   transition: border-color .15s, box-shadow .15s;
   position: relative;
 }
 .rd-pm-trigger:hover {
   border-color: var(--c-primary);
   box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.rd-pm-trigger:focus-visible {
+  outline: 2px solid var(--c-text);
+  outline-offset: 2px;
 }
 .rd-pm-dot {
   width: 10px;
