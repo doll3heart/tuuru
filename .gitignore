@@ -1,6 +1,7 @@
 node_modules/
 .vite/
 dist/
+*.tsbuildinfo
 *.pyc
 .DS_Store
 temp_git/
