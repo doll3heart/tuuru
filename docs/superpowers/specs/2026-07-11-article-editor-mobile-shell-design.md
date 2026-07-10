@@ -78,7 +78,7 @@ Desktop hover actions remain available. Coarse-pointer mode receives one 44px ov
 
 ## Inline phone-module arrangement
 
-Article phone-module cards still use document-global mouse listeners. A later atomic task migrates only that arranger to a cancel-safe Pointer Events state machine, preserving click-to-open and menu behavior. Its explicit lifecycle is `idle -> pending -> dragging -> committed|cancelled -> idle`. A successful pointer-up marks the gesture committed before releasing capture, so the resulting `lostpointercapture` is a no-op; an unexpected capture loss while pending or dragging cancels and restores without writing. When Pointer Capture is unavailable, temporary document-level Pointer Event listeners scoped to the active pointer provide the fallback and are removed on every terminal path. This migration follows the shell work so gesture debugging is not mixed with layout ownership.
+Article phone-module cards now use a cancel-safe Pointer Events controller while preserving click-to-open and menu behavior. Its explicit lifecycle is `idle -> pending -> dragging -> committed|cancelled -> idle`. The original card remains in the editable DOM as the Pointer Capture target while a separate inert preview follows the pointer. A successful pointer-up marks the gesture committed before releasing capture, so the resulting `lostpointercapture` is a no-op; an unexpected capture loss while pending or dragging cancels and restores without writing. When Pointer Capture is unavailable or unconfirmed, temporary document-level Pointer Event listeners scoped to the active pointer provide the fallback and are removed on every terminal path.
 
 ## Compatibility boundaries
 

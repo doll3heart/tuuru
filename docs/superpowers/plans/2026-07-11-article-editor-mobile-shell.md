@@ -189,3 +189,45 @@ $tsc=(Resolve-Path '.\node_modules\typescript\bin\tsc').Path
 ```
 
 Editor and reader builds use programmatic `vite.build` with `configFile:false` and write to `%TEMP%`, matching the repository's established validation workflow.
+
+## Implementation checkpoint (2026-07-11)
+
+Tasks 1-7 of the automated article-editor mobile shell are implemented on `codex/phone-runtime-overhaul`; Task 8 review and handoff remain open. The task checklists above remain as the original implementation instructions, while this section records the verified implementation checkpoint. The implementation stays frontend-only and local-only: it adds no upload path, server, remote database, community feature, telemetry, or network persistence. It also leaves work schemas, storage keys, import/export formats, and reader payloads unchanged.
+
+### Atomic implementation record
+
+| Scope | Commit |
+| --- | --- |
+| Separate bounded-mobile editing and outline panes | `a6f2ad4` |
+| Track the usable application viewport | `386be54` |
+| Make article action rails touchable | `4cbf643` |
+| Make outline destinations native and accessible | `3e86c76` |
+| Make chapter disclosure native and accessible | `8c68617` |
+| Expose outline actions without hover | `bd95782` |
+| Extract the inline-module drag lifecycle | `e6900c6` |
+| Migrate inline-module arrangement to Pointer Events | `a4ed4cc` |
+
+The inline-module migration was deliberately split into a pure lifecycle commit and a DOM integration commit so cancellation and transition rules remain independently reviewable. The latest clean-tree gate passes 170/170 Node tests, TypeScript project validation, and both editor and reader Vite production builds written to `%TEMP%`.
+
+Final review is still active. It has identified an existing-module empty-state persistence bug and broader reader/global accessibility dependencies that are not proven by the 170 automated tests. This checkpoint must not be read as final mobile verification or as Task 8 completion.
+
+### Real-device matrix still required
+
+Automated DOM and source-contract tests cannot prove operating-system keyboard, browser caret, safe-area, Pointer Capture, synthetic-click, or assistive-technology behavior. The following checks therefore remain open:
+
+| Viewport | Primary checks |
+| --- | --- |
+| 320x568 portrait | One visible pane, reachable 44px controls, bounded margin panel, no horizontal clipping |
+| 360x640 portrait | Pane and outline scroll retention, tap-versus-drag separation, focused-field keyboard reachability |
+| 390x844 portrait | Long article and outline scrolling, 200% text, screen-reader order, modal focus return |
+| 844x390 coarse-pointer landscape | Low-height media query, horizontal rails, rotation cancellation, no partial reorder write |
+
+On current iOS Safari and Android Chrome, also verify software-keyboard opening and dismissal, IME composition, caret retention when switching the in-place panes, inertial rail scrolling, Pointer Capture/cancel/lost-capture behavior, one-shot synthetic-click suppression, VoiceOver, and TalkBack. Rotate once during an active inline-module gesture and confirm that the original order is restored without a local-storage write.
+
+### Deferred follow-up, kept outside this phase
+
+- Profile a genuinely large local article before changing input persistence. Do not add a debounce until blur, pane change, navigation, export, and unload all have proven synchronous flush guarantees.
+- Add an explicit keyboard-accessible, non-drag way to rearrange inline phone modules if author testing shows ordering is a frequent task.
+- Normalize legacy persisted module-card markup before claiming every pre-existing hamburger control has the new `type` and accessible label.
+- Revisit article-shell safe-area consumption only together with the shared application header and root viewport policy; do not enable `viewport-fit=cover` for this page in isolation.
+- Complete the real-device matrix before calling software-keyboard, caret-retention, or mobile assistive-technology behavior verified.
