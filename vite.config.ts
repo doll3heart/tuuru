@@ -3,6 +3,7 @@ import path from 'path'
 
 export default defineConfig({
   base: './',
+  cacheDir: path.resolve(__dirname, '.vite/editor'),
   server: {
     port: 8765,
   },

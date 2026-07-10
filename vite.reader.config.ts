@@ -4,6 +4,7 @@ import path from 'path'
 export default defineConfig({
   root: path.resolve(__dirname, 'reader'),
   base: './',
+  cacheDir: path.resolve(__dirname, '.vite/reader'),
   server: {
     port: 5678,
   },
