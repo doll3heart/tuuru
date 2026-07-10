@@ -1,4 +1,4 @@
-﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
+﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, updateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast } from "../app.js"
 
@@ -194,16 +194,15 @@ window.editWorkInfo = function(id){
   document.body.appendChild(ov)
   ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
   ov.querySelector('#wiSaveBtn').onclick = function(){
-    var db = JSON.parse(localStorage.getItem('tuuru_works'))
-    var idx = db.works.findIndex(function(x){ return x.id === id })
-    if (idx < 0) { ov.remove(); return }
-    db.works[idx].title = (document.getElementById('wiTitle')?.value || '').trim() || w.title
-    db.works[idx].author = (document.getElementById('wiAuthor')?.value || '').trim()
-    db.works[idx].authorNote = (document.getElementById('wiNote')?.value || '').trim()
-    db.works[idx].password = (document.getElementById('wiPwd')?.value || '').trim()
-    db.works[idx].locked = !!(db.works[idx].password)
-    db.works[idx].updatedAt = Date.now()
-    localStorage.setItem('tuuru_works', JSON.stringify(db))
+    var password = (document.getElementById('wiPwd')?.value || '').trim()
+    var updated = updateWork(id, {
+      title: (document.getElementById('wiTitle')?.value || '').trim() || w.title,
+      author: (document.getElementById('wiAuthor')?.value || '').trim(),
+      authorNote: (document.getElementById('wiNote')?.value || '').trim(),
+      password: password,
+      locked: !!password
+    })
+    if (!updated) { ov.remove(); return }
     showToast('作品信息已更新')
     ov.remove()
     var list = document.getElementById('workList')

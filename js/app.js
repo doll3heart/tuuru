@@ -1,5 +1,6 @@
 import { navigate, initRouter, router } from "./router.js"
 import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork } from "./data.js"
+import { discardCorruptLocalDatabase, inspectLocalDatabase } from "./storage.js"
 
 // ==================== Render helpers ====================
 export function h(tag, attrs={}, ...children){
@@ -98,7 +99,10 @@ function generateVars(p) {
 }
 
 // ---- Apply a preset by key ----
-function getTheme() { return localStorage.getItem('tuuru_theme') || 'sky' }
+function getTheme() {
+  try { return localStorage.getItem('tuuru_theme') || 'sky' }
+  catch { return 'sky' }
+}
 function applyTheme(key) {
   var p = THEME_PRESETS.find(function(x){return x.id===key})
   var vars = p ? generateVars(p) : null
@@ -172,8 +176,86 @@ import { renderReader } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 
 // ==================== Init ====================
+function downloadRecoveryData(raw) {
+  const blob = new Blob([raw], { type: "text/plain;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = `tuuru-recovery-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function renderStorageRecovery(container, status) {
+  empty(container)
+
+  const title = h("h1", {}, "本地作品数据需要恢复")
+  const summary = h(
+    "p",
+    { className: "text-muted" },
+    "Tuuru 检测到本地作品数据无法安全读取。为防止覆盖原始内容，编辑和保存功能已暂停。",
+  )
+  const detail = h("pre", {
+    style: {
+      whiteSpace: "pre-wrap",
+      overflowWrap: "anywhere",
+      padding: "12px",
+      borderRadius: "8px",
+      background: "var(--c-surface2)",
+      color: "var(--c-text2)",
+      fontSize: ".8rem",
+    },
+  }, status.message)
+  const actions = h("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "16px" } })
+
+  if (status.raw !== null) {
+    actions.append(h("button", {
+      className: "btn btn-primary",
+      onClick: () => downloadRecoveryData(status.raw),
+    }, "下载原始数据"))
+  }
+
+  actions.append(h("button", {
+    className: "btn btn-ghost",
+    onClick: () => location.reload(),
+  }, "重新检测"))
+
+  if (status.raw !== null && (status.code === "invalid-json" || status.code === "invalid-structure")) {
+    actions.append(h("button", {
+      className: "btn btn-danger",
+      onClick: () => {
+        const answer = prompt("重置会永久删除当前损坏的数据。请先下载原始数据，然后输入 RESET 继续：")
+        if (answer !== "RESET") return
+
+        try {
+          discardCorruptLocalDatabase()
+          location.reload()
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "重置失败", "error")
+        }
+      },
+    }, "重置本地数据库"))
+  }
+
+  const card = h("section", { className: "card", style: { padding: "24px", marginTop: "24px" } },
+    title,
+    summary,
+    detail,
+    h("p", { className: "text-muted", style: { marginTop: "12px", fontSize: ".8rem" } },
+      "所有恢复操作都在当前浏览器内完成，数据不会上传。",
+    ),
+    actions,
+  )
+  container.append(h("main", { className: "app-main narrow" }, card))
+}
+
 export function init(){
   const app = document.getElementById("app")
+  const storageStatus = inspectLocalDatabase()
+  if (!storageStatus.ok) {
+    renderStorageRecovery(app, storageStatus)
+    return
+  }
   
   router("/", (container) => {
     app.innerHTML = renderHeader() + '<main class="app-main">'+renderHome()+'</main>'

@@ -1,4 +1,5 @@
 // Tuuru Works - Data Layer
+import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -121,9 +122,8 @@ export function randomUserXXName(){ return "用户"+Math.floor(10000+Math.random
 export function randomAvatar(pool){ return pool[Math.floor(Math.random()*pool.length)] }
 export function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8)}
 export function avatarColor(id){if(!id)return"#6366f1";let h=0;for(let i=0;i<id.length;i++)h=((h<<5)-h)+id.charCodeAt(i);return AC[Math.abs(h)%AC.length]}
-const SK="tuuru_works"
-function rd(){try{return JSON.parse(localStorage.getItem(SK))||{works:[],contacts:[],groups:[]}}catch{return{works:[],contacts:[],groups:[]}}}
-function wr(d){localStorage.setItem(SK,JSON.stringify(d))}
+function rd(){return readLocalDatabase()}
+function wr(d){writeLocalDatabase(d)}
 export function getWorks(){return rd().works}
 export function getWork(id){return rd().works.find(w=>w.id===id)}
 export function getWorksByType(t){return rd().works.filter(w=>w.type===t)}
