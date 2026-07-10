@@ -1,6 +1,7 @@
 import { validateWorkForImport } from '../js/work-schema.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
+import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -930,15 +931,13 @@ function buildPhoneHTML(pd, custom) {
   h += '<div style="font-size:12px;color:#555;z-index:1;margin-top:6px;font-weight:500">' + esc(skin.readerId || '读者') + '</div>'
   h += '</div>'
 
-  h += '<div id="phoneDesktopReader" style="flex:1;position:relative;min-height:420px;padding:10px 20px">'
-  var CELL_W = 80, CELL_H = 95, OFFSET_X = 20, OFFSET_Y = 36
+  h += '<div id="phoneDesktopReader" class="phone-desktop" style="flex:1;position:relative;min-height:420px;padding:10px 20px;' + phoneGridContainerStyle() + '">'
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
     if (app.enabled === false) continue
     if (app.type === 'settings' || app.type === 'customize') continue
-    var x = OFFSET_X + (app.desktopX || 0) * CELL_W
-    var y = OFFSET_Y + (app.desktopY || 0) * CELL_H
-    h += '<div class="phone-app-icon" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="left:' + x + 'px;top:' + y + 'px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
+    var gridStyle = phoneGridItemStyle(app.desktopX || 0, app.desktopY || 0)
+    h += '<div class="phone-app-icon" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
     var customIcon = rc.customIcons && rc.customIcons[app.type]
     h += '<div class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';position:relative">'
     if (customIcon) {
@@ -1411,7 +1410,6 @@ function savePhoneCustom(data) {
 
 // ====== Phone Preview ======
 function renderPhonePreview(ct) {
-  var CELL_W = 80, CELL_H = 95, OFFSET_X = 20, OFFSET_Y = 36
   var h = '<div class="rd-phone-preview" style="display:flex;justify-content:center;align-items:flex-start">'
   var frameBgStyle = 'width:360px;--phone-bg:' + esc(ct.wallpaper || '#d0e8f5') + ';--phone-radius:' + (ct.borderRadius || 28) + 'px;--phone-font:\'' + (ct.fontFamily || 'Noto Sans SC').replace(/'/g,'') + '\', sans-serif;--phone-fontsize:' + (ct.fontSize || 12) + 'px;--phone-frame:' + esc(ct.frameColor || '#ccc')
   if (ct.wallpaperType === 'image' && ct.wallpaperImage) {
@@ -1432,7 +1430,7 @@ function renderPhonePreview(ct) {
   h += '<div class="phone-profile-id">' + esc(ct.readerId || '访客') + '</div>'
   h += '</div>'
 
-  h += '<div class="phone-desktop" style="position:relative;min-height:260px">'
+  h += '<div class="phone-desktop" style="position:relative;min-height:260px;' + phoneGridContainerStyle() + '">'
   for (var i = 0; i < 8; i++) {
     // Use simple text-based icons — no SVG
     var apps = [
@@ -1447,11 +1445,9 @@ function renderPhonePreview(ct) {
     ]
     var app = apps[i]
     if (!app) continue
-    var xx = OFFSET_X + (i % 4) * CELL_W
-    var yy = OFFSET_Y + Math.floor(i / 4) * CELL_H
     var customIcon = ct.customIcons && ct.customIcons[app.type]
     h += '<div class="phone-app-icon rd-app-icon" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
-    h += ' style="left:' + xx + 'px;top:' + yy + 'px;border:none!important;outline:none!important;box-shadow:none!important">'
+    h += ' style="' + phoneGridItemStyle(i % 4, Math.floor(i / 4)) + 'border:none!important;outline:none!important;box-shadow:none!important">'
     h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
     if (customIcon) {
       h += '<img src="' + esc(customIcon) + '" style="width:36px;height:36px;object-fit:contain" onerror="this.style.display=\'none\'">'

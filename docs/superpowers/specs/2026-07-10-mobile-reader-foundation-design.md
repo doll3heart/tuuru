@@ -92,12 +92,12 @@ The article phone overlay receives explicit class names instead of depending on 
 Persisted `desktopX` and `desktopY` remain the source of truth. A small pure helper converts logical coordinates into CSS variable offsets for both the imported phone renderer and customization preview. The containing `.phone-desktop` supplies a container-relative horizontal origin:
 
 ```css
-clamp(4px, calc(100% - 330px), 20px)
+clamp(4px, max(calc(50% - 156px), calc(100% - 330px)), 20px)
 ```
 
-Four 72px icons separated by the existing 80px cell width occupy 312px. The expression resolves to 4px at a 320px desktop container, keeping columns `[4, 84, 164, 244]` inside it. Global border-box sizing means a legacy 360px framed preview has a 350px inner desktop and a 375px frame has a 365px inner desktop; both resolve to the legacy 20px origin and preserve `[20, 100, 180, 260]` exactly.
+Four 72px icons separated by the existing 80px cell width occupy 312px. The centered term keeps intermediate 330px and 340px containers symmetric; the second term reaches the legacy 20px origin at a 350px container. The expression resolves to 4px at 320px, keeping columns `[4, 84, 164, 244]` inside it. Global border-box sizing means a legacy 360px framed preview has a 350px inner desktop and a 375px frame has a 365px inner desktop; both preserve `[20, 100, 180, 260]` exactly.
 
-In bounded mobile overlay mode, the overlay drops its decorative 20px outer padding and the phone frame border. Without that override, a 320px viewport would expose only a 270px phone desktop after padding and borders, which cannot physically contain the 312px four-column span. Desktop overlays retain the existing framed presentation.
+In bounded mobile overlay mode, the overlay drops its decorative 20px outer padding and the phone frame border. The wrapper retains `width: 375px; max-width: 100%`, so it shrinks to 320px in narrow portrait but never expands beyond the established phone width in 390px portrait or 844px landscape. Without the padding and border override, a 320px viewport would expose only a 270px phone desktop, which cannot physically contain the 312px four-column span. Desktop overlays retain the existing framed presentation.
 
 Because percentage resolution belongs to CSS, it always uses the actual standalone, overlay, or preview container width and automatically reacts to rotation and resize. No window-width approximation, DOM read, observer, or cleanup lifecycle is required.
 

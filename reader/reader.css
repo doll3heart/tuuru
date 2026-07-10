@@ -752,6 +752,8 @@ body.rd-theme-gray .article-meta { color: #333; }
 .phone-app-icon {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
   cursor: pointer; position: absolute; width: 72px; outline: none;
+  left: calc(var(--phone-grid-origin-x, 20px) + var(--phone-grid-x, 0px));
+  top: var(--phone-grid-y, 36px);
 }
 .phone-icon-body { width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; border-radius: 14px; margin: 0 auto; }
 .phone-icon-body.icon-shadow { box-shadow: 0 1px 4px rgba(0,0,0,.15); }
@@ -861,6 +863,16 @@ body.rd-theme-gray .article-meta { color: #333; }
     right: calc(var(--reader-safe-right) + 8px);
     width: 44px;
     height: 44px;
+  }
+  .rd-pm-modal {
+    padding: var(--reader-safe-top) var(--reader-safe-right) var(--reader-safe-bottom) var(--reader-safe-left);
+  }
+  .rd-pm-phone-wrap {
+    height: 100%;
+  }
+  .rd-pm-phone-wrap > .phone-frame {
+    border: none;
+    border-radius: 0;
   }
 }
 

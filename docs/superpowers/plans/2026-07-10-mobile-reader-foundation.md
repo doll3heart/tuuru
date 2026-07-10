@@ -92,7 +92,7 @@ git commit -m "fix(reader): contain phone overlay scrolling"
 - [ ] At 350px and 365px inner widths, representing the existing bordered 360px preview and 375px standalone frame, preserve column positions `[20, 100, 180, 260]`.
 - [ ] Preserve row spacing and logical `desktopX`/`desktopY` semantics.
 - [ ] Implement a pure helper that emits logical row/column CSS offsets and shares the existing grid constants without DOM reads or data mutation.
-- [ ] Resolve the horizontal origin from the actual `.phone-desktop` container using `clamp(4px, calc(100% - 330px), 20px)`, so resize and rotation require no JavaScript lifecycle.
+- [ ] Resolve the horizontal origin from the actual `.phone-desktop` container using `clamp(4px, max(calc(50% - 156px), calc(100% - 330px)), 20px)`, so intermediate widths stay centered, legacy widths remain exact, and resize requires no JavaScript lifecycle.
 - [ ] In the existing bounded mobile media contract, remove article-overlay outer padding and phone-frame borders so a 320px viewport supplies a full 320px icon containing block. Preserve the framed desktop overlay.
 - [ ] Use the helper in both `buildPhoneHTML` and `renderPhonePreview`; add wiring and container-formula assertions to prevent drift back to hard-coded absolute positions or `window.innerWidth`.
 - [ ] Do not change App ordering, payloads, icons, or drag behavior.
