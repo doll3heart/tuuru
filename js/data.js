@@ -1,6 +1,7 @@
 // Tuuru Works - Data Layer
 import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
 import { CURRENT_WORK_SCHEMA_VERSION } from "./work-schema.js"
+import { substitutePlaceholders } from "./placeholders.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -215,22 +216,12 @@ export function deleteForumPost(wid,pid){const db=rd();const w=db.works.find(x=>
 
 const PM={name:["某某","XX","xxx","xxx"],nickname:["小某","某X"],food:["螺蛳粉","烤肉"],color:["白色","紫色","蓝色"]}
 export function substituteText(text,phs,mode,scene,nodeScene,scenes,valuesMap){
-  if(!text||!phs||!phs.length)return text
-  if(valuesMap)phs=phs.map(ph=>({...ph,values:valuesMap[ph.id]||ph.values||[]}))
-  let r=text
-  for(const ph of phs){
-    if(!ph.values||!ph.values.length){const pats=PM[ph.key]||[ph.key];for(const p of pats)r=r.replaceAll(p,ph.default||"");continue}
-    const v=rv(ph,mode,scene,nodeScene,scenes);const pats=PM[ph.key]||[ph.key]
-    for(const p of pats)r=r.replaceAll(p,v)
-  }
-  return r
-}
-function rv(ph,mode,scene,nodeScene,scenes){
-  const v=ph.values||[];if(!v.length)return ph.default||"";if(v.length===1)return v[0]
-  const m=ph.mode||mode||"each"
-  if(m==="locked")return v[0]
-  if(m==="scene"){const sid=nodeScene||scene;if(sid&&ph.sceneMap&&ph.sceneMap[sid])return ph.sceneMap[sid];return v[0]}
-  return v[Math.floor(Math.random()*v.length)]
+  return substitutePlaceholders(text,phs,{
+    valuesMap:valuesMap,
+    defaultMode:mode,
+    sceneId:nodeScene||scene,
+    patternsFor:function(ph){return PM[ph.key]||[ph.key]}
+  })
 }
 
 export function addPhoneModule(wid, data) {

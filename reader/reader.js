@@ -1,4 +1,5 @@
 import { validateWorkForImport } from '../js/work-schema.js'
+import { substitutePlaceholders } from '../js/placeholders.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -664,7 +665,10 @@ function renderArticleReader() {
   var content = node.content || ''
   var phs = _work.placeholders || []
   if (phs.length > 0 && _work.readerPhValues) {
-    content = substituteText(content, phs, _work.readerPhValues)
+    content = substitutePlaceholders(content, phs, {
+      valuesMap: _work.readerPhValues,
+      usePlaceholderMode: false
+    })
   }
 
   // Progress dots
@@ -870,19 +874,6 @@ function renderArticleReader() {
       bindOverlayApps(phoneWrapper)
     }
   })
-}
-
-function substituteText(text, phs, valuesMap) {
-  if (!text || !phs || !phs.length) return text
-  var r = text
-  for (var i = 0; i < phs.length; i++) {
-    var ph = phs[i]
-    var vals = (valuesMap && valuesMap[ph.id]) ? valuesMap[ph.id] : (ph.values || [])
-    var pats = ph.key ? [ph.key] : [ph.label]
-    var v = vals.length ? vals[Math.floor(Math.random() * vals.length)] : (ph.default || '')
-    pats.forEach(function(p) { r = r.replaceAll(p, v) })
-  }
-  return r
 }
 
 // ====== Build Phone HTML (shared by article overlay and standalone phone) ======
