@@ -87,12 +87,13 @@ git commit -m "fix(reader): contain phone overlay scrolling"
 - Modify: `reader/reader.css`
 - Modify: `reader/reader.js`
 
-- [ ] Write failing pure-function and CSS-contract tests for 320px, 360px, and 375px layouts.
+- [ ] Write failing pure-function and CSS-contract tests for 320px, 350px, and 365px desktop containers.
 - [ ] At 320px, assert four increasing, non-overlapping 72px icon boxes remain in bounds with approximately symmetric outer margins.
-- [ ] At both 360px preview and 375px standalone widths, preserve the current column positions `[20, 100, 180, 260]`.
+- [ ] At 350px and 365px inner widths, representing the existing bordered 360px preview and 375px standalone frame, preserve column positions `[20, 100, 180, 260]`.
 - [ ] Preserve row spacing and logical `desktopX`/`desktopY` semantics.
 - [ ] Implement a pure helper that emits logical row/column CSS offsets and shares the existing grid constants without DOM reads or data mutation.
-- [ ] Resolve the horizontal origin from the actual `.phone-desktop` container using `clamp(0px, calc(50% - 156px), 20px)`, so resize and rotation require no JavaScript lifecycle.
+- [ ] Resolve the horizontal origin from the actual `.phone-desktop` container using `clamp(4px, calc(100% - 330px), 20px)`, so resize and rotation require no JavaScript lifecycle.
+- [ ] In the existing bounded mobile media contract, remove article-overlay outer padding and phone-frame borders so a 320px viewport supplies a full 320px icon containing block. Preserve the framed desktop overlay.
 - [ ] Use the helper in both `buildPhoneHTML` and `renderPhonePreview`; add wiring and container-formula assertions to prevent drift back to hard-coded absolute positions or `window.innerWidth`.
 - [ ] Do not change App ordering, payloads, icons, or drag behavior.
 - [ ] Run focused test, full validation, request review, and commit:
