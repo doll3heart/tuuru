@@ -2,6 +2,7 @@
 import { uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
 import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
+import { PHONE_GRID_METRICS } from "../phone-grid.js"
 import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
@@ -15,12 +16,12 @@ var _flowWid = null
 var _flowPd = null
 
 // Grid constants
-var CELL_W = 80
-var CELL_H = 95
-var GRID_COLS = 4
-var GRID_ROWS = 4
-var OFFSET_X = 20
-var OFFSET_Y = 36
+var CELL_W = PHONE_GRID_METRICS.cellWidth
+var CELL_H = PHONE_GRID_METRICS.cellHeight
+var GRID_COLS = PHONE_GRID_METRICS.columns
+var GRID_ROWS = PHONE_GRID_METRICS.rows
+var OFFSET_X = PHONE_GRID_METRICS.legacyOriginX
+var OFFSET_Y = PHONE_GRID_METRICS.offsetY
 var PHONE_APP_TYPES_WITH_OWN_HEADER = new Set(['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping'])
 
 function esc(s) {
