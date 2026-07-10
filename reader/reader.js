@@ -1,5 +1,6 @@
 import { validateWorkForImport } from '../js/work-schema.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
+import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -281,7 +282,7 @@ function importWork(work) {
     alert(result.message)
     return
   }
-  loadWork(result.work)
+  loadWork(sanitizeImportedWork(result.work))
 }
 
 // ====== Landing Page (work info + password + placeholders) ======
@@ -316,7 +317,7 @@ function showLandingPage(work, callback) {
     phs.forEach(function(ph) {
       h += '<div class="rd-landing-field">'
       h += '<label>' + esc(ph.label || ph.key) + '</label>'
-      h += '<input type="text" class="rd-landing-input" data-ph-id="' + ph.id + '" value="' + esc(ph.default || '') + '" placeholder="' + esc(ph.prompt || '') + '">'
+      h += '<input type="text" class="rd-landing-input" data-ph-id="' + escapeHtmlAttribute(ph.id || '') + '" value="' + escapeHtmlAttribute(ph.default || '') + '" placeholder="' + escapeHtmlAttribute(ph.prompt || '') + '">'
       h += '</div>'
     })
     h += '<button class="rd-landing-preset-btn" id="rdPresetBtn">从预设填入</button>'
@@ -731,7 +732,7 @@ function renderArticleReader() {
   if (choices.length > 0) {
     h += '<div class="article-choices">'
     choices.forEach(function(c, ci) {
-      h += '<button class="article-choice-btn" data-target="' + esc(c.targetId || '') + '"><span class="label">' + (ci + 1) + '.</span>' + esc(c.text || '选项') + '</button>'
+      h += '<button class="article-choice-btn" data-target="' + escapeHtmlAttribute(c.targetId || '') + '"><span class="label">' + (ci + 1) + '.</span>' + esc(c.text || '选项') + '</button>'
     })
     h += '</div>'
   } else {
@@ -928,7 +929,7 @@ function buildPhoneHTML(pd, custom) {
     if (app.type === 'settings' || app.type === 'customize') continue
     var x = OFFSET_X + (app.desktopX || 0) * CELL_W
     var y = OFFSET_Y + (app.desktopY || 0) * CELL_H
-    h += '<div class="phone-app-icon" data-app-type="' + app.type + '" style="left:' + x + 'px;top:' + y + 'px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
+    h += '<div class="phone-app-icon" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="left:' + x + 'px;top:' + y + 'px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
     var customIcon = rc.customIcons && rc.customIcons[app.type]
     h += '<div class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';position:relative">'
     if (customIcon) {
@@ -1048,7 +1049,7 @@ function openReaderApp(type) {
     var h = ''
     if (posts.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无帖子</div>'
     posts.forEach(function(p) {
-      h += '<div class="rd-post-card" data-post-id="' + p.id + '" style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eee;cursor:pointer">'
+      h += '<div class="rd-post-card" data-post-id="' + escapeHtmlAttribute(p.id || '') + '" style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eee;cursor:pointer">'
       h += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;flex-shrink:0;background:' + avatarColor(p.contactId) + '">' + esc((p.contactName || '?').charAt(0)) + '</div>'
       h += '<div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(p.title) + '</div><div style="font-size:.68rem;color:#999">' + esc(p.contactName || '') + ' / ' + esc(p.time || '') + '</div></div>'
       h += '</div>'
@@ -1076,7 +1077,7 @@ function openReaderApp(type) {
       h += '<div style="display:flex;gap:10px;overflow-x:auto;padding:4px 0 10px">'
       albums.forEach(function(a) {
         var count = photos.filter(function(p) { return p.albumId === a.id }).length
-        h += '<div style="flex-shrink:0;width:80px;text-align:center;cursor:pointer" class="rd-album" data-album-id="' + a.id + '">'
+        h += '<div style="flex-shrink:0;width:80px;text-align:center;cursor:pointer" class="rd-album" data-album-id="' + escapeHtmlAttribute(a.id || '') + '">'
         h += '<div style="width:80px;height:80px;border:1px solid #ddd;background:#f0f0f0;margin-bottom:4px"></div>'
         h += '<div style="font-size:.7rem">' + esc(a.name) + ' (' + count + ')</div>'
         h += '</div>'
@@ -1440,7 +1441,7 @@ function renderPhonePreview(ct) {
     var xx = OFFSET_X + (i % 4) * CELL_W
     var yy = OFFSET_Y + Math.floor(i / 4) * CELL_H
     var customIcon = ct.customIcons && ct.customIcons[app.type]
-    h += '<div class="phone-app-icon rd-app-icon" data-app="' + app.type + '"'
+    h += '<div class="phone-app-icon rd-app-icon" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
     h += ' style="left:' + xx + 'px;top:' + yy + 'px;border:none!important;outline:none!important;box-shadow:none!important">'
     h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
     if (customIcon) {
