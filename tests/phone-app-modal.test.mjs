@@ -62,3 +62,45 @@ test("the phone app modal close button settles and removes its overlay", async (
   draft.dispose()
   dom.window.close()
 })
+
+test("a phone app render failure removes its overlay before rethrowing", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
+    url: "http://localhost/",
+  })
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.localStorage = dom.window.localStorage
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.Node = dom.window.Node
+  globalThis.Event = dom.window.Event
+  globalThis.MouseEvent = dom.window.MouseEvent
+  globalThis.MutationObserver = dom.window.MutationObserver
+
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({
+    id: "article-1",
+    type: "article",
+    phoneData: {
+      contacts: [],
+      chats: [null],
+      moments: [],
+      forumPosts: [],
+      forumNpcs: [],
+      memos: [],
+      photos: [],
+      albums: [],
+      browserHistory: [],
+      shoppingItems: [],
+      skin: { readerId: "Reader" },
+      apps: [],
+    },
+  })
+
+  assert.throws(() => openPhoneAppModal(draft.id, "messages"))
+  assert.equal(document.querySelectorAll(".phone-app-modal-overlay").length, 0)
+
+  draft.dispose()
+  dom.window.close()
+})

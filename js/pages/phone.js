@@ -85,40 +85,45 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   // Render the app inside
   var frame = content
 
-  switch (appType) {
-    case 'messages':
-      openMessagesEditor(frame, wid, pd)
-      break
-    case 'forum':
-      openForumEditor(frame, wid, { id: uid(), name: '论坛', avatarUrl: '' }, pd)
-      break
-    case 'memo':
-      var memos = pd.memos || []
-      var contactMemos = memos.filter(function(it) { return it.contactId === firstContact.id })
-      openMemoEditor(frame, wid, firstContact, contactMemos, pd)
-      break
-    case 'gallery':
-      openGalleryEditor(frame, wid, firstContact, pd)
-      break
-    case 'browser':
-      var history = pd.browserHistory || []
-      var contactHistory = history.filter(function(it) { return it.contactId === firstContact.id })
-      openBrowserEditor(frame, wid, firstContact, contactHistory, pd)
-      break
-    case 'shopping':
-      openShoppingEditor(frame, wid, firstContact, pd)
-      break
-    case 'profile':
-      var h = '<div class="cu-panel pf-panel" style="height:100%;position:relative">'
-      h += '<div class="cu-body"><div class="cu-section"><div class="cu-section-title">个人主页</div>'
-      h += '<div style="text-align:center;padding:20px"><div style="width:60px;height:60px;border-radius:50%;background:var(--c-surface2);display:inline-flex;align-items:center;justify-content:center;font-size:1.5rem;color:var(--c-text2)">' + esc((pd.skin?.readerId || '读者').charAt(0)) + '</div>'
-      h += '<div style="font-size:.9rem;color:var(--c-text);margin-top:8px;font-weight:500">' + esc(pd.skin?.readerId || '读者') + '</div></div>'
-      h += '</div></div>'
-      frame.innerHTML = h
-      break
-    case 'contacts':
-      renderContactsModal(frame, wid, pd)
-      break
+  try {
+    switch (appType) {
+      case 'messages':
+        openMessagesEditor(frame, wid, pd)
+        break
+      case 'forum':
+        openForumEditor(frame, wid, { id: uid(), name: '论坛', avatarUrl: '' }, pd)
+        break
+      case 'memo':
+        var memos = pd.memos || []
+        var contactMemos = memos.filter(function(it) { return it.contactId === firstContact.id })
+        openMemoEditor(frame, wid, firstContact, contactMemos, pd)
+        break
+      case 'gallery':
+        openGalleryEditor(frame, wid, firstContact, pd)
+        break
+      case 'browser':
+        var history = pd.browserHistory || []
+        var contactHistory = history.filter(function(it) { return it.contactId === firstContact.id })
+        openBrowserEditor(frame, wid, firstContact, contactHistory, pd)
+        break
+      case 'shopping':
+        openShoppingEditor(frame, wid, firstContact, pd)
+        break
+      case 'profile':
+        var h = '<div class="cu-panel pf-panel" style="height:100%;position:relative">'
+        h += '<div class="cu-body"><div class="cu-section"><div class="cu-section-title">个人主页</div>'
+        h += '<div style="text-align:center;padding:20px"><div style="width:60px;height:60px;border-radius:50%;background:var(--c-surface2);display:inline-flex;align-items:center;justify-content:center;font-size:1.5rem;color:var(--c-text2)">' + esc((pd.skin?.readerId || '读者').charAt(0)) + '</div>'
+        h += '<div style="font-size:.9rem;color:var(--c-text);margin-top:8px;font-weight:500">' + esc(pd.skin?.readerId || '读者') + '</div></div>'
+        h += '</div></div>'
+        frame.innerHTML = h
+        break
+      case 'contacts':
+        renderContactsModal(frame, wid, pd)
+        break
+    }
+  } catch (error) {
+    ov.remove()
+    throw error
   }
 
   return ov
