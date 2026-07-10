@@ -67,7 +67,9 @@ The root entry continues to omit `viewport-fit=cover`. Safe-area environment val
 
 The overlay is a fixed flex container whose height follows the dynamic viewport. The modal is at most 360x640px on larger screens and fills the available viewport at 480px and below. Its header remains fixed in flex flow, its content has `min-height: 0` and `overflow: hidden`, and each existing `.cu-panel` keeps ownership of App-editor scrolling through `.cu-body`.
 
-The outer close button and scoped `.cu-close-btn` controls become 44x44px targets while their visible glyphs remain compact. Existing close veto, overlay-click close, callback ordering, render-failure cleanup, and draft isolation remain unchanged.
+Messages, Forum, Memo, Gallery, Browser, and Shopping already render their own top-level App header and Back control. Their modal host omits the redundant outer header entirely, so no covered close button remains keyboard- or screen-reader-focusable. Contacts, Profile, and unknown/fallback content keep the outer title and close control because they do not provide an embedded App header.
+
+The reachable outer close button and scoped `.cu-close-btn` controls become 44x44px targets while their visible glyphs remain compact. Existing close veto, overlay-click close, callback ordering, render-failure cleanup, and draft isolation remain unchanged.
 
 ### 5. Dialog semantics and topmost keyboard closure
 

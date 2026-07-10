@@ -65,6 +65,7 @@ git commit -m "fix(phone): route app back through modal lifecycle"
 - [ ] Add a mocked `visualViewport` test proving height and offsetTop drive overlay-scoped CSS variables on open, resize, and scroll.
 - [ ] Assert the close control is a semantic button with an accessible label and a 44x44px target.
 - [ ] Replace only `openPhoneAppModal`'s geometry/header/content inline styles with scoped classes.
+- [ ] Omit the outer header for the six Apps that already provide an embedded top-level header; keep it for Contacts, Profile, and fallback content so every modal has exactly one reachable header.
 - [ ] Keep `.phone-app-modal-content` at `min-height: 0; overflow: hidden` so existing `.cu-body` elements remain the scroll owners.
 - [ ] At 480px and below, let the shell fill the dynamic viewport and remove only its decorative radius; keep the 360x640px maximum on larger screens.
 - [ ] Fall back to the CSS dynamic-height token when `visualViewport` is absent; do not claim `dvh` alone tracks every software keyboard.

@@ -39,7 +39,7 @@ test("the phone app modal close button settles and removes its overlay", async (
   let beforeCalls = 0
   let afterCalls = 0
 
-  const overlay = openPhoneAppModal(draft.id, "messages", {
+  const overlay = openPhoneAppModal(draft.id, "contacts", {
     beforeClose() {
       beforeCalls += 1
       return { saved: true }
@@ -52,7 +52,7 @@ test("the phone app modal close button settles and removes its overlay", async (
   })
 
   assert.equal(overlay.isConnected, true)
-  const closeButton = overlay.querySelector(".phone-app-modal-inner > div:first-child button")
+  const closeButton = overlay.querySelector(".phone-app-modal-close")
   assert.ok(closeButton)
   closeButton.click()
 

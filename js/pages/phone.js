@@ -21,6 +21,7 @@ var GRID_COLS = 4
 var GRID_ROWS = 4
 var OFFSET_X = 20
 var OFFSET_Y = 36
+var PHONE_APP_TYPES_WITH_OWN_HEADER = new Set(['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping'])
 
 function esc(s) {
   if (!s) return ""
@@ -56,6 +57,42 @@ function exitPhoneAppEditor(frame, wid, beforeExit) {
   })
 }
 
+function bindPhoneAppModalViewport(overlay) {
+  var viewport = typeof window !== 'undefined' ? window.visualViewport : null
+  if (!viewport) return function() {}
+
+  function syncViewport() {
+    var height = Number(viewport.height)
+    var offsetTop = Number(viewport.offsetTop)
+    if (Number.isFinite(height) && height > 0) {
+      overlay.style.setProperty('--phone-app-viewport-height', height + 'px')
+    } else {
+      overlay.style.removeProperty('--phone-app-viewport-height')
+    }
+    overlay.style.setProperty(
+      '--phone-app-viewport-offset-top',
+      (Number.isFinite(offsetTop) ? offsetTop : 0) + 'px'
+    )
+  }
+
+  var canListen = typeof viewport.addEventListener === 'function' && typeof viewport.removeEventListener === 'function'
+  syncViewport()
+  if (canListen) {
+    viewport.addEventListener('resize', syncViewport)
+    viewport.addEventListener('scroll', syncViewport)
+  }
+
+  var active = true
+  return function releaseViewport() {
+    if (!active) return
+    active = false
+    if (canListen) {
+      viewport.removeEventListener('resize', syncViewport)
+      viewport.removeEventListener('scroll', syncViewport)
+    }
+  }
+}
+
 export function openPhoneAppModal(wid, appType, options = {}) {
   var w = getWork(wid)
   if (!w) { showToast('作品未找到'); return }
@@ -80,20 +117,20 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   // Build overlay
   var ov = document.createElement('div')
   ov.className = 'modal-overlay phone-app-modal-overlay'
-  ov.style.cssText = ''
+  var releaseViewport = bindPhoneAppModalViewport(ov)
 
   var inner = document.createElement('div')
   inner.className = 'phone-app-modal-inner'
-  inner.style.cssText = 'background:var(--c-surface);width:360px;height:640px;max-height:90vh;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.3);position:relative'
 
   var topBar = document.createElement('div')
-  topBar.style.cssText = 'display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid var(--c-border);background:var(--c-surface);flex-shrink:0'
-  topBar.innerHTML = '<span style="font-size:.85rem;font-weight:600;flex:1;text-align:center;color:var(--c-text)">' + esc(title) + '</span><button style="border:none;background:transparent;cursor:pointer;font-size:1.1rem;color:var(--c-text2);padding:4px 8px">&times;</button>'
+  topBar.className = 'phone-app-modal-header'
+  topBar.innerHTML = '<span class="phone-app-modal-title">' + esc(title) + '</span><button class="phone-app-modal-close" type="button" aria-label="关闭">&times;</button>'
 
   var content = document.createElement('div')
-  content.style.cssText = 'flex:1;overflow:hidden'
+  content.className = 'phone-app-modal-content'
 
-  inner.appendChild(topBar)
+  var usesOwnHeader = PHONE_APP_TYPES_WITH_OWN_HEADER.has(appType)
+  if (!usesOwnHeader) inner.appendChild(topBar)
   inner.appendChild(content)
   ov.appendChild(inner)
 
@@ -108,13 +145,14 @@ export function openPhoneAppModal(wid, appType, options = {}) {
       return options.beforeClose ? options.beforeClose(reason) : undefined
     },
     remove: function() {
+      releaseViewport()
       delete content._requestPhoneAppModalClose
       ov.remove()
     },
     afterClose: options.afterClose
   })
   content._requestPhoneAppModalClose = close
-  closeBtn.addEventListener('click', function() { close('button') })
+  if (!usesOwnHeader) closeBtn.addEventListener('click', function() { close('button') })
   ov.addEventListener('click', function(e) { if (e.target === ov) close('backdrop') })
 
   document.body.appendChild(ov)
@@ -159,6 +197,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
         break
     }
   } catch (error) {
+    releaseViewport()
     delete content._requestPhoneAppModalClose
     ov.remove()
     throw error

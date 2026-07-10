@@ -9,6 +9,11 @@
   --shadow:0 1px 3px rgba(172,183,202,.25);
   --shadow-md:0 4px 12px rgba(172,183,202,.2);
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC",sans-serif;
+  --app-viewport-height:100vh;
+}
+
+@supports (height:100dvh){
+  :root{--app-viewport-height:100dvh}
 }
 
 
@@ -73,6 +78,15 @@ ul,ol{list-style:none}
 .modal-title{font-size:1rem;font-weight:600}
 .modal-body{padding:20px}
 .modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:2px double var(--c-border)}
+.phone-app-modal-overlay{top:var(--phone-app-viewport-offset-top,0px);right:0;bottom:auto;left:0;height:var(--phone-app-viewport-height,var(--app-viewport-height));overflow:hidden;overscroll-behavior:contain}
+.phone-app-modal-inner{width:min(360px,100%);height:min(640px,100%);min-height:0;background:var(--c-surface);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.3);position:relative}
+.phone-app-modal-header{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--c-border);background:var(--c-surface);flex-shrink:0}
+.phone-app-modal-header::before{content:"";width:44px;height:44px}
+.phone-app-modal-title{font-size:.85rem;font-weight:600;text-align:center;color:var(--c-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.phone-app-modal-close{width:44px;height:44px;border:none;background:transparent;cursor:pointer;font-size:1.1rem;color:var(--c-text2);padding:0;display:flex;align-items:center;justify-content:center}
+.phone-app-modal-close:hover{background:var(--c-surface2);color:var(--c-text)}
+.phone-app-modal-content{flex:1;min-height:0;overflow:hidden}
+.phone-app-modal-inner .cu-close-btn{min-width:44px;min-height:44px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 .flex-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
@@ -603,6 +617,8 @@ ul,ol{list-style:none}
   .editor-header .node-name{font-size:.9rem}
   .editor-toolbar{padding:4px 8px;gap:1px}
   .editor-toolbar button{padding:2px 6px;font-size:.7rem;min-width:24px}
+  .phone-app-modal-overlay{padding:0}
+  .phone-app-modal-inner{width:100%;height:100%;border-radius:0}
   .phone-editor-wrap{padding:10px 0}
   .phone-frame{width:100%;max-width:360px;min-height:600px;border-width:3px}
   .cu-header{padding:10px 14px}
