@@ -13,7 +13,8 @@ import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
 var _dragState = null
-var _wasDrag = false
+var _suppressedClickIcon = null
+var _phoneIconSnapTimers = new WeakMap()
 var _flowDragItem = null
 var _flowDragStartY = 0
 var _flowDragOrigIdx = -1
@@ -481,24 +482,97 @@ function patchApps(apps, pd, wid) {
 
 // ===== Drag-to-reorder =====
 var _dragHandlers = null
+var PHONE_ICON_DRAG_THRESHOLD = 5
+
+function clearSuppressedPhoneIconClick() {
+  _suppressedClickIcon = null
+}
+
+function suppressNextPhoneIconClick(icon) {
+  _suppressedClickIcon = icon
+}
+
+function consumeSuppressedPhoneIconClick(icon) {
+  if (_suppressedClickIcon !== icon) return false
+  clearSuppressedPhoneIconClick()
+  return true
+}
+
+function releasePhoneIconPointer(state) {
+  var icon = state && state.icon
+  if (!icon || typeof icon.releasePointerCapture !== 'function') return
+
+  try {
+    if (typeof icon.hasPointerCapture !== 'function' || icon.hasPointerCapture(state.pointerId)) {
+      icon.releasePointerCapture(state.pointerId)
+    }
+  } catch (error) {
+    // Capture may already have been released by the browser.
+  }
+}
+
+function clearPhoneIconDragAppearance(icon) {
+  if (!icon) return
+  icon.classList.remove('dragging')
+  icon.style.zIndex = ''
+  icon.style.transition = ''
+}
+
+function cancelPhoneIconSnapCleanup(icon) {
+  var pending = icon && _phoneIconSnapTimers.get(icon)
+  if (!pending) return
+  clearTimeout(pending.timer)
+  _phoneIconSnapTimers.delete(icon)
+}
+
+function schedulePhoneIconSnapCleanup(icon) {
+  cancelPhoneIconSnapCleanup(icon)
+  var token = {}
+  var timer = setTimeout(function() {
+    var pending = _phoneIconSnapTimers.get(icon)
+    if (!pending || pending.token !== token) return
+    _phoneIconSnapTimers.delete(icon)
+    if (!_dragState || _dragState.icon !== icon) clearPhoneIconDragAppearance(icon)
+  }, 200)
+  _phoneIconSnapTimers.set(icon, { timer: timer, token: token })
+}
+
+function cancelPhoneIconDrag(pointerId) {
+  if (!_dragState) return false
+  if (pointerId !== undefined && pointerId !== _dragState.pointerId) return false
+
+  var state = _dragState
+  _dragState = null
+  applyPhoneGridItemPosition(state.icon, state.origCol, state.origRow)
+  releasePhoneIconPointer(state)
+  clearPhoneIconDragAppearance(state.icon)
+  return true
+}
+
+function removePhoneIconDragHandlers() {
+  if (!_dragHandlers) return
+  _dragHandlers.forEach(function(handler) {
+    handler.el.removeEventListener(handler.type, handler.listener)
+  })
+  _dragHandlers = null
+}
+
+function rememberPhoneIconDragHandler(el, type, listener) {
+  el.addEventListener(type, listener)
+  _dragHandlers.push({ el: el, type: type, listener: listener })
+}
 
 function attachDrag(wid) {
+  cancelPhoneIconDrag()
+  removePhoneIconDragHandlers()
   if (document.activeElement) document.activeElement.blur()
   var desktop = document.getElementById('phoneDesktop')
   if (!desktop) return
 
-  // Remove old handlers to prevent accumulation
-  if (_dragHandlers) {
-    _dragHandlers.forEach(function(h) {
-      h.el.removeEventListener('mousedown', h.onDown)
-    })
-    _dragHandlers = null
-  }
   _dragHandlers = []
 
   var icons = desktop.querySelectorAll('.phone-app-icon')
   icons.forEach(function(icon) {
-    // Use onmousedown property instead of addEventListener to avoid accumulation
     icon.onmouseenter = function() {
       if (!icon.classList.contains('dragging')) icon.classList.add('hover-on')
     }
@@ -507,70 +581,119 @@ function attachDrag(wid) {
     }
     icon.onfocus = function() { icon.blur() }
 
-    var onDown = function(e) {
-      e.preventDefault()
-      e.target.blur()
-      startDrag(wid, icon, e.clientX, e.clientY)
+    var onPointerDown = function(e) {
+      if (_dragState || e.isPrimary === false || e.button !== 0) return
+      clearSuppressedPhoneIconClick()
+      if (e.target && typeof e.target.blur === 'function') e.target.blur()
+      startDrag(wid, icon, e)
     }
-    icon.addEventListener('mousedown', onDown)
-    _dragHandlers.push({ el: icon, onDown: onDown })
+    var onPointerMove = function(e) {
+      if (!_dragState || _dragState.icon !== icon || _dragState.pointerId !== e.pointerId) return
+      if (moveDrag(e.pointerId, e.clientX, e.clientY)) e.preventDefault()
+    }
+    var onPointerUp = function(e) {
+      if (!_dragState || _dragState.icon !== icon || _dragState.pointerId !== e.pointerId) return
+      moveDrag(e.pointerId, e.clientX, e.clientY)
+      if (endDrag(e.pointerId)) e.preventDefault()
+    }
+    var onPointerCancel = function(e) {
+      if (_dragState && _dragState.icon === icon) cancelPhoneIconDrag(e.pointerId)
+    }
+    var onLostPointerCapture = function(e) {
+      if (_dragState && _dragState.icon === icon) cancelPhoneIconDrag(e.pointerId)
+    }
+
+    rememberPhoneIconDragHandler(icon, 'pointerdown', onPointerDown)
+    rememberPhoneIconDragHandler(icon, 'pointermove', onPointerMove)
+    rememberPhoneIconDragHandler(icon, 'pointerup', onPointerUp)
+    rememberPhoneIconDragHandler(icon, 'pointercancel', onPointerCancel)
+    rememberPhoneIconDragHandler(icon, 'lostpointercapture', onLostPointerCapture)
   })
+
+  rememberPhoneIconDragHandler(window, 'blur', function() { cancelPhoneIconDrag() })
 }
 
-document.addEventListener('mousemove', function(e) {
-  if (!_dragState) return
-  moveDrag(e.clientX, e.clientY)
-})
-
-document.addEventListener('mouseup', function() {
-  if (!_dragState) return
-  endDrag()
-})
-
-function startDrag(wid, icon, mx, my) {
+function startDrag(wid, icon, event) {
   var rect = icon.getBoundingClientRect()
   var desktop = document.getElementById('phoneDesktop')
   if (!desktop) return
   var deskRect = desktop.getBoundingClientRect()
+  cancelPhoneIconSnapCleanup(icon)
+  clearPhoneIconDragAppearance(icon)
   _dragState = {
     icon: icon, wid: wid,
-    startX: mx, startY: my,
-    offsetX: mx - rect.left, offsetY: my - rect.top,
+    pointerId: event.pointerId,
+    startX: event.clientX, startY: event.clientY,
+    offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top,
     origLeft: rect.left - deskRect.left, origTop: rect.top - deskRect.top,
     origCol: parseInt(icon.dataset.desktopX) || 0,
     origRow: parseInt(icon.dataset.desktopY) || 0,
     deskLeft: deskRect.left, deskTop: deskRect.top,
-    containerWidth: deskRect.width
+    containerWidth: deskRect.width,
+    didDrag: false
   }
-  _wasDrag = false
-  icon.classList.add('dragging')
-  icon.style.zIndex = '100'
-  icon.style.transition = 'none'
+
+  if (typeof icon.setPointerCapture !== 'function') {
+    cancelPhoneIconDrag(event.pointerId)
+    return
+  }
+
+  try {
+    icon.setPointerCapture(event.pointerId)
+  } catch (error) {
+    cancelPhoneIconDrag(event.pointerId)
+    return
+  }
+
+  if (typeof icon.hasPointerCapture === 'function' && !icon.hasPointerCapture(event.pointerId)) {
+    cancelPhoneIconDrag(event.pointerId)
+  }
 }
 
-function moveDrag(mx, my) {
-  if (!_dragState) return
+function moveDrag(pointerId, mx, my) {
+  if (!_dragState || _dragState.pointerId !== pointerId) return false
   var dx = mx - _dragState.startX
   var dy = my - _dragState.startY
-  if (!_wasDrag && Math.abs(dx) < 5 && Math.abs(dy) < 5) return
-  _wasDrag = true
+  if (!_dragState.didDrag && Math.abs(dx) < PHONE_ICON_DRAG_THRESHOLD && Math.abs(dy) < PHONE_ICON_DRAG_THRESHOLD) {
+    return false
+  }
+
+  if (!_dragState.didDrag) {
+    _dragState.didDrag = true
+    _dragState.icon.classList.add('dragging')
+    _dragState.icon.style.zIndex = '100'
+    _dragState.icon.style.transition = 'none'
+  }
+
   var icon = _dragState.icon
   icon.style.left = (mx - _dragState.deskLeft - _dragState.offsetX) + 'px'
   icon.style.top = (my - _dragState.deskTop - _dragState.offsetY) + 'px'
+  return true
 }
 
-function endDrag() {
-  if (!_dragState) return
-  var icon = _dragState.icon
+function endDrag(pointerId) {
+  if (!_dragState || _dragState.pointerId !== pointerId) return false
+  var state = _dragState
+  _dragState = null
+  releasePhoneIconPointer(state)
+  if (!state.didDrag) return false
+
+  suppressNextPhoneIconClick(state.icon)
+  commitPhoneIconDrag(state)
+  return true
+}
+
+function commitPhoneIconDrag(state) {
+  var icon = state.icon
   var left = parseFloat(icon.style.left)
   var top = parseFloat(icon.style.top)
-  if (!Number.isFinite(left)) left = _dragState.origLeft
-  if (!Number.isFinite(top)) top = _dragState.origTop
-  var cell = getPhoneGridCell(_dragState.containerWidth, left, top)
+  if (!Number.isFinite(left)) left = state.origLeft
+  if (!Number.isFinite(top)) top = state.origTop
+  var cell = getPhoneGridCell(state.containerWidth, left, top)
   var col = Math.max(0, Math.min(PHONE_GRID_METRICS.columns - 1, cell.x))
   var row = Math.max(0, Math.min(PHONE_GRID_METRICS.rows - 1, cell.y))
 
-  var wid = _dragState.wid
+  var wid = state.wid
   var w = getWork(wid)
   if (w && w.phoneData) {
     var apps = w.phoneData.apps || []
@@ -579,13 +702,13 @@ function endDrag() {
       var a = apps[i]
       if (a.id === appId || !a.enabled) continue
       if (a.desktopX === col && a.desktopY === row) {
-        var ec = findEmptyCell(apps, appId, _dragState.origCol, _dragState.origRow)
+        var ec = findEmptyCell(apps, appId, state.origCol, state.origRow)
         a.desktopX = ec.x; a.desktopY = ec.y
         var oi = document.querySelector('[data-app-id="' + a.id + '"]')
         if (oi) {
           applyPhoneGridItemPosition(oi, a.desktopX, a.desktopY)
           oi.style.transition = 'left .15s, top .15s'
-          setTimeout(function() { if (oi) oi.style.transition = '' }, 200)
+          schedulePhoneIconSnapCleanup(oi)
         }
         break
       }
@@ -596,11 +719,7 @@ function endDrag() {
 
   applyPhoneGridItemPosition(icon, col, row)
   icon.style.transition = 'left .15s, top .15s'
-  setTimeout(function() {
-    icon.classList.remove('dragging')
-    icon.style.zIndex = ''; icon.style.transition = ''
-  }, 200)
-  _dragState = null
+  schedulePhoneIconSnapCleanup(icon)
 }
 
 function findEmptyCell(apps, excludeId, prefX, prefY) {
@@ -631,7 +750,8 @@ function findEmptyCell(apps, excludeId, prefX, prefY) {
 document.addEventListener('click', function(e) {
   var icon = e.target.closest('.phone-app-icon')
   if (!icon) return
-  if (_wasDrag) { _wasDrag = false; return }
+  if (consumeSuppressedPhoneIconClick(icon)) { e.preventDefault(); return }
+  clearSuppressedPhoneIconClick()
 
     e.preventDefault()
     // Clear any text selection & focus before opening panel

@@ -57,7 +57,7 @@ test("the editor renderer uses container-relative grid variables", () => {
 })
 
 test("drag snapping returns temporary pixels to logical grid variables", () => {
-  assert.match(phoneSource, /getPhoneGridCell\(_dragState\.containerWidth, left, top\)/)
+  assert.match(phoneSource, /getPhoneGridCell\((?:_dragState|state)\.containerWidth, left, top\)/)
   assert.match(phoneSource, /applyPhoneGridItemPosition\(icon, col, row\)/)
   assert.match(phoneSource, /applyPhoneGridItemPosition\(oi, a\.desktopX, a\.desktopY\)/)
   assert.match(phoneSource, /removeProperty\(['"]left['"]\)/)
