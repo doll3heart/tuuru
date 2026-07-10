@@ -43,10 +43,10 @@ git commit -m "fix(phone): flush app edits before close"
 - Extend: `tests/phone-app-modal.test.mjs`
 - Modify: `js/pages/phone.js`
 
-- [ ] Write failing integration tests for at least Messages and Memo proving their visible Back controls currently leave a blank connected overlay and skip `afterClose`.
+- [ ] Write a table-driven failing integration test for Messages, Forum, Memo, Gallery, Browser, and Shopping proving every visible top-level Back currently leaves a blank connected overlay and skips `afterClose`.
 - [ ] Give modal-hosted App editors a narrow close request without changing their standalone phone-editor host behavior.
 - [ ] Preserve each App's existing synchronous save step before requesting `close("app-back")`.
-- [ ] Prove Back settles exactly once, removes the overlay directly, passes reason `app-back`, and still honors a close veto.
+- [ ] Prove all six Back controls settle exactly once, remove the overlay directly, and pass reason `app-back`; keep detailed save-before-close and veto assertions on representative blur-backed and direct-save Apps.
 - [ ] Do not expose a second header merely by changing the absolute panel containing block.
 - [ ] Run focused tests, full validation, request review, and commit:
 
@@ -54,7 +54,7 @@ git commit -m "fix(phone): flush app edits before close"
 git commit -m "fix(phone): route app back through modal lifecycle"
 ```
 
-### Task 3: Bound the phone App modal to the dynamic viewport
+### Task 3: Bound the phone App modal to the Visual Viewport
 
 **Files:**
 - Create: `tests/phone-app-modal-layout.test.mjs`
@@ -62,30 +62,34 @@ git commit -m "fix(phone): route app back through modal lifecycle"
 - Modify: `js/pages/phone.js`
 
 - [ ] Write a failing contract test for a `100vh` application token upgraded to `100dvh`, named modal shell elements, bounded mobile geometry, and one App-panel scroll owner.
+- [ ] Add a mocked `visualViewport` test proving height and offsetTop drive overlay-scoped CSS variables on open, resize, and scroll.
 - [ ] Assert the close control is a semantic button with an accessible label and a 44x44px target.
 - [ ] Replace only `openPhoneAppModal`'s geometry/header/content inline styles with scoped classes.
 - [ ] Keep `.phone-app-modal-content` at `min-height: 0; overflow: hidden` so existing `.cu-body` elements remain the scroll owners.
 - [ ] At 480px and below, let the shell fill the dynamic viewport and remove only its decorative radius; keep the 360x640px maximum on larger screens.
+- [ ] Fall back to the CSS dynamic-height token when `visualViewport` is absent; do not claim `dvh` alone tracks every software keyboard.
+- [ ] Remove Visual Viewport listeners on successful close and every render-failure path; a veto keeps them active for retry.
 - [ ] Make both the outer close control and scoped `.cu-close-btn` shells at least 44x44px without enlarging their glyphs.
 - [ ] Add scoped overscroll containment without introducing global body-overflow mutation.
 - [ ] Preserve the existing close controller, veto behavior, overlay click, callback ordering, render-failure cleanup, and article-draft isolation.
 - [ ] Run focused tests, full validation, request review, and commit:
 
 ```bash
-git commit -m "fix(phone): adapt app modal to mobile viewport"
+git commit -m "fix(phone): adapt app modal to visual viewport"
 ```
 
-### Task 4: Add dialog semantics and keyboard closure
+### Task 4: Add dialog semantics and topmost keyboard closure
 
 **Files:**
 - Extend: `tests/phone-app-modal.test.mjs`
 - Modify: `js/pages/phone.js`
 
-- [ ] Write failing tests for labelled dialog semantics, an accessible explicit-type close button, and Escape using the existing close controller.
+- [ ] Write failing tests for `role="dialog"` labelling, an accessible explicit-type close button, initial focus inside the shell, and Escape using the existing close controller.
+- [ ] Do not set `aria-modal="true"` until the application has a real stack-aware focus/inert boundary.
 - [ ] Capture the previously focused element before opening and restore it only after a successful close.
-- [ ] Register one Escape listener per open modal and remove it on every successful close and render-failure path.
-- [ ] Prove a vetoed Escape leaves the overlay connected and retryable without restoring background focus.
-- [ ] Do not introduce a partial focus trap while nested global modals remain stack-unaware.
+- [ ] Register one Escape listener per open modal, respond only when this overlay is the last connected `.modal-overlay`, and remove the listener on every successful close and render-failure path.
+- [ ] Prove a later phone modal and a nested generic modal shield the parent; prove a vetoed topmost Escape leaves the overlay connected and retryable without restoring background focus.
+- [ ] Do not introduce a partial focus trap while nested global modals remain stack-unaware; record that full modal focus isolation remains follow-up work.
 - [ ] Run focused tests, full validation, request review, and commit:
 
 ```bash
@@ -98,11 +102,13 @@ git commit -m "fix(phone): make app modal keyboard accessible"
 - Create: `js/phone-grid.js`
 - Modify or replace with compatibility export: `reader/phone-grid.js`
 - Modify: `reader/reader.js` only if its import path must change
+- Modify: `js/pages/phone.js`
 - Modify: `tests/reader-phone-grid.test.mjs`
 
-- [ ] Give reader and editor one metrics implementation while preserving every current reader coordinate and style string.
+- [ ] Give reader and editor one metrics implementation while preserving every current reader and editor coordinate/style string.
 - [ ] Keep a small compatibility export at `reader/phone-grid.js` if that avoids an unnecessary reader import-surface change.
-- [ ] Prove there is one implementation of `PHONE_GRID_METRICS`, coordinate conversion, and style generation.
+- [ ] Import `PHONE_GRID_METRICS` into `js/pages/phone.js` and replace only its duplicate numeric constant definitions with aliases; do not adopt responsive renderer styles in this extraction commit.
+- [ ] Prove there is one numeric definition of the phone grid metrics while both production surfaces still produce their pre-extraction output.
 - [ ] Run focused tests, full validation, request review, and commit:
 
 ```bash

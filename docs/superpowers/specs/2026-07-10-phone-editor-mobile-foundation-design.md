@@ -46,9 +46,11 @@ The modal content exposes a narrow close request to App editors. When a top-leve
 
 When the same App editor is hosted inside the standalone phone editor, no modal close request exists and its current restore-to-desktop behavior remains. This context check prevents a broad rewrite of the six App editors while eliminating the blank intermediate modal and lifecycle bypass.
 
-### 3. Root dynamic-viewport token
+### 3. Root viewport fallback and Visual Viewport bridge
 
-The root stylesheet defines an application viewport-height token with a `100vh` fallback and a `100dvh` enhancement. This phase uses it only for the phone App modal. The rest of the root shell keeps its current document-scrolling behavior, avoiding a broad height or safe-area rewrite.
+The root stylesheet defines an application viewport-height token with a `100vh` fallback and a `100dvh` enhancement. `openPhoneAppModal` then bridges `window.visualViewport.height` and `offsetTop` into overlay-scoped CSS variables when that API exists. Visual Viewport `resize` and `scroll` events refresh the variables while a software keyboard, pinch zoom, or viewport pan changes the actually visible region; every successful close and render-failure path removes those listeners.
+
+The CSS token remains the fallback when `visualViewport` is unavailable. This phase uses both mechanisms only for the phone App modal. The rest of the root shell keeps its current document-scrolling behavior, avoiding a broad height or safe-area rewrite.
 
 The root entry continues to omit `viewport-fit=cover`. Safe-area environment values are therefore not introduced piecemeal into this modal; the later root-shell phase must adapt the sticky header and article editor as one coherent change before extending content into display cutouts.
 
@@ -67,13 +69,15 @@ The overlay is a fixed flex container whose height follows the dynamic viewport.
 
 The outer close button and scoped `.cu-close-btn` controls become 44x44px targets while their visible glyphs remain compact. Existing close veto, overlay-click close, callback ordering, render-failure cleanup, and draft isolation remain unchanged.
 
-### 5. Dialog semantics and keyboard closure
+### 5. Dialog semantics and topmost keyboard closure
 
-The bounded shell is an actual labelled dialog with `role="dialog"` and `aria-modal="true"`. Its outer close button has an accessible name and explicit button type. Escape requests the same close controller, successful close removes its document listener and restores the element focused before opening, and a veto leaves the dialog connected for retry. A full focus trap is deferred until the nested global modal system can be handled with the same stack-aware contract.
+The bounded shell is a labelled `role="dialog"`. It intentionally does not claim `aria-modal="true"` until Tuuru has a shared stack-aware focus/inert system for both phone and generic nested modals. Opening moves focus to a usable control inside the shell; successful close restores the element focused before opening.
+
+The outer close button has an accessible name and explicit button type. Escape requests the same close controller only when this overlay is the last connected `.modal-overlay` in document order. A nested generic modal or a later phone modal therefore shields its parent. Successful close and render failure remove the document listener; a veto leaves the dialog connected and focused for retry. A full focus trap and background `inert` boundary are deferred to the shared modal-stack phase rather than being partially implemented here.
 
 ### 6. One shared logical grid
 
-The reader grid helper becomes the single source of phone grid metrics for reader and editor code. A compatibility module may remain at the reader path so the reader import surface does not change abruptly, but metrics and calculations have one implementation.
+The reader grid helper becomes the single source of phone grid metrics for reader and editor code. A compatibility module may remain at the reader path so the reader import surface does not change abruptly. The extraction task imports those metrics into `js/pages/phone.js` and removes its duplicate numeric definitions without changing its rendered pixels; the following adaptation task adopts shared forward/inverse helpers and responsive CSS variables.
 
 The horizontal origin remains container-relative. Its lower clamp is reduced from 4px to 0px, while the centered term still resolves to 4px at a full 320px container. This preserves reader positions `[4, 84, 164, 244]` and lets the bordered editor's 314px inner container resolve to `[1, 81, 161, 241]`, fitting four 72px icons without removing the phone frame.
 
@@ -127,7 +131,8 @@ Those remaining touch-only App interactions and the article editor mobile shell 
 - Reproduce the focused-field backdrop-close failure and assert the external snapshot observes the final value before adding layout work.
 - Prove representative embedded-App Back controls settle the modal exactly once through reason `app-back` instead of leaving a blank shell.
 - Add a CSS/source contract test for dynamic viewport sizing, named modal structure, one scroll owner, and the 44px close target.
-- Test dialog labelling, Escape cleanup, veto behavior, and focus restoration independently from geometry.
+- Test Visual Viewport height/offset updates and listener cleanup in addition to the CSS fallback.
+- Test dialog labelling, initial focus, topmost-only Escape behavior, nested-modal shielding, veto cleanup, and focus restoration independently from geometry.
 - Preserve the existing lifecycle tests for close veto, callback ordering, overlay click, and render-failure cleanup.
 - Move grid metrics behind one shared implementation and test 314px, 320px, 350px, and 365px containers.
 - Add renderer wiring tests proving reader and editor consume the same grid contract and no fixed editor offset constants remain.
