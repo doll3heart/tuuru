@@ -187,3 +187,68 @@ test("outline destinations have visible focus and coarse-pointer target contract
   assert.match(boundedNode, /min-height\s*:\s*44px/)
   assert.match(boundedChoice, /min-height\s*:\s*44px/)
 })
+
+test("chapter disclosure controls one container for nodes and choices", () => {
+  const root = render()
+  const chapter = root.querySelector(".wt-chapter")
+  const heading = chapter.querySelector(":scope > .wt-chapter-title")
+  const toggle = heading.querySelector(":scope > .wt-chapter-toggle")
+  const actions = heading.querySelector(":scope > .chapter-actions")
+  const contentId = toggle?.getAttribute("aria-controls")
+  const content = contentId ? chapter.querySelector(`#${contentId}`) : null
+
+  assert.equal(heading.hasAttribute("data-a"), false)
+  assert.equal(toggle?.tagName, "BUTTON")
+  assert.equal(toggle?.type, "button")
+  assert.equal(toggle?.dataset.a, "ts")
+  assert.equal(toggle?.getAttribute("aria-expanded"), "true")
+  assert.ok(contentId)
+  assert.ok(content)
+  assert.equal(content.hidden, false)
+  assert.equal(content.querySelectorAll(".wt-node").length, 2)
+  assert.equal(content.querySelectorAll(".wt-choice").length, 1)
+  assert.ok(actions)
+  assert.equal(toggle.contains(actions), false)
+  assert.equal(toggle.querySelector("button,select,input"), null)
+  assert.equal(toggle.querySelector(".arrow").getAttribute("aria-hidden"), "true")
+  assert.equal(toggle.querySelector(".arrow").classList.contains("open"), true)
+  for (const button of actions.querySelectorAll("button")) {
+    assert.equal(button.type, "button")
+    assert.ok(button.getAttribute("aria-label")?.trim())
+  }
+
+  const before = localStorage.getItem("tuuru_works")
+  toggle.click()
+  assert.equal(toggle.getAttribute("aria-expanded"), "false")
+  assert.equal(content.hidden, true)
+  assert.equal(toggle.querySelector(".arrow").classList.contains("open"), false)
+  assert.equal(localStorage.getItem("tuuru_works"), before)
+
+  toggle.click()
+  assert.equal(toggle.getAttribute("aria-expanded"), "true")
+  assert.equal(content.hidden, false)
+  assert.equal(toggle.querySelector(".arrow").classList.contains("open"), true)
+  assert.equal(localStorage.getItem("tuuru_works"), before)
+
+  assert.doesNotMatch(editorSource, /<div class="wt-chapter-title" data-a="ts"/)
+})
+
+test("chapter disclosure has visible focus and a bounded coarse-pointer target", () => {
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
+  const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
+  const title = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-title")
+  const toggle = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-toggle")
+  const focus = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-toggle:focus-visible")
+  const actionsFocusWithin = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-title:focus-within .chapter-actions")
+  const hiddenContent = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-content[hidden]")
+  const boundedToggle = ruleBodiesFor(bounded || "", ".world-tree .wt-chapter-toggle")
+
+  assert.doesNotMatch(title, /cursor\s*:\s*pointer/)
+  assert.match(toggle, /appearance\s*:\s*none/)
+  assert.match(toggle, /background\s*:\s*transparent/)
+  assert.match(toggle, /text-align\s*:\s*left/)
+  assert.match(focus, /outline\s*:\s*2px\s+solid/)
+  assert.match(actionsFocusWithin, /display\s*:\s*flex/)
+  assert.match(hiddenContent, /display\s*:\s*none/)
+  assert.match(boundedToggle, /min-height\s*:\s*44px/)
+})

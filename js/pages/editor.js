@@ -283,8 +283,13 @@ function buildWorldTree(w) {
       var chs = ch[ci]
       var chid = chs.id
       var cNodes = grouped[chid] || []
+      var chapterContentId = 'wtChapterContent_' + chid
       h += '<div class="wt-chapter">'
-      h += '<div class="wt-chapter-title" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '"><span class="arrow" id="arr_' + chid + '">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span><span class="chapter-actions"><button data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节">\u270e</button><button data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节">\u2715</button></span></div>'
+      h += '<div class="wt-chapter-title">'
+      h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="true" aria-controls="' + chapterContentId + '">'
+      h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span></button>'
+      h += '<span class="chapter-actions"><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
+      h += '<div class="wt-chapter-content" id="' + chapterContentId + '">'
       for (var ni = 0; ni < cNodes.length; ni++) {
         h += nodeHTML(w, cNodes[ni])
         var cnode = cNodes[ni]
@@ -298,7 +303,7 @@ function buildWorldTree(w) {
           }
         }
       }
-      h += '</div>'
+      h += '</div></div>'
     }    var uncid = grouped[""] || []
     for (var ui = 0; ui < uncid.length; ui++) {
       h += nodeHTML(w, uncid[ui])
@@ -439,18 +444,13 @@ function handleClick(e) {
     return
   }
   if (a === "ts") {
-    var sid = b.dataset.sid
-    if (sid) {
-      var arrow = document.getElementById("arr_" + sid)
-      if (arrow) arrow.classList.toggle("open")
-      var parent = b.parentElement
-      if (parent) {
-        var nodes = parent.querySelectorAll(".wt-node")
-        for (var ni = 0; ni < nodes.length; ni++) {
-          nodes[ni].style.display = nodes[ni].style.display === "none" ? "" : "none"
-        }
-      }
-    }
+    var expanded = b.getAttribute("aria-expanded") === "true"
+    var nextExpanded = !expanded
+    var chapterContent = document.getElementById(b.getAttribute("aria-controls"))
+    b.setAttribute("aria-expanded", String(nextExpanded))
+    if (chapterContent) chapterContent.hidden = !nextExpanded
+    var arrow = b.querySelector(".arrow")
+    if (arrow) arrow.classList.toggle("open", nextExpanded)
     return
   }
   if (a === "chapter-delete") {

@@ -562,15 +562,18 @@ ul,ol{list-style:none}
 .world-tree .wt-choice-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* Chapter title actions (rename / delete) */
-.world-tree .wt-chapter-title{display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:.8rem;font-weight:500;color:var(--c-text2);cursor:pointer;border-bottom:1px solid var(--c-border);user-select:none}
+.world-tree .wt-chapter-title{display:flex;align-items:center;gap:0;padding:0;font-size:.8rem;font-weight:500;color:var(--c-text2);border-bottom:1px solid var(--c-border)}
 .world-tree .wt-chapter-title:hover{background:rgba(164,198,235,.08)}
+.world-tree .wt-chapter-toggle{appearance:none;-webkit-appearance:none;display:flex;align-items:center;gap:6px;flex:1;min-width:0;padding:6px 14px;border:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;user-select:none}
+.world-tree .wt-chapter-toggle:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
 .world-tree .wt-chapter-title .arrow{font-size:.6rem;transition:.15s;flex-shrink:0}
 .world-tree .wt-chapter-title .arrow.open{transform:rotate(90deg)}
 .world-tree .wt-chapter-title .chapter-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .world-tree .wt-chapter-title .chapter-actions{display:none;gap:1px;flex-shrink:0}
-.world-tree .wt-chapter-title:hover .chapter-actions{display:flex}
+.world-tree .wt-chapter-title:hover .chapter-actions,.world-tree .wt-chapter-title:focus-within .chapter-actions{display:flex}
 .world-tree .wt-chapter-title .chapter-actions button{padding:1px 5px;font-size:.7rem;border:1px solid transparent;background:transparent;color:var(--c-text2);cursor:pointer;transition:.12s;line-height:1.2}
 .world-tree .wt-chapter-title .chapter-actions button:hover{color:var(--c-primary-hover);background:rgba(164,198,235,.12);border-color:var(--c-border)}
+.world-tree .wt-chapter-content[hidden]{display:none}
 
 /* WT resize handle */
 .wt-resize-handle{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;z-index:10}
@@ -660,6 +663,7 @@ ul,ol{list-style:none}
   .margin-popover{left:8px;right:8px;max-width:calc(100% - 16px);max-height:calc(var(--app-viewport-height) - var(--app-header-height) - 120px);overflow-y:auto;white-space:normal}
   .editor-iconbar button:focus-visible,.editor-toolbar button:focus-visible,.editor-toolbar .toolbar-setting:focus-visible,.editor-toolbar .toolbar-number:focus-visible,.editor-toolbar .margin-num:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
   .world-tree .wt-node-select,.world-tree .wt-choice{min-height:44px}
+  .world-tree .wt-chapter-toggle{min-height:44px}
   .editor-area,.world-tree{width:100%;min-height:0;flex:1 1 0}
   .world-tree{border-left:none;border-top:2px double var(--c-border)}
   .editor-body-area[data-mobile-pane="editor"] .world-tree{display:none}
