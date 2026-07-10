@@ -133,6 +133,20 @@ test("standalone controls and feedback stay inside safe areas", () => {
   assert.match(toast, /bottom\s*:[^;]*--reader-safe-bottom/)
 })
 
+test("article reading content consumes every display-cutout inset", () => {
+  const article = joinedRuleBodies(".article-reader")
+
+  assert.match(article, /max-width\s*:\s*720px/)
+  assert.match(article, /padding\s*:[^;]*--reader-safe-top/)
+  assert.match(article, /padding\s*:[^;]*--reader-safe-right/)
+  assert.match(article, /padding\s*:[^;]*--reader-safe-bottom/)
+  assert.match(article, /padding\s*:[^;]*--reader-safe-left/)
+  assert.match(article, /calc\(40px\s*\+\s*var\(--reader-safe-top\)\)/)
+  assert.match(article, /calc\(20px\s*\+\s*var\(--reader-safe-right\)\)/)
+  assert.match(article, /calc\(40px\s*\+\s*var\(--reader-safe-bottom\)\)/)
+  assert.match(article, /calc\(20px\s*\+\s*var\(--reader-safe-left\)\)/)
+})
+
 test("article phone overlay uses bounded classes and clears its runtime context", () => {
   const source = sourceBetween("var hadPhoneData", "bindOverlayApps(phoneWrapper)")
   const overlay = joinedRuleBodies(".rd-pm-modal")

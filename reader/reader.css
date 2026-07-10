@@ -281,7 +281,11 @@ body {
 .article-reader {
   max-width: 720px;
   margin: 0 auto;
-  padding: 40px 20px;
+  padding:
+    calc(40px + var(--reader-safe-top))
+    calc(20px + var(--reader-safe-right))
+    calc(40px + var(--reader-safe-bottom))
+    calc(20px + var(--reader-safe-left));
 }
 .article-title {
   font-size: 1.4rem;
