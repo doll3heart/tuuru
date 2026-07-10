@@ -201,13 +201,13 @@ test("outline selection returns to editing while an editor choice does not steal
   t.after(() => decoy.remove())
 
   paneButton("outline").click()
-  document.querySelector('.wt-node[data-n="focus-b"]').click()
+  document.querySelector('.wt-node-select[data-n="focus-b"]').click()
   assert.equal(document.querySelector(".editor-body-area").dataset.mobilePane, "editor")
   assert.equal(document.activeElement, paneButton("editor"))
   assert.ok(document.getElementById("ce_focus-b"))
 
   paneButton("outline").click()
-  document.querySelector('.wt-node[data-n="focus-a"]').click()
+  document.querySelector('.wt-node-select[data-n="focus-a"]').click()
   const choice = document.querySelector('[data-a="ch-go"][data-target="focus-b"]')
   choice.focus()
   choice.click()

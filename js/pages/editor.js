@@ -291,10 +291,10 @@ function buildWorldTree(w) {
         if (cnode.choices && cnode.choices.length) {
           for (var cci = 0; cci < cnode.choices.length; cci++) {
             var cc = cnode.choices[cci]
-            h += '<div class="wt-choice" data-a="sl" data-w="' + w.id + '" data-n="' + (cc.targetId || '') + '">'
-            h += '<span class="wt-choice-arrow">\u21b3</span>'
+            h += '<button type="button" class="wt-choice" data-a="sl" data-w="' + w.id + '" data-n="' + (cc.targetId || '') + '">'
+            h += '<span class="wt-choice-arrow" aria-hidden="true">\u21b3</span>'
             h += '<span class="wt-choice-text">' + esc(cc.text || '选项') + '</span>'
-            h += '</div>'
+            h += '</button>'
           }
         }
       }
@@ -309,11 +309,14 @@ function buildWorldTree(w) {
 
 function nodeHTML(w, n) {
   var ac = n.id === _nodeId ? ' active' : ''
+  var current = n.id === _nodeId ? ' aria-current="true"' : ''
   var ch = w.chapters || []
   var curCid = n.chapterId || ""
-  var h = '<div class="wt-node' + ac + '" data-a="sl" data-w="' + w.id + '" data-n="' + n.id + '">'
-  h += '<span class="dot"></span>'
+  var h = '<div class="wt-node' + ac + '">'
+  h += '<button type="button" class="wt-node-select" data-a="sl" data-w="' + w.id + '" data-n="' + n.id + '"' + current + '>'
+  h += '<span class="dot" aria-hidden="true"></span>'
   h += '<span class="node-label">' + esc(n.title || '节点') + '</span>'
+  h += '</button>'
   h += '<span class="node-actions">'
   h += '<select class="chapter-move" data-a="mc" data-w="' + w.id + '" data-n="' + n.id + '" title="移动到章节"><option value="">移至…</option>'
   for (var ci = 0; ci < ch.length; ci++) {
