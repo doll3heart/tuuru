@@ -93,3 +93,22 @@ test("disposed and unknown draft ids fail closed", () => {
   assert.equal(access.updatePhoneWork(draft.id, { leaked: true }), null)
   assert.equal(access.getPhoneWork("phone-draft:missing"), null)
 })
+
+test("disposed draft ids are never reused by later sessions", () => {
+  const access = createPhoneWorkAccess({
+    readStoredWork: () => null,
+    updateStoredWork: () => null,
+    createSessionId: () => "same",
+    now: () => 10,
+  })
+  const first = access.createPhoneWorkDraft({ title: "first" })
+  const releasedId = first.id
+
+  first.dispose()
+  const second = access.createPhoneWorkDraft({ title: "second" })
+
+  assert.notEqual(second.id, releasedId)
+  assert.equal(access.getPhoneWork(releasedId), null)
+  assert.equal(access.updatePhoneWork(releasedId, { title: "leak" }), null)
+  assert.equal(access.getPhoneWork(second.id).title, "second")
+})

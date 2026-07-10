@@ -18,6 +18,7 @@ export function createPhoneWorkAccess({
   now = Date.now,
 }) {
   const drafts = new Map()
+  const issuedDraftIds = new Set()
 
   function isDraftId(id) {
     return String(id).startsWith(DRAFT_PREFIX)
@@ -44,11 +45,15 @@ export function createPhoneWorkAccess({
   }
 
   function createPhoneWorkDraft(initialWork) {
-    let id
-    do {
-      id = DRAFT_PREFIX + createSessionId()
-    } while (drafts.has(id))
+    const baseId = DRAFT_PREFIX + createSessionId()
+    let id = baseId
+    let collisionSuffix = 2
+    while (issuedDraftIds.has(id)) {
+      id = `${baseId}-${collisionSuffix}`
+      collisionSuffix += 1
+    }
 
+    issuedDraftIds.add(id)
     drafts.set(id, { ...clone(initialWork), id })
     let disposed = false
 
