@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom"
 
 const editorSource = readFileSync(new URL("../js/pages/editor.js", import.meta.url), "utf8")
 const css = readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
+const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
 const MOBILE_QUERY = "(max-width: 480px), (max-height: 480px) and (pointer: coarse)"
 
 function cssBlockAfterMarker(cssText, marker) {
@@ -21,6 +22,18 @@ function cssBlockAfterMarker(cssText, marker) {
     if (depth === 0) return cssText.slice(open + 1, index)
   }
   return null
+}
+
+function ruleBodiesFor(cssText, selector) {
+  const bodies = []
+  const pattern = /([^{}]+)\{([^{}]*)\}/g
+  let match
+
+  while ((match = pattern.exec(cssText))) {
+    const selectors = match[1].split(",").map(value => value.trim())
+    if (selectors.includes(selector)) bodies.push(match[2])
+  }
+  return bodies.join("\n")
 }
 
 const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
@@ -248,4 +261,45 @@ test("bounded phone layouts expose one editor pane without changing desktop coex
   assert.match(editorSource, /id="articleEditorPane"/)
   assert.match(editorSource, /id="articleOutlinePane"/)
   assert.doesNotMatch(editorSource, /aria-modal="true"|editor-mobile-drawer|editor-mobile-overlay/)
+})
+
+test("the editor height and scroll chain follow the usable application viewport", () => {
+  const editorStart = css.indexOf("/* ====== Three-Column Editor Layout")
+  const editorEnd = css.indexOf("/* Responsive */", editorStart)
+  const editorSection = css.slice(editorStart, editorEnd).replace(/\/\*[\s\S]*?\*\//g, "")
+  const header = ruleBodiesFor(cssWithoutComments, ".app-header")
+  const page = ruleBodiesFor(editorSection, ".editor-page")
+  const bodyArea = ruleBodiesFor(editorSection, ".editor-body-area")
+  const editorArea = ruleBodiesFor(editorSection, ".editor-area")
+  const editorContent = ruleBodiesFor(editorSection, ".editor-content")
+  const worldTree = ruleBodiesFor(editorSection, ".world-tree")
+  const treeBody = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-body")
+  const documentBody = ruleBodiesFor(cssWithoutComments, "body")
+  const narrow = cssBlockAfterMarker(css, "@media(max-width:480px)")
+  const dynamicViewportSupport = cssBlockAfterMarker(css, "@supports (height:100dvh)")
+
+  assert.match(css, /:root\s*\{[^}]*--app-viewport-height\s*:\s*100vh/)
+  assert.ok(dynamicViewportSupport)
+  assert.match(dynamicViewportSupport, /:root\s*\{[^}]*--app-viewport-height\s*:\s*100dvh/)
+  assert.match(css, /:root\s*\{[^}]*--app-header-height\s*:\s*56px/)
+  assert.match(header, /height\s*:\s*var\(--app-header-height\)/)
+  assert.match(page, /height\s*:\s*calc\(var\(--app-viewport-height\)\s*-\s*var\(--app-header-height\)\)/)
+  assert.doesNotMatch(page, /100vh|56px/)
+  assert.ok(narrow)
+  assert.match(narrow, /:root\s*\{[^}]*--app-header-height\s*:\s*48px/)
+
+  for (const rule of [page, bodyArea, editorArea, editorContent, worldTree, treeBody]) {
+    assert.match(rule, /min-height\s*:\s*0/)
+  }
+  assert.match(page, /overflow\s*:\s*hidden/)
+  assert.match(bodyArea, /overflow\s*:\s*hidden/)
+  assert.match(editorArea, /overflow\s*:\s*hidden/)
+  assert.match(worldTree, /overflow\s*:\s*hidden/)
+  assert.match(editorContent, /overflow-y\s*:\s*auto/)
+  assert.match(treeBody, /overflow-y\s*:\s*auto/)
+  assert.match(editorContent, /overscroll-behavior\s*:\s*contain/)
+  assert.match(treeBody, /overscroll-behavior\s*:\s*contain/)
+  assert.match(documentBody, /min-height\s*:\s*var\(--app-viewport-height\)/)
+  assert.doesNotMatch(documentBody, /min-height\s*:\s*100vh/)
+  assert.doesNotMatch(documentBody, /overflow(?:-x|-y)?\s*:\s*hidden/)
 })
