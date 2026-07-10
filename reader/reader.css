@@ -58,7 +58,7 @@ body {
 .rd-profile-avatar {
   width: 72px; height: 72px;
   border-radius: 50%;
-  overflow: hidden;
+  overflow: visible;
   background: var(--c-surface2);
   display: block;
   margin: 0 auto 12px;
@@ -769,5 +769,240 @@ body.rd-theme-gray .article-meta { color: #333; }
   .cu-section-title { font-size: .72rem; }
   .rd-input-row { flex-direction: column; align-items: stretch; }
   .rd-input-row .btn, .rd-input-row button { align-self: flex-start; }
-  .rd-input-sm { max-width: 100% !important; }
+   .rd-input-sm { max-width: 100% !important; }
 }
+
+/* ====== Per-App Settings Panel (Cu) ====== */
+.cu-modal-overlay { animation: cuFadeIn .2s ease; }
+@keyframes cuFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.cu-modal {
+  background: #fff;
+  max-width: 440px;
+  width: min(440px, calc(100vw - 40px));
+  max-height: 88vh;
+  overflow-y: auto;
+  border-radius: 14px;
+  box-shadow: 0 12px 48px rgba(0,0,0,.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.cu-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid #eee;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 1;
+}
+.cu-modal-title { font-size: 1rem; font-weight: 600; color: #333; }
+.cu-modal-close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1.4rem;
+  color: #888;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color .12s;
+}
+.cu-modal-close:hover { color: #333; }
+
+.cu-modal-body { padding: 14px 18px; flex: 1; overflow-y: auto; }
+
+.cu-modal-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid #eee;
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+}
+
+.cu-btn-save {
+  padding: 7px 22px;
+  font-size: .82rem;
+  border: none;
+  background: var(--c-primary);
+  color: #fff;
+  cursor: pointer;
+  border-radius: 6px;
+  font-weight: 500;
+  transition: background .15s;
+}
+.cu-btn-save:hover { background: var(--c-primary-hover); }
+
+.cu-btn-cancel {
+  padding: 7px 18px;
+  font-size: .82rem;
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: border-color .12s;
+}
+.cu-btn-cancel:hover { border-color: #aaa; }
+
+/* ---- Card ---- */
+.cu-card {
+  background: #fafbfc;
+  border: 1px solid #e8ebf0;
+  border-radius: 10px;
+  padding: 0;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.cu-card-title {
+  font-size: .78rem;
+  font-weight: 600;
+  color: #555;
+  padding: 10px 14px;
+  background: #f0f2f5;
+  border-bottom: 1px solid #e8ebf0;
+}
+.cu-card-body { padding: 10px 14px; }
+
+/* ---- Row ---- */
+.cu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 6px 0;
+  gap: 12px;
+}
+.cu-row-label {
+  font-size: .75rem;
+  font-weight: 500;
+  color: #555;
+  white-space: nowrap;
+  min-width: 48px;
+}
+.cu-row-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+/* ---- Color Buttons ---- */
+.cu-color-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cu-color-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid #ddd;
+  cursor: pointer;
+  padding: 0;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.cu-color-btn:hover { border-color: var(--c-primary-hover); }
+.cu-color-btn.active {
+  border-color: var(--c-primary-hover);
+  box-shadow: 0 0 0 2.5px rgba(164,198,235,.45);
+}
+
+/* ---- Color Picker (native) ---- */
+.cu-color-picker {
+  width: 26px;
+  height: 26px;
+  border: 2px solid #ddd;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  flex-shrink: 0;
+}
+.cu-color-picker::-webkit-color-swatch-wrapper { padding: 0; }
+.cu-color-picker::-webkit-color-swatch { border: none; border-radius: 50%; }
+.cu-color-picker:hover { border-color: var(--c-primary-hover); }
+
+/* ---- Shape Buttons ---- */
+.cu-shape-group {
+  display: flex;
+  gap: 6px;
+}
+.cu-shape-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 10px;
+  font-size: .68rem;
+  border: 1.5px solid #ddd;
+  background: #fff;
+  color: #777;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: border-color .15s, color .15s;
+  min-width: 56px;
+}
+.cu-shape-btn small { font-size: .65rem; line-height: 1; }
+.cu-shape-btn:hover { border-color: var(--c-primary-hover); color: var(--c-primary-hover); }
+.cu-shape-btn.active {
+  border-color: var(--c-primary-hover);
+  color: var(--c-primary-hover);
+  background: rgba(164,198,235,.08);
+}
+
+/* ---- Style Buttons ---- */
+.cu-style-btn {
+  padding: 6px 14px;
+  font-size: .72rem;
+  border: 1.5px solid #ddd;
+  background: #fff;
+  color: #777;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.cu-style-btn:hover { border-color: var(--c-primary-hover); color: var(--c-primary-hover); }
+.cu-style-btn.active {
+  border-color: var(--c-primary-hover);
+  color: var(--c-primary-hover);
+  background: rgba(164,198,235,.08);
+}
+
+/* ---- Slider ---- */
+.cu-slider {
+  flex: 1;
+  accent-color: var(--c-primary);
+  height: 4px;
+}
+.cu-slider-val {
+  font-size: .72rem;
+  color: #777;
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Reset ---- */
+.cu-reset-btn {
+  padding: 6px 16px;
+  font-size: .72rem;
+  border: 1px solid #ddd;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: border-color .12s, color .12s;
+}
+.cu-reset-btn:hover { border-color: var(--c-accent3); color: var(--c-accent3); }
+

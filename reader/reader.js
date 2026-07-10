@@ -408,7 +408,8 @@ function getReaderSettings() {
     fontFamily: "'Noto Sans SC', sans-serif",
     theme: 'light',
     typingEffect: false,
-    typingSpeed: 50
+    typingSpeed: 50,
+    customFonts: []
   }
 }
 
@@ -487,7 +488,20 @@ function openReaderSettingsPanel() {
     var f = fonts[fi]
     body += '<button class="rs-font-btn' + (rs.fontFamily === f.family ? ' active' : '') + '" data-rs-font="' + esc(f.family) + '">' + f.name + '</button>'
   }
-  body += '</div></div>'
+  // Custom uploaded fonts
+  var customFonts = rs.customFonts || []
+  for (var cfi = 0; cfi < customFonts.length; cfi++) {
+    var cf = customFonts[cfi]
+    body += '<button class="rs-font-btn' + (rs.fontFamily === '"' + cf.name + '"' ? ' active' : '') + '" data-rs-font="' + esc('"' + cf.name + '"') + '">' + esc(cf.name) + '</button>'
+  }
+  body += '</div>'
+  body += '<div style="padding:4px 0;margin-top:6px"><button style="padding:5px 14px;font-size:.72rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;border-radius:4px" id="rsUploadFont">上传字体 (.ttf/.woff)</button></div>'
+  body += '<div id="rsFontList" style="padding:4px 0">'
+  for (var cfi2 = 0; cfi2 < customFonts.length; cfi2++) {
+    body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-rs-del-font="' + cfi2 + '">删除</button></div>'
+  }
+  body += '</div>'
+  body += '</div>'
 
   // Theme
   body += '<div class="rs-section"><div class="rs-section-title">主题</div>'
@@ -575,10 +589,46 @@ function openReaderSettingsPanel() {
     }
   })
 
+  // Font upload button
+  var rsUploadFontBtn = ov.querySelector('#rsUploadFont')
+  if (rsUploadFontBtn) rsUploadFontBtn.onclick = function() {
+    var inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.ttf,.otf,.woff,.woff2'
+    inp.onchange = function() {
+      var file = inp.files[0]; if (!file) return
+      var name = prompt('字体名称:', file.name.replace(/\.[^.]+$/, '') || '自定义字体')
+      if (!name) return
+      var r = new FileReader()
+      r.onload = function() {
+        rs.customFonts = rs.customFonts || []
+        rs.customFonts.push({ name: name, data: r.result })
+        saveReaderSettings(rs)
+        // Inject @font-face
+        var style = document.createElement('style')
+        style.textContent = '@font-face{font-family:"' + name.replace(/"/g,'') + '";src:url(' + r.result + ');font-display:swap;}'
+        document.head.appendChild(style)
+        ov.remove()
+        openReaderSettingsPanel()
+      }
+      r.readAsDataURL(file)
+    }
+    inp.click()
+  }
+  // Font delete buttons
+  ov.querySelectorAll('[data-rs-del-font]').forEach(function(b) {
+    b.onclick = function() {
+      var idx = parseInt(b.dataset.rsDelFont)
+      rs.customFonts = rs.customFonts || []
+      rs.customFonts.splice(idx, 1)
+      saveReaderSettings(rs)
+      ov.remove()
+      openReaderSettingsPanel()
+    }
+  })
+
   // Reset
   var resetBtn = ov.querySelector('#rsReset')
   if (resetBtn) resetBtn.onclick = function() {
-    var defaults = { fontSize: 18, lineHeight: 1.9, letterSpacing: 0, paragraphSpacing: 16, marginSize: 20, fontFamily: "'Noto Sans SC', sans-serif", theme: 'light' }
+    var defaults = { fontSize: 18, lineHeight: 1.9, letterSpacing: 0, paragraphSpacing: 16, marginSize: 20, fontFamily: "'Noto Sans SC', sans-serif", theme: 'light', customFonts: [] }
     saveReaderSettings(defaults)
     ov.remove()
     var content = document.querySelector('.article-content')
@@ -725,21 +775,88 @@ function renderArticleReader() {
     }
   })
 
-  // Bind phone module triggers
+  // Bind phone module triggers — render as glass overlay
   var triggers = document.querySelectorAll('.rd-pm-trigger')
   triggers.forEach(function(trig) {
     trig.onclick = function() {
       var pmid = trig.dataset.pmId
       var type = trig.dataset.pmType
-      // Mark as visited
       visitedPm[pmid] = true
       try { sessionStorage.setItem('rd_pm_visited_' + _work.id, JSON.stringify(visitedPm)) } catch(e) {}
-      // Hide red dot
       var dot = trig.querySelector('.rd-pm-dot')
       if (dot) dot.classList.remove('has-unread')
 
-      // Show the phone app content in a modal overlay
-      openReaderPhoneModal(pmid, type)
+      var pm = null
+      var pms = _work.phoneModules || []
+      for (var i = 0; i < pms.length; i++) { if (pms[i].id === pmid) { pm = pms[i]; break } }
+      if (!pm) return
+      var d = pm.data || {}
+      var contacts = d.contacts || []
+
+      // All 7 apps always displayed, some with red dot
+      var APP_ICONS = {
+        messages:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+        forum:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="12" y2="13"/></svg>',
+        memo:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+        gallery:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+        browser:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+        shopping:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>',
+        contacts:'<svg viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>'
+      }
+      var APP_NAMES = {messages:'消息',forum:'论坛',memo:'备忘',gallery:'相册',browser:'浏览',shopping:'购物',contacts:'联系人'}
+      
+      var hasData = {}
+      hasData.messages = !!(d.chats && d.chats.length)
+      hasData.forum = !!(d.forumPosts && d.forumPosts.length)
+      hasData.memo = !!(d.memos && d.memos.length)
+      hasData.gallery = !!(d.photos && d.photos.length)
+      hasData.browser = !!(d.browserHistory && d.browserHistory.length)
+      hasData.shopping = !!(d.shoppingItems && d.shoppingItems.length)
+      hasData.contacts = !!(d.contacts && d.contacts.length)
+
+      var appTypes = ['messages','forum','memo','gallery','browser','shopping','contacts']
+      var apps = []
+      for (var ai = 0; ai < appTypes.length; ai++) {
+        var at = appTypes[ai]
+        apps.push({ type: at, name: APP_NAMES[at], icon: APP_ICONS[at], color: '#f0f0f0', desktopX: ai % 4, desktopY: Math.floor(ai / 4), hasUpdate: hasData[at] })
+      }
+
+      var rc = getPhoneCustom()
+      var pd = {
+        contacts: contacts,
+        chats: d.chats || [],
+        moments: [],
+        forumPosts: d.forumPosts || [],
+        forumNpcs: [],
+        memos: d.memos || [],
+        photos: d.photos || [],
+        albums: [],
+        browserHistory: d.browserHistory || [],
+        shoppingItems: d.shoppingItems || [],
+        skin: rc,
+        apps: apps
+      }
+      // Create glass overlay
+      var overlay = document.createElement('div')
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.15);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto'
+      var backBtn = document.createElement('button')
+      backBtn.className = 'reader-back'
+      backBtn.style.cssText = 'position:fixed;top:16px;left:16px;z-index:1510'
+      backBtn.textContent = '←'
+      backBtn.title = '返回'
+      backBtn.onclick = function() { overlay.remove() }
+      overlay.appendChild(backBtn)
+      // Set phoneData and overlay context for back navigation
+      _work.phoneData = pd
+      var phoneWrapper = document.createElement('div')
+      phoneWrapper.style.cssText = 'flex-shrink:0'
+      phoneWrapper.innerHTML = buildPhoneHTML(pd, rc)
+      overlay.appendChild(phoneWrapper)
+      document.body.appendChild(overlay)
+      _work._overlayWrapper = phoneWrapper
+      _work._inOverlay = true
+      // Bind app icon clicks
+      bindOverlayApps(phoneWrapper)
     }
   })
 }
@@ -757,23 +874,12 @@ function substituteText(text, phs, valuesMap) {
   return r
 }
 
-// ====== PHONE READER ======
-function renderPhoneReader() {
-  if (!_work || !_work.phoneData) {
-    render('app', '<div class="drop-zone"><p>手机数据为空</p><button class="drop-btn" onclick="renderHome()">返回</button></div>')
-    return
-  }
-  var pd = _work.phoneData
+// ====== Build Phone HTML (shared by article overlay and standalone phone) ======
+function buildPhoneHTML(pd, custom) {
   var skin = pd.skin || {}
-  // Merge reader's custom settings on top of author's skin
-  var rc = getPhoneCustom()
-  if (rc.wallpaper) {
-    skin.wallpaper = rc.wallpaper
-  }
-  if (rc.wallpaperType === 'image' && rc.wallpaperImage) {
-    skin.wallpaperImage = rc.wallpaperImage
-    skin.wallpaperType = rc.wallpaperType
-  }
+  var rc = custom || getPhoneCustom()
+  if (rc.wallpaper) skin.wallpaper = rc.wallpaper
+  if (rc.wallpaperType === 'image' && rc.wallpaperImage) { skin.wallpaperImage = rc.wallpaperImage; skin.wallpaperType = rc.wallpaperType }
   if (rc.frameColor) skin.frameColor = rc.frameColor
   if (rc.borderRadius !== undefined) skin.borderRadius = rc.borderRadius
   if (rc.readerId) skin.readerId = rc.readerId
@@ -786,9 +892,8 @@ function renderPhoneReader() {
   if (rc.fontSize) skin.fontSize = rc.fontSize
   var apps = pd.apps || []
 
-  var h = '<button class="reader-back" onclick="renderHome()" title="返回">←</button>'
-  h += '<div class="phone-reader">'
-  var readerBgStyle = '--phone-bg:' + ((skin.wallpaper && skin.wallpaper !== '#d0e8f5') ? skin.wallpaper : '') + ';'
+  var h = ''
+  var readerBgStyle = '--phone-bg:transparent;'
   readerBgStyle += '--phone-radius:' + (skin.borderRadius || 28) + 'px;'
   readerBgStyle += '--phone-font:\'' + (skin.fontFamily || 'Noto Sans SC').replace(/'/g, '') + '\', sans-serif;'
   readerBgStyle += '--phone-fontsize:' + (skin.fontSize || 12) + 'px;'
@@ -796,15 +901,12 @@ function renderPhoneReader() {
   if (skin.wallpaperType === 'image' && skin.wallpaperImage) {
     readerBgStyle += ';background-image:url(' + esc(skin.wallpaperImage) + ');background-size:cover;background-position:center'
   }
-  h += '<div class="phone-frame"'
-  h += ' style="' + readerBgStyle + '">'
+  h += '<div class="phone-frame" style="' + readerBgStyle + '">'
 
-  // Dynamic Island
   if (skin.showDynamicIsland !== false) {
     h += '<div style="display:flex;justify-content:center;padding:10px 0 4px"><div style="width:100px;height:24px;background:#000;border-radius:14px"></div></div>'
   }
 
-  // Profile section
   var coverBg = skin.topBgImage || skin.wallpaperImage || ''
   h += '<div style="position:relative;height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:#fff;margin:12px 12px 0;border-radius:16px;'
   if (coverBg) h += 'background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center;'
@@ -816,9 +918,7 @@ function renderPhoneReader() {
   h += '<div style="font-size:12px;color:#555;z-index:1;margin-top:6px;font-weight:500">' + esc(skin.readerId || '读者') + '</div>'
   h += '</div>'
 
-  // Desktop area
   h += '<div id="phoneDesktopReader" style="flex:1;position:relative;min-height:420px;padding:10px 20px">'
-
   var CELL_W = 80, CELL_H = 95, OFFSET_X = 20, OFFSET_Y = 36
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
@@ -826,10 +926,18 @@ function renderPhoneReader() {
     if (app.type === 'settings' || app.type === 'customize') continue
     var x = OFFSET_X + (app.desktopX || 0) * CELL_W
     var y = OFFSET_Y + (app.desktopY || 0) * CELL_H
-    h += '<div class="phone-app-icon" data-app-type="' + app.type + '"'
-    h += ' style="left:' + x + 'px;top:' + y + 'px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
-    h += '<div class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';">'
-    h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
+    h += '<div class="phone-app-icon" data-app-type="' + app.type + '" style="left:' + x + 'px;top:' + y + 'px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;outline:none;border:none!important;box-shadow:none!important">'
+    var customIcon = rc.customIcons && rc.customIcons[app.type]
+    h += '<div class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';position:relative">'
+    if (customIcon) {
+      h += '<img src="' + esc(customIcon) + '" style="width:56px;height:56px;object-fit:cover;border-radius:14px" onerror="this.style.display=\'none\'">'
+      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
+    } else {
+      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
+    }
+    if (app.hasUpdate) {
+      h += '<span style="position:absolute;top:2px;right:2px;width:14px;height:14px;background:#ef4444;border-radius:50%;border:2px solid #fff"></span>'
+    }
     h += '</div>'
     if (skin.showAppLabels !== false) {
       h += '<span style="font-size:10px;color:#555;text-align:center;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3">' + esc(app.name || 'App') + '</span>'
@@ -837,12 +945,25 @@ function renderPhoneReader() {
     h += '</div>'
   }
   h += '</div>'
-
   if (skin.showHomeIndicator !== false) {
     h += '<div style="display:flex;justify-content:center;padding:8px 0 14px"><div style="width:40%;height:4px;background:rgba(255,255,255,.3);border-radius:3px"></div></div>'
   }
+  h += '</div>'
+  return h
+}
 
-  h += '</div></div>'
+// ====== PHONE READER (standalone imported phone) ======
+function renderPhoneReader() {
+  if (!_work || !_work.phoneData) {
+    render('app', '<div class="drop-zone"><p>手机数据为空</p><button class="drop-btn" onclick="renderHome()">返回</button></div>')
+    return
+  }
+  var pd = _work.phoneData
+  var rc = getPhoneCustom()
+  var h = '<button class="reader-back" onclick="renderHome()" title="返回">←</button>'
+  h += '<div class="phone-reader">'
+  h += buildPhoneHTML(pd, rc)
+  h += '</div>'
   render('app', h)
 
   var icons = document.querySelectorAll('.phone-app-icon')
@@ -854,27 +975,45 @@ function renderPhoneReader() {
   })
 }
 
+function bindOverlayApps(wrapper) {
+  var rc = getPhoneCustom()
+  wrapper.querySelectorAll('.phone-app-icon').forEach(function(icon) {
+    icon.onclick = function() {
+      var type = icon.dataset.appType
+      openReaderApp(type)
+    }
+  })
+}
+
 // ---- Reader App Panels ----
 function openReaderApp(type) {
-  var frame = document.getElementById('phoneDesktopReader')
-  if (!frame) return
+  var inOverlay = _work._inOverlay
+  var phoneFrame = document.querySelector('.phone-frame')
+  if (!phoneFrame) return
   var pd = _work.phoneData
   var contacts = pd.contacts || []
   var w = _work
+  var rc = getPhoneCustom()
 
-  function backToDesktop() { renderPhoneReader() }
+  function backToDesktop() {
+    if (inOverlay && _work._overlayWrapper) {
+      _work._overlayWrapper.innerHTML = buildPhoneHTML(pd, rc)
+      bindOverlayApps(_work._overlayWrapper)
+    } else {
+      renderPhoneReader()
+    }
+  }
 
   function wrapPanel(title, bodyHtml) {
-    var h = '<div style="display:flex;flex-direction:column;height:100%;background:var(--c-bg);position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333">'
-    h += '<div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #ddd;background:#fff;flex-shrink:0">'
-    h += '<button class="rd-back-btn" style="border:none;background:transparent;font-size:1rem;cursor:pointer;color:#888;padding:4px 8px">←</button>'
-    h += '<span style="font-size:.85rem;font-weight:600;flex:1;text-align:center;color:#555">' + esc(title) + '</span>'
-    h += '<span style="width:36px"></span>'
+    var h = '<div class="cu-panel cu-panel-embedded" style="z-index:10">'
+    h += '<div class="cu-header" style="justify-content:flex-start;gap:8px">'
+    h += '<button class="rd-back-btn" style="border:none;background:transparent;font-size:1rem;cursor:pointer;color:var(--c-text2);padding:4px 8px">←</button>'
+    h += '<span class="cu-title" style="flex:1;text-align:center">' + esc(title) + '</span>'
     h += '</div>'
-    h += '<div style="flex:1;overflow-y:auto;padding:8px 10px">' + bodyHtml + '</div>'
+    h += '<div class="cu-body" style="padding:8px 10px">' + bodyHtml + '</div>'
     h += '</div>'
-    frame.innerHTML = h
-    var backBtn = frame.querySelector('.rd-back-btn')
+    phoneFrame.innerHTML = h
+    var backBtn = phoneFrame.querySelector('.rd-back-btn')
     if (backBtn) backBtn.onclick = backToDesktop
   }
 
@@ -895,11 +1034,11 @@ function openReaderApp(type) {
       h += '</div>'
     })
     wrapPanel('消息', h)
-    var cards = frame.querySelectorAll('.rd-chat-card')
+    var cards = phoneFrame.querySelectorAll('.rd-chat-card')
     cards.forEach(function(card) {
       card.onclick = function() {
         var idx = parseInt(card.dataset.chatIdx)
-        openReaderChat(frame, w, pd, chats[idx])
+        openReaderChat(phoneFrame, w, pd, chats[idx])
       }
     })
   } else if (type === 'forum') {
@@ -913,10 +1052,10 @@ function openReaderApp(type) {
       h += '</div>'
     })
     wrapPanel('论坛', h)
-    var postCards = frame.querySelectorAll('.rd-post-card')
+    var postCards = phoneFrame.querySelectorAll('.rd-post-card')
     postCards.forEach(function(card) {
       card.onclick = function() {
-        openReaderForumPost(frame, w, pd, card.dataset.postId)
+        openReaderForumPost(phoneFrame, w, pd, card.dataset.postId)
       }
     })
   } else if (type === 'memo') {
@@ -988,7 +1127,7 @@ function openReaderApp(type) {
     h += '<div id="rdShopOrder" style="display:none">' + shopList(orderItems) + '</div>'
     wrapPanel('购物清单', h)
 
-    var tabs = frame.querySelectorAll('.rd-shop-tab')
+    var tabs = phoneFrame.querySelectorAll('.rd-shop-tab')
     tabs.forEach(function(t) {
       t.onclick = function() {
         tabs.forEach(function(x) { x.classList.remove('active'); x.style.borderBottomColor = 'transparent' })
@@ -1022,6 +1161,9 @@ function openReaderApp(type) {
 function openReaderChat(frame, w, pd, ch) {
   var contacts = pd.contacts || []
 
+  // Deep clone chat data so we don't mutate the original work object
+  ch = JSON.parse(JSON.stringify(ch))
+
   function backToList() { openReaderApp('messages') }
 
   function getChatName() {
@@ -1032,43 +1174,78 @@ function openReaderChat(frame, w, pd, ch) {
 
   function renderChat() {
     var chatName = getChatName()
-    var bg = ch.bgImage || ''
-    var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;' + (bg ? 'background-image:url(' + esc(bg) + ');background-size:cover;background-position:center' : 'background:#f0f0f0') + '">'
-    h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd;flex-shrink:0">'
-    h += '<button class="rd-back-btn" style="border:none;background:transparent;font-size:1rem;cursor:pointer;color:#888;padding:4px 8px">←</button>'
-    h += '<span style="flex:1;text-align:center;font-size:.8rem;font-weight:500;color:#555">' + esc(chatName) + '</span>'
-    h += '<span style="width:36px"></span>'
-    h += '</div>'
-    h += '<div style="flex:1;overflow-y:auto;padding:6px 10px" id="rdChatMsgs">'
+    var ast = appStyle('messages')
     var rounds = ch.rounds || []
     if (rounds.length === 0 && ch.messages && ch.messages.length) {
       rounds = [{ id: 'd', label: '', messages: ch.messages }]
+      ch.rounds = rounds
     }
-    rounds.forEach(function(round) {
-      (round.messages || []).forEach(function(msg) {
+
+    // Collect all choices from all messages (used or not — reader can replay)
+    var allChoices = []
+    for (var lri = rounds.length - 1; lri >= 0; lri--) {
+      if (rounds[lri].messages) {
+        for (var lmi = rounds[lri].messages.length - 1; lmi >= 0; lmi--) {
+          var lm = rounds[lri].messages[lmi]
+          if (lm.choices && lm.choices.length > 0) {
+            for (var lci = 0; lci < lm.choices.length; lci++) {
+              allChoices.push({ roundIdx: lri, msgIdx: lmi, choiceIdx: lci, text: lm.choices[lci].text })
+            }
+            if (allChoices.length > 0) break
+          }
+        }
+        if (allChoices.length > 0) break
+      }
+    }
+
+    var avSz = ast.avatarSize + 'px'
+
+    // ---- BUILD HTML ----
+    var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;background:#f0f0f0">'
+
+    // Top bar
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd;flex-shrink:0">'
+    h += '<button id="chatBack" style="border:none;background:#eee;color:#555;cursor:pointer;font-size:.75rem;padding:5px 10px;border-radius:6px">← 返回</button>'
+    h += '<span style="flex:1;text-align:center;font-size:.8rem;font-weight:500;color:#555">' + esc(chatName) + '</span>'
+    h += '<span style="width:56px"></span>'
+    h += '</div>'
+
+    // Message area
+    h += '<div id="chatMsgArea" style="flex:1;overflow-y:auto;padding:6px 10px">'
+    for (var ri = 0; ri < rounds.length; ri++) {
+      var round = rounds[ri]
+      if (!round.messages || round.messages.length === 0) continue
+      for (var mi = 0; mi < round.messages.length; mi++) {
+        var msg = round.messages[mi]
         if (msg.type === 'time') {
           h += '<div style="text-align:center;padding:6px 0;font-size:.62rem;color:#b0b8c4">' + esc(msg.time || '') + '</div>'
-          return
+          continue
         }
         var isSelf = msg.senderId === 'self'
-        h += '<div style="display:flex;gap:8px;margin-bottom:12px;align-items:flex-start;' + (isSelf ? 'flex-direction:row-reverse' : '') + '">'
+        h += '<div style="display:flex;gap:6px;margin-bottom:10px;align-items:flex-start;' + (isSelf ? 'flex-direction:row-reverse' : '') + '">'
+        // Avatar for others
         if (!isSelf) {
           var sc = contacts.find(function(c) { return c.id === msg.senderId })
           var avBg = sc ? (sc.avatarUrl ? 'background-image:url(' + esc(sc.avatarUrl) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:#ccc'
-          h += '<div style="width:36px;height:36px;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;' + avBg + '">'
+          h += '<div style="width:' + avSz + ';height:' + avSz + ';flex-shrink:0;border-radius:' + ast.avatarRadius + ';display:flex;align-items:center;justify-content:center;color:#fff;font-size:.65rem;font-weight:600;' + avBg + '">'
           if (!sc || !sc.avatarUrl) h += '<span>' + esc((sc ? sc.name : '?').charAt(0)) + '</span>'
           h += '</div>'
         }
-        var bubbleStyle = isSelf ? 'background:#555;color:#fff;border-radius:8px 8px 2px 8px' : 'background:#fff;color:#333;border-radius:8px 8px 8px 2px'
-        h += '<div style="max-width:180px;padding:8px 12px;font-size:.82rem;line-height:1.5;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow-wrap:break-word;' + bubbleStyle + '">'
+        // Bubble content
+        h += '<div style="min-width:0;max-width:75%">'
+        var bubbleStyle = isSelf
+          ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
+          : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
         if (msg.type === 'image') {
+          h += '<div style="' + bubbleStyle + '">'
           h += '<img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
+          h += '</div>'
         } else if (msg.type === 'redpacket') {
-          h += '<div style="background:#C46060;padding:8px;border-radius:4px;color:#fff;text-align:center"><div style="font-size:.85rem;font-weight:700">' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div style="font-size:.6rem;opacity:.8">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div>'
+          h += '<div style="max-width:180px;padding:8px 12px;background:#C46060;color:#fff;border-radius:8px;text-align:center"><div style="font-size:.85rem;font-weight:700">' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div style="font-size:.6rem;opacity:.8">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div>'
         } else if (msg.type === 'transfer') {
-          h += '<div style="background:#D4915A;padding:10px;border-radius:4px;color:#fff"><div style="font-size:.6rem;opacity:.8">转账</div><div style="font-size:.85rem;font-weight:700">¥' + (msg.transferAmount || 0).toFixed(2) + '</div></div>'
+          h += '<div style="max-width:180px;padding:10px 12px;background:#D4915A;color:#fff;border-radius:8px"><div style="font-size:.6rem;opacity:.8">转账</div><div style="font-size:.85rem;font-weight:700">¥' + (msg.transferAmount || 0).toFixed(2) + '</div></div>'
         } else if (msg.type === 'familycard') {
-          h += '<div style="background:#8B7AAA;padding:10px;border-radius:4px;color:#fff;text-align:center"><div style="font-size:.6rem;opacity:.8">亲属卡</div><div style="font-size:.75rem">' + esc(msg.fcRelation || '亲人') + '</div><div style="font-size:.85rem;font-weight:700">¥' + (msg.fcAmount || 0).toFixed(2) + '</div></div>'
+          h += '<div style="max-width:180px;padding:10px 12px;background:#8B7AAA;color:#fff;border-radius:8px;text-align:center"><div style="font-size:.6rem;opacity:.8">亲属卡</div><div style="font-size:.75rem">' + esc(msg.fcRelation || '亲人') + '</div><div style="font-size:.85rem;font-weight:700">¥' + (msg.fcAmount || 0).toFixed(2) + '</div></div>'
         } else if (msg.type === 'voice') {
           var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
           var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))
@@ -1077,63 +1254,87 @@ function openReaderChat(frame, w, pd, ch) {
             var bh = 4 + Math.abs(Math.sin(bi * 0.7 + 1.5)) * 14
             bars += '<rect x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
           }
-          var voiceClick = "var t=this.querySelector('.chat-voice-text');t.style.display=t.style.display=='none'?'block':'none';var w=this.querySelector('.chat-voice-wave');w.style.display=t.style.display=='block'?'none':''"
-          bubbleStyle = isSelf ? 'background:#555;color:#fff;border-radius:8px 8px 2px 8px' : 'background:#fff;color:#333;border-radius:8px 8px 8px 2px'
-          h += '<div style="max-width:180px;padding:8px 12px;font-size:.82rem;line-height:1.5;box-shadow:0 1px 2px rgba(0,0,0,.04);overflow-wrap:break-word;cursor:pointer;min-width:100px;' + bubbleStyle + '" onclick="' + esc(voiceClick) + '">'
-          h += '<svg class="chat-voice-wave" width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7;display:inline">' + bars + '</svg>'
+          h += '<div style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
+          h += '<svg width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
           h += '<span style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
-          h += '<span class="chat-voice-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(msg.text || '') + '</span>'
+          h += '<span class="cv-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(msg.text || '') + '</span>'
           h += '</div>'
         } else {
+          h += '<div style="' + bubbleStyle + '">'
           if (msg.quoteId && msg.quoteText) {
             h += '<div style="font-size:.6rem;opacity:.7;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid rgba(0,0,0,.1)">引用：' + esc(msg.quoteText.substring(0, 40)) + '</div>'
           }
-          h += esc(msg.text || '')
+          h += esc(msg.text || '') + '</div>'
         }
         h += '</div>'
-        if (msg.choices && msg.choices.length > 0) {
-          h += '<div style="width:100%;display:flex;flex-direction:column;gap:3px;margin-top:4px">'
-          msg.choices.forEach(function(c, cidx) {
-            h += '<button class="rd-choice-btn" data-ri="' + rounds.indexOf(round) + '" data-mi="' + round.messages.indexOf(msg) + '" data-ci="' + cidx + '" style="padding:5px 12px;font-size:.7rem;border:1px solid var(--c-primary);background:rgba(164,198,235,.12);color:var(--c-primary-hover);cursor:pointer;border-radius:4px;text-align:center;' + (c.used ? 'opacity:.5;cursor:default' : '') + '">' + esc(c.text || '选项') + '</button>'
-          })
-          h += '</div>'
-        }
         h += '</div>'
-      })
-    })
+      }
+    }
     h += '</div>'
+
+    // Choice popup panel
+    if (allChoices.length > 0) {
+      h += '<div id="rdChoiceList" style="display:none;position:absolute;bottom:42px;left:0;right:0;background:#fff;border:1px solid #CAD3E0;border-radius:4px;max-height:200px;overflow-y:auto;z-index:30;box-shadow:0 -4px 12px rgba(0,0,0,.15);margin:0 6px">'
+      for (var ac = 0; ac < allChoices.length; ac++) {
+        var acv = allChoices[ac]
+        h += '<div class="rd-reply-option" data-ri="' + acv.roundIdx + '" data-mi="' + acv.msgIdx + '" data-ci="' + acv.choiceIdx + '" style="padding:10px 14px;font-size:.78rem;color:#4a5568;cursor:pointer;border-bottom:1px solid #eee">' + esc(acv.text) + '</div>'
+      }
+      h += '</div>'
+    }
+
+    // Bottom input bar
+    h += '<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#f5f6f8;border-top:1px solid #d8dce4;flex-shrink:0">'
+    h += '<input id="chatInput" readonly style="flex:1;padding:7px 12px;border:1px solid #d8dce4;border-radius:18px;font-size:.76rem;outline:none;background:' + (allChoices.length > 0 ? '#fff' : '#e8e8e8') + ';color:' + (allChoices.length > 0 ? '#4a5568' : '#aaa') + ';cursor:' + (allChoices.length > 0 ? 'pointer' : 'default') + '" placeholder="' + (allChoices.length > 0 ? '点击选择回复...' : '暂无可用选项') + '" value="">'
+    h += '<button id="chatSendBtn" style="width:30px;height:30px;border:none;background:#222;color:#fff;cursor:pointer;border-radius:50%;font-size:.7rem;display:flex;align-items:center;justify-content:center;flex-shrink:0">▶</button>'
+    h += '</div>'
+
     h += '</div>'
     frame.innerHTML = h
 
-    var backBtn = frame.querySelector('.rd-back-btn')
-    if (backBtn) backBtn.onclick = backToList
+    // ---- Bind events ----
+    frame.querySelector('#chatBack').onclick = backToList
 
-    var choiceBtns = frame.querySelectorAll('.rd-choice-btn')
-    choiceBtns.forEach(function(btn) {
-      btn.onclick = function() {
-        if (btn.style.opacity === '0.5') return
-        var ri = parseInt(btn.dataset.ri)
-        var mi = parseInt(btn.dataset.mi)
-        var ci = parseInt(btn.dataset.ci)
-        var rounds = ch.rounds || []
-        if (!rounds[ri]) return
-        var round = rounds[ri]
-        var msg = round.messages[mi]
-        if (!msg || !msg.choices) return
-        var choice = msg.choices[ci]
-        if (!choice || choice.used) return
-        choice.used = true
-        if (choice.replyText) {
-          round.messages.push({ id: 'r' + Date.now(), senderId: 'self', text: choice.replyText, type: 'text', time: new Date().toLocaleString() })
-        }
-        if (choice.followUpMessages) {
-          choice.followUpMessages.forEach(function(fm) {
-            round.messages.push(Object.assign({}, fm, { id: 'r' + Date.now() + Math.random() }))
-          })
-        }
-        renderChat()
+    var chatInput = frame.querySelector('#chatInput')
+    var sendBtn = frame.querySelector('#chatSendBtn')
+    var choiceList = frame.querySelector('#rdChoiceList')
+
+    function pickChoice(ri, mi, ci) {
+      if (!rounds[ri] || !rounds[ri].messages[mi]) return
+      var m = rounds[ri].messages[mi]
+      if (!m.choices || !m.choices[ci]) return
+      var choice = m.choices[ci]
+      if (choice.replyText) {
+        rounds[ri].messages.push({ id: 'r' + Date.now(), senderId: 'self', text: choice.replyText, type: 'text', time: new Date().toLocaleString() })
       }
-    })
+      if (choice.followUpMessages) {
+        choice.followUpMessages.forEach(function(fm) {
+          rounds[ri].messages.push(Object.assign({}, fm, { id: 'r' + Date.now() + Math.random() }))
+        })
+      }
+      if (choiceList) choiceList.style.display = 'none'
+      renderChat()
+    }
+
+    // Input bar toggle
+    if (chatInput) chatInput.onclick = function(e) { e.stopPropagation(); if (choiceList) choiceList.style.display = (choiceList.style.display === 'block' ? 'none' : 'block') }
+    if (sendBtn) sendBtn.onclick = function(e) { e.stopPropagation(); if (choiceList) choiceList.style.display = (choiceList.style.display === 'block' ? 'none' : 'block') }
+
+    // Option clicks
+    if (choiceList) {
+      choiceList.querySelectorAll('.rd-reply-option').forEach(function(opt) {
+        opt.onclick = function(e) {
+          e.stopPropagation()
+          pickChoice(parseInt(opt.dataset.ri), parseInt(opt.dataset.mi), parseInt(opt.dataset.ci))
+        }
+        opt.onmouseenter = function() { opt.style.background = '#f5f5f5' }
+        opt.onmouseleave = function() { opt.style.background = '' }
+      })
+      frame.addEventListener('click', function(e) {
+        if (choiceList.style.display === 'block' && !choiceList.contains(e.target) && e.target !== chatInput && e.target !== sendBtn) {
+          choiceList.style.display = 'none'
+        }
+      })
+    }
   }
 
   renderChat()
@@ -1174,157 +1375,6 @@ function openReaderForumPost(frame, w, pd, postId) {
   if (backBtn) backBtn.onclick = backToList
 }
 
-// ====== Reader Phone Module Modal ======
-function openReaderPhoneModal(pmid, type) {
-  var pm = null
-  var pms = _work.phoneModules || []
-  for (var i = 0; i < pms.length; i++) {
-    if (pms[i].id === pmid) { pm = pms[i]; break }
-  }
-  if (!pm) return
-
-  var data = pm.data || {}
-  var contacts = data.contacts || []
-
-  // Build the modal
-  var overlay = document.createElement('div')
-  overlay.className = 'modal-overlay rd-pm-overlay'
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px'
-
-  var inner = document.createElement('div')
-  inner.className = 'rd-pm-modal'
-  inner.style.cssText = 'background:#fff;max-width:380px;width:100%;max-height:85vh;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.3);position:relative'
-
-  var topBar = document.createElement('div')
-  topBar.style.cssText = 'display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #eee;flex-shrink:0'
-  var labels = {messages:'消息',forum:'论坛',memo:'备忘录',gallery:'相册',browser:'浏览记录',shopping:'购物',contacts:'联系人'}
-  var iconSvgs = {
-    messages:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-    forum:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="12" y2="13"/></svg>',
-    memo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
-    gallery:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
-    browser:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
-    shopping:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>',
-    contacts:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>'
-  }
-  topBar.innerHTML = '<span style="color:#666;flex-shrink:0">' + (iconSvgs[type] || '') + '</span><span style="font-size:.85rem;font-weight:600;flex:1;text-align:center;color:#555">' + esc(labels[type] || '模块') + '</span><button style="border:none;background:transparent;cursor:pointer;font-size:1.2rem;color:#999;padding:4px 8px">&times;</button>'
-
-  var content = document.createElement('div')
-  content.style.cssText = 'flex:1;overflow-y:auto;padding:10px 12px;font-size:13px;color:#333;background:#f8f8f8'
-
-  // Render content based on type
-  var bodyHtml = ''
-  if (type === 'messages') {
-    var chats = data.chats || []
-    if (chats.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无对话</div>'
-    else {
-      chats.forEach(function(ch) {
-        var name = ch.type === 'group' ? (ch.groupName || '群聊') : ((contacts.find(function(c){return c.id===ch.contactIds[0]}) || {}).name || '未知')
-        bodyHtml += '<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eee;align-items:center;cursor:pointer" onclick="this.querySelector(\'.rd-pm-chat-detail\').style.display=this.querySelector(\'.rd-pm-chat-detail\').style.display==\'none\'?\'block\':\'none\'">'
-        bodyHtml += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;background:' + (ch.type==='group'?'#10b981':'#6366f1') + '">' + esc(name.charAt(0)) + '</div>'
-        bodyHtml += '<div style="flex:1"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(name) + '</div>'
-        bodyHtml += '<div style="font-size:.68rem;color:#999">' + (ch.messages ? ch.messages.length + '条消息' : '0条消息') + '</div></div></div>'
-        // Chat messages detail
-        bodyHtml += '<div class="rd-pm-chat-detail" style="display:none;padding:6px 10px;background:#f0f0f0;margin-bottom:4px">'
-        var msgs = ch.messages || []
-        var rounds = ch.rounds || []
-        if (rounds.length > 0) {
-          rounds.forEach(function(r) { (r.messages||[]).forEach(function(m) {
-            if (m.type === 'time') return
-            bodyHtml += '<div style="margin:4px 0;padding:5px 8px;font-size:.72rem;background:' + (m.senderId==='self'?'#555;color:#fff':'#fff;color:#333') + ';border-radius:6px;max-width:80%">' + esc(m.text || '') + '</div>'
-          })})
-        } else {
-          msgs.forEach(function(m) {
-            bodyHtml += '<div style="margin:4px 0;padding:5px 8px;font-size:.72rem;background:' + (m.senderId==='self'?'#555;color:#fff':'#fff;color:#333') + ';border-radius:6px;max-width:80%">' + esc(m.text || '') + '</div>'
-          })
-        }
-        bodyHtml += '</div>'
-      })
-    }
-  } else if (type === 'forum') {
-    var posts = data.forumPosts || []
-    if (posts.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无帖子</div>'
-    else {
-      posts.forEach(function(p) {
-        bodyHtml += '<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eee;cursor:pointer" onclick="var d=this.nextElementSibling;d.style.display=d.style.display==\'none\'?\'block\':\'none\'">'
-        bodyHtml += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;background:' + avatarColor(p.contactId) + '">' + esc((p.contactName||'?').charAt(0)) + '</div>'
-        bodyHtml += '<div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(p.title) + '</div><div style="font-size:.68rem;color:#999">' + esc(p.contactName||'') + ' / ' + esc(p.time||'') + '</div></div>'
-        bodyHtml += '</div>'
-        bodyHtml += '<div style="display:none;padding:8px 10px;font-size:.75rem;color:#555;line-height:1.6;background:#f0f0f0;margin-bottom:4px">' + esc(p.content||'') + '</div>'
-      })
-    }
-  } else if (type === 'memo') {
-    var memos = data.memos || []
-    if (memos.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无备忘</div>'
-    else {
-      memos.forEach(function(m) {
-        bodyHtml += '<div style="padding:10px 12px;margin-bottom:6px;background:#fff;border:1px solid #eee;font-size:.78rem;line-height:1.6;border-radius:4px">' + esc(m.content || '') + '</div>'
-      })
-    }
-  } else if (type === 'gallery') {
-    var photos = data.photos || []
-    if (photos.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无照片</div>'
-    else {
-      bodyHtml += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'
-      photos.forEach(function(p) {
-        bodyHtml += '<div style="aspect-ratio:1;overflow:hidden;border:1px solid #eee;border-radius:4px;background:#f0f0f0;display:flex;align-items:center;justify-content:center">'
-        if (p.imageUrl) bodyHtml += '<img src="' + esc(p.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
-        else bodyHtml += '<span style="font-size:.65rem;color:#999;padding:4px;text-align:center">' + esc(p.caption||'') + '</span>'
-        bodyHtml += '</div>'
-      })
-      bodyHtml += '</div>'
-    }
-  } else if (type === 'browser') {
-    var history = data.browserHistory || []
-    if (history.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无记录</div>'
-    else {
-      history.forEach(function(h) {
-        bodyHtml += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #eee">'
-        bodyHtml += '<div style="width:8px;height:8px;border-radius:50%;background:#6366f1;flex-shrink:0"></div>'
-        bodyHtml += '<div style="flex:1"><div style="font-size:.78rem;font-weight:500;color:#555">' + esc(h.title||'') + '</div><div style="font-size:.68rem;color:#999">' + esc(h.url||'') + '</div></div>'
-        bodyHtml += '<span style="font-size:.65rem;color:#999">' + esc((h.time||'').replace(/\s.*$/,'')) + '</span>'
-        bodyHtml += '</div>'
-      })
-    }
-  } else if (type === 'shopping') {
-    var items = data.shoppingItems || []
-    if (items.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无商品</div>'
-    else {
-      items.forEach(function(s) {
-        bodyHtml += '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #eee">'
-        bodyHtml += '<div style="width:50px;height:50px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid #eee;border-radius:4px">'
-        if (s.imageUrl) bodyHtml += '<img src="' + esc(s.imageUrl) + '" style="width:100%;height:100%;object-fit:cover">'
-        bodyHtml += '</div>'
-        bodyHtml += '<div style="flex:1"><div style="font-size:.78rem;font-weight:500">' + esc(s.name) + '</div><div style="font-size:.75rem;color:#a3bded">¥' + (s.price||0).toFixed(2) + '</div></div>'
-        bodyHtml += '</div>'
-      })
-    }
-  } else if (type === 'contacts') {
-    var ct = data.contacts || []
-    if (ct.length === 0) bodyHtml = '<div style="text-align:center;padding:30px;color:#999">暂无联系人</div>'
-    else {
-      ct.forEach(function(c) {
-        bodyHtml += '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eee">'
-        bodyHtml += '<div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;background:' + avatarColor(c.id) + '">' + esc(c.name.charAt(0)) + '</div>'
-        bodyHtml += '<div style="font-size:.82rem;font-weight:500;color:#555">' + esc(c.name) + '</div>'
-        bodyHtml += '</div>'
-      })
-    }
-  }
-
-  content.innerHTML = bodyHtml
-  inner.appendChild(topBar)
-  inner.appendChild(content)
-  overlay.appendChild(inner)
-  document.body.appendChild(overlay)
-
-  // Close
-  var closeBtn = topBar.querySelector('button')
-  closeBtn.onclick = function() { overlay.remove() }
-  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove() })
-}
-
-
 // ====== Reader Phone Custom (Beautification Panel) ======
 function getPhoneCustom() {
   return lsGet('phoneCustom') || {
@@ -1334,7 +1384,10 @@ function getPhoneCustom() {
     showDynamicIsland: true, showHomeIndicator: true, showAppLabels: true,
     showIconShadow: true, iconBorderRadius: 14, iconColumns: 4, materialType: 'glass',
     materialOpacity: 65, timeColor: '#ffffff',
-    appBgs: {}
+    appBgs: {},
+    appSettings: {},
+    customFonts: [],
+    customIcons: {}
   }
 }
 
@@ -1384,10 +1437,16 @@ function renderPhonePreview(ct) {
     if (!app) continue
     var xx = OFFSET_X + (i % 4) * CELL_W
     var yy = OFFSET_Y + Math.floor(i / 4) * CELL_H
+    var customIcon = ct.customIcons && ct.customIcons[app.type]
     h += '<div class="phone-app-icon rd-app-icon" data-app="' + app.type + '"'
     h += ' style="left:' + xx + 'px;top:' + yy + 'px;border:none!important;outline:none!important;box-shadow:none!important">'
     h += '<div class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
-    h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:flex;align-items:center;justify-content:center">' + app.icon + '</span>'
+    if (customIcon) {
+      h += '<img src="' + esc(customIcon) + '" style="width:36px;height:36px;object-fit:contain" onerror="this.style.display=\'none\'">'
+      h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:none;align-items:center;justify-content:center">' + app.icon + '</span>'
+    } else {
+      h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:flex;align-items:center;justify-content:center">' + app.icon + '</span>'
+    }
     h += '</div>'
     if (ct.showAppLabels !== false) {
       h += '<span class="phone-icon-label">' + esc(app.name) + '</span>'
@@ -1411,6 +1470,23 @@ function showReaderToast(msg) {
   setTimeout(function() { t.remove() }, 2500)
 }
 
+// ====== Custom Font Engine ======
+function applyCustomFonts() {
+  var ct = getPhoneCustom()
+  var existing = document.getElementById('cu-custom-fonts-style')
+  if (existing) existing.remove()
+  var fonts = ct.customFonts || []
+  if (!fonts.length) return
+  var css = ''
+  fonts.forEach(function(f, i) {
+    css += '@font-face{font-family:"' + f.name.replace(/"/g,'') + '";src:url(' + f.data + ');font-display:swap;}\n'
+  })
+  var style = document.createElement('style')
+  style.id = 'cu-custom-fonts-style'
+  style.textContent = css
+  document.head.appendChild(style)
+}
+
 // ====== Beautification Panel ======
 function openReaderCustomizePanel() {
   var ct = getPhoneCustom()
@@ -1423,15 +1499,6 @@ function openReaderCustomizePanel() {
     { name:'亮银', color:'#ccc' }, { name:'深空灰', color:'#555' }, { name:'玫瑰金', color:'#e8a0b0' },
     { name:'天峰蓝', color:'#4a7a9a' }, { name:'暗夜紫', color:'#6a4a8a' }, { name:'奶油金', color:'#d4af7a' }
   ]
-  var fonts = [
-    { name:'默认', family:"'Noto Sans SC', sans-serif" },
-    { name:'圆体', family:"'PingFang SC', sans-serif" },
-    { name:'宋体', family:"'Noto Serif SC', serif" },
-    { name:'楷体', family:"'KaiTi', serif" },
-    { name:'仿宋', family:"'FangSong', serif" },
-    { name:'英文衬线', family:"'Georgia', serif" }
-  ]
-
   var body = '<div class="cu-section"><div class="cu-section-title">壁纸颜色</div><div class="rd-color-grid">'
   for (var ci = 0; ci < colors.length; ci++) {
     body += '<button class="rd-cu-color-btn' + (ct.wallpaper === colors[ci].color ? ' active' : '') + '" data-cu-color="' + colors[ci].color + '" style="background:' + colors[ci].color + '" title="' + colors[ci].name + '"></button>'
@@ -1452,11 +1519,21 @@ function openReaderCustomizePanel() {
   body += '<div class="cu-section"><div class="cu-section-title">圆角: <span id="cuRadiusLabel">' + (ct.borderRadius || 28) + '</span>px</div>'
   body += '<input class="rd-range" id="cuRadius" type="range" min="0" max="40" value="' + (ct.borderRadius || 28) + '"></div>'
 
+  var customFonts = ct.customFonts || []
   body += '<div class="cu-section"><div class="cu-section-title">字体</div><div class="rd-font-grid">'
-  for (var ffi = 0; ffi < fonts.length; ffi++) {
-    body += '<button class="btn btn-sm' + (ct.fontFamily === fonts[ffi].family ? ' btn-primary' : ' btn-outline') + '" data-cu-font="' + esc(fonts[ffi].family) + '">' + fonts[ffi].name + '</button>'
+  for (var cfi = 0; cfi < customFonts.length; cfi++) {
+    var cf = customFonts[cfi]
+    var ffn = '"' + cf.name + '"'
+    body += '<button class="btn btn-sm' + (ct.fontFamily === ffn ? ' btn-primary' : ' btn-outline') + '" data-cu-font="' + esc(cf.name) + '">' + esc(cf.name) + '</button>'
   }
-  body += '</div></div>'
+  body += '</div>'
+  body += '<div style="padding:4px 0"><button style="padding:5px 14px;font-size:.72rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;border-radius:4px" id="cuUploadFont">上传字体 (.ttf/.woff)</button></div>'
+  body += '<div id="cuFontList" style="padding:4px 0">'
+  for (var cfi2 = 0; cfi2 < customFonts.length; cfi2++) {
+    body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-cu-del-font="' + cfi2 + '">删除</button></div>'
+  }
+  body += '</div>'
+  body += '</div>'
 
   body += '<div class="cu-section">'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuIsland"' + (ct.showDynamicIsland !== false ? ' checked' : '') + '> 灵动岛</label>'
@@ -1479,9 +1556,41 @@ ov.innerHTML = '<div style="background:#fff;max-width:420px;max-width:min(420px,
   var fcolorBtns = ov.querySelectorAll('[data-cu-fcolor]')
   fcolorBtns.forEach(function(b) { b.onclick = function() { ct.frameColor = b.dataset.cuFcolor; ov.querySelectorAll('[data-cu-fcolor]').forEach(function(x){x.classList.remove('active')}); b.classList.add('active') } })
   var fontBtns = ov.querySelectorAll('[data-cu-font]')
-  fontBtns.forEach(function(b) { b.onclick = function() { ct.fontFamily = b.dataset.cuFont; ov.querySelectorAll('[data-cu-font]').forEach(function(x){x.classList.remove('btn-primary');x.classList.add('btn-outline')}); b.classList.remove('btn-outline');b.classList.add('btn-primary') } })
+  fontBtns.forEach(function(b) { b.onclick = function() { ct.fontFamily = '"' + b.dataset.cuFont + '"'; ov.querySelectorAll('[data-cu-font]').forEach(function(x){x.classList.remove('btn-primary');x.classList.add('btn-outline')}); b.classList.remove('btn-outline');b.classList.add('btn-primary') } })
   var radiusEl = ov.querySelector('#cuRadius')
   if (radiusEl) radiusEl.oninput = function() { ct.borderRadius = parseInt(this.value); var lbl = ov.querySelector('#cuRadiusLabel'); if (lbl) lbl.textContent = ct.borderRadius }
+
+  // Font upload
+  var fontUpload = ov.querySelector('#cuUploadFont')
+  if (fontUpload) fontUpload.onclick = function() {
+    var inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.ttf,.otf,.woff,.woff2'
+    inp.onchange = function() {
+      var file = inp.files[0]; if (!file) return
+      var name = prompt('字体名称:', file.name.replace(/\.[^.]+$/, '') || '自定义字体')
+      if (!name) return
+      var r = new FileReader()
+      r.onload = function() {
+        ct.customFonts = ct.customFonts || []
+        ct.customFonts.push({ name: name, data: r.result })
+        savePhoneCustom(ct)
+        ov.querySelector('#cuCloseX').click()
+        openReaderCustomizePanel()
+      }
+      r.readAsDataURL(file)
+    }
+    inp.click()
+  }
+  // Font delete buttons (delegation won't work here, add IDs)
+  ov.querySelectorAll('[data-cu-del-font]').forEach(function(b) {
+    b.onclick = function() {
+      var idx = parseInt(b.dataset.cuDelFont)
+      ct.customFonts = ct.customFonts || []
+      ct.customFonts.splice(idx, 1)
+      savePhoneCustom(ct)
+      ov.querySelector('#cuCloseX').click()
+      openReaderCustomizePanel()
+    }
+  })
 
   var wpUpload = ov.querySelector('#cuUploadBg')
   if (wpUpload) wpUpload.onclick = function() {
@@ -1547,48 +1656,573 @@ function openReaderProfilePanel() {
   var clearTop = ov.querySelector('#rpClearTop'); if (clearTop) clearTop.onclick = function() { ct.topBgImage = null }
 }
 
-function openReaderAppBgEditor(type) {
+// ---- App Settings defaults ----
+function getAppSettings(type) {
   var ct = getPhoneCustom()
-  var labels = { messages:'消息', forum:'论坛', memo:'备忘录', gallery:'相册', browser:'浏览记录', shopping:'购物' }
-  var title = (labels[type] || 'App') + ' - 背景'
-  ct.appBgs = ct.appBgs || {}
-  var cur = ct.appBgs[type] || ''
+  ct.appSettings = ct.appSettings || {}
+  var defaults = {
+    messages: {
+      avatarShape: 'circle', avatarSize: 36,
+      selfBubbleBg: '#555', selfBubbleText: '#fff', selfBubbleRadius: 8,
+      otherBubbleBg: '#fff', otherBubbleText: '#333', otherBubbleRadius: 8,
+      bubbleFontSize: 13, timeColor: '#b0b8c4', chatBg: '#f0f0f0'
+    },
+    forum: {
+      avatarShape: 'circle',
+      cardBg: '#fff', cardBorder: '#eee', cardRadius: 0,
+      titleColor: '#555', titleSize: 13, titleWeight: '500',
+      contentColor: '#333', contentSize: 13, timeColor: '#999'
+    },
+    memo: {
+      cardStyle: 'plain',
+      cardBg: '#fff', cardBorder: '#eee', cardRadius: 4,
+      textColor: '#333', fontSize: 12, lineHeight: 1.6
+    },
+    gallery: {
+      columns: 3, imageRadius: 4, gap: 6
+    },
+    browser: {
+      entryBg: 'transparent', entryRadius: 0,
+      titleColor: '#555', titleSize: 12, urlColor: '#999', timeColor: '#999'
+    },
+    shopping: {
+      cardBg: 'transparent', cardRadius: 0,
+      nameColor: '#333', nameSize: 12, priceColor: '#a3bded'
+    },
+    contacts: {
+      avatarShape: 'circle',
+      nameColor: '#555', nameSize: 13, nameWeight: '500'
+    }
+  }
+  if (!ct.appSettings[type]) ct.appSettings[type] = JSON.parse(JSON.stringify(defaults[type] || {}))
+  return ct.appSettings[type]
+}
 
-  var body = '<div class="cu-section"><div class="cu-section-title">背景颜色</div>'
-  body += '<input type="color" id="abColor" value="' + esc(cur || '#ffffff') + '" style="width:40px;height:32px">'
-  body += '</div>'
-  body += '<div class="cu-section"><div class="cu-section-title">背景图片</div>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="abImgUrl" value="' + esc(cur.indexOf('data:')===0 ? '' : cur) + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer" id="abUpload">上传</button></div>'
-  if (cur && cur.indexOf('data:') === 0) body += '<div class="rd-preview-img"><img src="' + esc(cur) + '" style="max-width:120px;max-height:80px"><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="abClear">清除</button></div>'
-  body += '</div>'
+// ---- Apply app settings to styles ----
+function appStyle(type) {
+  var s = getAppSettings(type)
+  var shape = s.avatarShape || 'circle'
+  var avRadius = shape === 'circle' ? '50%' : (shape === 'rounded' ? '8px' : '2px')
+  return {
+    avatarRadius: avRadius,
+    avatarSize: s.avatarSize || 36,
+    selfBubbleBg: s.selfBubbleBg || '#555',
+    selfBubbleText: s.selfBubbleText || '#fff',
+    selfBubbleRadius: (s.selfBubbleRadius || 8) + 'px',
+    otherBubbleBg: s.otherBubbleBg || '#fff',
+    otherBubbleText: s.otherBubbleText || '#333',
+    otherBubbleRadius: (s.otherBubbleRadius || 8) + 'px',
+    bubbleFontSize: (s.bubbleFontSize || 13) + 'px',
+    timeColor: s.timeColor || '#b0b8c4',
+    chatBg: s.chatBg || '#f0f0f0',
+    cardBg: s.cardBg || '#fff',
+    cardBorder: s.cardBorder || '#eee',
+    cardRadius: (s.cardRadius || 0) + 'px',
+    titleColor: s.titleColor || '#555',
+    titleSize: (s.titleSize || 13) + 'px',
+    titleWeight: s.titleWeight || '500',
+    textColor: s.textColor || '#333',
+    fontSize: (s.fontSize || 12) + 'px',
+    lineHeight: s.lineHeight || 1.6,
+    columns: s.columns || 3,
+    imageRadius: (s.imageRadius || 4) + 'px',
+    gap: (s.gap || 6) + 'px',
+    urlColor: s.urlColor || '#999',
+    entryRadius: (s.entryRadius || 0) + 'px',
+    nameColor: s.nameColor || '#333',
+    nameSize: (s.nameSize || 12) + 'px',
+    priceColor: s.priceColor || '#a3bded',
+    nameWeight: s.nameWeight || '500',
+    cardStyle: s.cardStyle || 'plain'
+  }
+}
 
+// ---- Modal wrapper ----
+function openCuModal(title, bodyHtml, onSave) {
   var ov = document.createElement('div')
+  ov.className = 'cu-modal-overlay'
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px'
-  ov.innerHTML = '<div style="background:#fff;max-width:380px;width:100%;max-height:85vh;overflow-y:auto;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.15)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #ddd"><span style="font-size:1rem;font-weight:600;color:#333">' + esc(title) + '</span><button style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="abCloseX">×</button></div><div style="padding:14px 16px">' + body + '</div><div style="display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;border-top:1px solid #ddd"><button style="padding:6px 16px;font-size:.8rem;border:none;background:#A4C6EB;color:#fff;cursor:pointer;border-radius:4px" id="abSave">保存</button><button style="padding:6px 16px;font-size:.8rem;border:1px solid #ddd;background:#fff;color:#666;cursor:pointer;border-radius:4px" id="abCancel">取消</button></div></div>'
+  ov.innerHTML = '<div class="cu-modal"><div class="cu-modal-header"><span class="cu-modal-title">' + esc(title) + '</span><button class="cu-modal-close" id="cuModalClose">\u00d7</button></div><div class="cu-modal-body">' + bodyHtml + '</div><div class="cu-modal-footer"><button class="cu-btn-save" id="cuModalSave">保存</button><button class="cu-btn-cancel" id="cuModalCancel">取消</button></div></div>'
   document.body.appendChild(ov)
   ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
-  ov.querySelector('#abCloseX').onclick = function() { ov.remove() }
-  ov.querySelector('#abCancel').onclick = function() { ov.remove() }
+  ov.querySelector('#cuModalClose').onclick = function() { ov.remove() }
+  ov.querySelector('#cuModalCancel').onclick = function() { ov.remove() }
+  ov.querySelector('#cuModalSave').onclick = function() {
+    if (onSave) onSave(ov)
+    ov.remove()
+  }
+  return ov
+}
 
-  ov.querySelector('#abSave').onclick = function() {
-    var color = ov.querySelector('#abColor').value
-    var url = ov.querySelector('#abImgUrl')?.value?.trim() || ''
-    ct.appBgs[type] = url || color
+function cuCard(title, body) {
+  return '<div class="cu-card"><div class="cu-card-title">' + esc(title) + '</div><div class="cu-card-body">' + body + '</div></div>'
+}
+
+function cuRow(label, control) {
+  return '<div class="cu-row"><span class="cu-row-label">' + esc(label) + '</span><span class="cu-row-ctrl">' + control + '</span></div>'
+}
+
+function cuColorBtn(color, cls, dataAttr, dataVal) {
+  return '<button class="cu-color-btn' + (cls || '') + '" style="background:' + color + '" data-' + dataAttr + '="' + dataVal + '"></button>'
+}
+
+function cuColorRow(label, presetColors, currentColor, dataAttr) {
+  var h = '<div class="cu-color-group">'
+  for (var i = 0; i < presetColors.length; i++) {
+    h += cuColorBtn(presetColors[i], currentColor === presetColors[i] ? ' active' : '', dataAttr, presetColors[i])
+  }
+  h += '<input type="color" class="cu-color-picker" value="' + currentColor + '" data-' + dataAttr + '-picker="' + currentColor + '">'
+  h += '</div>'
+  return cuRow(label, h)
+}
+
+function cuShapeBtn(shape, active) {
+  var labels = { circle: '圆形', rounded: '圆角方形', square: '方形' }
+  var css = shape === 'circle' ? 'border-radius:50%' : (shape === 'rounded' ? 'border-radius:8px' : 'border-radius:2px')
+  return '<button class="cu-shape-btn' + (active ? ' active' : '') + '" data-cu-shape="' + shape + '"><span style="display:block;width:24px;height:24px;background:#c4c8d4;' + css + '"></span><small>' + esc(labels[shape] || shape) + '</small></button>'
+}
+
+function cuSliderRow(label, id, min, max, step, val, unit) {
+  return cuRow(label, '<input type="range" class="cu-slider" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '"><span class="cu-slider-val" id="' + id + 'Val">' + val + (unit || '') + '</span>')
+}
+
+// ====== Preview Panel ======
+function renderCuPreview(type, s) {
+  var h = '<div class="cu-preview" id="cuPreview">'
+  h += '<div class="cu-preview-label">预览</div>'
+
+  if (type === 'messages') {
+    var avRadius = s.avatarShape === 'circle' ? '50%' : (s.avatarShape === 'rounded' ? '8px' : '2px')
+    var avSz = (s.avatarSize || 36) + 'px'
+    var selfBg = s.selfBubbleBg || '#555'
+    var selfText = s.selfBubbleText || '#fff'
+    var selfRad = (s.selfBubbleRadius || 8) + 'px'
+    var otherBg = s.otherBubbleBg || '#fff'
+    var otherText = s.otherBubbleText || '#333'
+    var otherRad = (s.otherBubbleRadius || 8) + 'px'
+    var fs = (s.bubbleFontSize || 13) + 'px'
+    var tc = s.timeColor || '#b0b8c4'
+    h += '<div class="cu-preview-msg" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 消息</span></div>'
+    h += '<div style="display:flex;gap:6px;padding:5px 8px;border-bottom:1px solid #eee;align-items:center">'
+    h += '<div style="width:' + avSz + ';height:' + avSz + ';border-radius:' + avRadius + ';background:#6366f1;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.55rem;font-weight:600">A</div>'
+    h += '<div style="flex:1;min-width:0"><div style="font-size:.6rem;font-weight:500;color:#555">示例联系人</div></div>'
+    h += '</div>'
+    h += '<div style="display:flex;gap:6px;padding:5px 8px;align-items:center">'
+    h += '<div style="width:' + avSz + ';height:' + avSz + ';border-radius:' + avRadius + ';background:#10b981;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.55rem;font-weight:600">群</div>'
+    h += '<div style="flex:1;min-width:0"><div style="font-size:.6rem;font-weight:500;color:#555">示例群聊</div></div>'
+    h += '</div>'
+    h += '<div style="background:' + (s.chatBg || '#f0f0f0') + ';padding:4px 8px">'
+    h += '<div style="text-align:center;font-size:.48rem;color:' + tc + ';padding:2px 0">12:30</div>'
+    h += '<div style="display:flex;gap:6px;margin-bottom:4px;align-items:flex-start">'
+    h += '<div style="width:24px;height:24px;border-radius:' + avRadius + ';background:#6366f1;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.5rem">A</div>'
+    h += '<div style="max-width:65%;padding:4px 7px;font-size:' + fs + ';line-height:1.4;background:' + otherBg + ';color:' + otherText + ';border-radius:' + otherRad + ' ' + otherRad + ' ' + otherRad + ' 2px;word-break:break-word">你好！</div>'
+    h += '</div>'
+    h += '<div style="display:flex;gap:6px;align-items:flex-start;flex-direction:row-reverse">'
+    h += '<div style="max-width:65%;padding:4px 7px;font-size:' + fs + ';line-height:1.4;background:' + selfBg + ';color:' + selfText + ';border-radius:' + selfRad + ' ' + selfRad + ' 2px ' + selfRad + ';word-break:break-word">周末见！</div>'
+    h += '</div>'
+    h += '</div></div>'
+  } else if (type === 'forum') {
+    var avRadius = s.avatarShape === 'circle' ? '50%' : (s.avatarShape === 'rounded' ? '8px' : '2px')
+    h += '<div class="cu-preview-forum" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 论坛</span></div>'
+    h += '<div style="padding:6px 8px;background:' + (s.cardBg || '#fff') + '">'
+    h += '<div style="display:flex;gap:6px;padding:4px 0;border-bottom:1px solid #eee;align-items:center">'
+    h += '<div style="width:28px;height:28px;border-radius:' + avRadius + ';background:#8b5cf6;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.5rem;font-weight:600">B</div>'
+    h += '<div style="flex:1;min-width:0"><div style="font-size:' + (s.titleSize || 13) + 'px;font-weight:' + (s.titleWeight || '500') + ';color:' + (s.titleColor || '#555') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">示例帖子标题</div><div style="font-size:.45rem;color:' + (s.timeColor || '#999') + '">用户A · 12:30</div></div>'
+    h += '</div>'
+    h += '<div style="display:flex;gap:6px;padding:4px 0;align-items:center">'
+    h += '<div style="width:28px;height:28px;border-radius:' + avRadius + ';background:#d946ef;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.5rem;font-weight:600">C</div>'
+    h += '<div style="flex:1;min-width:0"><div style="font-size:' + (s.titleSize || 13) + 'px;font-weight:' + (s.titleWeight || '500') + ';color:' + (s.titleColor || '#555') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">另一个话题</div><div style="font-size:.45rem;color:' + (s.timeColor || '#999') + '">用户B · 11:20</div></div>'
+    h += '</div>'
+    h += '</div></div>'
+  } else if (type === 'memo') {
+    var memoBg = s.cardBg || '#fff'
+    var memoBorder = s.cardBorder || '#eee'
+    var memoRad = (s.cardRadius || 4) + 'px'
+    if (s.cardStyle === 'sticky') { memoBg = '#fef9e7'; memoBorder = '#e8d5a0' }
+    if (s.cardStyle === 'vintage') { memoBg = '#f5e6c8'; memoBorder = '#d4c4a0'; memoRad = '2px' }
+    h += '<div class="cu-preview-memo" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 备忘录</span></div>'
+    h += '<div style="padding:6px 8px">'
+    h += '<div style="padding:6px 8px;margin-bottom:4px;background:' + memoBg + ';border:1px solid ' + memoBorder + ';border-radius:' + memoRad + ';font-size:' + (s.fontSize || 12) + 'px;color:' + (s.textColor || '#333') + ';line-height:' + (s.lineHeight || 1.6) + '">记得买牛奶和面包</div>'
+    h += '<div style="padding:6px 8px;background:' + memoBg + ';border:1px solid ' + memoBorder + ';border-radius:' + memoRad + ';font-size:' + (s.fontSize || 12) + 'px;color:' + (s.textColor || '#333') + ';line-height:' + (s.lineHeight || 1.6) + '">周三下午三点小组会议</div>'
+    h += '</div></div>'
+  } else if (type === 'gallery') {
+    var cols = s.columns || 3
+    var imgRad = (s.imageRadius || 4) + 'px'
+    var gap = (s.gap || 6) + 'px'
+    var swatches = ['#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#f59e0b', '#10b981']
+    h += '<div class="cu-preview-gallery" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 相册</span></div>'
+    h += '<div style="display:grid;grid-template-columns:repeat(' + cols + ',1fr);gap:' + gap + ';padding:6px">'
+    for (var gi = 0; gi < (cols * 2); gi++) {
+      h += '<div style="aspect-ratio:1;background:' + swatches[gi % swatches.length] + ';border-radius:' + imgRad + ';opacity:.6"></div>'
+    }
+    h += '</div></div>'
+  } else if (type === 'browser') {
+    h += '<div class="cu-preview-browser" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 浏览记录</span></div>'
+    h += '<div style="padding:2px 8px">'
+    h += '<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #eee">'
+    h += '<div style="width:6px;height:6px;border-radius:50%;background:#6366f1;flex-shrink:0"></div>'
+    h += '<div style="flex:1;min-width:0"><div style="font-size:' + (s.titleSize || 12) + 'px;font-weight:500;color:' + (s.titleColor || '#555') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">示例网页标题</div><div style="font-size:.48rem;color:' + (s.urlColor || '#999') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://example.com</div></div>'
+    h += '<span style="font-size:.45rem;color:' + (s.timeColor || '#999') + ';white-space:nowrap">12:30</span>'
+    h += '</div>'
+    h += '<div style="display:flex;align-items:center;gap:6px;padding:5px 0">'
+    h += '<div style="width:6px;height:6px;border-radius:50%;background:#f59e0b;flex-shrink:0"></div>'
+    h += '<div style="flex:1;min-width:0"><div style="font-size:' + (s.titleSize || 12) + 'px;font-weight:500;color:' + (s.titleColor || '#555') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">另一个记录</div><div style="font-size:.48rem;color:' + (s.urlColor || '#999') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">https://example.org</div></div>'
+    h += '<span style="font-size:.45rem;color:' + (s.timeColor || '#999') + ';white-space:nowrap">11:05</span>'
+    h += '</div>'
+    h += '</div></div>'
+  } else if (type === 'shopping') {
+    h += '<div class="cu-preview-shop" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 购物清单</span></div>'
+    h += '<div style="padding:4px 8px">'
+    h += '<div style="display:flex;gap:6px;padding:3px 0;border-bottom:1px solid #eee;align-items:flex-start">'
+    h += '<div style="width:34px;height:34px;background:#e8ebf0;border:1px solid #eee;flex-shrink:0"></div>'
+    h += '<div style="flex:1"><div style="font-size:' + (s.nameSize || 12) + 'px;font-weight:500;color:' + (s.nameColor || '#333') + '">示例商品A</div><div style="font-size:.6rem;color:' + (s.priceColor || '#a3bded') + '">¥99.00</div></div>'
+    h += '</div>'
+    h += '<div style="display:flex;gap:6px;padding:3px 0;align-items:flex-start">'
+    h += '<div style="width:34px;height:34px;background:#e8ebf0;border:1px solid #eee;flex-shrink:0"></div>'
+    h += '<div style="flex:1"><div style="font-size:' + (s.nameSize || 12) + 'px;font-weight:500;color:' + (s.nameColor || '#333') + '">示例商品B</div><div style="font-size:.6rem;color:' + (s.priceColor || '#a3bded') + '">¥199.00</div></div>'
+    h += '</div>'
+    h += '</div></div>'
+  } else if (type === 'contacts') {
+    var avRadius = s.avatarShape === 'circle' ? '50%' : (s.avatarShape === 'rounded' ? '8px' : '2px')
+    h += '<div class="cu-preview-contact" style="border:1px solid #e0e0e0;overflow:hidden">'
+    h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 联系人</span></div>'
+    h += '<div style="padding:4px 8px">'
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #eee">'
+    h += '<div style="width:28px;height:28px;border-radius:' + avRadius + ';background:' + avatarColor('demo1') + ';flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.55rem;font-weight:600">C</div>'
+    h += '<div style="font-size:' + (s.nameSize || 13) + 'px;font-weight:' + (s.nameWeight || '500') + ';color:' + (s.nameColor || '#555') + '">示例联系人A</div>'
+    h += '</div>'
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
+    h += '<div style="width:28px;height:28px;border-radius:' + avRadius + ';background:' + avatarColor('demo2') + ';flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.55rem;font-weight:600">D</div>'
+    h += '<div style="font-size:' + (s.nameSize || 13) + 'px;font-weight:' + (s.nameWeight || '500') + ';color:' + (s.nameColor || '#555') + '">示例联系人B</div>'
+    h += '</div>'
+    h += '</div></div>'
+  }
+  h += '</div>'
+  return h
+}
+
+function readCurrentSettings(modal, type) {
+  var s = getAppSettings(type)
+  // Read sliders
+  var sliderMap = {
+    cuMsgAvSize: 'avatarSize', cuSelfRadius: 'selfBubbleRadius', cuOtherRadius: 'otherBubbleRadius',
+    cuBubbleFs: 'bubbleFontSize', cuCardRadius: 'cardRadius', cuTitleSize: 'titleSize',
+    cuFontSize: 'fontSize', cuLineHeight: 'lineHeight', cuImgRadius: 'imageRadius',
+    cuGap: 'gap', cuEntryRadius: 'entryRadius', cuNameSize: 'nameSize'
+  }
+  for (var id in sliderMap) {
+    var el = modal.querySelector('#' + id)
+    if (el) s[sliderMap[id]] = parseFloat(el.value) || s[sliderMap[id]]
+  }
+  // Read active color buttons
+  var colorBtnMap = {
+    'cu-self-bg': 'selfBubbleBg', 'cu-self-text': 'selfBubbleText',
+    'cu-other-bg': 'otherBubbleBg', 'cu-other-text': 'otherBubbleText',
+    'cu-chat-bg': 'chatBg', 'cu-time-color': 'timeColor',
+    'cu-card-bg': 'cardBg', 'cu-title-color': 'titleColor',
+    'cu-text-color': 'textColor', 'cu-url-color': 'urlColor',
+    'cu-name-color': 'nameColor', 'cu-price-color': 'priceColor'
+  }
+  for (var attr in colorBtnMap) {
+    var btn = modal.querySelector('.cu-color-btn.active[data-' + attr + ']')
+    if (btn) { s[colorBtnMap[attr]] = btn.getAttribute('data-' + attr); continue }
+    var picker = modal.querySelector('.cu-color-picker[data-' + attr + '-picker]')
+    if (picker && picker.value) s[colorBtnMap[attr]] = picker.value
+  }
+  // Read active shape button
+  var shapeBtn = modal.querySelector('.cu-shape-btn.active')
+  if (shapeBtn && shapeBtn.dataset.cuShape) s.avatarShape = shapeBtn.dataset.cuShape
+  // Read active style buttons
+  var memoStyle = modal.querySelector('.cu-style-btn.active[data-cu-memo-style]')
+  if (memoStyle) s.cardStyle = memoStyle.dataset.cuMemoStyle
+  var galleryCol = modal.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')
+  if (galleryCol) s.columns = parseInt(galleryCol.dataset.cuGalleryCols) || 3
+  return s
+}
+
+function updateCuPreview(modal, type) {
+  var preview = modal.querySelector('#cuPreview')
+  if (!preview) return
+  var s = readCurrentSettings(modal, type)
+  preview.innerHTML = renderCuPreview(type, s).replace(/^<div class="cu-preview"[^>]*>/, '').replace(/<\/div>$/, '')
+}
+
+// ====== Per-App Settings Panel ======
+function openReaderAppSettings(type) {
+  var ct = getPhoneCustom()
+  ct.appSettings = ct.appSettings || {}
+  var labels = { messages:'消息', forum:'论坛', memo:'备忘录', gallery:'相册', browser:'浏览记录', shopping:'购物', contacts:'联系人' }
+  var title = '美化 - ' + (labels[type] || 'App')
+
+  var s = getAppSettings(type)
+  var body = ''
+
+  if (type === 'messages') {
+    var shapes = ['circle', 'rounded', 'square']
+    body += cuCard('头像设置',
+      cuRow('形状', '<div class="cu-shape-group">' + shapes.map(function(sh) { return cuShapeBtn(sh, s.avatarShape === sh) }).join('') + '</div>') +
+      cuSliderRow('尺寸', 'cuMsgAvSize', 24, 56, 2, s.avatarSize, 'px')
+    )
+    body += cuCard('我方气泡',
+      cuColorRow('背景色', ['#555', '#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6'], s.selfBubbleBg, 'cu-self-bg') +
+      cuColorRow('文字色', ['#fff', '#333', '#1a1a2e', '#4a3a2a'], s.selfBubbleText, 'cu-self-text') +
+      cuSliderRow('圆角', 'cuSelfRadius', 0, 20, 1, s.selfBubbleRadius, 'px')
+    )
+    body += cuCard('对方气泡',
+      cuColorRow('背景色', ['#fff', '#f0f0f0', '#e8f4e8', '#fef9e7', '#f0e8f4', '#e8f0f8'], s.otherBubbleBg, 'cu-other-bg') +
+      cuColorRow('文字色', ['#333', '#555', '#1a1a2e', '#4a3a2a'], s.otherBubbleText, 'cu-other-text') +
+      cuSliderRow('圆角', 'cuOtherRadius', 0, 20, 1, s.otherBubbleRadius, 'px')
+    )
+    body += cuCard('文字',
+      cuSliderRow('字号', 'cuBubbleFs', 10, 18, 1, s.bubbleFontSize, 'px')
+    )
+    body += cuCard('聊天背景',
+      cuColorRow('背景色', ['#f0f0f0', '#fff', '#e8e8e8', '#1a1a2e', '#c8dcc8'], s.chatBg, 'cu-chat-bg')
+    )
+    body += cuCard('时间标签',
+      cuColorRow('颜色', ['#b0b8c4', '#999', '#666', '#333'], s.timeColor, 'cu-time-color')
+    )
+  } else if (type === 'forum') {
+    var shapes = ['circle', 'rounded', 'square']
+    body += cuCard('头像',
+      cuRow('形状', '<div class="cu-shape-group">' + shapes.map(function(sh) { return cuShapeBtn(sh, s.avatarShape === sh) }).join('') + '</div>')
+    )
+    body += cuCard('帖子卡片',
+      cuColorRow('背景色', ['#fff', '#f8f8f8', '#e8f0f8', '#fef9e7'], s.cardBg, 'cu-card-bg') +
+      cuSliderRow('圆角', 'cuCardRadius', 0, 16, 1, s.cardRadius, 'px')
+    )
+    body += cuCard('标题',
+      cuColorRow('颜色', ['#555', '#333', '#1a1a2e', '#6366f1'], s.titleColor, 'cu-title-color') +
+      cuSliderRow('字号', 'cuTitleSize', 10, 18, 1, s.titleSize, 'px')
+    )
+    body += cuCard('时间标签',
+      cuColorRow('颜色', ['#999', '#666', '#b0b8c4'], s.timeColor, 'cu-time-color')
+    )
+  } else if (type === 'memo') {
+    body += cuCard('卡片风格',
+      cuRow('样式', '<div class="cu-shape-group">' +
+        '<button class="cu-style-btn' + (s.cardStyle === 'plain' ? ' active' : '') + '" data-cu-memo-style="plain">简洁</button>' +
+        '<button class="cu-style-btn' + (s.cardStyle === 'sticky' ? ' active' : '') + '" data-cu-memo-style="sticky">便签</button>' +
+        '<button class="cu-style-btn' + (s.cardStyle === 'vintage' ? ' active' : '') + '" data-cu-memo-style="vintage">复古</button>' +
+        '</div>')
+    )
+    body += cuCard('外观',
+      cuColorRow('背景色', ['#fff', '#fef9e7', '#f5e6c8', '#e8f4e8'], s.cardBg, 'cu-card-bg') +
+      cuSliderRow('圆角', 'cuCardRadius', 0, 16, 1, s.cardRadius, 'px')
+    )
+    body += cuCard('文字',
+      cuColorRow('颜色', ['#333', '#555', '#4a3a2a', '#1a1a2e'], s.textColor, 'cu-text-color') +
+      cuSliderRow('字号', 'cuFontSize', 10, 16, 1, s.fontSize, 'px') +
+      cuSliderRow('行间距', 'cuLineHeight', 1.2, 2.4, 0.1, s.lineHeight, '')
+    )
+  } else if (type === 'gallery') {
+    body += cuCard('网格',
+      cuRow('列数', '<div class="cu-shape-group">' +
+        '<button class="cu-style-btn' + (s.columns === 2 ? ' active' : '') + '" data-cu-gallery-cols="2">2列</button>' +
+        '<button class="cu-style-btn' + (s.columns === 3 ? ' active' : '') + '" data-cu-gallery-cols="3">3列</button>' +
+        '<button class="cu-style-btn' + (s.columns === 4 ? ' active' : '') + '" data-cu-gallery-cols="4">4列</button>' +
+        '</div>')
+    )
+    body += cuCard('外观',
+      cuSliderRow('图片圆角', 'cuImgRadius', 0, 16, 1, s.imageRadius, 'px') +
+      cuSliderRow('间距', 'cuGap', 2, 16, 2, s.gap, 'px')
+    )
+  } else if (type === 'browser') {
+    body += cuCard('标题',
+      cuColorRow('颜色', ['#555', '#333', '#6366f1', '#1a1a2e'], s.titleColor, 'cu-title-color') +
+      cuSliderRow('字号', 'cuTitleSize', 10, 16, 1, s.titleSize, 'px')
+    )
+    body += cuCard('URL',
+      cuColorRow('颜色', ['#999', '#666', '#888'], s.urlColor, 'cu-url-color')
+    )
+    body += cuCard('时间标签',
+      cuColorRow('颜色', ['#999', '#666', '#b0b8c4'], s.timeColor, 'cu-time-color')
+    )
+    body += cuCard('条目',
+      cuSliderRow('圆角', 'cuEntryRadius', 0, 12, 1, s.entryRadius, 'px')
+    )
+  } else if (type === 'shopping') {
+    body += cuCard('商品名称',
+      cuColorRow('颜色', ['#333', '#555', '#1a1a2e'], s.nameColor, 'cu-name-color') +
+      cuSliderRow('字号', 'cuNameSize', 10, 16, 1, s.nameSize, 'px')
+    )
+    body += cuCard('价格',
+      cuColorRow('颜色', ['#a3bded', '#ef4444', '#f59e0b', '#10b981'], s.priceColor, 'cu-price-color')
+    )
+  } else if (type === 'contacts') {
+    var shapes = ['circle', 'rounded', 'square']
+    body += cuCard('头像',
+      cuRow('形状', '<div class="cu-shape-group">' + shapes.map(function(sh) { return cuShapeBtn(sh, s.avatarShape === sh) }).join('') + '</div>')
+    )
+    body += cuCard('名称',
+      cuColorRow('颜色', ['#555', '#333', '#6366f1', '#1a1a2e'], s.nameColor, 'cu-name-color') +
+      cuSliderRow('字号', 'cuNameSize', 10, 18, 1, s.nameSize, 'px')
+    )
+  }
+
+  // Icon card - for all app types
+  ct.customIcons = ct.customIcons || {}
+  var curIcon = ct.customIcons[type] || ''
+  body += cuCard('应用图标',
+    cuRow('自定义', '<div style="display:flex;gap:6px;align-items:center">' +
+      '<input class="rd-input rd-input-sm" id="cuIconUrl" value="' + esc(curIcon) + '" placeholder="输入图标URL或上传...">' +
+      '<button style="padding:4px 10px;font-size:.7rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;white-space:nowrap" id="cuIconUpload">上传</button>' +
+      (curIcon ? '<button style="padding:4px 10px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;white-space:nowrap" id="cuIconClear">清除</button>' : '') +
+      '</div>')
+  )
+  if (curIcon) body += '<div class="rd-preview-img"><img src="' + esc(curIcon) + '" style="max-height:40px;border-radius:4px"></div>'
+
+  body += '<div style="text-align:center;padding-top:8px"><button class="cu-reset-btn" id="cuAppReset">恢复默认</button></div>'
+
+  // Prepend preview
+  body = renderCuPreview(type, s) + body
+
+  var ov = openCuModal(title, body, function(modal) {
+    // Helper: read color from active button or from picker
+    function readColor(attr, key) {
+      var btn = modal.querySelector('.cu-color-btn.active[data-' + attr + ']')
+      if (btn) { s[key] = btn.getAttribute('data-' + attr); return }
+      var picker = modal.querySelector('.cu-color-picker[data-' + attr + '-picker]')
+      if (picker && picker.value) s[key] = picker.value
+    }
+    readColor('cuSelfBg', 'selfBubbleBg')
+    readColor('cuSelfText', 'selfBubbleText')
+    readColor('cuOtherBg', 'otherBubbleBg')
+    readColor('cuOtherText', 'otherBubbleText')
+    readColor('cuChatBg', 'chatBg')
+    readColor('cuTimeColor', 'timeColor')
+    readColor('cuCardBg', 'cardBg')
+    readColor('cuTitleColor', 'titleColor')
+    readColor('cuTextColor', 'textColor')
+    readColor('cuUrlColor', 'urlColor')
+    readColor('cuNameColor', 'nameColor')
+    readColor('cuPriceColor', 'priceColor')
+    var shapeBtns = modal.querySelectorAll('.cu-shape-btn.active')
+    shapeBtns.forEach(function(b) {
+      if (b.dataset.cuShape) s.avatarShape = b.dataset.cuShape
+    })
+    // Sliders
+    function readSlider(id, key) {
+      var el = modal.querySelector('#' + id); if (el) s[key] = parseFloat(el.value) || s[key]
+    }
+    readSlider('cuMsgAvSize', 'avatarSize')
+    readSlider('cuSelfRadius', 'selfBubbleRadius')
+    readSlider('cuOtherRadius', 'otherBubbleRadius')
+    readSlider('cuBubbleFs', 'bubbleFontSize')
+    readSlider('cuCardRadius', 'cardRadius')
+    readSlider('cuTitleSize', 'titleSize')
+    readSlider('cuFontSize', 'fontSize')
+    readSlider('cuLineHeight', 'lineHeight')
+    readSlider('cuImgRadius', 'imageRadius')
+    readSlider('cuGap', 'gap')
+    readSlider('cuEntryRadius', 'entryRadius')
+    readSlider('cuNameSize', 'nameSize')
+    // Style buttons
+    var memoStyleBtn = modal.querySelector('.cu-style-btn.active[data-cu-memo-style]')
+    if (memoStyleBtn) s.cardStyle = memoStyleBtn.dataset.cuMemoStyle
+    var galleryColBtn = modal.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')
+    if (galleryColBtn) s.columns = parseInt(galleryColBtn.dataset.cuGalleryCols) || 3
+    // Read icon URL
+    var iconUrlEl = modal.querySelector('#cuIconUrl'); if (iconUrlEl && iconUrlEl.value.trim()) ct.customIcons[type] = iconUrlEl.value.trim()
+    ct.appSettings[type] = s
+    savePhoneCustom(ct)
+    renderCustomPage()
+    showReaderToast((labels[type] || 'App') + '美化已保存')
+  })
+
+  // Bind slider displays
+  bindCuSliders(ov)
+  // Icon upload / clear handlers (need ov to be created)
+  var iconUploadBtn = ov.querySelector('#cuIconUpload')
+  if (iconUploadBtn) iconUploadBtn.onclick = function() {
+    var inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'
+    inp.onchange = function() {
+      var file = inp.files[0]; if (!file) return
+      var r = new FileReader()
+      r.onload = function() { ct.customIcons[type] = r.result; ov.querySelector('#cuIconUrl').value = r.result }
+      r.readAsDataURL(file)
+    }
+    inp.click()
+  }
+  var iconClearBtn = ov.querySelector('#cuIconClear')
+  if (iconClearBtn) iconClearBtn.onclick = function() {
+    ct.customIcons[type] = ''
+    var urlEl = ov.querySelector('#cuIconUrl'); if (urlEl) urlEl.value = ''
+    var preview = ov.querySelector('.rd-preview-img'); if (preview) preview.remove()
+  }
+  // Read icon URL on save (via onSave callback above already reads from ct.customIcons)
+  // Real-time preview updates
+  ov.querySelectorAll('.cu-slider').forEach(function(sl) {
+    sl.addEventListener('input', function() { updateCuPreview(ov, type) })
+  })
+  ov.querySelectorAll('.cu-color-btn').forEach(function(b) {
+    b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
+  })
+  ov.querySelectorAll('.cu-color-picker').forEach(function(p) {
+    p.addEventListener('input', function() { updateCuPreview(ov, type) })
+  })
+  ov.querySelectorAll('.cu-shape-btn').forEach(function(b) {
+    b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
+  })
+  ov.querySelectorAll('.cu-style-btn').forEach(function(b) {
+    b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
+  })
+  // Bind color buttons
+  ov.querySelectorAll('.cu-color-btn').forEach(function(b) {
+    b.onclick = function() {
+      var group = b.parentElement
+      if (!group) return
+      group.querySelectorAll('.cu-color-btn').forEach(function(x) { x.classList.remove('active') })
+      b.classList.add('active')
+    }
+  })
+  // Bind shape buttons
+  ov.querySelectorAll('.cu-shape-btn').forEach(function(b) {
+    b.onclick = function() {
+      var group = b.parentElement
+      if (!group) return
+      group.querySelectorAll('.cu-shape-btn').forEach(function(x) { x.classList.remove('active') })
+      b.classList.add('active')
+    }
+  })
+  // Bind style buttons
+  ov.querySelectorAll('.cu-style-btn').forEach(function(b) {
+    b.onclick = function() {
+      var group = b.parentElement
+      if (!group) return
+      group.querySelectorAll('.cu-style-btn').forEach(function(x) { x.classList.remove('active') })
+      b.classList.add('active')
+    }
+  })
+  // Reset
+  var resetBtn = ov.querySelector('#cuAppReset')
+  if (resetBtn) resetBtn.onclick = function() {
+    delete ct.appSettings[type]
     savePhoneCustom(ct)
     ov.remove()
-    showReaderToast(title + '已保存')
+    renderCustomPage()
+    showReaderToast((labels[type] || 'App') + '已恢复默认')
   }
-  var abUpload = ov.querySelector('#abUpload')
-  if (abUpload) abUpload.onclick = function() {
-    var inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'
-    inp.onchange = function() { var file = inp.files[0]; if (!file) return; var r = new FileReader(); r.onload = function() { ct.appBgs[type] = r.result; ov.querySelector('#abColor').value = '#ffffff' }; r.readAsDataURL(file) }; inp.click()
-  }
-  var abClear = ov.querySelector('#abClear')
-  if (abClear) abClear.onclick = function() { ct.appBgs[type] = ''; ov.querySelector('#abColor').value = '#ffffff'; delete ct.appBgs[type] }
+}
+
+function bindCuSliders(ov) {
+  ov.querySelectorAll('.cu-slider').forEach(function(sl) {
+    var valEl = ov.querySelector('#' + sl.id + 'Val')
+    sl.oninput = function() {
+      if (valEl) valEl.textContent = this.value + (valEl.textContent.replace(/[\d.]+/, '') || '')
+    }
+  })
 }
 
 function renderCustomPage() {
   var ct = getPhoneCustom()
+  applyCustomFonts()
   var panel = document.getElementById('tabCustom')
   if (!panel) return
   var h = '<div class="rd-custom">'
@@ -1614,7 +2248,7 @@ document.addEventListener('click', function(e) {
       e.stopPropagation()
       if (type === 'customize') { openReaderCustomizePanel(); return }
       if (type === 'profile') { openReaderProfilePanel(); return }
-      openReaderAppBgEditor(type)
+      openReaderAppSettings(type)
       return
     }
     el = el.parentElement
