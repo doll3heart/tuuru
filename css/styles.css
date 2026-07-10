@@ -1,8 +1,8 @@
 /* Angel Core Design System -- Light (default) */
 :root{
   --c-bg:#ECF4FE;  --c-surface:#FFFFFF;  --c-surface2:#D3E5F8;
-  --c-primary:#A4C6EB;  --c-primary-hover:#A3BDED;
-  --c-text:#4a5568;  --c-text2:#7a8ba8;
+  --c-primary:#A4C6EB;  --c-primary-hover:#416598;
+  --c-text:#4a5568;  --c-text2:#526582;
   --c-border:#CAD3E0;  --c-border2:#BBC8D8;
   --c-accent:#FADCE9;  --c-accent2:#F1DEEC;  --c-accent3:#D9A0B3;
   --c-msg-self:#555;  --c-msg-other:#ffffff;
@@ -239,7 +239,7 @@ ul,ol{list-style:none}
 .editor-main .toolbar-mini button:hover{background:var(--c-surface2);color:var(--c-text)}
 .editor-main .content-area{width:100%;min-height:400px;border:none;padding:0;font-size:1rem;line-height:1.9;resize:vertical;color:var(--c-text);background:transparent;outline:none;font-family:var(--font)}
 .editor-main .content-area:focus{outline:none}
-.editor-main .content-area::placeholder{color:#c0c8d8}
+.editor-main .content-area::placeholder{color:var(--c-text2)}
 .editor-main .editor-footer{display:flex;justify-content:space-between;align-items:center;padding:12px 0;margin-top:8px;border-top:1px solid var(--c-border);font-size:.75rem;color:var(--c-text2)}
 .editor-main .editor-footer .char-count span{font-weight:600;color:var(--c-text)}
 .editor-main .node-meta-panel{display:flex;gap:12px;align-items:center;padding:8px 0;margin-top:4px;flex-wrap:wrap}
@@ -532,7 +532,7 @@ ul,ol{list-style:none}
 .editor-content{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:24px 32px}
 .editor-content .content-area{width:100%;min-height:400px;border:none;padding:0;font-size:1rem;line-height:1.9;resize:none;color:var(--c-text);background:transparent;outline:none;font-family:var(--font)}
 .editor-content .content-area:focus{outline:none}
-.editor-content .content-area::placeholder{color:#c0c8d8}
+.editor-content .content-area::placeholder{color:var(--c-text2)}
 
 /* Right side - World Tree panel */
 .world-tree{width:280px;border-left:2px double var(--c-border);display:flex;flex-direction:column;min-height:0;overflow:hidden;flex-shrink:0;background:var(--c-surface2);position:relative}
@@ -690,7 +690,7 @@ ul,ol{list-style:none}
 /* Missing editor CSS classes */
 .editor-content .content-editable{width:100%;min-height:400px;padding:0;font-size:1rem;line-height:1.9;color:var(--c-text);background:transparent;outline:none;font-family:var(--font)}
 .editor-content .content-editable:focus{outline:none}
-.editor-content .content-editable:empty::before{content:attr(data-placeholder);color:#c0c8d8;pointer-events:none}
+.editor-content .content-editable:empty::before{content:attr(data-placeholder);color:var(--c-text2);pointer-events:none}
 .editor-content .content-editable img{max-width:100%;height:auto;display:block;border-radius:4px;margin:8px auto;box-sizing:border-box}
 .world-tree .wt-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 0}
 .world-tree .wt-empty{text-align:center;padding:20px;font-size:.75rem;color:var(--c-text2)}
@@ -774,7 +774,7 @@ ul,ol{list-style:none}
   color:var(--c-text2);outline:none;padding:0;line-height:1.4;font-family:inherit
 }
 .browser-url:focus{color:var(--c-text)}
-.browser-url::placeholder{color:#c0c8d8}
+.browser-url::placeholder{color:var(--c-text2)}
 .browser-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .browser-time{font-size:.68rem;color:var(--c-text2);white-space:nowrap}
 .browser-del{
