@@ -1,3 +1,5 @@
+import { validateWorkForImport } from '../js/work-schema.js'
+
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
 
@@ -172,7 +174,7 @@ window.reimportRecent = function(id) {
   try {
     var db = JSON.parse(localStorage.getItem('moirain_work_' + id))
     if (!db) { alert('该作品已不在缓存中，请重新导入'); return }
-    loadWork(db)
+    importWork(db)
   } catch(e) {
     alert('加载失败：' + e.message)
   }
@@ -209,7 +211,7 @@ function setupImport() {
       if (ext === 'json') {
         try {
           var work = JSON.parse(reader.result)
-          loadWork(work)
+          importWork(work)
         } catch (e) {
           alert('JSON 解析失败：' + e.message)
         }
@@ -263,13 +265,22 @@ function decodeSteganoFromDataUrl(dataUrl) {
     try {
       var json = new TextDecoder().decode(bytes)
       var work = JSON.parse(json)
-      loadWork(work)
+      importWork(work)
     } catch(e) {
       alert('隐写数据解析失败：' + e.message)
     }
   }
   img.onerror = function() { alert('PNG 加载失败') }
   img.src = dataUrl
+}
+
+function importWork(work) {
+  var result = validateWorkForImport(work)
+  if (!result.ok) {
+    alert(result.message)
+    return
+  }
+  loadWork(result.work)
 }
 
 // ====== Landing Page (work info + password + placeholders) ======

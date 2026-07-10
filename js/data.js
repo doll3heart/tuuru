@@ -1,5 +1,6 @@
 // Tuuru Works - Data Layer
 import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
+import { CURRENT_WORK_SCHEMA_VERSION } from "./work-schema.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -132,6 +133,7 @@ export function createWork(data){
   var db=rd()
   var w={
     id:uid(),
+    schemaVersion:CURRENT_WORK_SCHEMA_VERSION,
     type:data.type||WORK_TYPE.ARTICLE,
     title:data.title||"无标题作品",
     desc:data.desc||"",
@@ -287,6 +289,7 @@ export function exportWorkAsJSON(wid) {
   if (!w) return null
   // Deep clone to avoid mutating original
   var copy = JSON.parse(JSON.stringify(w))
+  copy.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
   // Remove editor-specific fields
   delete copy.editorSettings
   delete copy.updatedAt
