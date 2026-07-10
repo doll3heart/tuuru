@@ -852,20 +852,29 @@ function renderArticleReader() {
         skin: rc,
         apps: apps
       }
+      var hadPhoneData = Object.prototype.hasOwnProperty.call(_work, 'phoneData')
+      var previousPhoneData = _work.phoneData
       // Create glass overlay
       var overlay = document.createElement('div')
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:1500;background:rgba(0,0,0,.15);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto'
+      overlay.className = 'rd-pm-modal'
       var backBtn = document.createElement('button')
-      backBtn.className = 'reader-back'
-      backBtn.style.cssText = 'position:fixed;top:16px;left:16px;z-index:1510'
+      backBtn.className = 'reader-back rd-pm-back'
       backBtn.textContent = '←'
       backBtn.title = '返回'
-      backBtn.onclick = function() { overlay.remove() }
+      backBtn.onclick = function() {
+        if (_work._overlayWrapper === phoneWrapper) {
+          _work._overlayWrapper = null
+          _work._inOverlay = false
+          if (hadPhoneData) _work.phoneData = previousPhoneData
+          else delete _work.phoneData
+        }
+        overlay.remove()
+      }
       overlay.appendChild(backBtn)
       // Set phoneData and overlay context for back navigation
       _work.phoneData = pd
       var phoneWrapper = document.createElement('div')
-      phoneWrapper.style.cssText = 'flex-shrink:0'
+      phoneWrapper.className = 'rd-pm-phone-wrap'
       phoneWrapper.innerHTML = buildPhoneHTML(pd, rc)
       overlay.appendChild(phoneWrapper)
       document.body.appendChild(overlay)
@@ -1744,7 +1753,6 @@ function appStyle(type) {
 function openCuModal(title, bodyHtml, onSave) {
   var ov = document.createElement('div')
   ov.className = 'cu-modal-overlay'
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px'
   ov.innerHTML = '<div class="cu-modal"><div class="cu-modal-header"><span class="cu-modal-title">' + esc(title) + '</span><button class="cu-modal-close" id="cuModalClose">\u00d7</button></div><div class="cu-modal-body">' + bodyHtml + '</div><div class="cu-modal-footer"><button class="cu-btn-save" id="cuModalSave">保存</button><button class="cu-btn-cancel" id="cuModalCancel">取消</button></div></div>'
   document.body.appendChild(ov)
   ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })

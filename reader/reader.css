@@ -675,7 +675,53 @@ body.rd-theme-gray .article-meta { color: #333; }
 
 /* Reader phone module modal */
 .rd-pm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--reader-viewport-height);
+  min-height: 0;
+  padding:
+    calc(var(--reader-safe-top) + 20px)
+    calc(var(--reader-safe-right) + 20px)
+    calc(var(--reader-safe-bottom) + 20px)
+    calc(var(--reader-safe-left) + 20px);
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: rgba(0, 0, 0, .15);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   font-family: var(--font);
+}
+.rd-pm-phone-wrap {
+  flex-shrink: 1;
+  width: 375px;
+  max-width: 100%;
+  height: 700px;
+  min-height: 0;
+  max-height: 100%;
+}
+.rd-pm-phone-wrap > .phone-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+.rd-pm-phone-wrap > .phone-frame > #phoneDesktopReader {
+  min-height: 0 !important;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.rd-pm-back {
+  top: calc(var(--reader-safe-top) + 16px);
+  left: calc(var(--reader-safe-left) + 16px);
+  width: 44px;
+  height: 44px;
+  z-index: 1510;
 }
 
 /* ====== Reader Phone Custom Panel (phone preview) ====== */
@@ -844,7 +890,25 @@ body.rd-theme-gray .article-meta { color: #333; }
 }
 
 /* ====== Per-App Settings Panel (Cu) ====== */
-.cu-modal-overlay { animation: cuFadeIn .2s ease; }
+.cu-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--reader-viewport-height);
+  padding:
+    calc(var(--reader-safe-top) + 20px)
+    calc(var(--reader-safe-right) + 20px)
+    calc(var(--reader-safe-bottom) + 20px)
+    calc(var(--reader-safe-left) + 20px);
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: rgba(0, 0, 0, .4);
+  animation: cuFadeIn .2s ease;
+}
 @keyframes cuFadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .cu-modal {
@@ -852,7 +916,8 @@ body.rd-theme-gray .article-meta { color: #333; }
   max-width: 440px;
   width: min(440px, calc(100vw - 40px));
   max-height: 88vh;
-  overflow-y: auto;
+  max-height: min(88dvh, 100%);
+  overflow: hidden;
   border-radius: 14px;
   box-shadow: 0 12px 48px rgba(0,0,0,.18);
   display: flex;
@@ -869,6 +934,7 @@ body.rd-theme-gray .article-meta { color: #333; }
   top: 0;
   background: #fff;
   z-index: 1;
+  flex-shrink: 0;
 }
 .cu-modal-title { font-size: 1rem; font-weight: 600; color: #333; }
 .cu-modal-close {
@@ -883,7 +949,14 @@ body.rd-theme-gray .article-meta { color: #333; }
 }
 .cu-modal-close:hover { color: #333; }
 
-.cu-modal-body { padding: 14px 18px; flex: 1; overflow-y: auto; }
+.cu-modal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 14px 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 .cu-modal-footer {
   display: flex;
@@ -894,6 +967,7 @@ body.rd-theme-gray .article-meta { color: #333; }
   position: sticky;
   bottom: 0;
   background: #fff;
+  flex-shrink: 0;
 }
 
 .cu-btn-save {
