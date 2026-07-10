@@ -93,6 +93,35 @@ function bindPhoneAppModalViewport(overlay) {
   }
 }
 
+function isTopmostModalOverlay(overlay) {
+  var overlays = document.querySelectorAll('.modal-overlay')
+  return overlays.length > 0 && overlays[overlays.length - 1] === overlay
+}
+
+function focusFirstModalControl(container) {
+  if (!container) return false
+  var target = container.querySelector(
+    '.phone-app-modal-close, .cu-header .cu-close-btn, button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )
+  if (!target || typeof target.focus !== 'function') return false
+  target.focus()
+  return document.activeElement === target
+}
+
+function focusPhoneAppModal(inner) {
+  return focusFirstModalControl(inner)
+}
+
+function restorePhoneAppModalFocus(target) {
+  if (target && target !== document.body && target.isConnected && typeof target.focus === 'function') {
+    target.focus()
+    if (document.activeElement === target) return
+  }
+
+  var overlays = document.querySelectorAll('.modal-overlay')
+  if (overlays.length > 0) focusFirstModalControl(overlays[overlays.length - 1])
+}
+
 export function openPhoneAppModal(wid, appType, options = {}) {
   var w = getWork(wid)
   if (!w) { showToast('作品未找到'); return }
@@ -107,6 +136,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   }
   var pd = w.phoneData
   var contacts = pd.contacts || []
+  var previouslyFocused = document.activeElement
 
   var labels = { messages: '消息', forum: '论坛', memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单', profile: '个人主页', contacts: '联系人' }
   var title = labels[appType] || 'App'
@@ -121,6 +151,8 @@ export function openPhoneAppModal(wid, appType, options = {}) {
 
   var inner = document.createElement('div')
   inner.className = 'phone-app-modal-inner'
+  inner.setAttribute('role', 'dialog')
+  inner.setAttribute('aria-label', title)
 
   var topBar = document.createElement('div')
   topBar.className = 'phone-app-modal-header'
@@ -136,6 +168,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
 
   // Close button
   var closeBtn = topBar.querySelector('button')
+  var releaseKeyboard = function() {}
   var close = createPhoneModalCloseController({
     beforeClose: function(reason) {
       var active = document.activeElement
@@ -145,15 +178,37 @@ export function openPhoneAppModal(wid, appType, options = {}) {
       return options.beforeClose ? options.beforeClose(reason) : undefined
     },
     remove: function() {
+      releaseKeyboard()
       releaseViewport()
       delete content._requestPhoneAppModalClose
       ov.remove()
+      restorePhoneAppModalFocus(previouslyFocused)
     },
     afterClose: options.afterClose
   })
-  content._requestPhoneAppModalClose = close
-  if (!usesOwnHeader) closeBtn.addEventListener('click', function() { close('button') })
-  ov.addEventListener('click', function(e) { if (e.target === ov) close('backdrop') })
+  function requestClose(reason) {
+    try {
+      var closed = close(reason)
+      if (!closed && ov.isConnected) focusPhoneAppModal(inner)
+      return closed
+    } catch (error) {
+      if (ov.isConnected) focusPhoneAppModal(inner)
+      console.error('Failed to close phone App modal', error)
+      return false
+    }
+  }
+
+  content._requestPhoneAppModalClose = requestClose
+  if (!usesOwnHeader) closeBtn.addEventListener('click', function() { requestClose('button') })
+  ov.addEventListener('click', function(e) { if (e.target === ov) requestClose('backdrop') })
+
+  function onKeyDown(e) {
+    if (e.defaultPrevented || e.key !== 'Escape' || !isTopmostModalOverlay(ov)) return
+    e.preventDefault()
+    requestClose('escape')
+  }
+  document.addEventListener('keydown', onKeyDown)
+  releaseKeyboard = function() { document.removeEventListener('keydown', onKeyDown) }
 
   document.body.appendChild(ov)
 
@@ -196,10 +251,13 @@ export function openPhoneAppModal(wid, appType, options = {}) {
         renderContactsModal(frame, wid, pd)
         break
     }
+    focusPhoneAppModal(inner)
   } catch (error) {
+    releaseKeyboard()
     releaseViewport()
     delete content._requestPhoneAppModalClose
     ov.remove()
+    restorePhoneAppModalFocus(previouslyFocused)
     throw error
   }
 
@@ -1710,7 +1768,7 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
   // Build HTML
   var bh = '<div class="cu-panel cu-panel-embedded" id="browserPanel">'
   bh += '<div class="cu-header" style="justify-content:space-between">'
-  bh += '<button class="cu-close-btn" id="browserBack">&larr;</button>'
+  bh += '<button type="button" class="cu-close-btn" id="browserBack" aria-label="返回">&larr;</button>'
   bh += '<span class="cu-title" style="flex:1;text-align:center">' + esc(contact.name || '?') + ' \u00b7 浏览记录</span>'
   bh += '<button class="cu-close-btn" id="browserAdd" title="添加">+</button></div>'
   bh += '<div class="browser-search-bar">'
@@ -1947,7 +2005,7 @@ function openGalleryEditor(frame, wid, contact, pd) {
   // Build HTML
   var gh = '<div class="cu-panel cu-panel-embedded" id="galleryPanel">'
   gh += '<div class="cu-header" style="justify-content:space-between">'
-  gh += '<button class="cu-close-btn" id="galleryBack">&larr;</button>'
+  gh += '<button type="button" class="cu-close-btn" id="galleryBack" aria-label="返回">&larr;</button>'
   gh += '<span class="cu-title" style="flex:1;text-align:center">' + esc(contact.name || '?') + ' \u00b7 相册</span>'
   gh += '<div style="width:32px"></div></div>'
   gh += '<div class="cu-body" id="galleryBody" style="padding:8px 12px"></div>'
@@ -2276,7 +2334,7 @@ function openShoppingEditor(frame, wid, contact, pd) {
   // Build HTML
   var sh = '<div class="cu-panel cu-panel-embedded" id="shopPanel">'
   sh += '<div class="cu-header" style="justify-content:space-between">'
-  sh += '<button class="cu-close-btn" id="shopBack">&larr;</button>'
+  sh += '<button type="button" class="cu-close-btn" id="shopBack" aria-label="返回">&larr;</button>'
   sh += '<span class="cu-title" style="flex:1;text-align:center">' + esc(contact.name || '?') + ' \u00b7 购物</span>'
   sh += '<button class="cu-close-btn" id="shopAdd" title="添加商品">+</button></div>'
   sh += '<div class="shop-tabs" id="shopTabs">'
@@ -2937,7 +2995,7 @@ function openForumEditor(frame, wid, contact, pd) {
   // Build HTML
   var fh = '<div class="cu-panel cu-panel-embedded" id="forumPanel">'
   fh += '<div class="cu-header" style="justify-content:space-between">'
-  fh += '<button class="cu-close-btn" id="forumBack">&larr;</button>'
+  fh += '<button type="button" class="cu-close-btn" id="forumBack" aria-label="返回">&larr;</button>'
   fh += '<span class="cu-title" style="flex:1;text-align:center">论坛</span>'
   fh += '<div style="width:32px"></div></div>'
   fh += '<div class="cu-body" id="forumBody" style="padding:6px 10px"></div>'
@@ -3350,7 +3408,7 @@ function bindMsgEvents() {
   // Build HTML
   var mh = '<div class="cu-panel cu-panel-embedded" id="msgPanel">'
   mh += '<div class="cu-header" style="justify-content:space-between">'
-  mh += '<button class="cu-close-btn" id="msgBack">&larr;</button>'
+  mh += '<button type="button" class="cu-close-btn" id="msgBack" aria-label="返回">&larr;</button>'
   mh += '<span class="cu-title" style="flex:1;text-align:center">消息</span>'
   mh += '<div style="width:32px"></div></div>'
   mh += '<div class="cu-body" id="msgBody" style="padding:6px 10px;flex:1"></div>'
@@ -4172,7 +4230,7 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
   // Build initial HTML
   var h = '<div class="cu-panel cu-panel-embedded" id="memoPanel">'
   h += '<div class="cu-header" style="justify-content:space-between">'
-  h += '<button class="cu-close-btn" id="memoBack">&larr;</button>'
+  h += '<button type="button" class="cu-close-btn" id="memoBack" aria-label="返回">&larr;</button>'
   h += '<span class="cu-title" style="flex:1;text-align:center">' + esc(contact.name || '?') + ' \u00b7 \u5907\u5fd8\u5f55</span>'
   h += '<button class="cu-close-btn" id="memoAdd" title="\u65b0\u5efa">+</button></div>'
   h += '<div class="cu-body" id="memoBody" style="padding:10px 12px"></div>'
