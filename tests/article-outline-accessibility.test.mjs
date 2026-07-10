@@ -252,3 +252,298 @@ test("chapter disclosure has visible focus and a bounded coarse-pointer target",
   assert.match(hiddenContent, /display\s*:\s*none/)
   assert.match(boundedToggle, /min-height\s*:\s*44px/)
 })
+
+test("outline actions expose one named disclosure and one sibling panel per item", () => {
+  const root = render()
+  const nodeRows = [...root.querySelectorAll(".wt-node")]
+  const chapterRows = [...root.querySelectorAll(".wt-chapter-title")]
+
+  assert.equal(nodeRows.length, 2)
+  assert.equal(chapterRows.length, 1)
+
+  for (const row of [...nodeRows, ...chapterRows]) {
+    const trigger = row.querySelector(":scope > .wt-action-disclosure")
+    const panelId = trigger?.getAttribute("aria-controls")
+    const panel = panelId ? row.querySelector(`:scope > #${panelId}`) : null
+
+    assert.equal(trigger?.tagName, "BUTTON")
+    assert.equal(trigger?.type, "button")
+    assert.equal(trigger?.dataset.a, "outline-actions")
+    assert.equal(trigger?.getAttribute("aria-expanded"), "false")
+    assert.ok(trigger?.getAttribute("aria-label")?.trim())
+    assert.ok(panelId)
+    assert.ok(panel)
+    assert.equal(panel?.classList.contains("wt-action-panel"), true)
+    assert.equal(panel?.getAttribute("role"), "group")
+    assert.ok(panel?.getAttribute("aria-label")?.trim())
+    assert.equal(trigger?.contains(panel), false)
+    assert.equal(trigger?.querySelector("button,select,input"), null)
+  }
+
+  for (const row of nodeRows) {
+    const panel = row.querySelector(":scope > .node-actions")
+    const controls = [...panel.querySelectorAll(":scope > select, :scope > button")]
+    assert.equal(panel.querySelectorAll(':scope > select[data-a="mc"]').length, 1)
+    assert.equal(panel.querySelector(':scope > select[data-a="mc"]').disabled, true)
+    assert.deepEqual(
+      controls.filter(control => control.tagName === "BUTTON").map(control => control.dataset.a),
+      ["rn2", "up", "dn", "dl"],
+    )
+    for (const control of controls) {
+      assert.ok(control.getAttribute("aria-label")?.trim())
+      if (control.tagName === "BUTTON") assert.equal(control.type, "button")
+    }
+  }
+
+  assert.equal(nodeRows[0].querySelector('[data-a="up"]').disabled, true)
+  assert.equal(nodeRows[0].querySelector('[data-a="dn"]').disabled, false)
+  assert.equal(nodeRows[1].querySelector('[data-a="up"]').disabled, false)
+  assert.equal(nodeRows[1].querySelector('[data-a="dn"]').disabled, true)
+
+  assert.deepEqual(
+    [...chapterRows[0].querySelectorAll(":scope > .chapter-actions > button")].map(button => button.dataset.a),
+    ["chapter-rename", "chapter-delete"],
+  )
+})
+
+test("outline action disclosures keep exactly one item open without writing", () => {
+  const root = render()
+  const triggers = [...root.querySelectorAll(".wt-action-disclosure")]
+  const before = localStorage.getItem("tuuru_works")
+
+  assert.equal(triggers.length, 3)
+  triggers[1].click()
+  const firstPanel = document.getElementById(triggers[1].getAttribute("aria-controls"))
+  assert.equal(triggers[1].getAttribute("aria-expanded"), "true")
+  assert.equal(document.activeElement, firstPanel.querySelector("select:not([disabled]),button:not([disabled])"))
+  assert.equal(root.querySelectorAll('.wt-action-disclosure[aria-expanded="true"]').length, 1)
+
+  triggers[2].click()
+  const secondPanel = document.getElementById(triggers[2].getAttribute("aria-controls"))
+  assert.equal(triggers[1].getAttribute("aria-expanded"), "false")
+  assert.equal(triggers[2].getAttribute("aria-expanded"), "true")
+  assert.equal(document.activeElement, secondPanel.querySelector("select:not([disabled]),button:not([disabled])"))
+  assert.equal(root.querySelectorAll('.wt-action-disclosure[aria-expanded="true"]').length, 1)
+
+  document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+  assert.equal(triggers[2].getAttribute("aria-expanded"), "false")
+  assert.equal(document.activeElement, triggers[2])
+
+  triggers[1].click()
+  triggers[1].click()
+  assert.equal(triggers[1].getAttribute("aria-expanded"), "false")
+  assert.equal(document.activeElement, triggers[1])
+
+  triggers[1].click()
+  const outside = document.createElement("button")
+  outside.type = "button"
+  outside.textContent = "Outside"
+  document.body.appendChild(outside)
+  outside.focus()
+  outside.dispatchEvent(new window.Event("pointerdown", { bubbles: true }))
+  assert.equal(triggers[1].getAttribute("aria-expanded"), "false")
+  assert.equal(document.activeElement, outside)
+  outside.remove()
+
+  assert.equal(localStorage.getItem("tuuru_works"), before)
+})
+
+test("outline action disclosures reset across pane, refresh, and work changes", () => {
+  let root = render()
+  let trigger = root.querySelector(".wt-node .wt-action-disclosure")
+
+  trigger.click()
+  root.querySelector('[data-a="mobile-pane"][data-pane="outline"]').click()
+  assert.equal(trigger.getAttribute("aria-expanded"), "false")
+
+  trigger.click()
+  root.querySelector('.wt-node-select[data-n="node-b"]').click()
+  assert.equal(trigger.getAttribute("aria-expanded"), "false")
+  root = document.getElementById("app")
+  assert.equal(root.querySelectorAll('.wt-action-disclosure[aria-expanded="true"]').length, 0)
+
+  trigger = root.querySelector(".wt-node .wt-action-disclosure")
+  trigger.click()
+  const otherWork = JSON.parse(JSON.stringify(work))
+  otherWork.id = "outline-work-other"
+  localStorage.setItem("tuuru_works", JSON.stringify({ works: [work, otherWork], contacts: [], groups: [] }))
+  renderEditor(otherWork.id)
+  assert.equal(trigger.getAttribute("aria-expanded"), "false")
+
+  localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
+  render()
+})
+
+test("outline rename and delete hand focus to their existing dialogs", () => {
+  let root = render()
+  let trigger = root.querySelector(".wt-chapter-title > .wt-action-disclosure")
+  const before = localStorage.getItem("tuuru_works")
+
+  trigger.click()
+  document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="chapter-rename"]').click()
+  assert.equal(trigger.getAttribute("aria-expanded"), "false")
+  assert.equal(document.activeElement?.id, "pI")
+  assert.notEqual(document.activeElement, trigger)
+  document.getElementById("modalClose").click()
+  assert.equal(document.activeElement, trigger)
+
+  root = render()
+  trigger = root.querySelector(".wt-chapter-title > .wt-action-disclosure")
+  trigger.click()
+  document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="chapter-delete"]').click()
+  assert.equal(trigger.getAttribute("aria-expanded"), "false")
+  assert.equal(document.activeElement?.id, "cN")
+  assert.notEqual(document.activeElement, trigger)
+  document.getElementById("cN").click()
+  assert.equal(document.activeElement, trigger)
+
+  root = render()
+  trigger = root.querySelector(".wt-chapter-title > .wt-action-disclosure")
+  trigger.click()
+  document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="chapter-delete"]').click()
+  document.getElementById("modalClose").click()
+  assert.equal(document.activeElement, trigger)
+
+  root = render()
+  trigger = root.querySelector(".wt-chapter-title > .wt-action-disclosure")
+  trigger.click()
+  document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="chapter-delete"]').click()
+  document.querySelector(".modal-overlay").click()
+  assert.equal(document.activeElement, trigger)
+
+  assert.equal(localStorage.getItem("tuuru_works"), before)
+})
+
+test("desktop outline actions regain focus after cancellation", () => {
+  let root = render()
+  let action = root.querySelector('.wt-chapter-title .chapter-actions [data-a="chapter-rename"]')
+
+  action.click()
+  assert.equal(document.activeElement?.id, "pI")
+  document.getElementById("modalClose").click()
+  assert.equal(document.activeElement, action)
+
+  root = render()
+  action = root.querySelector('.wt-chapter-title .chapter-actions [data-a="chapter-delete"]')
+  action.click()
+  assert.equal(document.activeElement?.id, "cN")
+  document.getElementById("cN").click()
+  assert.equal(document.activeElement, action)
+
+  root = render()
+  action = root.querySelector('.wt-node-select[data-n="node-a"]').closest(".wt-node").querySelector('[data-a="dl"]')
+  const originalConfirm = globalThis.confirm
+  const before = localStorage.getItem("tuuru_works")
+  try {
+    globalThis.confirm = () => false
+    action.click()
+    assert.equal(document.activeElement, action)
+    assert.equal(localStorage.getItem("tuuru_works"), before)
+  } finally {
+    globalThis.confirm = originalConfirm
+  }
+})
+
+test("node action panels reuse move, reorder, and delete command paths", () => {
+  const originalConfirm = globalThis.confirm
+
+  try {
+    const movableWork = JSON.parse(JSON.stringify(work))
+    movableWork.chapters.push({ id: "chapter-b", name: "Chapter B" })
+    localStorage.setItem("tuuru_works", JSON.stringify({ works: [movableWork], contacts: [], groups: [] }))
+
+    let root = render()
+    let row = root.querySelector('.wt-node-select[data-n="node-a"]').closest(".wt-node")
+    let trigger = row.querySelector(".wt-action-disclosure")
+    trigger.click()
+    const move = document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="mc"]')
+    move.value = "chapter-b"
+    move.dispatchEvent(new window.Event("change", { bubbles: true }))
+
+    assert.equal(trigger.getAttribute("aria-expanded"), "false")
+    assert.equal(
+      JSON.parse(localStorage.getItem("tuuru_works")).works[0].nodes.find(node => node.id === "node-a").chapterId,
+      "chapter-b",
+    )
+    assert.equal(document.querySelectorAll('.wt-action-disclosure[aria-expanded="true"]').length, 0)
+
+    localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
+    root = render()
+    row = root.querySelector('.wt-node-select[data-n="node-b"]').closest(".wt-node")
+    trigger = row.querySelector(".wt-action-disclosure")
+    trigger.click()
+    document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="up"]').click()
+
+    assert.equal(trigger.getAttribute("aria-expanded"), "false")
+    assert.deepEqual(
+      JSON.parse(localStorage.getItem("tuuru_works")).works[0].nodes.map(node => node.id),
+      ["node-b", "node-a"],
+    )
+    assert.equal(document.querySelectorAll('.wt-action-disclosure[aria-expanded="true"]').length, 0)
+
+    localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
+    root = render()
+    row = root.querySelector('.wt-node-select[data-n="node-a"]').closest(".wt-node")
+    trigger = row.querySelector(".wt-action-disclosure")
+    const beforeDelete = localStorage.getItem("tuuru_works")
+    globalThis.confirm = () => {
+      assert.equal(trigger.getAttribute("aria-expanded"), "false")
+      return false
+    }
+    trigger.click()
+    document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="dl"]').click()
+
+    assert.equal(trigger.getAttribute("aria-expanded"), "false")
+    assert.equal(document.activeElement, trigger)
+    assert.equal(localStorage.getItem("tuuru_works"), beforeDelete)
+
+    trigger.click()
+    const unavailableUp = document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="up"]')
+    unavailableUp.disabled = false
+    unavailableUp.click()
+    assert.equal(trigger.getAttribute("aria-expanded"), "false")
+    assert.equal(document.activeElement, trigger)
+    assert.equal(localStorage.getItem("tuuru_works"), beforeDelete)
+  } finally {
+    globalThis.confirm = originalConfirm
+    localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
+    render()
+  }
+})
+
+test("outline action disclosures preserve desktop access and fit bounded touch panes", () => {
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
+  const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
+  const trigger = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-action-disclosure")
+  const triggerFocus = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-action-disclosure:focus-visible")
+  const desktopNodeActions = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-node:hover .node-actions")
+  const desktopChapterActions = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-title:hover .chapter-actions")
+  const boundedTrigger = ruleBodiesFor(bounded || "", ".world-tree .wt-action-disclosure")
+  const boundedClosedNode = ruleBodiesFor(bounded || "", ".world-tree .wt-node .node-actions")
+  const boundedClosedChapter = ruleBodiesFor(bounded || "", ".world-tree .wt-chapter-title .chapter-actions")
+  const boundedOpenNode = ruleBodiesFor(bounded || "", '.world-tree .wt-node[data-outline-actions-open="true"] > .node-actions')
+  const boundedOpenChapter = ruleBodiesFor(bounded || "", '.world-tree .wt-chapter-title[data-outline-actions-open="true"] > .chapter-actions')
+  const boundedPanel = ruleBodiesFor(bounded || "", ".world-tree .wt-action-panel")
+  const boundedButtons = ruleBodiesFor(bounded || "", ".world-tree .wt-action-panel > button")
+  const boundedSelect = ruleBodiesFor(bounded || "", ".world-tree .wt-action-panel > select")
+  const boundedMove = ruleBodiesFor(bounded || "", ".world-tree .wt-node .node-actions > .chapter-move")
+
+  assert.match(trigger, /display\s*:\s*none/)
+  assert.match(triggerFocus, /outline\s*:\s*2px\s+solid/)
+  assert.match(desktopNodeActions, /display\s*:\s*flex/)
+  assert.match(desktopChapterActions, /display\s*:\s*flex/)
+  assert.match(boundedTrigger, /display\s*:\s*(?:inline-)?flex/)
+  assert.match(boundedTrigger, /min-width\s*:\s*44px/)
+  assert.match(boundedTrigger, /min-height\s*:\s*44px/)
+  assert.match(boundedClosedNode, /display\s*:\s*none/)
+  assert.match(boundedClosedNode, /margin-left\s*:\s*0/)
+  assert.match(boundedClosedChapter, /display\s*:\s*none/)
+  assert.match(boundedOpenNode, /display\s*:\s*flex/)
+  assert.match(boundedOpenChapter, /display\s*:\s*flex/)
+  assert.match(boundedPanel, /width\s*:\s*100%/)
+  assert.match(boundedPanel, /max-width\s*:\s*100%/)
+  assert.match(boundedPanel, /flex-wrap\s*:\s*wrap/)
+  assert.match(boundedButtons, /min-height\s*:\s*44px/)
+  assert.match(boundedSelect, /min-height\s*:\s*44px/)
+  assert.match(boundedMove, /max-width\s*:\s*100%/)
+})

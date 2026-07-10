@@ -5,6 +5,7 @@ import { showToast, renderHeader, modal } from "../app.js"
 import { createPhoneWorkDraft } from "../phone-work-access.js"
 import { createPhoneModuleCloseHandlers, createPhoneModuleDraftData } from "../phone-module-draft.js"
 import { applyEditorMobilePane, isBoundedEditorViewport } from "../editor-mobile-pane.js"
+import { createEditorOutlineMenuController } from "../editor-outline-menu.js"
 import { openPhoneAppModal } from "./phone.js"
 
 // State
@@ -12,6 +13,7 @@ var _workId = null
 var _nodeId = null
 var _mobilePane = "editor"
 var _pendingMobileFocus = null
+var _outlineActionMenu = createEditorOutlineMenuController(document)
 
 function esc(s) {
   if (!s) return ""
@@ -20,23 +22,31 @@ function esc(s) {
   return d.innerHTML
 }
 
-function showPrompt(title, placeholder, cb) {
-  var ov = modal(title, '<div class="form-group"><input id="pI" class="form-input" placeholder="' + esc(placeholder) + '"></div>', '<button id="pK" class="btn btn-primary">\u786e\u5b9a</button>')
+function showPrompt(title, placeholder, cb, onCancel) {
+  var ov = modal(title, '<div class="form-group"><input id="pI" class="form-input" placeholder="' + esc(placeholder) + '"></div>', '<button id="pK" class="btn btn-primary">\u786e\u5b9a</button>', function() { onCancel?.() })
   document.getElementById("pK").onclick = function() {
     var v = document.getElementById("pI")?.value?.trim() || ""
+    if (!v) {
+      ov.remove()
+      onCancel?.()
+      return
+    }
     cb(v)
     ov.remove()
   }
+  document.getElementById("pI")?.focus()
 }
 
-function showConfirm(title, msg, cb) {
-  var ov = modal(title, '<p>' + esc(msg) + '</p>', '<button id="cK" class="btn btn-danger">\u786e\u5b9a</button><button id="cN" class="btn btn-ghost">\u53d6\u6d88</button>')
+function showConfirm(title, msg, cb, onCancel) {
+  var ov = modal(title, '<p>' + esc(msg) + '</p>', '<button id="cK" class="btn btn-danger">\u786e\u5b9a</button><button id="cN" class="btn btn-ghost">\u53d6\u6d88</button>', function() { onCancel?.() })
   document.getElementById("cK").onclick = function() { cb(true); ov.remove() }
-  document.getElementById("cN").onclick = function() { ov.remove() }
+  document.getElementById("cN").onclick = function() { ov.remove(); onCancel?.() }
+  document.getElementById("cN")?.focus()
 }
 
 
 export function renderEditor(wid) {
+  _outlineActionMenu.reset()
   if (_workId !== wid) {
     _mobilePane = "editor"
     _pendingMobileFocus = null
@@ -76,6 +86,11 @@ function restorePendingMobilePaneFocus(root) {
   if (!pane || !isBoundedEditorViewport()) return
   var control = root?.querySelector('[data-a="mobile-pane"][data-pane="' + pane + '"]')
   if (control) control.focus()
+}
+
+function restoreOutlineActionFocus(disclosure, actionControl) {
+  var target = disclosure?.isConnected ? disclosure : actionControl?.isConnected ? actionControl : null
+  target?.focus()
 }
 
 function buildIconbar(wid) {
@@ -271,27 +286,30 @@ function buildWorldTree(w) {
   } else {
     // Group nodes by scene
     var grouped = {}
-    var ungrouped = []
     for (var i = 0; i < ns.length; i++) {
       var n = ns[i]
       var cid = n.chapterId || ""
       if (!grouped[cid]) grouped[cid] = []
       grouped[cid].push(n)
     }
+    var nodeActionIndex = 0
     // Render scenes
-        for (var ci = 0; ci < ch.length; ci++) {
+    for (var ci = 0; ci < ch.length; ci++) {
       var chs = ch[ci]
       var chid = chs.id
       var cNodes = grouped[chid] || []
-      var chapterContentId = 'wtChapterContent_' + chid
+      var chapterContentId = 'wtChapterContent_' + ci
+      var chapterActionPanelId = 'wtChapterActions_' + ci
+      var chapterActionLabel = '章节操作：' + (chs.name || '未命名章节')
       h += '<div class="wt-chapter">'
-      h += '<div class="wt-chapter-title">'
+      h += '<div class="wt-chapter-title" data-outline-action-host>'
       h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="true" aria-controls="' + chapterContentId + '">'
       h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span></button>'
-      h += '<span class="chapter-actions"><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
+      h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + chapterActionPanelId + '" aria-label="' + esc(chapterActionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
+      h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
       h += '<div class="wt-chapter-content" id="' + chapterContentId + '">'
       for (var ni = 0; ni < cNodes.length; ni++) {
-        h += nodeHTML(w, cNodes[ni])
+        h += nodeHTML(w, cNodes[ni], nodeActionIndex++)
         var cnode = cNodes[ni]
         if (cnode.choices && cnode.choices.length) {
           for (var cci = 0; cci < cnode.choices.length; cci++) {
@@ -304,26 +322,36 @@ function buildWorldTree(w) {
         }
       }
       h += '</div></div>'
-    }    var uncid = grouped[""] || []
+    }
+    var uncid = grouped[""] || []
     for (var ui = 0; ui < uncid.length; ui++) {
-      h += nodeHTML(w, uncid[ui])
-    }  }
+      h += nodeHTML(w, uncid[ui], nodeActionIndex++)
+    }
+  }
   h += '</div></div>'
   return h
 }
 
-function nodeHTML(w, n) {
+function nodeHTML(w, n, actionIndex) {
   var ac = n.id === _nodeId ? ' active' : ''
   var current = n.id === _nodeId ? ' aria-current="true"' : ''
   var ch = w.chapters || []
   var curCid = n.chapterId || ""
-  var h = '<div class="wt-node' + ac + '">'
+  var canMoveChapter = ch.some(function(c) { return c.id !== curCid })
+  var siblings = (w.nodes || []).filter(function(node) { return (node.chapterId || "") === curCid })
+  var siblingIndex = siblings.findIndex(function(node) { return node.id === n.id })
+  var canMoveUp = siblingIndex > 0
+  var canMoveDown = siblingIndex >= 0 && siblingIndex < siblings.length - 1
+  var actionPanelId = 'wtNodeActions_' + actionIndex
+  var actionLabel = '节点操作：' + (n.title || '未命名节点')
+  var h = '<div class="wt-node' + ac + '" data-outline-action-host>'
   h += '<button type="button" class="wt-node-select" data-a="sl" data-w="' + w.id + '" data-n="' + n.id + '"' + current + '>'
   h += '<span class="dot" aria-hidden="true"></span>'
   h += '<span class="node-label">' + esc(n.title || '节点') + '</span>'
   h += '</button>'
-  h += '<span class="node-actions">'
-  h += '<select class="chapter-move" data-a="mc" data-w="' + w.id + '" data-n="' + n.id + '" title="移动到章节"><option value="">移至…</option>'
+  h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + actionPanelId + '" aria-label="' + esc(actionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
+  h += '<span class="node-actions wt-action-panel" id="' + actionPanelId + '" role="group" aria-label="' + esc(actionLabel) + '">'
+  h += '<select class="chapter-move" data-a="mc" data-w="' + w.id + '" data-n="' + n.id + '" title="移动到章节" aria-label="移动节点到章节"' + (canMoveChapter ? '' : ' disabled') + '><option value="">移至…</option>'
   for (var ci = 0; ci < ch.length; ci++) {
     var c = ch[ci]
     if (c.id !== curCid) {
@@ -331,10 +359,10 @@ function nodeHTML(w, n) {
     }
   }
   h += '</select>'
-  h += '<button data-a="rn2" data-w="' + w.id + '" data-n="' + n.id + '" title="重命名">\u270e</button>'
-  h += '<button data-a="up" data-w="' + w.id + '" data-n="' + n.id + '" title="上移">\u25b2</button>'
-  h += '<button data-a="dn" data-w="' + w.id + '" data-n="' + n.id + '" title="下移">\u25bc</button>'
-  h += '<button data-a="dl" data-w="' + w.id + '" data-n="' + n.id + '" title="删除">\u2715</button>'
+  h += '<button type="button" data-a="rn2" data-w="' + w.id + '" data-n="' + n.id + '" title="重命名" aria-label="重命名节点">\u270e</button>'
+  h += '<button type="button" data-a="up" data-w="' + w.id + '" data-n="' + n.id + '" title="上移" aria-label="上移节点"' + (canMoveUp ? '' : ' disabled') + '>\u25b2</button>'
+  h += '<button type="button" data-a="dn" data-w="' + w.id + '" data-n="' + n.id + '" title="下移" aria-label="下移节点"' + (canMoveDown ? '' : ' disabled') + '>\u25bc</button>'
+  h += '<button type="button" data-a="dl" data-w="' + w.id + '" data-n="' + n.id + '" title="删除" aria-label="删除节点">\u2715</button>'
   h += '</span></div>'
   return h
 }
@@ -346,6 +374,7 @@ document.addEventListener("change", handleChange)
 function handleClick(e) {
   var b = e.target.closest("[data-a]")
   if (!b) return
+  var outlineActionTrigger = b.tagName === "BUTTON" ? _outlineActionMenu.closeForAction(b) : null
   var a = b.dataset.a
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
@@ -357,6 +386,7 @@ function handleClick(e) {
     }
     return
   }
+  if (a === "outline-actions") return
   if (a === "an") {
     var nd = addNode(w)
     if (nd) {
@@ -376,11 +406,11 @@ function handleClick(e) {
   }
   if (a === "sl") { _nodeId = n; prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
   if (a === "up") {
-    moveNode(w, n, -1)
+    if (!moveNode(w, n, -1)) restoreOutlineActionFocus(outlineActionTrigger, b)
     return
   }
   if (a === "dn") {
-    moveNode(w, n, 1)
+    if (!moveNode(w, n, 1)) restoreOutlineActionFocus(outlineActionTrigger, b)
     return
   }
   if (a === "dl") {
@@ -389,14 +419,14 @@ function handleClick(e) {
       var remainingNodes = (getWork(w)?.nodes || []).length
       if (remainingNodes === 0) prepareMobilePaneRefresh("outline", true)
       refreshEditor(w)
-    }
+    } else restoreOutlineActionFocus(outlineActionTrigger, b)
     return
   }
   if (a === "rn2") {
     var nd = getNode(w, n)
     showPrompt("重命名节点", nd ? nd.title : "", function(nn) {
       if (nn) { updateNode(w, n, {title: nn}); refreshEditor(w) }
-    })
+    }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
     return
   }
   if (a === "ss") {
@@ -455,7 +485,21 @@ function handleClick(e) {
   }
   if (a === "chapter-delete") {
     var sid = b.dataset.sid
-    if (sid) { showConfirm("\u5220\u9664\u7ae0\u8282", "\u786e\u5b9a\u5220\u9664\u6b64\u7ae0\u8282\uff1f\u8282\u70b9\u5c06\u79fb\u81f3\u5269\u4f59\u7ae0\u8282", function(ok) { if (ok) { var _w2 = getWork(w); var _rem = (_w2.chapters || []).filter(function(s){return s.id !== sid}); if (_rem.length > 0) { (_w2.nodes || []).forEach(function(node) { if (node.chapterId === sid) { updateNode(w, node.id, {chapterId: _rem[0].id}) } }) } updateWork(_workId, {chapters: _rem}); refreshEditor(w) } }) }
+    if (sid) {
+      showConfirm("\u5220\u9664\u7ae0\u8282", "\u786e\u5b9a\u5220\u9664\u6b64\u7ae0\u8282\uff1f\u8282\u70b9\u5c06\u79fb\u81f3\u5269\u4f59\u7ae0\u8282", function(ok) {
+        if (ok) {
+          var _w2 = getWork(w)
+          var _rem = (_w2.chapters || []).filter(function(s){ return s.id !== sid })
+          if (_rem.length > 0) {
+            (_w2.nodes || []).forEach(function(node) {
+              if (node.chapterId === sid) updateNode(w, node.id, {chapterId: _rem[0].id})
+            })
+          }
+          updateWork(_workId, {chapters: _rem})
+          refreshEditor(w)
+        }
+      }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
+    }
     return
   }
   if (a === "chapter-rename") {
@@ -471,7 +515,7 @@ function handleClick(e) {
         updateWork(_workId, {chapters: _chapters})
         refreshEditor(_workId)
       }
-    })
+    }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
     return
   }
   if (a === "fs-margin-toggle") {
@@ -500,6 +544,7 @@ function getNode(wid, nid) {
 function handleChange(e) {
   var b = e.target.closest("[data-a]")
   if (!b) return
+  var outlineActionTrigger = _outlineActionMenu.closeForAction(b)
   var a = b.dataset.a
 
   // Node title rename (from editor header input)
@@ -528,8 +573,10 @@ function handleChange(e) {
         }
         updateWork(w, {nodes: _ns})
         refreshEditor(w)
+        return
       }
     }
+    restoreOutlineActionFocus(outlineActionTrigger, b)
     return
   }
 
@@ -1139,11 +1186,11 @@ function insertImageAtCursor(src) {
 
 function moveNode(wid, nid, dir) {
   var w = getWork(wid)
-  if (!w || !w.nodes || !w.nodes.length) return
+  if (!w || !w.nodes || !w.nodes.length) return false
   var ns = w.nodes
 
   var node = ns.find(function(x) { return x.id === nid })
-  if (!node) return
+  if (!node) return false
   var cid = node.chapterId || ""
 
   // Collect sibling nodes in same chapter (preserving global order)
@@ -1153,11 +1200,11 @@ function moveNode(wid, nid, dir) {
       siblings.push(ns[i])
     }
   }
-  if (siblings.length < 2) return
+  if (siblings.length < 2) return false
 
   var si = siblings.findIndex(function(x) { return x.id === nid })
   var st = si + dir
-  if (st < 0 || st >= siblings.length) return
+  if (st < 0 || st >= siblings.length) return false
 
   // Swap in global array
   var gi = ns.findIndex(function(x) { return x.id === nid })
@@ -1167,6 +1214,7 @@ function moveNode(wid, nid, dir) {
   ns[gt] = tmp
   updateWork(wid, {nodes: ns})
   refreshEditor(wid)
+  return true
 }
 
 function refreshEditor(wid) {
