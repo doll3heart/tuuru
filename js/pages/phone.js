@@ -1,6 +1,7 @@
 // Tuuru Works - Phone Editor
 import { uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
+import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
 import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
@@ -28,7 +29,7 @@ function esc(s) {
   return d.innerHTML
 }
 
-export function openPhoneAppModal(wid, appType) {
+export function openPhoneAppModal(wid, appType, options = {}) {
   var w = getWork(wid)
   if (!w) { showToast('作品未找到'); return }
   if (!w.phoneData) {
@@ -71,8 +72,13 @@ export function openPhoneAppModal(wid, appType) {
 
   // Close button
   var closeBtn = topBar.querySelector('button')
-  closeBtn.onclick = function() { ov.remove() }
-  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
+  var close = createPhoneModalCloseController({
+    beforeClose: options.beforeClose,
+    remove: function() { ov.remove() },
+    afterClose: options.afterClose
+  })
+  closeBtn.onclick = function() { close('button') }
+  ov.addEventListener('click', function(e) { if (e.target === ov) close('backdrop') })
 
   document.body.appendChild(ov)
 
@@ -114,6 +120,8 @@ export function openPhoneAppModal(wid, appType) {
       renderContactsModal(frame, wid, pd)
       break
   }
+
+  return ov
 }
 
 function renderContactsModal(frame, wid, pd) {
