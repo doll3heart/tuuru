@@ -261,6 +261,7 @@ ul,ol{list-style:none}
 /* ====== Three-Column Editor Layout (from Reverie/Habitat) ====== */
 .editor-page{display:flex;flex-direction:column;height:calc(100vh - 56px)}
 .editor-body-area{display:flex;flex:1;overflow:hidden}
+.editor-mobile-view-switch{display:none}
 
 /* Left icon sidebar */
 .editor-iconbar{width:48px;border-right:2px double var(--c-border);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px;flex-shrink:0;background:var(--c-surface2)}
@@ -609,11 +610,6 @@ ul,ol{list-style:none}
   .modal-footer .btn{flex:1;min-width:80px}
   .tabs{overflow-x:auto}
   .tab{padding:8px 12px;font-size:.8rem;white-space:nowrap}
-  .editor-body-area{flex-direction:column}
-  .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border);overflow-x:auto}
-  .editor-iconbar .divider{width:1px;height:20px}
-  .editor-iconbar button{width:32px;height:32px;font-size:.7rem;flex-shrink:0}
-  .world-tree{width:100%;border-left:none;border-top:2px double var(--c-border)}
   .editor-content{padding:16px 12px}
   .editor-header{padding:8px 12px}
   .editor-header .node-name{font-size:.9rem}
@@ -639,6 +635,23 @@ ul,ol{list-style:none}
   .work-card-actions{flex-direction:column;gap:6px}
   .work-card-actions-left{flex-wrap:wrap}
 }
+
+/* Article editor bounded mobile workspace */
+@media(max-width:480px),(max-height:480px) and (pointer:coarse){
+  .editor-body-area{flex-direction:column;min-height:0}
+  .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border);overflow-x:auto;overflow-y:hidden}
+  .editor-iconbar .divider{width:1px;height:20px}
+  .editor-iconbar button{width:32px;height:32px;font-size:.7rem;flex-shrink:0}
+  .editor-mobile-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:4px 8px;gap:4px;border-bottom:1px solid var(--c-border);background:var(--c-surface);flex-shrink:0}
+  .editor-mobile-view-switch button{min-height:44px;border:1px solid transparent;background:transparent;color:var(--c-text2);cursor:pointer}
+  .editor-mobile-view-switch button[aria-pressed="true"]{background:var(--c-surface2);border-color:var(--c-border);color:var(--c-text);font-weight:600}
+  .editor-mobile-view-switch button:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
+  .editor-area,.world-tree{width:100%;min-height:0;flex:1 1 0}
+  .world-tree{border-left:none;border-top:2px double var(--c-border)}
+  .editor-body-area[data-mobile-pane="editor"] .world-tree{display:none}
+  .editor-body-area[data-mobile-pane="outline"] .editor-area{display:none}
+}
+
 /* Missing editor CSS classes */
 .editor-content .content-editable{width:100%;min-height:400px;padding:0;font-size:1rem;line-height:1.9;color:var(--c-text);background:transparent;outline:none;font-family:var(--font)}
 .editor-content .content-editable:focus{outline:none}

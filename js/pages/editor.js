@@ -4,11 +4,14 @@ import { navigate } from "../router.js"
 import { showToast, renderHeader, modal } from "../app.js"
 import { createPhoneWorkDraft } from "../phone-work-access.js"
 import { createPhoneModuleCloseHandlers, createPhoneModuleDraftData } from "../phone-module-draft.js"
+import { applyEditorMobilePane, isBoundedEditorViewport } from "../editor-mobile-pane.js"
 import { openPhoneAppModal } from "./phone.js"
 
 // State
 var _workId = null
 var _nodeId = null
+var _mobilePane = "editor"
+var _pendingMobileFocus = null
 
 function esc(s) {
   if (!s) return ""
@@ -34,6 +37,10 @@ function showConfirm(title, msg, cb) {
 
 
 export function renderEditor(wid) {
+  if (_workId !== wid) {
+    _mobilePane = "editor"
+    _pendingMobileFocus = null
+  }
   _workId = wid
   var w = getWork(wid)
   if (!w) return '<div class="app-main"><div class="empty-state"><h3>作品未找到</h3></div></div>'
@@ -41,10 +48,34 @@ export function renderEditor(wid) {
   if (!_nodeId || !ns.find(function(n){ return n.id === _nodeId })) {
     _nodeId = ns.length ? ns[0].id : null
   }
+  if (!_nodeId) _mobilePane = "outline"
   var L = buildIconbar(wid)
   var E = buildEditor(w, _nodeId)
   var W = buildWorldTree(w)
-  return '<div class="editor-page"><div class="editor-body-area">' + L + E + W + '</div></div>'
+  return '<div class="editor-page"><div class="editor-body-area" data-mobile-pane="' + _mobilePane + '">' + L + buildMobileViewSwitch() + E + W + '</div></div>'
+}
+
+function buildMobileViewSwitch() {
+  var editorPressed = _mobilePane === "editor" ? "true" : "false"
+  var outlinePressed = _mobilePane === "outline" ? "true" : "false"
+  var h = '<div class="editor-mobile-view-switch" role="group" aria-label="编辑器视图">'
+  h += '<button type="button" data-a="mobile-pane" data-pane="editor" aria-controls="articleEditorPane" aria-pressed="' + editorPressed + '">正文</button>'
+  h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">大纲</button>'
+  h += '</div>'
+  return h
+}
+
+function prepareMobilePaneRefresh(pane, restoreFocus) {
+  _mobilePane = pane
+  _pendingMobileFocus = restoreFocus && isBoundedEditorViewport() ? pane : null
+}
+
+function restorePendingMobilePaneFocus(root) {
+  var pane = _pendingMobileFocus
+  _pendingMobileFocus = null
+  if (!pane || !isBoundedEditorViewport()) return
+  var control = root?.querySelector('[data-a="mobile-pane"][data-pane="' + pane + '"]')
+  if (control) control.focus()
 }
 
 function buildIconbar(wid) {
@@ -67,8 +98,8 @@ function buildIconbar(wid) {
 
 function buildEditor(w, nid) {
   var n = (w.nodes || []).find(function(x){ return x.id === nid })
-  if (!n) return '<div class="editor-area"><div class="editor-empty">选择一个节点开始编辑</div></div>'
-  var h = '<div class="editor-area">'
+  if (!n) return '<div class="editor-area" id="articleEditorPane"><div class="editor-empty">选择一个节点开始编辑</div></div>'
+  var h = '<div class="editor-area" id="articleEditorPane">'
   h += buildHeader(w, n)
   h += buildToolbar(nid)
   h += buildContent(n)
@@ -221,7 +252,7 @@ function buildContent(n) {
 function buildWorldTree(w) {
   var ns = w.nodes || []
   var ch = w.chapters || []
-  var h = '<div class="world-tree">'
+  var h = '<div class="world-tree" id="articleOutlinePane">'
   h += '<div class="wt-header"><span>节点列表</span><div>'
   h += '<button data-a="as" data-w="' + w.id + '">+章</button>'
   h += '<button data-a="an" data-w="' + w.id + '">+</button></div></div>'
@@ -301,6 +332,14 @@ function handleClick(e) {
   var a = b.dataset.a
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
+  if (a === "mobile-pane") {
+    var shell = b.closest(".editor-body-area")
+    if (applyEditorMobilePane(shell, b.dataset.pane)) {
+      _mobilePane = b.dataset.pane
+      _pendingMobileFocus = null
+    }
+    return
+  }
   if (a === "an") {
     var nd = addNode(w)
     if (nd) {
@@ -308,6 +347,7 @@ function handleClick(e) {
       var _s = (_w.scenes || [])[0]
       if (_s) updateNode(w, nd.id, {scene: _s.id})
       _nodeId = nd.id
+      prepareMobilePaneRefresh("editor", true)
       refreshEditor(w)
     }
     return
@@ -317,7 +357,7 @@ function handleClick(e) {
     if (sn) { var wo = getWork(w); wo.chapters = wo.chapters || []; wo.chapters.push({id:uid(), name:sn}); updateWork(w, {chapters: wo.chapters}); refreshEditor(w) }
     return
   }
-  if (a === "sl") { _nodeId = n; refreshEditor(w); return }
+  if (a === "sl") { _nodeId = n; prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
   if (a === "up") {
     moveNode(w, n, -1)
     return
@@ -327,7 +367,12 @@ function handleClick(e) {
     return
   }
   if (a === "dl") {
-    if (confirm("确定删除?")) { deleteNode(w, n); refreshEditor(w) }
+    if (confirm("确定删除?")) {
+      deleteNode(w, n)
+      var remainingNodes = (getWork(w)?.nodes || []).length
+      if (remainingNodes === 0) prepareMobilePaneRefresh("outline", true)
+      refreshEditor(w)
+    }
     return
   }
   if (a === "rn2") {
@@ -376,6 +421,7 @@ function handleClick(e) {
     var target = b.dataset.target
     if (target && getNode(w, target)) {
       _nodeId = target
+      prepareMobilePaneRefresh("editor", false)
       refreshEditor(w)
     }
     return
@@ -1111,6 +1157,7 @@ function refreshEditor(wid) {
   var a = document.getElementById("app")
   if (a) {
     a.innerHTML = renderHeader() + '<div id="editorMain">' + renderEditor(wid) + '</div>'
+    restorePendingMobilePaneFocus(a.querySelector(".editor-body-area"))
   }
 }
 
