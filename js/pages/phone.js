@@ -73,7 +73,13 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   // Close button
   var closeBtn = topBar.querySelector('button')
   var close = createPhoneModalCloseController({
-    beforeClose: options.beforeClose,
+    beforeClose: function(reason) {
+      var active = document.activeElement
+      if (active && content.contains(active) && typeof active.blur === 'function') {
+        active.blur()
+      }
+      return options.beforeClose ? options.beforeClose(reason) : undefined
+    },
     remove: function() { ov.remove() },
     afterClose: options.afterClose
   })
