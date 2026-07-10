@@ -3,15 +3,25 @@ export function createPhoneModalCloseController({
   remove,
   afterClose,
 }) {
-  let closed = false
+  let state = "open"
 
   return function close(reason) {
-    if (closed) return false
+    if (state !== "open") return false
+    state = "closing"
 
-    const result = beforeClose ? beforeClose(reason) : undefined
-    if (result === false) return false
+    let result
+    try {
+      result = beforeClose ? beforeClose(reason) : undefined
+    } catch (error) {
+      state = "open"
+      throw error
+    }
+    if (result === false) {
+      state = "open"
+      return false
+    }
 
-    closed = true
+    state = "closed"
     remove()
     if (afterClose) afterClose(result, reason)
     return true

@@ -37,3 +37,48 @@ test("a successful close removes once and passes its result", () => {
     },
   ])
 })
+
+test("a synchronous reentrant close cannot settle the modal twice", () => {
+  let close
+  let firstAttempt = true
+  let reentrantResult
+  let beforeCalls = 0
+  let removeCalls = 0
+  let afterCalls = 0
+
+  close = createPhoneModalCloseController({
+    beforeClose: () => {
+      beforeCalls += 1
+      if (firstAttempt) {
+        firstAttempt = false
+        reentrantResult = close("reentrant")
+      }
+      return "saved"
+    },
+    remove: () => { removeCalls += 1 },
+    afterClose: () => { afterCalls += 1 },
+  })
+
+  assert.equal(close("button"), true)
+  assert.equal(reentrantResult, false)
+  assert.equal(beforeCalls, 1)
+  assert.equal(removeCalls, 1)
+  assert.equal(afterCalls, 1)
+})
+
+test("a beforeClose error leaves the modal available for retry", () => {
+  let shouldThrow = true
+  let removeCalls = 0
+  const close = createPhoneModalCloseController({
+    beforeClose: () => {
+      if (shouldThrow) throw new Error("save failed")
+      return "saved"
+    },
+    remove: () => { removeCalls += 1 },
+  })
+
+  assert.throws(() => close("button"), /save failed/)
+  shouldThrow = false
+  assert.equal(close("button"), true)
+  assert.equal(removeCalls, 1)
+})
