@@ -1,5 +1,6 @@
 // Tuuru Works - Phone Editor
-import { getWork, updateWork, uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, addContact, updateContact, deleteContact, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
+import { uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
+import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
 import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
