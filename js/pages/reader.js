@@ -10,8 +10,8 @@ export function renderReader(workId){
     return renderPasswordGate(work)
   }
   
-  if(work.type===WORK_TYPE.ARTICLE) return renderArticleReader(work)
-  if(work.type===WORK_TYPE.PHONE) return renderPhoneReader(work)
+  if(work.type===WORK_TYPE.ARTICLE) return renderArticleReader(workId, work)
+  if(work.type===WORK_TYPE.PHONE) return renderPhoneReader(workId, work)
   return `<div class="text-muted">未知作品类型</div>`
 }
 
@@ -27,7 +27,7 @@ function renderPasswordGate(work){
   `
 }
 
-function renderArticleReader(work){
+function renderArticleReader(workId, work){
   const state = getReaderState(workId)
   const phs = work.placeholders||[]
   const unfilled = phs.filter(p=>p.prompt&&!state.phValues[p.id])
@@ -102,7 +102,7 @@ function renderNode(work, node, state){
   `
 }
 
-function renderPhoneReader(work){
+function renderPhoneReader(workId, work){
   const state = getReaderState(workId)
   const phs = work.placeholders||[]
   const unfilled = phs.filter(p=>p.prompt&&!state.phValues[p.id])
@@ -135,8 +135,10 @@ function renderPhoneViewer(work, state){
           <div style="width:64px;height:64px;border-radius:50%;background:var(--c-primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.5rem;margin-bottom:8px"></div>
           <div style="font-weight:600;font-size:1rem;margin-bottom:4px">${escHtml(work.title)}</div>
           <div style="font-size:.8rem;color:#999;margin-bottom:24px">${escHtml(work.desc||"")}</div>
-          <div class="grid-3" style="width:100%;gap:10px" id="readerHomeGrid">?????...</div><div style="font-size:.8rem;margin-top:4px;color:var(--c-text2)">朋友圈 (${moments.length})</div></div>
-            <div class="card" style="text-align:center;padding:16px;cursor:pointer" onclick="readerPhoneView('${work.id}','forum')"><div style="font-size:2rem"></div><div style="font-size:.8rem;margin-top:4px;color:var(--c-text2)">论坛 (${posts.length})</div></div>
+          <div class="grid-2" style="width:100%;gap:12px" id="readerHomeGrid">
+            <div class="card" style="text-align:center;padding:16px;cursor:pointer" onclick="readerPhoneView('${work.id}','chatlist')"><div style="font-size:2rem"></div><div style="font-size:.8rem;margin-top:4px;color:var(--c-text2)">聊天 (${(pd.chats||[]).length})</div></div>
+            <div class="card" style="text-align:center;padding:16px;cursor:pointer" onclick="readerPhoneView('${work.id}','moment')"><div style="font-size:2rem"></div><div style="font-size:.8rem;margin-top:4px;color:var(--c-text2)">朋友圈 (${(pd.moments||[]).length})</div></div>
+            <div class="card" style="text-align:center;padding:16px;cursor:pointer" onclick="readerPhoneView('${work.id}','forum')"><div style="font-size:2rem"></div><div style="font-size:.8rem;margin-top:4px;color:var(--c-text2)">论坛 (${(pd.forumPosts||[]).length})</div></div>
             <div class="card" style="text-align:center;padding:16px;cursor:pointer"><div style="font-size:2rem"></div><div style="font-size:.8rem;margin-top:4px;color:var(--c-text2)">联系人 (${contacts.length})</div></div>
           </div>
         </div>
