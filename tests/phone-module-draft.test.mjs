@@ -187,6 +187,52 @@ test("an empty module closes without a formal module write", () => {
   assert.equal(emptyCalls, 1)
 })
 
+test("an edited module commits its empty payload instead of restoring old content", () => {
+  const committed = []
+  const saved = []
+  let disposed = 0
+  let emptyCalls = 0
+  const savedModule = { id: "module-1", type: "messages", data: { chats: [], contacts: [] } }
+  const handlers = createPhoneModuleCloseHandlers({
+    type: "messages",
+    commitEmpty: true,
+    draft: {
+      snapshot: () => ({ phoneData: { chats: [], contacts: [] } }),
+      dispose: () => { disposed += 1 },
+    },
+    commit: data => { committed.push(data); return savedModule },
+    onSaved: module => saved.push(module),
+    onEmpty: () => { emptyCalls += 1 },
+  })
+
+  const result = handlers.beforeClose()
+  handlers.afterClose(result)
+
+  assert.deepEqual(committed, [{ chats: [], contacts: [] }])
+  assert.equal(disposed, 1)
+  assert.deepEqual(saved, [savedModule])
+  assert.equal(emptyCalls, 0)
+})
+
+test("a failed empty edit keeps the existing module draft available", () => {
+  let disposed = 0
+  const errors = []
+  const handlers = createPhoneModuleCloseHandlers({
+    type: "messages",
+    commitEmpty: true,
+    draft: {
+      snapshot: () => ({ phoneData: { chats: [], contacts: [] } }),
+      dispose: () => { disposed += 1 },
+    },
+    commit: () => null,
+    onError: error => errors.push(error),
+  })
+
+  assert.equal(handlers.beforeClose(), false)
+  assert.equal(disposed, 0)
+  assert.equal(errors.length, 1)
+})
+
 test("the article editor wires phone cards to a virtual draft session", async () => {
   const source = await readFile(new URL("../js/pages/editor.js", import.meta.url), "utf8")
   const start = source.indexOf("function openPhoneAppModalForCard")
@@ -197,6 +243,7 @@ test("the article editor wires phone cards to a virtual draft session", async ()
   assert.notEqual(end, -1)
   assert.match(functionSource, /createPhoneWorkDraft/)
   assert.match(functionSource, /openPhoneAppModal\(draft\.id/)
+  assert.match(functionSource, /commitEmpty:\s*Boolean\(existingPm\)/)
   assert.doesNotMatch(functionSource, /updateWork\s*\(\s*wid\s*,\s*\{\s*phoneData/)
   assert.doesNotMatch(functionSource, /MutationObserver|setTimeout/)
 })

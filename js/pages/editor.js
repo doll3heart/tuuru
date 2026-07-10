@@ -1402,6 +1402,7 @@ function openPhoneAppModalForCard(wid, nid, pmid, type, def, onClose) {
 
   var handlers = createPhoneModuleCloseHandlers({
     type: type,
+    commitEmpty: Boolean(existingPm),
     draft: draft,
     commit: function(pmData) {
       if (pmid) {

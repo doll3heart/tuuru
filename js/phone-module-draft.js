@@ -74,6 +74,7 @@ export function createPhoneModuleCloseHandlers({
   type,
   draft,
   commit,
+  commitEmpty = false,
   onSaved,
   onEmpty,
   onError,
@@ -90,7 +91,8 @@ export function createPhoneModuleCloseHandlers({
     }
 
     const data = pickPhoneModuleData(type, draftWork.phoneData)
-    if (!hasPhoneModuleContent(type, data)) {
+    const isEmpty = !hasPhoneModuleContent(type, data)
+    if (isEmpty && !commitEmpty) {
       draft.dispose()
       return { empty: true, savedModule: null }
     }
