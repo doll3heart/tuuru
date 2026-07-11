@@ -458,11 +458,47 @@ Expected: 255 tests pass; TypeScript and both temporary production builds pass; 
 
 ---
 
+## Review Follow-up Task 3: Canonicalize and Harden the Temporary Boundary
+
+**Files:**
+
+- Modify: `scripts/verify-builds.mjs`
+- Modify: `tests/build-verification.test.mjs`
+
+- [ ] Add focused failing tests proving an in-repository or canonically aliased temp parent is rejected before `mkdtemp()`, and that missing-prefix, nested, outside-parent, and repository-ancestor roots never reach recursive removal.
+- [ ] Inject `realpath` as the production canonicalizer, canonicalize the repository and existing temp parent before creation, and reject a temp parent inside or equal to the repository.
+- [ ] Canonicalize the returned root, require it to be one direct `tuuru-build-` child of the canonical parent, reject repository overlap in either direction, and use only that validated path for output and cleanup.
+- [ ] Run the focused test RED then GREEN, run the Git-state-guarded full verification, commit as `fix(build): harden temporary output boundary`, and rerun post-commit verification.
+
+## Review Follow-up Task 4: Preserve Falsy Dependency Failures
+
+**Files:**
+
+- Modify: `scripts/verify-builds.mjs`
+- Modify: `tests/build-verification.test.mjs`
+
+- [ ] Add focused failing cases for falsy build and cleanup rejections.
+- [ ] Replace truthiness-based error detection with explicit failure-state tracking while preserving the original rejection values and combined-error ordering.
+- [ ] Run focused RED/GREEN and the Git-state-guarded full verification, commit as `fix(build): preserve falsy verification failures`, and rerun post-commit verification.
+
+## Review Follow-up Task 5: Lock Sequential Awaiting in the Test Contract
+
+**Files:**
+
+- Modify: `tests/build-verification.test.mjs`
+
+- [ ] Replace the immediately resolved sequencing stub with a deferred first build, assert the reader has not started while it is pending, then release it and confirm reader-before-cleanup order.
+- [ ] Run the focused test and the Git-state-guarded full verification, commit as `test(build): prove verification builds sequentially`, and rerun post-commit verification.
+
+---
+
 ## Review Checklist
 
 - Confirm `scripts/verify-builds.mjs` never calls `rm()` before validating the unique temp root.
 - Confirm the actual Vite config files are loaded and only `build.outDir` / `emptyOutDir` are overridden.
 - Confirm build calls are sequential, not parallel.
+- Confirm temp-parent validation happens before directory creation and canonical returned paths cannot overlap the repository in either direction.
+- Confirm falsy thrown values still produce a failed verification.
 - Confirm import has no side effects.
 - Confirm formal npm build/preview scripts and both Vite config files remain unchanged.
 - Confirm no network, deployment, application runtime, storage schema, or formal artifact changes appear in either implementation commit.
