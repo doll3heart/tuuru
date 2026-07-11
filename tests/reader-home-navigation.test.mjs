@@ -170,7 +170,7 @@ test("reader home controls navigate without relying on module globals", async t 
   }
   const outsideDrop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(outsideDrop, "dataTransfer", {
-    value: { files: [{ name: "work.json" }] },
+    value: { files: [{ name: "work.json", size: 1 }] },
   })
   document.dispatchEvent(outsideDrop)
 
@@ -182,7 +182,7 @@ test("reader home controls navigate without relying on module globals", async t 
   assertActiveTab(2)
   const importDrop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(importDrop, "dataTransfer", {
-    value: { files: [{ name: "work.json" }] },
+    value: { files: [{ name: "work.json", size: 1 }] },
   })
   document.getElementById("dropInner").dispatchEvent(importDrop)
 

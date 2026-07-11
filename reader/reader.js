@@ -281,20 +281,65 @@ function renderImportPanel() {
   return h
 }
 
+var MAX_READER_JSON_IMPORT_BYTES = 10 * 1024 * 1024
+var MAX_READER_PNG_IMPORT_BYTES = 25 * 1024 * 1024
+
+function readerImportFileError(file, ext) {
+  if (!file || !Number.isSafeInteger(file.size) || file.size < 0) {
+    return '无法确认文件大小，请重新选择文件'
+  }
+  if (file.size === 0) return '文件为空，请选择有效的作品文件'
+  if (ext === 'json' && file.size > MAX_READER_JSON_IMPORT_BYTES) {
+    return 'JSON 文件超过 10 MB 安全读取上限'
+  }
+  if (ext === 'png' && file.size > MAX_READER_PNG_IMPORT_BYTES) {
+    return 'PNG 文件超过 25 MB 安全读取上限'
+  }
+  return ''
+}
+
 function setupImport() {
   var inner = document.getElementById('dropInner')
   var pickBtn = document.getElementById('pickFileBtn')
   var fileInput = document.getElementById('fileInput')
 
+  function resetFileInput() {
+    if (fileInput) fileInput.value = ''
+  }
+
   function handleFile(file) {
     if (!file) return
-    var ext = file.name.split('.').pop().toLowerCase()
+    var name = typeof file.name === 'string' ? file.name : ''
+    var ext = name.split('.').pop().toLowerCase()
     if (ext !== 'json' && ext !== 'png') {
       alert('请选择 .json 或 .png 文件')
+      resetFileInput()
       return
     }
-    var reader = new FileReader()
+    var fileError = readerImportFileError(file, ext)
+    if (fileError) {
+      alert(fileError)
+      resetFileInput()
+      return
+    }
+    var reader
+    try {
+      reader = new FileReader()
+    } catch (error) {
+      alert('无法读取文件，请确认文件仍可访问后重试')
+      resetFileInput()
+      return
+    }
+    var settled = false
+    function finishRead(message) {
+      if (settled) return false
+      settled = true
+      resetFileInput()
+      if (message) alert(message)
+      return true
+    }
     reader.onload = function() {
+      if (!finishRead()) return
       if (ext === 'json') {
         try {
           var work = JSON.parse(reader.result)
@@ -307,8 +352,18 @@ function setupImport() {
         decodeSteganoFromDataUrl(reader.result)
       }
     }
-    if (ext === 'json') reader.readAsText(file)
-    else reader.readAsDataURL(file)
+    reader.onerror = function() {
+      finishRead('无法读取文件，请确认文件仍可访问后重试')
+    }
+    reader.onabort = function() {
+      finishRead('文件读取已取消，请重新选择')
+    }
+    try {
+      if (ext === 'json') reader.readAsText(file)
+      else reader.readAsDataURL(file)
+    } catch (error) {
+      finishRead('无法读取文件，请确认文件仍可访问后重试')
+    }
   }
 
   // Drag & drop

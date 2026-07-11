@@ -92,7 +92,7 @@ function installDom(t, storage, alerts) {
   })
   globalThis.window = dom.window
   globalThis.document = dom.window.document
-  globalThis.localStorage = storage
+  globalThis.localStorage = storage || dom.window.localStorage
   globalThis.sessionStorage = dom.window.sessionStorage
   globalThis.Element = dom.window.Element
   globalThis.HTMLElement = dom.window.HTMLElement
@@ -104,6 +104,13 @@ function installDom(t, storage, alerts) {
   globalThis.alert = message => alerts.push(String(message))
   t.after(() => dom.window.close())
   return dom
+}
+
+function dropFile(dom, file) {
+  const drop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(drop, "dataTransfer", { value: { files: [file] } })
+  document.getElementById("dropInner").dispatchEvent(drop)
+  return drop
 }
 
 test("reader imports remain usable when local persistence is unavailable", async t => {
@@ -194,4 +201,86 @@ test("reader keeps its cached work when only the recent list exceeds quota", asy
   assert.equal(storage.values.get("moirain_recent"), storage.originalRecent)
   assert.deepEqual(storage.removals, [])
   assert.equal(storage.values.get("sentinel"), "preserve me")
+})
+
+test("reader rejects unsafe import sizes before creating a FileReader", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const constructions = []
+  const reads = []
+
+  globalThis.FileReader = class {
+    constructor() { constructions.push(this) }
+    readAsText(file) { reads.push(["text", file]) }
+    readAsDataURL(file) { reads.push(["data-url", file]) }
+  }
+
+  await import(`../reader/reader.js?reader-import-limits=${Date.now()}`)
+  document.querySelector('[data-tab="import"]').click()
+
+  const MiB = 1024 * 1024
+  for (const file of [
+    { name: "unknown-size.json" },
+    { name: "empty.json", size: 0 },
+    { name: "too-large.json", size: 10 * MiB + 1 },
+    { name: "too-large.png", size: 25 * MiB + 1 },
+  ]) {
+    dropFile(dom, file)
+  }
+
+  assert.equal(constructions.length, 0)
+  assert.deepEqual(reads, [])
+  assert.equal(alerts.length, 4)
+
+  const jsonAtLimit = { name: "limit.json", size: 10 * MiB }
+  const pngAtLimit = { name: "limit.png", size: 25 * MiB }
+  dropFile(dom, jsonAtLimit)
+  dropFile(dom, pngAtLimit)
+
+  assert.equal(constructions.length, 2)
+  assert.deepEqual(reads, [
+    ["text", jsonAtLimit],
+    ["data-url", pngAtLimit],
+  ])
+})
+
+test("reader reports FileReader errors and cancellations without parsing", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  let mode = "error"
+
+  globalThis.FileReader = class {
+    readAsText() {
+      if (mode === "error") this.onerror?.()
+      else this.onabort?.()
+    }
+    readAsDataURL() {
+      throw new Error("unexpected PNG read")
+    }
+  }
+
+  await import(`../reader/reader.js?reader-import-read-failure=${Date.now()}`)
+  document.querySelector('[data-tab="import"]').click()
+
+  const input = document.getElementById("fileInput")
+  Object.defineProperty(input, "files", {
+    configurable: true,
+    value: [{ name: "unreadable.json", size: 100 }],
+  })
+  Object.defineProperty(input, "value", {
+    configurable: true,
+    writable: true,
+    value: "selected-file",
+  })
+  input.onchange()
+  assert.equal(input.value, "")
+
+  mode = "abort"
+  dropFile(dom, { name: "cancelled.json", size: 100 })
+
+  assert.equal(alerts.length, 2)
+  assert.match(alerts[0], /无法读取/)
+  assert.match(alerts[1], /取消/)
+  assert.equal(document.getElementById("rdStartBtn"), null)
+  assert.equal(alerts.some(message => /JSON 解析失败/.test(message)), false)
 })
