@@ -123,8 +123,11 @@ test("unsafe temporary roots are rejected without recursive removal", async () =
   assert.equal(removeCalls, 0)
 })
 
-test("formal package scripts remain available before command wiring", async () => {
+test("package exposes clean verification without changing release commands", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+
+  assert.equal(packageJson.scripts["build:verify"], "tsc -b --pretty false && node scripts/verify-builds.mjs")
+  assert.equal(packageJson.scripts.verify, "npm test && npm run build:verify")
   assert.equal(packageJson.scripts.build, "npm run build:editor && npm run build:reader")
   assert.equal(packageJson.scripts["build:editor"], "tsc -b && vite build --config vite.config.ts")
   assert.equal(packageJson.scripts["build:reader"], "vite build --config vite.reader.config.ts")

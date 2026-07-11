@@ -9,6 +9,8 @@
     "build": "npm run build:editor && npm run build:reader",
     "build:editor": "tsc -b && vite build --config vite.config.ts",
     "build:reader": "vite build --config vite.reader.config.ts",
+    "build:verify": "tsc -b --pretty false && node scripts/verify-builds.mjs",
+    "verify": "npm test && npm run build:verify",
     "test": "node --test",
     "preview": "vite preview --config vite.config.ts",
     "preview:reader": "vite preview --config vite.reader.config.ts"
