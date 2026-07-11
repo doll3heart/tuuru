@@ -2052,18 +2052,88 @@ function readerGalleryStyleVariables() {
 }
 
 // ---- Modal wrapper ----
-function openCuModal(title, bodyHtml, onSave) {
+function openCuModal(title, bodyHtml, onSave, returnFocus) {
   var ov = document.createElement('div')
   ov.className = 'cu-modal-overlay'
-  ov.innerHTML = '<div class="cu-modal"><div class="cu-modal-header"><span class="cu-modal-title">' + esc(title) + '</span><button class="cu-modal-close" id="cuModalClose">\u00d7</button></div><div class="cu-modal-body">' + bodyHtml + '</div><div class="cu-modal-footer"><button class="cu-btn-save" id="cuModalSave">保存</button><button class="cu-btn-cancel" id="cuModalCancel">取消</button></div></div>'
+  ov.innerHTML = '<div class="cu-modal" role="dialog" aria-modal="true" aria-labelledby="cuModalTitle" tabindex="-1"><div class="cu-modal-header"><span class="cu-modal-title" id="cuModalTitle">' + esc(title) + '</span><button type="button" class="cu-modal-close" id="cuModalClose" aria-label="' + escapeHtmlAttribute('关闭 ' + title) + '">\u00d7</button></div><div class="cu-modal-body">' + bodyHtml + '</div><div class="cu-modal-footer"><button type="button" class="cu-btn-save" id="cuModalSave">保存</button><button type="button" class="cu-btn-cancel" id="cuModalCancel">取消</button></div></div>'
   document.body.appendChild(ov)
-  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
-  ov.querySelector('#cuModalClose').onclick = function() { ov.remove() }
-  ov.querySelector('#cuModalCancel').onclick = function() { ov.remove() }
-  ov.querySelector('#cuModalSave').onclick = function() {
-    if (onSave) onSave(ov)
-    ov.remove()
+  var dialog = ov.querySelector('.cu-modal')
+  var closeButton = ov.querySelector('#cuModalClose')
+  var closed = false
+  var returnAppType = returnFocus && returnFocus.getAttribute ? returnFocus.getAttribute('data-app') : ''
+
+  function restoreModalFocus() {
+    if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === 'function') {
+      returnFocus.focus()
+      return
+    }
+    if (returnAppType) {
+      var appButtons = document.querySelectorAll('#tabCustom .rd-app-icon[data-app]')
+      for (var appIndex = 0; appIndex < appButtons.length; appIndex++) {
+        if (appButtons[appIndex].getAttribute('data-app') !== returnAppType) continue
+        appButtons[appIndex].focus()
+        return
+      }
+    }
+    var customTab = document.querySelector('.rd-tab[data-tab="custom"]')
+    if (customTab) customTab.focus()
   }
+
+  function closeModal() {
+    if (closed) return
+    closed = true
+    ov.removeEventListener('keydown', onModalKeydown)
+    ov.remove()
+    restoreModalFocus()
+  }
+
+  function modalFocusables() {
+    return Array.prototype.filter.call(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'), function(control) {
+      return !control.hidden && control.getAttribute('aria-hidden') !== 'true'
+    })
+  }
+
+  function onModalKeydown(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeModal()
+      return
+    }
+    if (event.key !== 'Tab') return
+    var focusables = modalFocusables()
+    if (!focusables.length) {
+      event.preventDefault()
+      dialog.focus()
+      return
+    }
+    var first = focusables[0]
+    var last = focusables[focusables.length - 1]
+    var active = document.activeElement
+    if (event.shiftKey && (active === first || !dialog.contains(active))) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  ov.closeReaderModal = closeModal
+  ov.addEventListener('keydown', onModalKeydown)
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal() })
+  closeButton.onclick = closeModal
+  ov.querySelector('#cuModalCancel').onclick = closeModal
+  var saveButton = ov.querySelector('#cuModalSave')
+  saveButton.onclick = function() {
+    try {
+      if (onSave) onSave(ov)
+      closeModal()
+    } catch (error) {
+      alert('设置保存失败，浏览器无法写入本地存储。请检查存储空间后重试。')
+      saveButton.focus()
+    }
+  }
+  closeButton.focus()
   return ov
 }
 
@@ -2273,7 +2343,7 @@ function updateCuPreview(modal, type) {
 }
 
 // ====== Per-App Settings Panel ======
-function openReaderAppSettings(type) {
+function openReaderAppSettings(type, trigger) {
   var ct = getPhoneCustom()
   ct.appSettings = ct.appSettings || {}
   var labels = { messages:'消息', forum:'论坛', memo:'备忘录', gallery:'相册', browser:'浏览记录', shopping:'购物', contacts:'联系人' }
@@ -2460,7 +2530,7 @@ function openReaderAppSettings(type) {
     savePhoneCustom(ct)
     renderCustomPage()
     showReaderToast((labels[type] || 'App') + '美化已保存')
-  })
+  }, trigger)
 
   // Bind slider displays
   bindCuSliders(ov)
@@ -2530,9 +2600,15 @@ function openReaderAppSettings(type) {
   var resetBtn = ov.querySelector('#cuAppReset')
   if (resetBtn) resetBtn.onclick = function() {
     delete ct.appSettings[type]
-    savePhoneCustom(ct)
-    ov.remove()
+    try {
+      savePhoneCustom(ct)
+    } catch (error) {
+      alert('恢复默认失败，浏览器无法写入本地存储。请检查存储空间后重试。')
+      resetBtn.focus()
+      return
+    }
     renderCustomPage()
+    ov.closeReaderModal()
     showReaderToast((labels[type] || 'App') + '已恢复默认')
   }
 }
@@ -2574,7 +2650,7 @@ document.addEventListener('click', function(e) {
       e.stopPropagation()
       if (type === 'customize') { openReaderCustomizePanel(); return }
       if (type === 'profile') { openReaderProfilePanel(); return }
-      openReaderAppSettings(type)
+      openReaderAppSettings(type, el)
       return
     }
     el = el.parentElement
