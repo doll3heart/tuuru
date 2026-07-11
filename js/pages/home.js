@@ -2,7 +2,8 @@
 import { navigate } from "../router.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
-import { readLocalDatabaseBackupFile, serializeLocalDatabaseBackup } from "../storage.js"
+import { startLocalLibraryRestore } from "../library-restore-ui.js"
+import { serializeLocalDatabaseBackup } from "../storage.js"
 
 export function renderHome(){
   const works = getWorks()
@@ -31,7 +32,7 @@ export function renderHome(){
       <h2 style="font-size:1.2rem;font-weight:600">我的作品</h2>
       <div class="flex-row">
         <button class="btn btn-outline" onclick="backupLibrary()" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机">备份全部作品</button>
-        <button class="btn btn-outline" id="backupInspectBtn" onclick="inspectLibraryBackup()" title="只读取并校验备份，不会修改当前创作库">检查备份</button>
+        <button class="btn btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成">检查 / 恢复备份</button>
         <button class="btn btn-primary" onclick="navigate('/new')"> 新建作品</button>
       </div>
     </div>
@@ -106,58 +107,23 @@ window.backupLibrary = function(){
     var blob = new Blob([json], { type: 'application/json;charset=utf-8' })
     var filename = 'tuuru-library-backup-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json'
     downloadBlob(blob, filename)
-    showToast('备份已下载；文件包含私密内容，请妥善保管', 'success')
+    showToast('备份下载已发起；文件包含私密内容，请妥善保管', 'success')
   } catch(e) {
     alert('备份失败：' + (e instanceof Error ? e.message : '未知错误'))
   }
 }
 
-function formatFileSize(bytes) {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-}
-
-function showBackupPreview(file, backup) {
-  var summary = backup.summary
-  var typeSummary = summary.articleCount + ' 篇互动文章 / ' + summary.phoneCount + ' 个小手机'
-  if (summary.otherCount > 0) typeSummary += ' / ' + summary.otherCount + ' 个旧格式或未知类型'
-  var body = '<div style="padding:2px 0">'
-  body += '<p style="margin-bottom:16px;color:var(--c-primary-hover);font-weight:600">备份格式与基础结构校验通过</p>'
-  body += '<div style="display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;font-size:.85rem">'
-  body += '<span style="color:var(--c-text2)">文件</span><span style="overflow-wrap:anywhere">' + escHtml(file.name) + '</span>'
-  body += '<span style="color:var(--c-text2)">文件大小</span><span>' + formatFileSize(file.size) + '</span>'
-  body += '<span style="color:var(--c-text2)">备份时间</span><span>' + escHtml(new Date(backup.exportedAt).toLocaleString()) + '</span>'
-  body += '<span style="color:var(--c-text2)">备份版本</span><span>v' + backup.backupVersion + '</span>'
-  body += '<span style="color:var(--c-text2)">作品</span><span>' + summary.workCount + ' 个（' + typeSummary + '）</span>'
-  body += '<span style="color:var(--c-text2)">全局联系人 / 分组</span><span>' + summary.contactCount + ' / ' + summary.groupCount + '</span>'
-  body += '</div>'
-  body += '<p style="margin-top:16px;font-size:.78rem;color:var(--c-text2)">本次仅在内存中读取并校验文件，未恢复、覆盖或修改任何浏览器数据。</p>'
-  body += '</div>'
-  var overlay = modal('备份检查结果', body, '<button class="btn btn-primary" id="backupPreviewClose">关闭</button>')
-  overlay.querySelector('#backupPreviewClose').onclick = function() { overlay.remove() }
-}
-
-window.inspectLibraryBackup = function(){
-  var input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.json,application/json'
-  input.onchange = async function() {
-    var file = input.files && input.files[0]
-    if (!file) return
-    var button = document.getElementById('backupInspectBtn')
-    if (button) button.disabled = true
-
-    try {
-      showBackupPreview(file, await readLocalDatabaseBackupFile(file))
-    } catch(e) {
-      alert('备份检查失败：' + (e instanceof Error ? e.message : '无法读取文件'))
-    } finally {
-      input.value = ''
-      if (button) button.disabled = false
-    }
+let libraryRestoreController
+window.restoreLibraryBackup = function() {
+  if (!libraryRestoreController) {
+    libraryRestoreController = startLocalLibraryRestore({
+      storage: localStorage,
+      modal,
+      notify: showToast,
+      reload: () => location.reload(),
+    })
   }
-  input.click()
+  libraryRestoreController.pickFile(document.getElementById("backupInspectBtn"))
 }
 
 window.delWork = function(id){
