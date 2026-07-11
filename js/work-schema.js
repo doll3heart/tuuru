@@ -6,6 +6,7 @@ const PHONE_COLLECTIONS = [
   "contacts", "chats", "moments", "forumPosts", "forumNpcs", "apps",
   "memos", "photos", "albums", "browserHistory", "shoppingItems",
 ]
+const MAX_WORK_NESTING_DEPTH = 100
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -17,6 +18,45 @@ function cloneJsonValue(value) {
     return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneJsonValue(child)]))
   }
   return value
+}
+
+function invalidNesting(path) {
+  return failure("invalid-work", "作品结构嵌套过深或无法安全检查。", [{
+    code: "invalid-nesting",
+    path,
+    message: "作品结构嵌套过深、包含循环引用或无法检查。",
+  }])
+}
+
+function inspectNesting(input, path) {
+  const active = new WeakSet()
+  const stack = [{ value: input, depth: 0, exiting: false }]
+
+  try {
+    while (stack.length > 0) {
+      const frame = stack.pop()
+      const value = frame.value
+      if (value === null || typeof value !== "object") continue
+      if (frame.exiting) {
+        active.delete(value)
+        continue
+      }
+      if (frame.depth > MAX_WORK_NESTING_DEPTH || active.has(value)) {
+        return invalidNesting(path)
+      }
+
+      active.add(value)
+      stack.push({ value, depth: frame.depth, exiting: true })
+      const children = Array.isArray(value) ? value : Object.values(value)
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push({ value: children[index], depth: frame.depth + 1, exiting: false })
+      }
+    }
+  } catch {
+    return invalidNesting(path)
+  }
+
+  return { ok: true }
 }
 
 function failure(code, message, issues = []) {
@@ -41,6 +81,47 @@ function recordArray(value, path, { required = false } = {}) {
     }])
   }
   return { ok: true, value: value.map(cloneJsonValue) }
+}
+
+function genericArray(value, path, { required = false } = {}) {
+  if (value === undefined && !required) return { ok: true, value: [] }
+  if (!Array.isArray(value)) {
+    return failure("invalid-array", "字段必须是数组。", [{
+      code: "invalid-array",
+      path,
+      message: "字段必须是数组。",
+    }])
+  }
+  return { ok: true, value: value.map(cloneJsonValue) }
+}
+
+function normalizeCollection(owner, key, path, validator = recordArray) {
+  const result = validator(owner[key], `${path}.${key}`)
+  if (result.ok) owner[key] = result.value
+  return result
+}
+
+function normalizeChoices(owner, path) {
+  const choicesResult = normalizeCollection(owner, "choices", path)
+  if (!choicesResult.ok) return choicesResult
+
+  for (let index = 0; index < owner.choices.length; index += 1) {
+    const result = normalizeCollection(
+      owner.choices[index],
+      "followUpMessages",
+      `${path}.choices[${index}]`,
+    )
+    if (!result.ok) return result
+  }
+  return { ok: true }
+}
+
+function normalizeMessages(messages, path) {
+  for (let index = 0; index < messages.length; index += 1) {
+    const result = normalizeChoices(messages[index], `${path}[${index}]`)
+    if (!result.ok) return result
+  }
+  return { ok: true }
 }
 
 function asWorkFailure(result, code, message) {
@@ -72,6 +153,11 @@ function normalizeArticle(input, path) {
         message: "手机模块 data 必须是对象。",
       }])
     }
+    if (moduleData !== undefined) {
+      const result = normalizePhoneData(moduleData, `${path}.phoneModules[${index}].data`)
+      if (!result.ok) return asWorkFailure(result, "invalid-article", "文章手机模块结构无效。")
+      work.phoneModules[index].data = result.value
+    }
   }
   if (!work.startNode && work.nodes.length > 0) work.startNode = work.nodes[0].id
   return { ok: true, work }
@@ -86,36 +172,61 @@ function normalizePhoneData(phoneData, path) {
   }
 
   for (let index = 0; index < normalized.chats.length; index += 1) {
-    const sourceChat = phoneData.chats[index]
+    const chat = normalized.chats[index]
+    const contactIdsResult = normalizeCollection(chat, "contactIds", `${path}.chats[${index}]`, genericArray)
+    if (!contactIdsResult.ok) return contactIdsResult
     for (const key of ["messages", "rounds"]) {
-      const result = recordArray(sourceChat[key], `${path}.chats[${index}].${key}`)
+      const result = normalizeCollection(chat, key, `${path}.chats[${index}]`)
       if (!result.ok) return result
-      normalized.chats[index][key] = result.value
     }
-    for (let roundIndex = 0; roundIndex < normalized.chats[index].rounds.length; roundIndex += 1) {
-      const result = recordArray(
-        sourceChat.rounds[roundIndex].messages,
-        `${path}.chats[${index}].rounds[${roundIndex}].messages`,
-      )
+    const messagesResult = normalizeMessages(chat.messages, `${path}.chats[${index}].messages`)
+    if (!messagesResult.ok) return messagesResult
+    for (let roundIndex = 0; roundIndex < chat.rounds.length; roundIndex += 1) {
+      const round = chat.rounds[roundIndex]
+      const roundPath = `${path}.chats[${index}].rounds[${roundIndex}]`
+      const result = normalizeCollection(round, "messages", roundPath)
       if (!result.ok) return result
-      normalized.chats[index].rounds[roundIndex].messages = result.value
+      const nestedResult = normalizeMessages(round.messages, `${roundPath}.messages`)
+      if (!nestedResult.ok) return nestedResult
     }
   }
 
-  for (const [collection, nested] of [["moments", "comments"], ["forumPosts", "comments"]]) {
-    for (let index = 0; index < normalized[collection].length; index += 1) {
-      const result = recordArray(
-        phoneData[collection][index][nested],
-        `${path}.${collection}[${index}].${nested}`,
+  for (let index = 0; index < normalized.moments.length; index += 1) {
+    const moment = normalized.moments[index]
+    const momentPath = `${path}.moments[${index}]`
+    const imagesResult = normalizeCollection(moment, "images", momentPath, genericArray)
+    if (!imagesResult.ok) return imagesResult
+    const commentsResult = normalizeCollection(moment, "comments", momentPath)
+    if (!commentsResult.ok) return commentsResult
+    for (let commentIndex = 0; commentIndex < moment.comments.length; commentIndex += 1) {
+      const result = normalizeChoices(
+        moment.comments[commentIndex],
+        `${momentPath}.comments[${commentIndex}]`,
       )
       if (!result.ok) return result
-      normalized[collection][index][nested] = result.value
+    }
+  }
+
+  for (let index = 0; index < normalized.forumPosts.length; index += 1) {
+    const post = normalized.forumPosts[index]
+    const postPath = `${path}.forumPosts[${index}]`
+    const imagesResult = normalizeCollection(post, "images", postPath, genericArray)
+    if (!imagesResult.ok) return imagesResult
+    const commentsResult = normalizeCollection(post, "comments", postPath)
+    if (!commentsResult.ok) return commentsResult
+    for (let commentIndex = 0; commentIndex < post.comments.length; commentIndex += 1) {
+      const result = normalizeCollection(
+        post.comments[commentIndex],
+        "replies",
+        `${postPath}.comments[${commentIndex}]`,
+      )
+      if (!result.ok) return result
     }
   }
   return { ok: true, value: normalized }
 }
 
-export function validateAndNormalizeWork(input, {
+function validateAndNormalizeWorkUnchecked(input, {
   context = "reader-import",
   path = "$",
 } = {}) {
@@ -140,7 +251,11 @@ export function validateAndNormalizeWork(input, {
   }
 
   if (!SUPPORTED_WORK_TYPES.has(input.type)) {
-    if (context !== "reader-import" && (input.type === undefined || typeof input.type === "string")) {
+    const preservesLegacyType = context !== "reader-import"
+      && (input.type === undefined || typeof input.type === "string")
+    if (preservesLegacyType) {
+      const nestingResult = inspectNesting(input, path)
+      if (!nestingResult.ok) return nestingResult
       return {
         ok: true,
         work: cloneJsonValue(input),
@@ -153,6 +268,9 @@ export function validateAndNormalizeWork(input, {
       code: "unsupported-type", path: `${path}.type`, message: "作品类型不受支持。",
     }])
   }
+
+  const nestingResult = inspectNesting(input, path)
+  if (!nestingResult.ok) return nestingResult
 
   let normalized
   if (input.type === "article") normalized = normalizeArticle(input, path)
@@ -180,6 +298,16 @@ export function validateAndNormalizeWork(input, {
     sourceVersion,
     migrated: sourceVersion < CURRENT_WORK_SCHEMA_VERSION,
     warnings: [],
+  }
+}
+
+export function validateAndNormalizeWork(input, options = {}) {
+  let failurePath = "$"
+  try {
+    if (typeof options?.path === "string") failurePath = options.path
+    return validateAndNormalizeWorkUnchecked(input, options)
+  } catch {
+    return invalidNesting(failurePath)
   }
 }
 

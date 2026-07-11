@@ -59,6 +59,11 @@ function parsedBackup(database) {
   }))
 }
 
+function deeplyNestedDatabaseRaw(depth = 5000) {
+  const nested = `${'{"child":'.repeat(depth)}null${"}".repeat(depth)}`
+  return `{"works":[{"type":"article","nodes":[],"future":${nested}}],"contacts":[],"groups":[]}`
+}
+
 test("a missing database starts empty without writing", () => {
   const storage = createStorage()
 
@@ -156,6 +161,29 @@ test("backup parsing and local inspection share nested work validation", () => {
   assert.equal(inspectLocalDatabaseRaw(JSON.stringify(database)).code, "invalid-structure")
   assert.throws(
     () => parseLocalDatabaseBackup(JSON.stringify(envelope)),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-database",
+  )
+})
+
+test("deep local work data fails closed and preserves the exact recovery raw value", () => {
+  const raw = deeplyNestedDatabaseRaw()
+  let status
+
+  assert.doesNotThrow(() => {
+    status = inspectLocalDatabaseRaw(raw)
+  })
+  assert.equal(status.ok, false)
+  assert.equal(status.code, "invalid-structure")
+  assert.equal(status.raw, raw)
+  assert.equal(status.issues[0].code, "invalid-nesting")
+})
+
+test("deep backup work data reports the stable backup database error", () => {
+  const databaseRaw = deeplyNestedDatabaseRaw()
+  const raw = `{"format":"tuuru-local-library-backup","backupVersion":1,"exportedAt":"2026-07-11T00:00:00.000Z","database":${databaseRaw}}`
+
+  assert.throws(
+    () => parseLocalDatabaseBackup(raw),
     error => error instanceof LocalDatabaseError && error.code === "invalid-backup-database",
   )
 })
