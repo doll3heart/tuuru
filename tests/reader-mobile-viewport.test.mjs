@@ -87,7 +87,7 @@ test("reader CSS exposes a dynamic viewport and all safe-area tokens", () => {
 test("bounded phone mode covers narrow portrait and coarse-pointer landscape", () => {
   assert.match(
     cssWithoutComments,
-    /@media\s*\(max-width:\s*480px\)\s*,\s*\(max-height:\s*480px\)\s*and\s*\(pointer:\s*coarse\)/,
+    /@media\s*\(max-width:\s*480px\)\s*,\s*\(max-height:\s*500px\)\s*and\s*\(pointer:\s*coarse\)/,
   )
 
   const reader = joinedRuleBodies(".phone-reader")

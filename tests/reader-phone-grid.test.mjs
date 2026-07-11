@@ -137,7 +137,7 @@ test("both reader phone renderers are wired to the shared grid helper", () => {
 
 test("bounded mobile article overlays stay borderless without exceeding the legacy width", () => {
   const bounded = atRuleBody(
-    /@media\s*\(max-width:\s*480px\)\s*,\s*\(max-height:\s*480px\)\s*and\s*\(pointer:\s*coarse\)/,
+    /@media\s*\(max-width:\s*480px\)\s*,\s*\(max-height:\s*500px\)\s*and\s*\(pointer:\s*coarse\)/,
   )
   const overlay = ruleBodiesFor(bounded, ".rd-pm-modal")
   const boundedWrapper = ruleBodiesFor(bounded, ".rd-pm-phone-wrap")

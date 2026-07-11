@@ -32,7 +32,7 @@ function ruleBodiesFor(source, selector) {
 
 const boundedPhone = blockFrom(
   css,
-  "@media (max-width: 480px), (max-height: 480px) and (pointer: coarse)",
+  "@media (max-width: 480px), (max-height: 500px) and (pointer: coarse)",
 )
 
 test("reader settings render named hooks for their compact controls", () => {

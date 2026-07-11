@@ -951,7 +951,7 @@ body.rd-theme-gray .article-meta { color: #333; }
 }
 @keyframes rd-toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
-@media (max-width: 480px), (max-height: 480px) and (pointer: coarse) {
+@media (max-width: 480px), (max-height: 500px) and (pointer: coarse) {
   .phone-reader {
     position: fixed;
     inset: 0;
@@ -1016,6 +1016,17 @@ body.rd-theme-gray .article-meta { color: #333; }
   .rd-pm-phone-wrap > .phone-frame {
     border: none;
     border-radius: 0;
+  }
+}
+
+@media (max-height: 500px) and (pointer: coarse) {
+  .phone-reader > .phone-frame > .phone-island,
+  .phone-reader > .phone-frame > .phone-profile,
+  .phone-reader > .phone-frame > .phone-home-bar,
+  .rd-pm-phone-wrap > .phone-frame > .phone-island,
+  .rd-pm-phone-wrap > .phone-frame > .phone-profile,
+  .rd-pm-phone-wrap > .phone-frame > .phone-home-bar {
+    display: none;
   }
 }
 

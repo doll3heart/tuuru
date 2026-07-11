@@ -997,18 +997,18 @@ function buildPhoneHTML(pd, custom) {
   h += '<div class="phone-frame" style="' + readerBgStyle + '">'
 
   if (skin.showDynamicIsland !== false) {
-    h += '<div style="display:flex;justify-content:center;padding:10px 0 4px"><div style="width:100px;height:24px;background:#000;border-radius:14px"></div></div>'
+    h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
   }
 
   var coverBg = skin.topBgImage || skin.wallpaperImage || ''
-  h += '<div style="position:relative;height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;background:#fff;margin:12px 12px 0;border-radius:16px;'
-  if (coverBg) h += 'background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center;'
-  h += '">'
-  h += '<div style="position:absolute;inset:0;background:rgba(0,0,0,.05)"></div>'
-  h += '<div style="width:60px;height:60px;border-radius:50%;border:2px solid rgba(0,0,0,.15);overflow:hidden;background:rgba(0,0,0,.04);display:flex;align-items:center;justify-content:center;z-index:1;position:relative">'
-  if (skin.readerAvatar) h += '<img src="' + esc(skin.readerAvatar) + '" alt="" style="width:100%;height:100%;object-fit:cover">'
+  h += '<div class="phone-profile"'
+  if (coverBg) h += ' style="background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center"'
+  h += '>'
+  h += '<div class="phone-profile-overlay"></div>'
+  h += '<div class="phone-avatar">'
+  if (skin.readerAvatar) h += '<img src="' + esc(skin.readerAvatar) + '" alt="">'
   h += '</div>'
-  h += '<div style="font-size:12px;color:#555;z-index:1;margin-top:6px;font-weight:500">' + esc(skin.readerId || '读者') + '</div>'
+  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
   h += '</div>'
 
   h += '<div id="phoneDesktopReader" class="phone-desktop" style="flex:1;position:relative;min-height:420px;padding:10px 20px;' + phoneGridContainerStyle() + '">'
@@ -1038,7 +1038,7 @@ function buildPhoneHTML(pd, custom) {
   }
   h += '</div>'
   if (skin.showHomeIndicator !== false) {
-    h += '<div style="display:flex;justify-content:center;padding:8px 0 14px"><div style="width:40%;height:4px;background:rgba(255,255,255,.3);border-radius:3px"></div></div>'
+    h += '<div class="phone-home-bar"><div class="phone-home-indicator"></div></div>'
   }
   h += '</div>'
   return h
