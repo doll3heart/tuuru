@@ -128,9 +128,9 @@ function buildEditor(w, nid) {
 function buildHeader(w, n) {
   var sc = w.scenes || []
   var h = '<div class="editor-header">'
-  h += '<input class="node-name" id="nt_' + n.id + '" value="' + esc(n.title || '') + '" placeholder="节点标题" data-a="rn" data-n="' + n.id + '">'
+  h += '<input class="node-name" id="nt_' + n.id + '" value="' + esc(n.title || '') + '" placeholder="节点标题" aria-label="节点标题" data-a="rn" data-n="' + n.id + '">'
   h += '<div class="editor-actions">'
-  h += '<select data-a="ss" data-n="' + n.id + '"><option value="">场景</option>'
+  h += '<select data-a="ss" data-n="' + n.id + '" aria-label="节点场景"><option value="">场景</option>'
   for (var i = 0; i < sc.length; i++) {
     var s = sc[i]
     h += '<option value="' + s.id + '"' + (n.scene === s.id ? ' selected' : '') + '>' + esc(s.name) + '</option>'

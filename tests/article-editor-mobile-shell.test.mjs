@@ -304,6 +304,57 @@ test("the editor height and scroll chain follow the usable application viewport"
   assert.doesNotMatch(documentBody, /overflow(?:-x|-y)?\s*:\s*hidden/)
 })
 
+test("the bounded editor header keeps title and scene controls usable in one row", async () => {
+  const work = article("bounded-header-work", [{ id: "bounded-header-node" }])
+  work.scenes = [{ id: "scene-a", name: "A scene name that is intentionally very long" }]
+  seed(work)
+  const root = await render(work.id)
+  const title = root.querySelector(".editor-header .node-name")
+  const scene = root.querySelector('.editor-header [data-a="ss"]')
+
+  assert.equal(title.getAttribute("aria-label"), "节点标题")
+  assert.equal(scene.getAttribute("aria-label"), "节点场景")
+
+  const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
+  assert.ok(bounded)
+  const header = ruleBodiesFor(bounded, ".editor-header")
+  const boundedTitle = ruleBodiesFor(bounded, ".editor-header .node-name")
+  const actions = ruleBodiesFor(bounded, ".editor-header .editor-actions")
+  const boundedScene = ruleBodiesFor(bounded, ".editor-header .editor-actions select")
+  const count = ruleBodiesFor(bounded, ".editor-header .word-count")
+
+  assert.match(header, /min-width\s*:\s*0/)
+  assert.match(header, /gap\s*:\s*4px/)
+  assert.match(boundedTitle, /min-width\s*:\s*0/)
+  assert.match(boundedTitle, /min-height\s*:\s*44px/)
+  assert.match(actions, /min-width\s*:\s*0/)
+  assert.match(actions, /flex\s*:\s*0\s+1\s+88px/)
+  assert.match(boundedScene, /width\s*:\s*100%/)
+  assert.match(boundedScene, /max-width\s*:\s*88px/)
+  assert.match(boundedScene, /min-height\s*:\s*44px/)
+  assert.match(count, /flex-shrink\s*:\s*0/)
+  assert.match(count, /white-space\s*:\s*nowrap/)
+
+  const shortLandscape = cssBlockAfterMarker(
+    css,
+    "@media(max-height:480px) and (pointer:coarse)",
+  )
+  assert.ok(shortLandscape)
+  assert.match(ruleBodiesFor(shortLandscape, ":root"), /--app-header-height\s*:\s*48px/)
+  for (const selector of [
+    ".editor-iconbar",
+    ".editor-mobile-view-switch",
+    ".editor-header",
+    ".editor-toolbar-scroll",
+  ]) {
+    assert.match(ruleBodiesFor(shortLandscape, selector), /padding-block\s*:\s*0/, selector)
+  }
+  assert.match(
+    ruleBodiesFor(shortLandscape, ".editor-content"),
+    /padding-block\s*:\s*8px/,
+  )
+})
+
 test("article action rails expose named native controls and an unclipped margin panel", async () => {
   const work = article("action-rail-work", [{ id: "action-rail-node" }])
   seed(work)
