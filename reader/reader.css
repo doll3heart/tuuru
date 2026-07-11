@@ -1195,3 +1195,13 @@ body.rd-theme-gray .article-meta { color: #333; }
 }
 .cu-reset-btn:hover { border-color: var(--c-accent3); color: var(--c-accent3); }
 
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto !important; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
