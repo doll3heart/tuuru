@@ -169,6 +169,7 @@ restoreLocalDatabaseBackup(plan, storage = localStorage)
   candidateRaw,
   expectedCurrentRaw,
   summary,
+  currentSummary,       // null when the current value is missing or corrupt
   previousState: "missing" | "valid" | "corrupt",
   recoveryArtifact: null | {
     kind,
