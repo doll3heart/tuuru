@@ -19,12 +19,15 @@ import {
 function createStorage(initialValue = null, options = {}) {
   let value = initialValue
   const calls = { get: 0, set: 0, remove: 0 }
+  const events = []
 
   return {
     calls,
+    events,
     get value() { return value },
     getItem() {
       calls.get += 1
+      events.push("get")
       if (options.getErrorAt === calls.get) throw options.getError || new Error("read failed")
       if (options.getValues && calls.get <= options.getValues.length) {
         return options.getValues[calls.get - 1]
@@ -34,11 +37,13 @@ function createStorage(initialValue = null, options = {}) {
     },
     setItem(_key, nextValue) {
       calls.set += 1
+      events.push("set")
       if (options.setError) throw options.setError
       value = nextValue
     },
     removeItem() {
       calls.remove += 1
+      events.push("remove")
       if (options.removeError) throw options.removeError
       value = null
     },
@@ -488,6 +493,7 @@ test("a successful restore performs one replacement and exact readback", () => {
   assert.equal(storage.calls.set, 1)
   assert.equal(storage.calls.remove, 0)
   assert.equal(storage.value, plan.candidateRaw)
+  assert.deepEqual(storage.events, ["get", "get", "set", "get"])
 })
 
 test("restore from corrupt storage bypasses only the ordinary-write guard", () => {
@@ -532,6 +538,278 @@ test("quota failure preserves the exact old raw value", () => {
   assert.equal(storage.value, oldRaw)
   assert.equal(storage.calls.set, 1)
   assert.equal(storage.calls.remove, 0)
+})
+
+test("mutable forged restore plans are rejected before storage access", () => {
+  const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
+  const storage = createStorage(oldRaw)
+  const forgedPlan = {
+    candidateRaw: JSON.stringify({ works: [{ id: "forged" }], contacts: [], groups: [] }),
+    expectedCurrentRaw: oldRaw,
+    summary: {},
+    previousState: "valid",
+  }
+
+  assert.throws(
+    () => restoreLocalDatabaseBackup(forgedPlan, storage),
+    error => error instanceof LocalDatabaseError
+      && error.code === "restore-serialize-failed"
+      && error.details.phase === "replace"
+      && error.details.commitState === "unchanged",
+  )
+  assert.deepEqual(storage.events, [])
+  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
+  assert.equal(storage.value, oldRaw)
+})
+
+test("frozen forged restore plans are rejected before storage access", () => {
+  const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
+  const storage = createStorage(oldRaw)
+  const forgedPlan = Object.freeze({
+    candidateRaw: JSON.stringify({ works: [{ id: "forged" }], contacts: [], groups: [] }),
+    expectedCurrentRaw: oldRaw,
+    summary: Object.freeze({}),
+    previousState: "valid",
+  })
+
+  assert.throws(
+    () => restoreLocalDatabaseBackup(forgedPlan, storage),
+    error => error instanceof LocalDatabaseError
+      && error.code === "restore-serialize-failed"
+      && error.details.phase === "replace"
+      && error.details.commitState === "unchanged",
+  )
+  assert.deepEqual(storage.events, [])
+  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
+  assert.equal(storage.value, oldRaw)
+})
+
+test("registered restore candidates are revalidated before storage access", { concurrency: false }, () => {
+  const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
+  const storage = createStorage(oldRaw)
+  const plan = prepareLocalDatabaseRestore(
+    parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
+    storage,
+  )
+  const originalParse = JSON.parse
+
+  try {
+    JSON.parse = () => { throw new Error("forced validation failure") }
+    assert.throws(
+      () => restoreLocalDatabaseBackup(plan, storage),
+      error => error instanceof LocalDatabaseError
+        && error.code === "restore-serialize-failed"
+        && error.details.phase === "replace"
+        && error.details.commitState === "unchanged",
+    )
+  } finally {
+    JSON.parse = originalParse
+  }
+
+  assert.deepEqual(storage.events, ["get"])
+  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.value, oldRaw)
+})
+
+test("restore summaries are derived from the revalidated candidate", () => {
+  const backup = parsedBackup({
+    works: [{ id: "new-1" }, { id: "new-2" }],
+    contacts: [{ id: "contact-1" }],
+    groups: [{ id: "group-1" }],
+  })
+  backup.summary = {
+    workCount: 999,
+    articleCount: 999,
+    phoneCount: 999,
+    otherCount: 999,
+    contactCount: 999,
+    groupCount: 999,
+  }
+  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const plan = prepareLocalDatabaseRestore(backup, storage)
+  const expectedSummary = {
+    workCount: 2,
+    articleCount: 0,
+    phoneCount: 0,
+    otherCount: 2,
+    contactCount: 1,
+    groupCount: 1,
+  }
+
+  assert.deepEqual(plan.summary, expectedSummary)
+  assert.deepEqual(restoreLocalDatabaseBackup(plan, storage).summary, expectedSummary)
+})
+
+test("UTF-8 byte measurement failures stop during preparation without writing", { concurrency: false }, () => {
+  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const cause = new Error("encoder unavailable")
+  const OriginalTextEncoder = globalThis.TextEncoder
+
+  try {
+    globalThis.TextEncoder = class {
+      constructor() { throw cause }
+    }
+    assert.throws(
+      () => prepareLocalDatabaseRestore(
+        parsedBackup({ works: [{ id: "作品" }], contacts: [], groups: [] }),
+        storage,
+      ),
+      error => error instanceof LocalDatabaseError
+        && error.code === "restore-serialize-failed"
+        && error.details.phase === "prepare"
+        && error.details.commitState === "unchanged"
+        && error.cause === cause,
+    )
+  } finally {
+    globalThis.TextEncoder = OriginalTextEncoder
+  }
+
+  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.calls.remove, 0)
+})
+
+test("restore commit returns the prepared UTF-8 byte count without fallible work after verify", { concurrency: false }, () => {
+  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const plan = prepareLocalDatabaseRestore(
+    parsedBackup({ works: [{ id: "作品" }], contacts: [], groups: [] }),
+    storage,
+  )
+  const expectedBytes = new TextEncoder().encode(plan.candidateRaw).length
+  const OriginalTextEncoder = globalThis.TextEncoder
+  let result
+
+  try {
+    globalThis.TextEncoder = class {
+      constructor() { throw new Error("commit must not encode") }
+    }
+    result = restoreLocalDatabaseBackup(plan, storage)
+  } finally {
+    globalThis.TextEncoder = OriginalTextEncoder
+  }
+
+  assert.equal(plan.restoredBytes, expectedBytes)
+  assert.equal(result.restoredBytes, expectedBytes)
+  assert.deepEqual(storage.events, ["get", "get", "set", "get"])
+})
+
+test("invalid and hostile restore times fail with a stable unchanged preparation error", () => {
+  const cause = new Error("hostile clock")
+  const values = [
+    new Date("invalid"),
+    { toISOString() { throw cause } },
+    { toISOString() { return "not-an-iso-timestamp" } },
+  ]
+
+  for (const now of values) {
+    const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+    assert.throws(
+      () => prepareLocalDatabaseRestore(
+        parsedBackup({ works: [], contacts: [], groups: [] }),
+        storage,
+        now,
+      ),
+      error => error instanceof LocalDatabaseError
+        && error.code === "restore-serialize-failed"
+        && error.details.phase === "prepare"
+        && error.details.commitState === "unchanged",
+    )
+    assert.equal(storage.calls.set, 0)
+    assert.equal(storage.calls.remove, 0)
+  }
+})
+
+test("restore preparation serializes time once and reuses its ISO value", () => {
+  const iso = "2026-07-11T01:02:03.004Z"
+  let calls = 0
+  const now = {
+    toISOString() {
+      calls += 1
+      if (calls > 1) throw new Error("timestamp serialized twice")
+      return iso
+    },
+  }
+  const currentRaw = JSON.stringify({ works: [{ id: "old" }], contacts: [], groups: [] })
+  const storage = createStorage(currentRaw)
+
+  const plan = prepareLocalDatabaseRestore(
+    parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
+    storage,
+    now,
+  )
+
+  assert.equal(calls, 1)
+  assert.equal(plan.recoveryArtifact.filename, "tuuru-library-before-restore-2026-07-11T01-02-03-004Z.json")
+  assert.equal(JSON.parse(plan.recoveryArtifact.contents).exportedAt, iso)
+  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.calls.remove, 0)
+})
+
+test("restore reads report preparation and replacement phases before writing", () => {
+  const prepareCause = new Error("prepare read failed")
+  const prepareStorage = createStorage(null, { getError: prepareCause })
+  assert.throws(
+    () => prepareLocalDatabaseRestore(
+      parsedBackup({ works: [], contacts: [], groups: [] }),
+      prepareStorage,
+    ),
+    error => error instanceof LocalDatabaseError
+      && error.code === "restore-readback-failed"
+      && error.details.phase === "prepare"
+      && error.details.commitState === "unchanged"
+      && error.cause === prepareCause,
+  )
+  assert.equal(prepareStorage.calls.set, 0)
+
+  const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
+  const replaceCause = new Error("replace read failed")
+  const replaceStorage = createStorage(oldRaw, {
+    getValues: [oldRaw],
+    getErrorAt: 2,
+    getError: replaceCause,
+  })
+  const plan = prepareLocalDatabaseRestore(
+    parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
+    replaceStorage,
+  )
+  assert.throws(
+    () => restoreLocalDatabaseBackup(plan, replaceStorage),
+    error => error instanceof LocalDatabaseError
+      && error.code === "restore-readback-failed"
+      && error.details.phase === "replace"
+      && error.details.commitState === "unchanged"
+      && error.cause === replaceCause,
+  )
+  assert.deepEqual(replaceStorage.events, ["get", "get"])
+  assert.equal(replaceStorage.calls.set, 0)
+  assert.equal(replaceStorage.calls.remove, 0)
+})
+
+test("a readback exception is unknown and never triggers retry or rollback", () => {
+  const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
+  const cause = new Error("readback failed")
+  const storage = createStorage(oldRaw, {
+    getValues: [oldRaw, oldRaw],
+    getErrorAt: 3,
+    getError: cause,
+  })
+  const plan = prepareLocalDatabaseRestore(
+    parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
+    storage,
+  )
+
+  assert.throws(
+    () => restoreLocalDatabaseBackup(plan, storage),
+    error => error instanceof LocalDatabaseError
+      && error.code === "restore-readback-failed"
+      && error.details.phase === "verify"
+      && error.details.commitState === "unknown"
+      && error.cause === cause,
+  )
+  assert.deepEqual(storage.events, ["get", "get", "set", "get"])
+  assert.equal(storage.calls.set, 1)
+  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.value, plan.candidateRaw)
 })
 
 test("uncertain readback never reports success or rolls back", () => {
