@@ -83,34 +83,49 @@ function addRecent(work) {
 function renderHome() {
   var h = '<div class="rd-home">'
   // Tabs
-  h += '<div class="rd-tabs">'
-  h += '<div class="rd-tab active" data-tab="personal">个人主页</div>'
-  h += '<div class="rd-tab" data-tab="custom">美化</div>'
-  h += '<div class="rd-tab" data-tab="import">导入</div>'
+  h += '<div class="rd-tabs" role="tablist" aria-label="首页栏目">'
+  h += '<button type="button" class="rd-tab active" id="rdTabPersonal" role="tab" aria-controls="tabPersonal" aria-selected="true" tabindex="0" data-tab="personal">个人主页</button>'
+  h += '<button type="button" class="rd-tab" id="rdTabCustom" role="tab" aria-controls="tabCustom" aria-selected="false" tabindex="-1" data-tab="custom">美化</button>'
+  h += '<button type="button" class="rd-tab" id="rdTabImport" role="tab" aria-controls="tabImport" aria-selected="false" tabindex="-1" data-tab="import">导入</button>'
   h += '</div>'
   // Tab panels
-  h += '<div class="rd-panel" id="tabPersonal">' + renderPersonalPage() + '</div>'
-  h += '<div class="rd-panel" style="display:none" id="tabCustom">' + renderCustomPage() + '</div>'
-  h += '<div class="rd-panel" style="display:none" id="tabImport">' + renderImportPanel() + '</div>'
+  h += '<div class="rd-panel" id="tabPersonal" role="tabpanel" aria-labelledby="rdTabPersonal">' + renderPersonalPage() + '</div>'
+  h += '<div class="rd-panel" style="display:none" id="tabCustom" role="tabpanel" aria-labelledby="rdTabCustom" hidden>' + renderCustomPage() + '</div>'
+  h += '<div class="rd-panel" style="display:none" id="tabImport" role="tabpanel" aria-labelledby="rdTabImport" hidden>' + renderImportPanel() + '</div>'
   h += '<div style="text-align:center;padding:16px;margin-top:20px;font-size:.6rem;color:var(--c-text2);opacity:.3"><a href="https://tuuru.chat" target="_blank" style="color:inherit;text-decoration:none">tuuru.chat</a></div>'
   h += '</div>'
   render('app', h)
 
   // Tab switching
-  var tabs = document.querySelectorAll('.rd-tab')
-  tabs.forEach(function(t) {
-    t.onclick = function() {
-      tabs.forEach(function(x) { x.classList.remove('active') })
-      t.classList.add('active')
-      var tab = t.dataset.tab
-      var p = document.getElementById('tabPersonal')
-      var c = document.getElementById('tabCustom')
-      var i = document.getElementById('tabImport')
-      if (p) p.style.display = tab === 'personal' ? 'block' : 'none'
-      if (c) c.style.display = tab === 'custom' ? 'block' : 'none'
-      if (i) i.style.display = tab === 'import' ? 'block' : 'none'
-      if (tab === 'personal') refreshPersonalPage()
-      if (tab === 'custom') renderCustomPage()
+  var tabs = document.querySelectorAll('.rd-tabs .rd-tab')
+  function activateTab(t, moveFocus) {
+    tabs.forEach(function(x) {
+      var active = x === t
+      x.classList.toggle('active', active)
+      x.setAttribute('aria-selected', active ? 'true' : 'false')
+      x.tabIndex = active ? 0 : -1
+      var panel = document.getElementById(x.getAttribute('aria-controls'))
+      if (panel) {
+        panel.hidden = !active
+        panel.style.display = active ? 'block' : 'none'
+      }
+    })
+    var tab = t.dataset.tab
+    if (moveFocus) t.focus()
+    if (tab === 'personal') refreshPersonalPage()
+    if (tab === 'custom') renderCustomPage()
+  }
+  tabs.forEach(function(t, index) {
+    t.onclick = function() { activateTab(t, false) }
+    t.onkeydown = function(event) {
+      var nextIndex = null
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length
+      if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length
+      if (event.key === 'Home') nextIndex = 0
+      if (event.key === 'End') nextIndex = tabs.length - 1
+      if (nextIndex === null) return
+      event.preventDefault()
+      activateTab(tabs[nextIndex], true)
     }
   })
 

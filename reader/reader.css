@@ -40,6 +40,13 @@ body {
   padding-top: 20px;
 }
 .rd-tab {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  min-height: 44px;
   padding: 10px 24px;
   font-size: .9rem;
   font-weight: 500;
@@ -47,14 +54,19 @@ body {
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   cursor: pointer;
-  transition: .15s;
+  transition: color .15s, border-color .15s;
 }
 .rd-tab:hover { color: var(--c-text); }
+.rd-tab:focus-visible {
+  outline: 2px solid var(--c-primary-hover);
+  outline-offset: 2px;
+}
 .rd-tab.active {
   color: var(--c-primary-hover);
   border-bottom-color: var(--c-primary);
 }
 .rd-panel { min-height: 60vh; }
+.rd-panel[hidden] { display: none; }
 
 /* ====== Personal page ====== */
 .rd-personal { padding: 0 0 40px; }
@@ -984,7 +996,7 @@ body.rd-theme-gray .article-meta { color: #333; }
     margin-bottom: -40px;
   }
   .rd-home { padding: 0 7px; }
-  .rd-tab { padding: 8px 12px; font-size: .8rem; }
+  .rd-tab { flex: 1 1 0; min-width: 0; padding: 8px 4px; font-size: .8rem; }
   .rd-tabs { margin-bottom: 12px; }
   .rd-profile-card { padding: 20px 12px; margin-bottom: 16px; }
   .rd-preset-section { padding: 14px; }
