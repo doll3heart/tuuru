@@ -69,6 +69,25 @@ function lsGet(key) {
 function lsSet(key, val) {
   localStorage.setItem('moirain_' + key, JSON.stringify(val))
 }
+
+var _readerStorageWarningShown = false
+
+function warnReaderStorageFailure() {
+  if (_readerStorageWarningShown) return
+  _readerStorageWarningShown = true
+  alert('本次作品仍可继续阅读，但浏览器无法保存本地阅读缓存；刷新或关闭页面后需要重新导入。请检查浏览器存储空间。')
+}
+
+function tryReaderStorageWrite(write) {
+  try {
+    write()
+    return true
+  } catch (error) {
+    warnReaderStorageFailure()
+    return false
+  }
+}
+
 function getProfile() {
   return lsGet('profile') || { readerId: '', readerAvatar: '', bio: '' }
 }
@@ -451,7 +470,7 @@ function showLandingPage(work, callback) {
       values[inp.dataset.phId] = [inp.value || '']
     })
     work.readerPhValues = values
-    lsSet('readerPhValues', values)
+    tryReaderStorageWrite(function() { lsSet('readerPhValues', values) })
     document.body.removeChild(overlay)
     callback()
   }
@@ -466,8 +485,12 @@ function loadWork(work) {
   _work = work
   _nodeId = null
   _visitedNodes = []
-  try { localStorage.setItem('moirain_work_' + work.id, JSON.stringify(work)) } catch(e) {}
-  addRecent(work)
+  var cached = tryReaderStorageWrite(function() {
+    localStorage.setItem('moirain_work_' + work.id, JSON.stringify(work))
+  })
+  if (cached) {
+    tryReaderStorageWrite(function() { addRecent(work) })
+  }
   showLandingPage(work, function() {
     if (_work.type === 'phone') {
       renderPhoneReader()
