@@ -185,16 +185,58 @@ export function writeLocalDatabase(data, storage = localStorage) {
   }
 }
 
+function serializeBackupDatabase(database, exportedAt) {
+  return JSON.stringify({
+    format: LOCAL_DATABASE_BACKUP_FORMAT,
+    backupVersion: LOCAL_DATABASE_BACKUP_VERSION,
+    exportedAt: exportedAt.toISOString(),
+    database,
+  }, null, 2)
+}
+
+function summarizeDatabase(database) {
+  const articleCount = database.works.filter(work => isRecord(work) && work.type === "article").length
+  const phoneCount = database.works.filter(work => isRecord(work) && work.type === "phone").length
+  return {
+    workCount: database.works.length,
+    articleCount,
+    phoneCount,
+    otherCount: database.works.length - articleCount - phoneCount,
+    contactCount: database.contacts.length,
+    groupCount: database.groups.length,
+  }
+}
+
+function restoreError(message, code, phase, commitState, cause) {
+  return new LocalDatabaseError(message, code, cause, { phase, commitState })
+}
+
+function readExactRaw(storage) {
+  try {
+    return storage.getItem(DATABASE_KEY)
+  } catch (error) {
+    throw restoreError(
+      "浏览器无法读取当前本地创作库。",
+      "restore-readback-failed",
+      "prepare",
+      "unchanged",
+      error,
+    )
+  }
+}
+
+function freezeRestorePlan(plan) {
+  if (plan.summary) Object.freeze(plan.summary)
+  if (plan.currentSummary) Object.freeze(plan.currentSummary)
+  if (plan.recoveryArtifact) Object.freeze(plan.recoveryArtifact)
+  return Object.freeze(plan)
+}
+
 export function serializeLocalDatabaseBackup(storage = localStorage, exportedAt = new Date()) {
   const database = readLocalDatabase(storage)
 
   try {
-    return JSON.stringify({
-      format: LOCAL_DATABASE_BACKUP_FORMAT,
-      backupVersion: LOCAL_DATABASE_BACKUP_VERSION,
-      exportedAt: exportedAt.toISOString(),
-      database,
-    }, null, 2)
+    return serializeBackupDatabase(database, exportedAt)
   } catch (error) {
     throw new LocalDatabaseError(
       "无法创建完整创作库备份。请确认浏览器仍有足够可用内存。",
@@ -259,22 +301,129 @@ export function parseLocalDatabaseBackup(raw) {
   }
   const validatedDatabase = databaseResult.data
 
-  const articleCount = validatedDatabase.works.filter(work => work.type === "article").length
-  const phoneCount = validatedDatabase.works.filter(work => work.type === "phone").length
-
   return {
     format: backup.format,
     backupVersion: backup.backupVersion,
     exportedAt: backup.exportedAt,
     database: validatedDatabase,
-    summary: {
-      workCount: validatedDatabase.works.length,
-      articleCount,
-      phoneCount,
-      otherCount: validatedDatabase.works.length - articleCount - phoneCount,
-      contactCount: validatedDatabase.contacts.length,
-      groupCount: validatedDatabase.groups.length,
-    },
+    summary: summarizeDatabase(validatedDatabase),
+  }
+}
+
+export function prepareLocalDatabaseRestore(parsedBackup, storage = localStorage, now = new Date()) {
+  if (!isRecord(parsedBackup) || !isRecord(parsedBackup.database)) {
+    throw restoreError(
+      "恢复计划缺少有效备份。",
+      "restore-serialize-failed",
+      "prepare",
+      "unchanged",
+    )
+  }
+
+  let candidateRaw
+  try {
+    candidateRaw = JSON.stringify(parsedBackup.database)
+  } catch (error) {
+    throw restoreError(
+      "无法序列化待恢复的创作库。",
+      "restore-serialize-failed",
+      "prepare",
+      "unchanged",
+      error,
+    )
+  }
+  const candidateStatus = inspectLocalDatabaseRaw(candidateRaw)
+  if (!candidateStatus.ok) {
+    throw restoreError(
+      "待恢复的创作库未通过完整校验。",
+      "restore-serialize-failed",
+      "prepare",
+      "unchanged",
+    )
+  }
+
+  const expectedCurrentRaw = readExactRaw(storage)
+  const currentStatus = inspectLocalDatabaseRaw(expectedCurrentRaw)
+  const previousState = expectedCurrentRaw === null ? "missing" : currentStatus.ok ? "valid" : "corrupt"
+  const stamp = now.toISOString().replace(/[:.]/g, "-")
+  let recoveryArtifact = null
+  if (previousState === "valid") {
+    recoveryArtifact = {
+      kind: "library-backup",
+      filename: `tuuru-library-before-restore-${stamp}.json`,
+      mimeType: "application/json;charset=utf-8",
+      contents: serializeBackupDatabase(currentStatus.data, now),
+    }
+  } else if (previousState === "corrupt") {
+    recoveryArtifact = {
+      kind: "corrupt-raw",
+      filename: `tuuru-corrupt-before-restore-${stamp}.txt`,
+      mimeType: "text/plain;charset=utf-8",
+      contents: expectedCurrentRaw,
+    }
+  }
+
+  return freezeRestorePlan({
+    candidateRaw,
+    expectedCurrentRaw,
+    summary: { ...parsedBackup.summary },
+    currentSummary: currentStatus.ok ? summarizeDatabase(currentStatus.data) : null,
+    previousState,
+    recoveryArtifact,
+  })
+}
+
+export function restoreLocalDatabaseBackup(plan, storage = localStorage) {
+  const currentRaw = readExactRaw(storage)
+  if (currentRaw !== plan.expectedCurrentRaw) {
+    throw restoreError(
+      "当前创作库已发生变化，请重新检查备份。",
+      "restore-conflict",
+      "replace",
+      "unchanged",
+    )
+  }
+
+  try {
+    storage.setItem(DATABASE_KEY, plan.candidateRaw)
+  } catch (error) {
+    throw restoreError(
+      "恢复写入失败，原创作库保持不变。",
+      "restore-write-failed",
+      "replace",
+      "unchanged",
+      error,
+    )
+  }
+
+  let readback
+  try {
+    readback = storage.getItem(DATABASE_KEY)
+  } catch (error) {
+    throw restoreError(
+      "恢复后无法确认本地数据状态，请重新加载检查。",
+      "restore-readback-failed",
+      "verify",
+      "unknown",
+      error,
+    )
+  }
+  const verified = readback === plan.candidateRaw && inspectLocalDatabaseRaw(readback).ok
+  if (!verified) {
+    throw restoreError(
+      "恢复结果无法确认，请重新加载检查。",
+      "restore-verification-failed",
+      "verify",
+      "unknown",
+    )
+  }
+
+  return {
+    ok: true,
+    code: "restored",
+    summary: plan.summary,
+    previousState: plan.previousState,
+    restoredBytes: new TextEncoder().encode(plan.candidateRaw).length,
   }
 }
 
