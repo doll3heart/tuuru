@@ -113,6 +113,70 @@ function dropFile(dom, file) {
   return drop
 }
 
+function encodeRgbPayload(text) {
+  const data = new TextEncoder().encode(text)
+  const packed = new Uint8Array(4 + data.length)
+  packed.set([
+    (data.length >>> 24) & 0xff,
+    (data.length >>> 16) & 0xff,
+    (data.length >>> 8) & 0xff,
+    data.length & 0xff,
+  ])
+  packed.set(data, 4)
+
+  const width = Math.ceil(packed.length / 3)
+  const pixels = new Uint8ClampedArray(width * 4)
+  for (let pixel = 0; pixel < width; pixel += 1) pixels[pixel * 4 + 3] = 255
+  packed.forEach((byte, index) => {
+    const pixelIndex = Math.floor(index / 3) * 4 + (index % 3)
+    pixels[pixelIndex] = byte
+  })
+  return { width, height: 1, pixels }
+}
+
+function installPngReadFakes(t, imageData) {
+  const createElement = document.createElement.bind(document)
+  const OriginalImage = globalThis.Image
+  const OriginalFileReader = globalThis.FileReader
+
+  document.createElement = function(tagName, options) {
+    if (String(tagName).toLowerCase() !== "canvas") {
+      return createElement(tagName, options)
+    }
+    return {
+      width: 0,
+      height: 0,
+      getContext() {
+        return {
+          drawImage() {},
+          getImageData() { return { data: imageData.pixels } },
+        }
+      },
+    }
+  }
+  globalThis.Image = class {
+    width = imageData.width
+    height = imageData.height
+    set src(value) {
+      this.currentSrc = value
+      this.onload?.()
+    }
+  }
+  globalThis.FileReader = class {
+    readAsText() { throw new Error("unexpected JSON read") }
+    readAsDataURL() {
+      this.result = "data:image/png;base64,reader-test"
+      this.onload?.()
+    }
+  }
+
+  t.after(() => {
+    document.createElement = createElement
+    globalThis.Image = OriginalImage
+    globalThis.FileReader = OriginalFileReader
+  })
+}
+
 test("reader imports remain usable when local persistence is unavailable", async t => {
   const storage = unavailableStorage()
   const alerts = []
@@ -283,4 +347,50 @@ test("reader reports FileReader errors and cancellations without parsing", async
   assert.match(alerts[1], /取消/)
   assert.equal(document.getElementById("rdStartBtn"), null)
   assert.equal(alerts.some(message => /JSON 解析失败/.test(message)), false)
+})
+
+test("reader decodes the four-byte PNG header from RGB channels", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const work = phoneWork()
+  work.id = "reader-rgb-header-work"
+  work.title = "RGB header"
+  const serializedWork = JSON.stringify(work)
+  const imageData = encodeRgbPayload(serializedWork)
+  installPngReadFakes(t, imageData)
+
+  await import(`../reader/reader.js?reader-import-rgb-header=${Date.now()}`)
+  document.querySelector('[data-tab="import"]').click()
+  dropFile(dom, { name: "editor-export.png", size: imageData.pixels.byteLength })
+
+  assert.ok(document.getElementById("rdStartBtn"))
+  assert.equal(document.querySelector(".rd-landing-title")?.textContent, work.title)
+  assert.deepEqual(alerts, [])
+})
+
+test("reader rejects PNG payload lengths that overlap the four-byte header", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const pixels = new Uint8ClampedArray([
+    0, 0, 0, 3,
+    3, 0, 0, 255,
+  ])
+  installPngReadFakes(t, { width: 2, height: 1, pixels })
+  const OriginalTextDecoder = globalThis.TextDecoder
+  let decodeCalls = 0
+  globalThis.TextDecoder = class {
+    decode() {
+      decodeCalls += 1
+      return JSON.stringify(phoneWork())
+    }
+  }
+  t.after(() => { globalThis.TextDecoder = OriginalTextDecoder })
+
+  await import(`../reader/reader.js?reader-import-header-capacity=${Date.now()}`)
+  document.querySelector('[data-tab="import"]').click()
+  dropFile(dom, { name: "truncated.png", size: pixels.byteLength })
+
+  assert.equal(decodeCalls, 0)
+  assert.equal(document.getElementById("rdStartBtn"), null)
+  assert.equal(alerts.length, 1)
 })

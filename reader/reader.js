@@ -2,6 +2,7 @@ import { validateWorkForImport } from '../js/work-schema.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
+import { readSteganoPayload } from '../js/stegano.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 
@@ -405,16 +406,8 @@ function decodeSteganoFromDataUrl(dataUrl) {
     canvas.width = img.width; canvas.height = img.height
     var ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0)
     var pixels = ctx.getImageData(0, 0, img.width, img.height).data
-    // Read 4-byte header
-    var header = [pixels[0], pixels[1], pixels[2], pixels[3]]
-    var dataLen = (header[0]<<24)|(header[1]<<16)|(header[2]<<8)|header[3]
-    if (dataLen <= 0 || dataLen > img.width*img.height*3 || dataLen > 10*1024*1024) { alert('未检测到隐写数据'); return }
-    var bytes = new Uint8Array(dataLen)
-    for (var i = 0; i < dataLen; i++) {
-      var byteIdx = 4 + i
-      var pixelIdx = Math.floor(byteIdx / 3) * 4 + (byteIdx % 3)
-      bytes[i] = pixels[pixelIdx]
-    }
+    var bytes = readSteganoPayload(pixels)
+    if (!bytes) { alert('未检测到隐写数据'); return }
     try {
       var json = new TextDecoder().decode(bytes)
       var work = JSON.parse(json)

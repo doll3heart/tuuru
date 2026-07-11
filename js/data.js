@@ -2,6 +2,7 @@
 import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
 import { CURRENT_WORK_SCHEMA_VERSION } from "./work-schema.js"
 import { substitutePlaceholders } from "./placeholders.js"
+import { readSteganoPayload, writeSteganoPayload } from "./stegano.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -319,16 +320,8 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback) {
     var imageData = ctx.getImageData(0, 0, size, size)
     var pixels = imageData.data
     
-    // Write 4-byte length header (big-endian)
-    var len = data.length
-    var header = [ (len >> 24) & 0xFF, (len >> 16) & 0xFF, (len >> 8) & 0xFF, len & 0xFF ]
-    
-    // Write bytes into RGB channels (skip alpha)
-    for (var i = 0; i < totalBytes; i++) {
-      var byteVal = i < 4 ? header[i] : data[i - 4]
-      var pixelIdx = Math.floor(i / 3) * 4 + (i % 3)
-      pixels[pixelIdx] = byteVal
-    }
+    // Write the length header and payload into RGB channels (skip alpha)
+    writeSteganoPayload(pixels, data)
     
     ctx.putImageData(imageData, 0, 0)
     callback(canvas.toDataURL('image/png'))
@@ -388,27 +381,10 @@ export function decodeSteganoPNG(pngDataUrl) {
       var imageData = ctx.getImageData(0, 0, img.width, img.height)
       var pixels = imageData.data
       
-      // Read 4-byte length header
-      var header = [0, 0, 0, 0]
-      for (var i = 0; i < 4; i++) {
-        var pixelIdx = Math.floor(i / 3) * 4 + (i % 3)
-        header[i] = pixels[pixelIdx]
-      }
-      var dataLen = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3]
-      
-      // Sanity check
-      var maxBytes = img.width * img.height * 3
-      if (dataLen <= 0 || dataLen > maxBytes || dataLen > 10 * 1024 * 1024) {
+      var bytes = readSteganoPayload(pixels)
+      if (!bytes) {
         resolve(null)
         return
-      }
-      
-      // Read data bytes
-      var bytes = new Uint8Array(dataLen)
-      for (var i2 = 0; i2 < dataLen; i2++) {
-        var byteIdx = 4 + i2
-        var pixelIdx2 = Math.floor(byteIdx / 3) * 4 + (byteIdx % 3)
-        bytes[i2] = pixels[pixelIdx2]
       }
       
       try {
