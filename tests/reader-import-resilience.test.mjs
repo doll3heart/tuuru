@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { Buffer } from "node:buffer"
 import { JSDOM } from "jsdom"
 
 function phoneWork() {
@@ -165,7 +166,7 @@ function installPngReadFakes(t, imageData) {
   globalThis.FileReader = class {
     readAsText() { throw new Error("unexpected JSON read") }
     readAsDataURL() {
-      this.result = "data:image/png;base64,reader-test"
+      this.result = pngHeaderDataUrl(imageData.width, imageData.height)
       this.onload?.()
     }
   }
@@ -175,6 +176,17 @@ function installPngReadFakes(t, imageData) {
     globalThis.Image = OriginalImage
     globalThis.FileReader = OriginalFileReader
   })
+}
+
+function pngHeaderDataUrl(width, height, validSignature = true) {
+  const bytes = Buffer.alloc(24)
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes, 0)
+  bytes.writeUInt32BE(13, 8)
+  bytes.write("IHDR", 12, "ascii")
+  bytes.writeUInt32BE(width, 16)
+  bytes.writeUInt32BE(height, 20)
+  if (!validSignature) bytes[0] = 0
+  return `data:image/png;base64,${bytes.toString("base64")}`
 }
 
 test("reader imports remain usable when local persistence is unavailable", async t => {
@@ -393,4 +405,62 @@ test("reader rejects PNG payload lengths that overlap the four-byte header", asy
   assert.equal(decodeCalls, 0)
   assert.equal(document.getElementById("rdStartBtn"), null)
   assert.equal(alerts.length, 1)
+})
+
+test("reader validates PNG dimensions before constructing an Image", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  let imageConstructions = 0
+  let canvasConstructions = 0
+  globalThis.Image = class {
+    width = 240
+    height = 240
+    constructor() { imageConstructions += 1 }
+    set src(value) {
+      this.currentSrc = value
+      this.onload?.()
+    }
+  }
+  globalThis.FileReader = class {
+    readAsText() { throw new Error("unexpected JSON read") }
+    readAsDataURL(file) {
+      this.result = file.dataUrl
+      this.onload?.()
+    }
+  }
+
+  await import(`../reader/reader.js?reader-png-dimensions=${Date.now()}`)
+  document.querySelector('[data-tab="import"]').click()
+  const createElement = document.createElement.bind(document)
+  document.createElement = function(tagName, options) {
+    if (String(tagName).toLowerCase() !== "canvas") return createElement(tagName, options)
+    canvasConstructions += 1
+    return {
+      width: 0,
+      height: 0,
+      getContext() {
+        return {
+          drawImage() {},
+          getImageData() { return { data: new Uint8ClampedArray(240 * 240 * 4) } },
+        }
+      },
+    }
+  }
+  t.after(() => { document.createElement = createElement })
+
+  for (const [name, dataUrl] of [
+    ["valid.png", pngHeaderDataUrl(240, 240)],
+    ["wide.png", pngHeaderDataUrl(4097, 1)],
+    ["dense.png", pngHeaderDataUrl(2049, 2048)],
+    ["invalid.png", pngHeaderDataUrl(240, 240, false)],
+  ]) {
+    dropFile(dom, { name, size: 100, dataUrl })
+  }
+
+  assert.equal(imageConstructions, 1)
+  assert.equal(canvasConstructions, 1)
+  assert.equal(alerts.length, 4)
+  assert.match(alerts[1], /4096/)
+  assert.match(alerts[2], /像素/)
+  assert.match(alerts[3], /PNG/)
 })

@@ -4,6 +4,7 @@ import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
+import { parsePngDimensionsFromDataUrl, readerPngDimensionError } from './png-import-policy.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 
 // Tuuru Reader
@@ -350,6 +351,11 @@ function setupImport() {
         }
       } else {
         // PNG stego decode
+        var dimensionError = readerPngDimensionError(parsePngDimensionsFromDataUrl(reader.result))
+        if (dimensionError) {
+          alert(dimensionError)
+          return
+        }
         decodeSteganoFromDataUrl(reader.result)
       }
     }
