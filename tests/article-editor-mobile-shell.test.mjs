@@ -385,6 +385,41 @@ test("scene selection persists on change without a click double-write", async ()
   }
 })
 
+test("word count consistently measures visible text and keeps its label", async () => {
+  const cases = [
+    ["", "0 字"],
+    ["<strong>甲乙</strong>", "2 字"],
+    ["甲<br>乙", "2 字"],
+    ["甲 乙", "3 字"],
+    ["&amp;&nbsp;", "2 字"],
+  ]
+
+  for (const [index, [content, expected]] of cases.entries()) {
+    const work = article(`word-count-${index}`, [{ id: `word-count-node-${index}` }])
+    work.nodes[0].content = content
+    seed(work)
+    const root = await render(work.id)
+    assert.equal(root.querySelector(".word-count").textContent, expected)
+  }
+
+  const work = article("word-count-live", [{ id: "word-count-live-node" }])
+  work.nodes[0].content = "<strong>甲乙</strong>"
+  seed(work)
+  const root = await render(work.id)
+  const editable = root.querySelector(".content-editable")
+  const count = root.querySelector(".word-count")
+
+  assert.equal(count.textContent, "2 字")
+
+  editable.innerHTML = "<em>甲</em><br>乙&amp;&nbsp;"
+  editable.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
+
+  assert.equal(count.textContent, "4 字")
+  const saved = JSON.parse(localStorage.getItem("tuuru_works"))
+  assert.equal(saved.works[0].nodes[0].content, "<em>甲</em><br>乙&amp;&nbsp;")
+  assert.doesNotMatch(editorSource, /ce\.innerText/)
+})
+
 test("article action rails expose named native controls and an unclipped margin panel", async () => {
   const work = article("action-rail-work", [{ id: "action-rail-node" }])
   seed(work)

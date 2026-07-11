@@ -24,6 +24,19 @@ function esc(s) {
   return d.innerHTML
 }
 
+function countEditorCharacters(value) {
+  if (typeof value === "string") {
+    var template = document.createElement("template")
+    template.innerHTML = value
+    return (template.content.textContent || "").length
+  }
+  return (value?.textContent || "").length
+}
+
+function formatEditorCharacterCount(value) {
+  return countEditorCharacters(value) + " 字"
+}
+
 function showPrompt(title, placeholder, cb, onCancel) {
   var ov = modal(title, '<div class="form-group"><input id="pI" class="form-input" placeholder="' + esc(placeholder) + '"></div>', '<button id="pK" class="btn btn-primary">\u786e\u5b9a</button>', function() { onCancel?.() })
   document.getElementById("pK").onclick = function() {
@@ -137,7 +150,7 @@ function buildHeader(w, n) {
   }
   h += '</select>'
   h += '</div>'
-  h += '<span class="word-count" id="wc_' + n.id + '">' + (n.content || '').length + ' 字</span>'
+  h += '<span class="word-count" id="wc_' + n.id + '">' + formatEditorCharacterCount(n.content || '') + '</span>'
   h += '</div>'
   return h
 }
@@ -1518,5 +1531,5 @@ document.addEventListener("input", function(e) {
   if (!nid || !_workId) return
   updateNode(_workId, nid, {content: ce.innerHTML})
   var wc = document.getElementById("wc_" + nid)
-  if (wc) wc.textContent = ce.innerText.length
+  if (wc) wc.textContent = formatEditorCharacterCount(ce)
 })
