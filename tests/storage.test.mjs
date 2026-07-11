@@ -2,9 +2,11 @@ import test from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  LOCAL_DATABASE_KEY,
   LocalDatabaseError,
   discardCorruptLocalDatabase,
   inspectLocalDatabase,
+  inspectLocalDatabaseRaw,
   parseLocalDatabaseBackup,
   readLocalDatabaseBackupFile,
   readLocalDatabase,
@@ -56,6 +58,90 @@ test("legacy valid data receives in-memory defaults without being rewritten", ()
   })
   assert.equal(storage.value, raw)
   assert.equal(storage.calls.set, 0)
+})
+
+test("raw inspection normalizes missing legacy collections without writing", () => {
+  const raw = JSON.stringify({
+    works: [{ type: "article", nodes: [{ id: "start" }], future: true }],
+    futureDatabaseField: { enabled: true },
+  })
+
+  const status = inspectLocalDatabaseRaw(raw)
+
+  assert.equal(status.ok, true)
+  assert.deepEqual(status.data.contacts, [])
+  assert.deepEqual(status.data.groups, [])
+  assert.deepEqual(status.data.works[0].nodes[0].choices, [])
+  assert.deepEqual(status.data.futureDatabaseField, { enabled: true })
+  assert.equal(status.raw, raw)
+})
+
+test("known nested corruption fails closed and preserves exact raw data", () => {
+  const raw = JSON.stringify({
+    works: [{ type: "phone", phoneData: { contacts: [null] } }],
+    contacts: [],
+    groups: [],
+  })
+  const storage = createStorage(raw)
+
+  const status = inspectLocalDatabase(storage)
+
+  assert.equal(status.ok, false)
+  assert.equal(status.code, "invalid-structure")
+  assert.equal(status.raw, raw)
+  assert.equal(status.issues[0].path, "$.works[0].phoneData.contacts[0]")
+  assert.throws(() => readLocalDatabase(storage), LocalDatabaseError)
+  assert.equal(storage.calls.set, 0)
+})
+
+test("present wrong-typed top-level collections are never defaulted away", () => {
+  for (const database of [
+    { works: [], contacts: null, groups: [] },
+    { works: [], contacts: [], groups: "bad" },
+    { works: [], contacts: [null], groups: [] },
+  ]) {
+    const status = inspectLocalDatabaseRaw(JSON.stringify(database))
+    assert.equal(status.ok, false)
+    assert.equal(status.code, "invalid-structure")
+  }
+})
+
+test("invalid outgoing nested data never reaches setItem", () => {
+  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+
+  assert.throws(
+    () => writeLocalDatabase({
+      works: [{ type: "article", nodes: [{ choices: [null] }] }],
+      contacts: [],
+      groups: [],
+    }, storage),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-write",
+  )
+  assert.equal(storage.calls.set, 0)
+})
+
+test("backup parsing and local inspection share nested work validation", () => {
+  const database = {
+    works: [{ type: "article", nodes: [{ choices: null }] }],
+    contacts: [],
+    groups: [],
+  }
+  const envelope = {
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-11T00:00:00.000Z",
+    database,
+  }
+
+  assert.equal(inspectLocalDatabaseRaw(JSON.stringify(database)).code, "invalid-structure")
+  assert.throws(
+    () => parseLocalDatabaseBackup(JSON.stringify(envelope)),
+    error => error instanceof LocalDatabaseError && error.code === "invalid-backup-database",
+  )
+})
+
+test("database key remains a stable public storage contract", () => {
+  assert.equal(LOCAL_DATABASE_KEY, "tuuru_works")
 })
 
 test("invalid JSON is preserved and blocks every write", () => {
@@ -162,8 +248,8 @@ test("a full library backup refuses corrupt or unavailable storage", () => {
 test("a full library backup can be parsed into a read-only summary", () => {
   const database = {
     works: [
-      { id: "article-1", type: "article" },
-      { id: "phone-1", type: "phone" },
+      { id: "article-1", type: "article", nodes: [] },
+      { id: "phone-1", type: "phone", phoneData: {} },
       { id: "legacy-1" },
     ],
     contacts: [{ id: "contact-1" }],
@@ -178,7 +264,7 @@ test("a full library backup can be parsed into a read-only summary", () => {
   const parsed = parseLocalDatabaseBackup("\uFEFF" + raw)
 
   assert.equal(parsed.exportedAt, "2026-07-10T05:30:00.000Z")
-  assert.deepEqual(parsed.database, database)
+  assert.deepEqual(parsed.database, JSON.parse(raw).database)
   assert.deepEqual(parsed.summary, {
     workCount: 3,
     articleCount: 1,

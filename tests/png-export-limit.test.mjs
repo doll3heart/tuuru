@@ -19,7 +19,7 @@ async function openPngExport(t, workId, importTag) {
   const alerts = []
   globalThis.alert = message => alerts.push(String(message))
   localStorage.setItem("tuuru_works", JSON.stringify({
-    works: [{ id: workId, schemaVersion: 1, type: "article", title: "PNG work" }],
+    works: [{ id: workId, schemaVersion: 1, type: "article", title: "PNG work", nodes: [] }],
     contacts: [],
     groups: [],
   }))
