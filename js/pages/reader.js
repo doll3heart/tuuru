@@ -19,8 +19,8 @@ function renderPasswordGate(work){
   return `
     <div class="password-gate">
       <div class="icon">🔒</div>
-      <h2>此作品已加密</h2>
-      <p>请输入密码后阅读</p>
+      <h2>此作品设有阅读密码</h2>
+      <p>请输入阅读密码后继续；该密码不是文件加密。</p>
       <input type="password" id="readerPwInput" placeholder="输入密码" style="padding:10px 14px;border:1px solid var(--c-border2);border-radius:var(--radius);font-size:.95rem;width:220px">
       <button class="btn btn-primary" onclick="checkReaderPw('${work.id}')">验证</button>
     </div>
