@@ -47,7 +47,6 @@ function avatarColor(id) {
 var _work = null
 var _nodeId = null
 var _visitedNodes = []
-var _importDropCleanup = null
 
 // ---- render ----
 function render(el, html) {
@@ -230,11 +229,6 @@ function renderImportPanel() {
 }
 
 function setupImport() {
-  if (_importDropCleanup) {
-    _importDropCleanup()
-    _importDropCleanup = null
-  }
-
   var inner = document.getElementById('dropInner')
   var pickBtn = document.getElementById('pickFileBtn')
   var fileInput = document.getElementById('fileInput')
@@ -279,13 +273,10 @@ function setupImport() {
     var file = e.dataTransfer.files[0]
     handleFile(file)
   }
-  document.addEventListener('dragover', onDragOver)
-  document.addEventListener('dragleave', onDragLeave)
-  document.addEventListener('drop', onDrop)
-  _importDropCleanup = function() {
-    document.removeEventListener('dragover', onDragOver)
-    document.removeEventListener('dragleave', onDragLeave)
-    document.removeEventListener('drop', onDrop)
+  if (inner) {
+    inner.addEventListener('dragover', onDragOver)
+    inner.addEventListener('dragleave', onDragLeave)
+    inner.addEventListener('drop', onDrop)
   }
 
   // Click to pick

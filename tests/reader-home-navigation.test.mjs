@@ -49,12 +49,23 @@ test("reader home controls navigate without relying on module globals", async t 
     readAsText() { reads += 1 }
     readAsDataURL() { reads += 1 }
   }
-  const drop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
-  Object.defineProperty(drop, "dataTransfer", {
+  const outsideDrop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(outsideDrop, "dataTransfer", {
     value: { files: [{ name: "work.json" }] },
   })
-  document.dispatchEvent(drop)
+  document.dispatchEvent(outsideDrop)
 
-  assert.equal(drop.defaultPrevented, true)
+  assert.equal(outsideDrop.defaultPrevented, false)
+  assert.equal(reads, 0)
+
+  document.querySelector('.rd-tab[data-tab="import"]').click()
+  assert.equal(document.getElementById("tabImport").style.display, "block")
+  const importDrop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
+  Object.defineProperty(importDrop, "dataTransfer", {
+    value: { files: [{ name: "work.json" }] },
+  })
+  document.getElementById("dropInner").dispatchEvent(importDrop)
+
+  assert.equal(importDrop.defaultPrevented, true)
   assert.equal(reads, 1)
 })
