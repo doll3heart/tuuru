@@ -819,6 +819,37 @@ body.rd-theme-gray .article-meta { color: #333; }
 .rd-back-btn:focus-visible { outline: 2px solid var(--c-text); outline-offset: 2px; }
 .rd-back-spacer { width: 44px; flex: 0 0 44px; }
 
+.rd-chat-card,
+.rd-post-card {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; min-height: 56px; display: flex; align-items: center; gap: 10px;
+  margin: 0; padding: 10px 0; border: 0; border-bottom: 1px solid #eee;
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.rd-chat-card:hover,
+.rd-post-card:hover { background: var(--c-surface2); }
+.rd-chat-card:focus-visible,
+.rd-post-card:focus-visible {
+  outline: 2px solid var(--c-primary-hover); outline-offset: -2px;
+}
+.rd-shop-tabs {
+  display: flex; margin-bottom: 8px; border-bottom: 1px solid #ddd;
+}
+.rd-shop-tab {
+  -webkit-appearance: none; appearance: none;
+  flex: 1 1 0; min-width: 0; min-height: 44px;
+  margin: 0; padding: 8px; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--c-text2); font: inherit; font-size: .75rem;
+  text-align: center; cursor: pointer;
+}
+.rd-shop-tab.active {
+  border-bottom-color: var(--c-primary-hover); color: var(--c-primary-hover);
+}
+.rd-shop-tab:focus-visible {
+  outline: 2px solid var(--c-primary-hover); outline-offset: -2px;
+}
+.rd-shop-panel[hidden] { display: none; }
+
 .rd-album-list {
   display: flex; gap: 10px; overflow-x: auto; padding: 4px 0 10px;
   overscroll-behavior-inline: contain; scrollbar-width: thin;

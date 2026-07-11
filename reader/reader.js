@@ -36,6 +36,13 @@ function focusReaderAppIcon(root, type) {
   return false
 }
 
+function focusReaderControl(root, selector) {
+  var control = root && typeof root.querySelector === 'function' ? root.querySelector(selector) : null
+  if (!control) return false
+  control.focus()
+  return true
+}
+
 function avatarColor(id) {
   var AC = ["#6366f1","#8b5cf6","#a855f7","#d946ef","#ec4899","#f43f5e","#ef4444","#f97316","#f59e0b","#84cc16","#22c55e","#10b981","#14b8a6","#06b6d4","#0ea5e9","#3b82f6","#64748b","#78716c"]
   if (!id) return AC[0]
@@ -1112,41 +1119,44 @@ function openReaderApp(type) {
     var chats = pd.chats || []
     var h = ''
     if (chats.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无对话</div>'
-    chats.forEach(function(ch) {
+    chats.forEach(function(ch, chatIndex) {
       var name = ''
       if (ch.type === 'group') name = ch.groupName || '群聊'
       else {
         var cc = contacts.find(function(x) { return x.id === ch.contactIds[0] })
         name = cc ? cc.name : '未知'
       }
-      h += '<div class="rd-chat-card" data-chat-idx="' + chats.indexOf(ch) + '" style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eee;cursor:pointer;align-items:center">'
+      h += '<button type="button" class="rd-chat-card" data-chat-index="' + chatIndex + '" aria-label="' + escapeHtmlAttribute('打开与 ' + name + ' 的对话') + '">'
       h += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;flex-shrink:0;background:' + (ch.type === 'group' ? '#10b981' : '#6366f1') + '">' + esc(name.charAt(0)) + '</div>'
       h += '<div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(name) + '</div></div>'
-      h += '</div>'
+      h += '</button>'
     })
     wrapPanel('消息', h)
     var cards = phoneFrame.querySelectorAll('.rd-chat-card')
     cards.forEach(function(card) {
       card.onclick = function() {
-        var idx = parseInt(card.dataset.chatIdx)
-        openReaderChat(phoneFrame, w, pd, chats[idx])
+        var index = Number(card.dataset.chatIndex)
+        if (!Number.isInteger(index) || !chats[index]) return
+        openReaderChat(phoneFrame, w, pd, chats[index], index)
       }
     })
   } else if (type === 'forum') {
     var posts = pd.forumPosts || []
     var h = ''
     if (posts.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无帖子</div>'
-    posts.forEach(function(p) {
-      h += '<div class="rd-post-card" data-post-id="' + escapeHtmlAttribute(p.id || '') + '" style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eee;cursor:pointer">'
+    posts.forEach(function(p, postIndex) {
+      h += '<button type="button" class="rd-post-card" data-post-index="' + postIndex + '" aria-label="' + escapeHtmlAttribute('查看帖子 ' + (p.title || '')) + '">'
       h += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;flex-shrink:0;background:' + avatarColor(p.contactId) + '">' + esc((p.contactName || '?').charAt(0)) + '</div>'
       h += '<div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(p.title) + '</div><div style="font-size:.68rem;color:#999">' + esc(p.contactName || '') + ' / ' + esc(p.time || '') + '</div></div>'
-      h += '</div>'
+      h += '</button>'
     })
     wrapPanel('论坛', h)
     var postCards = phoneFrame.querySelectorAll('.rd-post-card')
     postCards.forEach(function(card) {
       card.onclick = function() {
-        openReaderForumPost(phoneFrame, w, pd, card.dataset.postId)
+        var index = Number(card.dataset.postIndex)
+        if (!Number.isInteger(index) || !posts[index]) return
+        openReaderForumPost(phoneFrame, w, pd, posts[index].id, index)
       }
     })
   } else if (type === 'memo') {
@@ -1246,7 +1256,10 @@ function openReaderApp(type) {
     var items = (pd.shoppingItems || []).filter(function(s) { return contacts.length > 0 ? s.contactId === contacts[0].id : true })
     var cartItems = items.filter(function(s) { return s.status !== 'order' })
     var orderItems = items.filter(function(s) { return s.status === 'order' })
-    var h = '<div style="display:flex;border-bottom:1px solid #ddd;margin-bottom:8px"><div class="rd-shop-tab active" data-tab="cart" style="flex:1;text-align:center;padding:8px;font-size:.75rem;cursor:pointer;border-bottom:2px solid transparent">购物车</div><div class="rd-shop-tab" data-tab="order" style="flex:1;text-align:center;padding:8px;font-size:.75rem;cursor:pointer;border-bottom:2px solid transparent">订单</div></div>'
+    var h = '<div class="rd-shop-tabs" role="tablist" aria-label="购物内容">'
+    h += '<button type="button" class="rd-shop-tab active" id="rdShopCartTab" role="tab" aria-controls="rdShopCart" aria-selected="true" tabindex="0" data-tab="cart">购物车</button>'
+    h += '<button type="button" class="rd-shop-tab" id="rdShopOrderTab" role="tab" aria-controls="rdShopOrder" aria-selected="false" tabindex="-1" data-tab="order">订单</button>'
+    h += '</div>'
     function shopList(list) {
       var r = ''
       if (list.length === 0) r += '<div style="text-align:center;padding:20px;color:#999">暂无</div>'
@@ -1260,21 +1273,38 @@ function openReaderApp(type) {
       })
       return r
     }
-    h += '<div id="rdShopCart">' + shopList(cartItems) + '</div>'
-    h += '<div id="rdShopOrder" style="display:none">' + shopList(orderItems) + '</div>'
+    h += '<div class="rd-shop-panel" id="rdShopCart" role="tabpanel" aria-labelledby="rdShopCartTab">' + shopList(cartItems) + '</div>'
+    h += '<div class="rd-shop-panel" id="rdShopOrder" role="tabpanel" aria-labelledby="rdShopOrderTab" style="display:none" hidden>' + shopList(orderItems) + '</div>'
     wrapPanel('购物清单', h)
 
     var tabs = phoneFrame.querySelectorAll('.rd-shop-tab')
-    tabs.forEach(function(t) {
-      t.onclick = function() {
-        tabs.forEach(function(x) { x.classList.remove('active'); x.style.borderBottomColor = 'transparent' })
-        t.classList.add('active')
-        t.style.borderBottomColor = 'var(--c-primary-hover)'
-        document.getElementById('rdShopCart').style.display = t.dataset.tab === 'cart' ? 'block' : 'none'
-        document.getElementById('rdShopOrder').style.display = t.dataset.tab === 'order' ? 'block' : 'none'
+    function activateShopTab(tab, moveFocus) {
+      tabs.forEach(function(item) {
+        var active = item === tab
+        item.classList.toggle('active', active)
+        item.setAttribute('aria-selected', active ? 'true' : 'false')
+        item.tabIndex = active ? 0 : -1
+        var panel = phoneFrame.querySelector('#' + item.getAttribute('aria-controls'))
+        if (panel) {
+          panel.hidden = !active
+          panel.style.display = active ? 'block' : 'none'
+        }
+      })
+      if (moveFocus) tab.focus()
+    }
+    tabs.forEach(function(tab, index) {
+      tab.onclick = function() { activateShopTab(tab, false) }
+      tab.onkeydown = function(event) {
+        var nextIndex = null
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length
+        if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length
+        if (event.key === 'Home') nextIndex = 0
+        if (event.key === 'End') nextIndex = tabs.length - 1
+        if (nextIndex === null) return
+        event.preventDefault()
+        activateShopTab(tabs[nextIndex], true)
       }
     })
-    if (tabs[0]) tabs[0].style.borderBottomColor = 'var(--c-primary-hover)'
   } else if (type === 'profile') {
     var h = '<div style="text-align:center;padding:30px">'
     h += '<div style="width:70px;height:70px;border-radius:50%;background:#eee;display:inline-flex;align-items:center;justify-content:center;font-size:2rem;color:#999;margin-bottom:12px">' + esc((pd.skin?.readerId || '读者').charAt(0)) + '</div>'
@@ -1295,13 +1325,16 @@ function openReaderApp(type) {
 }
 
 // ---- Chat reader ----
-function openReaderChat(frame, w, pd, ch) {
+function openReaderChat(frame, w, pd, ch, chatIndex) {
   var contacts = pd.contacts || []
 
   // Deep clone chat data so we don't mutate the original work object
   ch = JSON.parse(JSON.stringify(ch))
 
-  function backToList() { openReaderApp('messages') }
+  function backToList() {
+    openReaderApp('messages')
+    focusReaderControl(frame, '.rd-chat-card[data-chat-index="' + chatIndex + '"]')
+  }
 
   function getChatName() {
     if (ch.type === 'group') return ch.groupName || '群聊'
@@ -1478,12 +1511,15 @@ function openReaderChat(frame, w, pd, ch) {
 }
 
 // ---- Forum post viewer ----
-function openReaderForumPost(frame, w, pd, postId) {
+function openReaderForumPost(frame, w, pd, postId, postIndex) {
   var posts = pd.forumPosts || []
   var post = posts.find(function(p) { return p.id === postId })
   if (!post) return
 
-  function backToList() { openReaderApp('forum') }
+  function backToList() {
+    openReaderApp('forum')
+    focusReaderControl(frame, '.rd-post-card[data-post-index="' + postIndex + '"]')
+  }
 
   var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;background:#fff">'
   h += '<div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #ddd;flex-shrink:0">'
