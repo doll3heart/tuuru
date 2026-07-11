@@ -2,6 +2,7 @@ import { navigate, initRouter, router } from "./router.js"
 import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork } from "./data.js"
 import { discardCorruptLocalDatabase, inspectLocalDatabase } from "./storage.js"
 import { pickReadableColor } from "./color-contrast.js"
+import { startLocalLibraryRestore } from "./library-restore-ui.js"
 
 // ==================== Render helpers ====================
 export function h(tag, attrs={}, ...children){
@@ -188,7 +189,9 @@ function downloadRecoveryData(raw) {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function renderStorageRecovery(container, status) {
+export function renderStorageRecovery(container, status, {
+  startRestore = startLocalLibraryRestore,
+} = {}) {
   empty(container)
 
   const title = h("h1", {}, "本地作品数据需要恢复")
@@ -215,6 +218,20 @@ function renderStorageRecovery(container, status) {
       className: "btn btn-primary",
       onClick: () => downloadRecoveryData(status.raw),
     }, "下载原始数据"))
+  }
+
+  if (status.raw !== null && (status.code === "invalid-json" || status.code === "invalid-structure")) {
+    actions.append(h("button", {
+      className: "btn btn-outline",
+      onClick: event => {
+        const controller = startRestore({
+          modal,
+          notify: showToast,
+          reload: () => location.reload(),
+        })
+        controller.pickFile(event.currentTarget)
+      },
+    }, "从完整备份恢复"))
   }
 
   actions.append(h("button", {
