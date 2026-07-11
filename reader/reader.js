@@ -47,6 +47,7 @@ function avatarColor(id) {
 var _work = null
 var _nodeId = null
 var _visitedNodes = []
+var _importDropCleanup = null
 
 // ---- render ----
 function render(el, html) {
@@ -116,6 +117,15 @@ function renderHome() {
   // Setup import
   setupImport()
 }
+
+document.addEventListener('click', function(event) {
+  var trigger = event.target && event.target.closest
+    ? event.target.closest('[data-reader-home]')
+    : null
+  if (!trigger) return
+  event.preventDefault()
+  renderHome()
+})
 
 // ====== Personal Page ======
 function renderPersonalPage() {
@@ -220,6 +230,11 @@ function renderImportPanel() {
 }
 
 function setupImport() {
+  if (_importDropCleanup) {
+    _importDropCleanup()
+    _importDropCleanup = null
+  }
+
   var inner = document.getElementById('dropInner')
   var pickBtn = document.getElementById('pickFileBtn')
   var fileInput = document.getElementById('fileInput')
@@ -250,14 +265,28 @@ function setupImport() {
   }
 
   // Drag & drop
-  document.addEventListener('dragover', function(e) { e.preventDefault(); if (inner) inner.classList.add('drag-over') })
-  document.addEventListener('dragleave', function(e) { e.preventDefault(); if (inner) inner.classList.remove('drag-over') })
-  document.addEventListener('drop', function(e) {
+  function onDragOver(e) {
+    e.preventDefault()
+    if (inner) inner.classList.add('drag-over')
+  }
+  function onDragLeave(e) {
+    e.preventDefault()
+    if (inner) inner.classList.remove('drag-over')
+  }
+  function onDrop(e) {
     e.preventDefault()
     if (inner) inner.classList.remove('drag-over')
     var file = e.dataTransfer.files[0]
     handleFile(file)
-  })
+  }
+  document.addEventListener('dragover', onDragOver)
+  document.addEventListener('dragleave', onDragLeave)
+  document.addEventListener('drop', onDrop)
+  _importDropCleanup = function() {
+    document.removeEventListener('dragover', onDragOver)
+    document.removeEventListener('dragleave', onDragLeave)
+    document.removeEventListener('drop', onDrop)
+  }
 
   // Click to pick
   if (pickBtn) {
@@ -681,7 +710,7 @@ function renderArticleReader() {
   }
   var node = nodes.find(function(n) { return n.id === _nodeId })
   if (!node) {
-    render('app', '<div class="drop-zone"><p>作品内容为空</p><button class="drop-btn" onclick="renderHome()">返回首页</button></div>')
+    render('app', '<div class="drop-zone"><p>作品内容为空</p><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>')
     return
   }
 
@@ -699,7 +728,7 @@ function renderArticleReader() {
   var visitedSet = {}
   _visitedNodes.forEach(function(id) { visitedSet[id] = true })
   visitedSet[_nodeId] = true
-  var h = '<button class="reader-back" onclick="renderHome()" title="返回">←</button>'
+  var h = '<button type="button" class="reader-back" data-reader-home title="返回" aria-label="返回首页">←</button>'
   h += '<button class="reader-settings-btn" title="排版设置">⚙</button>'
   h += '<div class="article-reader">'
   h += '<div class="article-progress">'
@@ -762,7 +791,7 @@ function renderArticleReader() {
     })
     h += '</div>'
   } else {
-    h += '<div style="text-align:center;padding:24px"><button class="drop-btn" onclick="renderHome()">返回首页</button></div>'
+    h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>'
   }
 
   render('app', h)
@@ -991,12 +1020,12 @@ function buildPhoneHTML(pd, custom) {
 // ====== PHONE READER (standalone imported phone) ======
 function renderPhoneReader() {
   if (!_work || !_work.phoneData) {
-    render('app', '<div class="drop-zone"><p>手机数据为空</p><button class="drop-btn" onclick="renderHome()">返回</button></div>')
+    render('app', '<div class="drop-zone"><p>手机数据为空</p><button type="button" class="drop-btn" data-reader-home>返回</button></div>')
     return
   }
   var pd = _work.phoneData
   var rc = getPhoneCustom()
-  var h = '<button class="reader-back" onclick="renderHome()" title="返回">←</button>'
+  var h = '<button type="button" class="reader-back" data-reader-home title="返回" aria-label="返回首页">←</button>'
   h += '<div class="phone-reader">'
   h += buildPhoneHTML(pd, rc)
   h += '</div>'
