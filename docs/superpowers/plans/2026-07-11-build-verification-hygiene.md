@@ -361,9 +361,9 @@ Expected: 255 tests pass, TypeScript and both temporary Vite builds pass, tracke
 - Consumes: `scripts/verify-builds.mjs` from Task 1 and existing `npm test` / `tsc -b` commands.
 - Produces: `npm run build:verify` for TypeScript plus two temporary Vite builds, and `npm run verify` for the complete Node-test and build gate.
 
-- [ ] **Step 1: Add the failing package-script contract**
+- [ ] **Step 1: Expand the existing package-script contract**
 
-Append to `tests/build-verification.test.mjs`:
+Replace the Task 1 test named `formal package scripts remain available before command wiring` in `tests/build-verification.test.mjs` with:
 
 ```js
 test("package exposes clean verification without changing release commands", async () => {
@@ -387,7 +387,7 @@ Run:
 node --test tests/build-verification.test.mjs
 ```
 
-Expected: the new test fails because `build:verify` and `verify` are undefined; Task 1 tests remain green.
+Expected: the expanded test fails because `build:verify` and `verify` are undefined; the other six Task 1 tests remain green.
 
 - [ ] **Step 3: Add only the verification scripts**
 
@@ -416,7 +416,7 @@ Run:
 node --test tests/build-verification.test.mjs
 ```
 
-Expected: 8 tests pass.
+Expected: 7 tests pass.
 
 - [ ] **Step 5: Run both npm verification entry points with a Git-state guard**
 
@@ -434,7 +434,7 @@ git diff --exit-code -- dist-editor
 if (Test-Path -LiteralPath .\dist-reader) { throw "Verification created workspace dist-reader" }
 ```
 
-Expected: 256 tests pass inside `npm run verify`; TypeScript and both temporary Vite builds pass twice; Git-visible state remains limited to Task 2 files.
+Expected: 255 tests pass inside `npm run verify`; TypeScript and both temporary Vite builds pass twice; Git-visible state remains limited to Task 2 files.
 
 - [ ] **Step 6: Commit Task 2**
 
@@ -454,7 +454,7 @@ if (Test-Path -LiteralPath .\dist-reader) { throw "Verification created workspac
 git status --porcelain=v2 --untracked-files=all
 ```
 
-Expected: 256 tests pass; TypeScript and both temporary production builds pass; all diff checks pass; no workspace `dist-reader/` exists; the final Git-status command prints nothing.
+Expected: 255 tests pass; TypeScript and both temporary production builds pass; all diff checks pass; no workspace `dist-reader/` exists; the final Git-status command prints nothing.
 
 ---
 
