@@ -1143,32 +1143,78 @@ function openReaderApp(type) {
     })
     wrapPanel('备忘录', h)
   } else if (type === 'gallery') {
-    var photos = (pd.photos || []).filter(function(p) { return contacts.length > 0 ? p.contactId === contacts[0].id : true })
-    var albums = (pd.albums || []).filter(function(a) { return contacts.length > 0 ? a.contactId === contacts[0].id : true })
-    var h = ''
-    if (albums.length > 0) {
-      h += '<div style="display:flex;gap:10px;overflow-x:auto;padding:4px 0 10px">'
-      albums.forEach(function(a) {
-        var count = photos.filter(function(p) { return p.albumId === a.id }).length
-        h += '<div style="flex-shrink:0;width:80px;text-align:center;cursor:pointer" class="rd-album" data-album-id="' + escapeHtmlAttribute(a.id || '') + '">'
-        h += '<div style="width:80px;height:80px;border:1px solid #ddd;background:#f0f0f0;margin-bottom:4px"></div>'
-        h += '<div style="font-size:.7rem">' + esc(a.name) + ' (' + count + ')</div>'
-        h += '</div>'
-      })
-      h += '</div>'
-    }
-    h += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'
-    var ungrouped = photos.filter(function(p) { return !p.albumId })
-    if (ungrouped.length === 0 && photos.length === 0) h += '<div style="grid-column:1/-1;text-align:center;color:#999;padding:20px">暂无照片</div>'
-    ungrouped.forEach(function(p) {
-      if (p.imageUrl) {
-        h += '<div style="aspect-ratio:1;overflow:hidden;border:1px solid #eee"><img src="' + esc(p.imageUrl) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>'
-      } else {
-        h += '<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;background:#f8f8f8;border:1px solid #eee;font-size:.7rem;color:#999;padding:4px;text-align:center">' + esc(p.caption || '') + '</div>'
-      }
+    var primaryContact = contacts.length > 0 && contacts[0] && typeof contacts[0] === 'object' ? contacts[0] : null
+    var photos = (Array.isArray(pd.photos) ? pd.photos : []).filter(function(p) {
+      return p && typeof p === 'object' && (!primaryContact || p.contactId === primaryContact.id)
     })
-    h += '</div>'
-    wrapPanel('相册', h)
+    var albums = (Array.isArray(pd.albums) ? pd.albums : []).filter(function(a) {
+      return a && typeof a === 'object' && (!primaryContact || a.contactId === primaryContact.id)
+    })
+    var albumIds = new Set(albums.map(function(a) { return a.id }))
+
+    function renderGalleryPhotoGrid(items) {
+      var grid = '<div class="rd-gallery-grid">'
+      if (items.length === 0) grid += '<div class="rd-gallery-empty">暂无照片</div>'
+      items.forEach(function(p) {
+        grid += '<div class="rd-gallery-photo">'
+        if (p.imageUrl) {
+          grid += '<img src="' + escapeHtmlAttribute(p.imageUrl) + '" alt="' + escapeHtmlAttribute(p.caption || '') + '" onerror="this.style.display=\'none\'">'
+        } else {
+          grid += '<div class="rd-gallery-photo-placeholder">' + esc(p.caption || '') + '</div>'
+        }
+        grid += '</div>'
+      })
+      grid += '</div>'
+      return grid
+    }
+
+    function renderGalleryAlbum(albumIndex) {
+      var album = albums[albumIndex]
+      if (!album) return
+      var albumPhotos = photos.filter(function(p) { return p.albumId === album.id })
+      var body = '<button type="button" class="rd-gallery-album-back" aria-label="返回相册列表">← 返回相册</button>'
+      body += renderGalleryPhotoGrid(albumPhotos)
+      wrapPanel(album.name || '相册', body)
+      var albumBack = phoneFrame.querySelector('.rd-gallery-album-back')
+      if (albumBack) {
+        albumBack.onclick = function() { renderGalleryMain(albumIndex) }
+        albumBack.focus()
+      }
+    }
+
+    function renderGalleryMain(restoreAlbumIndex) {
+      var body = ''
+      if (albums.length > 0) {
+        body += '<div class="rd-album-list">'
+        albums.forEach(function(a, albumIndex) {
+          var count = photos.filter(function(p) { return p.albumId === a.id }).length
+          var name = a.name || '相册'
+          var accessibleName = '打开相册 ' + name + '，' + count + ' 张'
+          body += '<button type="button" class="rd-album" data-album-index="' + albumIndex + '" aria-label="' + escapeHtmlAttribute(accessibleName) + '">'
+          body += '<span class="rd-album-cover" aria-hidden="true"></span>'
+          body += '<span class="rd-album-name">' + esc(name) + '</span>'
+          body += '<span class="rd-album-count">' + count + ' 张</span>'
+          body += '</button>'
+        })
+        body += '</div>'
+      }
+      var ungrouped = photos.filter(function(p) { return !p.albumId || !albumIds.has(p.albumId) })
+      body += renderGalleryPhotoGrid(ungrouped)
+      wrapPanel('相册', body)
+
+      var albumButtons = phoneFrame.querySelectorAll('.rd-album[data-album-index]')
+      albumButtons.forEach(function(button) {
+        button.onclick = function() {
+          var albumIndex = Number(button.dataset.albumIndex)
+          if (Number.isInteger(albumIndex)) renderGalleryAlbum(albumIndex)
+        }
+      })
+      if (Number.isInteger(restoreAlbumIndex) && albumButtons[restoreAlbumIndex]) {
+        albumButtons[restoreAlbumIndex].focus()
+      }
+    }
+
+    renderGalleryMain()
   } else if (type === 'browser') {
     var history = (pd.browserHistory || []).filter(function(h) { return contacts.length > 0 ? h.contactId === contacts[0].id : true })
     var h = '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:#fff;border:1px solid #ddd"><span style="color:#999">🔍</span><span style="font-size:.78rem;color:#999">搜索或输入网址</span></div>'
