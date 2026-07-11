@@ -1,6 +1,7 @@
 import { navigate, initRouter, router } from "./router.js"
 import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork } from "./data.js"
 import { discardCorruptLocalDatabase, inspectLocalDatabase } from "./storage.js"
+import { pickReadableColor } from "./color-contrast.js"
 
 // ==================== Render helpers ====================
 export function h(tag, attrs={}, ...children){
@@ -63,7 +64,7 @@ function mix(a,b,t){var ca=hexToRgb(a),cb=hexToRgb(b);return rgbToHex(Math.round
 function rgba(h,a){var c=hexToRgb(h);return'rgba('+c.r+','+c.g+','+c.b+','+a+')'}
 
 // ---- Preset definitions ----
-var THEME_PRESETS = [
+export var THEME_PRESETS = [
   {id:'sky',name:'水色',dot:'#A4C6EB'},
   {id:'sakura',name:'樱花',dot:'#F0D9E4',bg:'#F0D9E4',text:'#16131F',primary:'#C1A0AC',accent3:'#4A3F4B'},
   {id:'deep',name:'苍闇',dot:'#07080C',bg:'#07080C',surface:'#333C50',text:'#CAD9F5',primary:'#546282',text2:'#9CB2E8'},
@@ -73,7 +74,7 @@ var THEME_PRESETS = [
 ]
 
 // ---- Generate all 15 CSS variables from a preset ----
-function generateVars(p) {
+export function generateVars(p) {
   if (!p.bg) return null
   var isLight = luminance(p.bg) > 128
   var s = p.surface || mix(p.bg,'#ffffff',isLight?0.15:0.06)
@@ -94,7 +95,8 @@ function generateVars(p) {
     '--c-msg-self':isLight?'#555':'#3a3a3a', '--c-msg-other':s,
     '--shadow':isLight?'0 1px 3px rgba(0,0,0,.08)':'0 1px 4px rgba(0,0,0,.5)',
     '--shadow-md':isLight?'0 4px 12px rgba(0,0,0,.1)':'0 4px 16px rgba(0,0,0,.45)',
-    '--c-btn-text':luminance(p.primary)>160?p.text:'#fff'
+    '--c-btn-text':pickReadableColor(p.primary,[p.text]),
+    '--c-btn-hover-text':pickReadableColor(ph,[p.text])
   }
 }
 

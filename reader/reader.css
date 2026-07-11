@@ -6,6 +6,8 @@
   --c-primary-hover: #416598;
   --c-text: #4a5568;
   --c-text2: #526582;
+  --c-btn-text: #394a61;
+  --c-btn-hover-text: #ffffff;
   --c-border: #CAD3E0;
   --c-accent3: #D9A0B3;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
@@ -199,7 +201,7 @@ body {
   cursor: pointer;
   transition: .12s;
 }
-.rd-preset-save:hover { background: var(--c-primary); color: #fff; }
+.rd-preset-save:hover { background: var(--c-primary); color: var(--c-btn-text); }
 
 /* ====== Placeholder form ====== */
 .rd-ph-form { }
@@ -268,14 +270,14 @@ body {
   display: inline-block;
   padding: 10px 24px;
   background: var(--c-primary);
-  color: #fff;
+  color: var(--c-btn-text);
   border: none;
   cursor: pointer;
   font-size: .9rem;
   font-weight: 500;
   transition: background .15s;
 }
-.drop-btn:hover { background: var(--c-primary-hover); }
+.drop-btn:hover { background: var(--c-primary-hover); color: var(--c-btn-hover-text); }
 
 /* ====== Article reader ====== */
 .article-reader {
@@ -447,7 +449,7 @@ body {
   cursor: pointer;
   transition: .12s;
 }
-.rd-landing-preset-btn:hover { background: var(--c-primary); color: #fff; }
+.rd-landing-preset-btn:hover { background: var(--c-primary); color: var(--c-btn-text); }
 .rd-landing-divider {
   height: 1px;
   background: var(--c-border);
@@ -466,11 +468,11 @@ body {
   font-weight: 500;
   border: none;
   background: var(--c-primary);
-  color: #fff;
+  color: var(--c-btn-text);
   cursor: pointer;
   transition: background .15s;
 }
-.rd-landing-start-btn:hover { background: var(--c-primary-hover); }
+.rd-landing-start-btn:hover { background: var(--c-primary-hover); color: var(--c-btn-hover-text); }
 
 /* ====== Phone reader ====== */
 .phone-reader {
@@ -584,7 +586,7 @@ body {
   padding: 5px 12px; font-size: .75rem; border: 1px solid #ddd;
   background: #fff; color: #555; cursor: pointer; border-radius: 4px; transition: .12s;
 }
-.rs-font-btn.active { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }
+.rs-font-btn.active { background: var(--c-primary); color: var(--c-btn-text); border-color: var(--c-primary); }
 .rs-font-btn:hover:not(.active) { border-color: var(--c-primary); color: var(--c-primary-hover); }
 .rs-theme-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .rs-theme-btn {
@@ -801,7 +803,7 @@ body.rd-theme-gray .article-meta { color: #333; }
 .rd-custom-field { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .rd-custom-field label { font-size: .78rem; font-weight: 500; color: var(--c-text2); white-space: nowrap; min-width: 50px; }
 .rd-custom-upload-btn { padding: 5px 12px; font-size: .75rem; border: 1px solid var(--c-primary); background: transparent; color: var(--c-primary-hover); cursor: pointer; font-family: inherit; transition: .12s; }
-.rd-custom-upload-btn:hover { background: var(--c-primary); color: #fff; }
+.rd-custom-upload-btn:hover { background: var(--c-primary); color: var(--c-btn-text); }
 .rd-custom-clear-btn { padding: 2px 8px; font-size: .7rem; border: 1px solid var(--c-accent3); background: transparent; color: var(--c-accent3); cursor: pointer; font-family: inherit; margin-left: 8px; transition: .12s; }
 .rd-custom-clear-btn:hover { background: var(--c-accent3); color: #fff; }
 .rd-cu-color-btn { transition: border-color .15s; }
@@ -1017,13 +1019,13 @@ body.rd-theme-gray .article-meta { color: #333; }
   font-size: .82rem;
   border: none;
   background: var(--c-primary);
-  color: #fff;
+  color: var(--c-btn-text);
   cursor: pointer;
   border-radius: 6px;
   font-weight: 500;
   transition: background .15s;
 }
-.cu-btn-save:hover { background: var(--c-primary-hover); }
+.cu-btn-save:hover { background: var(--c-primary-hover); color: var(--c-btn-hover-text); }
 
 .cu-btn-cancel {
   padding: 7px 18px;
