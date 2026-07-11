@@ -39,6 +39,14 @@ function openGallerySettings() {
   return trigger
 }
 
+function openNamedAppSettings(type) {
+  document.querySelector('[data-tab="custom"]').click()
+  const trigger = document.querySelector(`.rd-app-icon[data-app="${type}"]`)
+  trigger.focus()
+  trigger.click()
+  return trigger
+}
+
 test("reader App settings behave as a modal dialog and restore focus", async t => {
   const dom = installDom(t)
   await import(`../reader/reader.js?reader-app-settings-dialog=${Date.now()}`)
@@ -123,4 +131,59 @@ test("reader App settings stay retryable when local persistence fails", async t 
   assert.equal(document.activeElement, resetButton)
   assert.equal(alerts.length, 2)
   assert.match(alerts[1], /恢复默认|存储/)
+})
+
+test("reader App color choices expose names and synchronize selection state", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-settings-colors=${Date.now()}`)
+
+  openNamedAppSettings("messages")
+  const group = document.querySelector(".cu-color-group")
+  const buttons = [...group.querySelectorAll(".cu-color-btn")]
+  const picker = group.querySelector(".cu-color-picker")
+
+  assert.ok(buttons.length > 1)
+  assert.equal(buttons.filter(button => button.getAttribute("aria-pressed") === "true").length, 1)
+  buttons.forEach(button => {
+    assert.equal(button.type, "button")
+    assert.ok(button.getAttribute("aria-label"))
+    assert.ok(button.querySelector('.cu-color-swatch[aria-hidden="true"]'))
+    assert.ok(["true", "false"].includes(button.getAttribute("aria-pressed")))
+  })
+  assert.ok(picker.getAttribute("aria-label"))
+
+  const previous = buttons.find(button => button.getAttribute("aria-pressed") === "true")
+  const next = buttons.find(button => button !== previous)
+  next.click()
+  assert.equal(previous.getAttribute("aria-pressed"), "false")
+  assert.equal(next.getAttribute("aria-pressed"), "true")
+  assert.equal(next.classList.contains("active"), true)
+
+  picker.value = "#123456"
+  picker.dispatchEvent(new Event("input", { bubbles: true }))
+  assert.equal(group.querySelector(".cu-color-btn.active"), null)
+  assert.equal(buttons.every(button => button.getAttribute("aria-pressed") === "false"), true)
+
+  next.click()
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(saved.appSettings.messages.selfBubbleBg, next.getAttribute("data-cu-self-bg"))
+})
+
+test("reader App color controls keep 44px targets and visible focus", () => {
+  const buttonRule = cssBody(".cu-color-btn")
+  const swatchRule = cssBody(".cu-color-swatch")
+  const pickerRule = cssBody(".cu-color-picker")
+
+  assert.match(buttonRule, /width:\s*44px;/)
+  assert.match(buttonRule, /height:\s*44px;/)
+  assert.doesNotMatch(buttonRule, /outline:\s*none;/)
+  assert.match(swatchRule, /width:\s*26px;/)
+  assert.match(swatchRule, /height:\s*26px;/)
+  assert.match(pickerRule, /width:\s*44px;/)
+  assert.match(pickerRule, /height:\s*44px;/)
+  assert.match(
+    readerCss,
+    /\.cu-color-btn:focus-visible\s*,\s*\.cu-color-picker:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--c-primary-hover\);/,
+  )
 })

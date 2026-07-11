@@ -1240,38 +1240,58 @@ body.rd-theme-gray .article-meta { color: #333; }
   flex-wrap: wrap;
 }
 .cu-color-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cu-color-swatch {
   width: 26px;
   height: 26px;
+  flex: 0 0 26px;
   border-radius: 50%;
   border: 2px solid #ddd;
-  cursor: pointer;
-  padding: 0;
-  outline: none;
+  box-sizing: border-box;
   transition: border-color .15s, box-shadow .15s;
 }
-.cu-color-btn:hover { border-color: var(--c-primary-hover); }
-.cu-color-btn.active {
+.cu-color-btn:hover .cu-color-swatch { border-color: var(--c-primary-hover); }
+.cu-color-btn.active .cu-color-swatch {
   border-color: var(--c-primary-hover);
   box-shadow: 0 0 0 2.5px rgba(164,198,235,.45);
 }
 
 /* ---- Color Picker (native) ---- */
 .cu-color-picker {
-  width: 26px;
-  height: 26px;
-  border: 2px solid #ddd;
+  width: 44px;
+  height: 44px;
+  border: 2px solid transparent;
   border-radius: 50%;
   cursor: pointer;
-  padding: 0;
+  padding: 7px;
   margin: 0;
+  box-sizing: border-box;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
   flex-shrink: 0;
 }
 .cu-color-picker::-webkit-color-swatch-wrapper { padding: 0; }
-.cu-color-picker::-webkit-color-swatch { border: none; border-radius: 50%; }
-.cu-color-picker:hover { border-color: var(--c-primary-hover); }
+.cu-color-picker::-webkit-color-swatch { border: 2px solid #ddd; border-radius: 50%; }
+.cu-color-picker::-moz-color-swatch { border: 2px solid #ddd; border-radius: 50%; }
+.cu-color-picker:hover { border-color: transparent; }
+.cu-color-picker:hover::-webkit-color-swatch { border-color: var(--c-primary-hover); }
+.cu-color-picker:hover::-moz-color-swatch { border-color: var(--c-primary-hover); }
+.cu-color-btn:focus-visible,
+.cu-color-picker:focus-visible {
+  outline: 2px solid var(--c-primary-hover);
+  outline-offset: 2px;
+}
 
 /* ---- Shape Buttons ---- */
 .cu-shape-group {

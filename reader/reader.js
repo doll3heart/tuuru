@@ -2145,16 +2145,18 @@ function cuRow(label, control) {
   return '<div class="cu-row"><span class="cu-row-label">' + esc(label) + '</span><span class="cu-row-ctrl">' + control + '</span></div>'
 }
 
-function cuColorBtn(color, cls, dataAttr, dataVal) {
-  return '<button class="cu-color-btn' + (cls || '') + '" style="background:' + color + '" data-' + dataAttr + '="' + dataVal + '"></button>'
+function cuColorBtn(color, cls, dataAttr, dataVal, label) {
+  var active = (cls || '').indexOf('active') >= 0
+  var accessibleName = (label || '颜色') + ' ' + color
+  return '<button type="button" class="cu-color-btn' + (cls || '') + '" data-' + dataAttr + '="' + escapeHtmlAttribute(dataVal) + '" aria-label="' + escapeHtmlAttribute(accessibleName) + '" aria-pressed="' + (active ? 'true' : 'false') + '"><span class="cu-color-swatch" aria-hidden="true" style="background:' + escapeHtmlAttribute(color) + '"></span></button>'
 }
 
 function cuColorRow(label, presetColors, currentColor, dataAttr) {
   var h = '<div class="cu-color-group">'
   for (var i = 0; i < presetColors.length; i++) {
-    h += cuColorBtn(presetColors[i], currentColor === presetColors[i] ? ' active' : '', dataAttr, presetColors[i])
+    h += cuColorBtn(presetColors[i], currentColor === presetColors[i] ? ' active' : '', dataAttr, presetColors[i], label)
   }
-  h += '<input type="color" class="cu-color-picker" value="' + currentColor + '" data-' + dataAttr + '-picker="' + currentColor + '">'
+  h += '<input type="color" class="cu-color-picker" aria-label="' + escapeHtmlAttribute('自定义' + label) + '" value="' + escapeHtmlAttribute(currentColor) + '" data-' + dataAttr + '-picker="' + escapeHtmlAttribute(currentColor) + '">'
   h += '</div>'
   return cuRow(label, h)
 }
@@ -2486,18 +2488,18 @@ function openReaderAppSettings(type, trigger) {
       var picker = modal.querySelector('.cu-color-picker[data-' + attr + '-picker]')
       if (picker && picker.value) s[key] = picker.value
     }
-    readColor('cuSelfBg', 'selfBubbleBg')
-    readColor('cuSelfText', 'selfBubbleText')
-    readColor('cuOtherBg', 'otherBubbleBg')
-    readColor('cuOtherText', 'otherBubbleText')
-    readColor('cuChatBg', 'chatBg')
-    readColor('cuTimeColor', 'timeColor')
-    readColor('cuCardBg', 'cardBg')
-    readColor('cuTitleColor', 'titleColor')
-    readColor('cuTextColor', 'textColor')
-    readColor('cuUrlColor', 'urlColor')
-    readColor('cuNameColor', 'nameColor')
-    readColor('cuPriceColor', 'priceColor')
+    readColor('cu-self-bg', 'selfBubbleBg')
+    readColor('cu-self-text', 'selfBubbleText')
+    readColor('cu-other-bg', 'otherBubbleBg')
+    readColor('cu-other-text', 'otherBubbleText')
+    readColor('cu-chat-bg', 'chatBg')
+    readColor('cu-time-color', 'timeColor')
+    readColor('cu-card-bg', 'cardBg')
+    readColor('cu-title-color', 'titleColor')
+    readColor('cu-text-color', 'textColor')
+    readColor('cu-url-color', 'urlColor')
+    readColor('cu-name-color', 'nameColor')
+    readColor('cu-price-color', 'priceColor')
     var shapeBtns = modal.querySelectorAll('.cu-shape-btn.active')
     shapeBtns.forEach(function(b) {
       if (b.dataset.cuShape) s.avatarShape = b.dataset.cuShape
@@ -2561,7 +2563,16 @@ function openReaderAppSettings(type, trigger) {
     b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
   })
   ov.querySelectorAll('.cu-color-picker').forEach(function(p) {
-    p.addEventListener('input', function() { updateCuPreview(ov, type) })
+    p.addEventListener('input', function() {
+      var group = p.parentElement
+      if (group) {
+        group.querySelectorAll('.cu-color-btn').forEach(function(button) {
+          button.classList.remove('active')
+          button.setAttribute('aria-pressed', 'false')
+        })
+      }
+      updateCuPreview(ov, type)
+    })
   })
   ov.querySelectorAll('.cu-shape-btn').forEach(function(b) {
     b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
@@ -2574,8 +2585,12 @@ function openReaderAppSettings(type, trigger) {
     b.onclick = function() {
       var group = b.parentElement
       if (!group) return
-      group.querySelectorAll('.cu-color-btn').forEach(function(x) { x.classList.remove('active') })
+      group.querySelectorAll('.cu-color-btn').forEach(function(x) {
+        x.classList.remove('active')
+        x.setAttribute('aria-pressed', 'false')
+      })
       b.classList.add('active')
+      b.setAttribute('aria-pressed', 'true')
     }
   })
   // Bind shape buttons
