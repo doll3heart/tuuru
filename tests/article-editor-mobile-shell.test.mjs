@@ -355,6 +355,32 @@ test("the bounded editor header keeps title and scene controls usable in one row
   )
 })
 
+test("short fine-pointer viewports keep the editor icon rail usable", () => {
+  const marker = "/* Article editor short viewport fallback */"
+  const fallback = cssBlockAfterMarker(css, marker)
+  const boundedMarker = "/* Article editor bounded mobile workspace */"
+
+  assert.ok(fallback)
+  assert.match(css, /@media\(min-width:481px\) and \(max-height:480px\)/)
+  assert.ok(css.indexOf(marker) < css.indexOf(boundedMarker))
+
+  const iconRail = ruleBodiesFor(fallback, ".editor-iconbar")
+  const iconButton = ruleBodiesFor(fallback, ".editor-iconbar button")
+  const divider = ruleBodiesFor(fallback, ".editor-iconbar .divider")
+
+  assert.match(iconRail, /width\s*:\s*64px/)
+  assert.match(iconRail, /min-height\s*:\s*0/)
+  assert.match(iconRail, /overflow-x\s*:\s*hidden/)
+  assert.match(iconRail, /overflow-y\s*:\s*auto/)
+  assert.match(iconRail, /touch-action\s*:\s*pan-y/)
+  assert.match(iconButton, /width\s*:\s*44px/)
+  assert.match(iconButton, /height\s*:\s*44px/)
+  assert.match(iconButton, /min-width\s*:\s*44px/)
+  assert.match(iconButton, /min-height\s*:\s*44px/)
+  assert.match(iconButton, /flex-shrink\s*:\s*0/)
+  assert.match(divider, /flex-shrink\s*:\s*0/)
+})
+
 test("scene selection persists on change without a click double-write", async () => {
   const work = article("scene-change-work", [{ id: "scene-change-node" }])
   work.scenes = [{ id: "scene-a", name: "Scene A" }]
