@@ -865,6 +865,8 @@ function renderArticleReader() {
       if (!pm) return
       var d = pm.data || {}
       var contacts = d.contacts || []
+      var photos = Array.isArray(d.photos) ? d.photos : []
+      var albums = Array.isArray(d.albums) ? d.albums : []
 
       // All 7 apps always displayed, some with red dot
       var APP_ICONS = {
@@ -882,7 +884,7 @@ function renderArticleReader() {
       hasData.messages = !!(d.chats && d.chats.length)
       hasData.forum = !!(d.forumPosts && d.forumPosts.length)
       hasData.memo = !!(d.memos && d.memos.length)
-      hasData.gallery = !!(d.photos && d.photos.length)
+      hasData.gallery = photos.length > 0 || albums.length > 0
       hasData.browser = !!(d.browserHistory && d.browserHistory.length)
       hasData.shopping = !!(d.shoppingItems && d.shoppingItems.length)
       hasData.contacts = !!(d.contacts && d.contacts.length)
@@ -902,8 +904,8 @@ function renderArticleReader() {
         forumPosts: d.forumPosts || [],
         forumNpcs: [],
         memos: d.memos || [],
-        photos: d.photos || [],
-        albums: [],
+        photos: photos,
+        albums: albums,
         browserHistory: d.browserHistory || [],
         shoppingItems: d.shoppingItems || [],
         skin: rc,
