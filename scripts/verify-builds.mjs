@@ -91,6 +91,8 @@ export async function runBuildValidation({
   })
   let buildError
   let cleanupError
+  let buildFailed = false
+  let cleanupFailed = false
 
   try {
     for (const target of plan) {
@@ -103,23 +105,25 @@ export async function runBuildValidation({
       })
     }
   } catch (error) {
+    buildFailed = true
     buildError = error
   }
 
   try {
     await remove(canonicalTempRoot, { recursive: true, force: true })
   } catch (error) {
+    cleanupFailed = true
     cleanupError = error
   }
 
-  if (buildError && cleanupError) {
+  if (buildFailed && cleanupFailed) {
     throw new AggregateError(
       [buildError, cleanupError],
       "Build validation and temporary cleanup both failed",
     )
   }
-  if (buildError) throw buildError
-  if (cleanupError) throw cleanupError
+  if (buildFailed) throw buildError
+  if (cleanupFailed) throw cleanupError
 }
 
 const isDirectExecution = Boolean(process.argv[1]) && (

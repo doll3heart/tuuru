@@ -30,6 +30,13 @@ function dependencies(overrides = {}) {
   }
 }
 
+async function captureOutcome(promise) {
+  return promise.then(
+    value => ({ status: "fulfilled", value }),
+    reason => ({ status: "rejected", reason }),
+  )
+}
+
 test("the build plan uses existing configs and isolated output children", () => {
   const paths = fixturePaths()
   const plan = createBuildPlan(paths)
@@ -110,6 +117,43 @@ test("build and cleanup failures remain visible together", async () => {
   const error = await runBuildValidation(options).catch(value => value)
   assert.ok(error instanceof AggregateError)
   assert.deepEqual(error.errors, [buildError, cleanupError])
+})
+
+test("a falsy build rejection is preserved and still cleans", async () => {
+  let removeCalls = 0
+  const options = dependencies({
+    build: async () => Promise.reject(undefined),
+    remove: async () => { removeCalls += 1 },
+  })
+
+  const outcome = await captureOutcome(runBuildValidation(options))
+
+  assert.deepEqual(outcome, { status: "rejected", reason: undefined })
+  assert.equal(removeCalls, 1)
+})
+
+test("a falsy cleanup rejection is preserved", async () => {
+  const options = dependencies({
+    remove: async () => Promise.reject(null),
+  })
+
+  const outcome = await captureOutcome(runBuildValidation(options))
+
+  assert.deepEqual(outcome, { status: "rejected", reason: null })
+})
+
+test("falsy build and cleanup rejections remain visible together in order", async () => {
+  const options = dependencies({
+    build: async () => Promise.reject(undefined),
+    remove: async () => Promise.reject(0),
+  })
+
+  const outcome = await captureOutcome(runBuildValidation(options))
+
+  assert.equal(outcome.status, "rejected")
+  assert.ok(outcome.reason instanceof AggregateError)
+  assert.deepEqual(outcome.reason.errors, [undefined, 0])
+  assert.equal(outcome.reason.message, "Build validation and temporary cleanup both failed")
 })
 
 test("an in-repository temporary parent is rejected before directory creation", async () => {
