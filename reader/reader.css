@@ -896,6 +896,24 @@ body.rd-theme-gray .article-meta { color: #333; }
     width: 44px;
     height: 44px;
   }
+  .rs-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0 !important;
+  }
+  .rs-font-btn,
+  .rs-theme-btn,
+  .rs-reset-btn,
+  .rs-upload-font-btn,
+  .rs-delete-font-btn,
+  .rd-checkbox,
+  .rs-range {
+    min-height: 44px;
+  }
+  .rs-delete-font-btn { min-width: 44px; }
   .rd-pm-modal {
     padding: var(--reader-safe-top) var(--reader-safe-right) var(--reader-safe-bottom) var(--reader-safe-left);
   }

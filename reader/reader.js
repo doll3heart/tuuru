@@ -531,10 +531,10 @@ function openReaderSettingsPanel() {
     body += '<button class="rs-font-btn' + (rs.fontFamily === '"' + cf.name + '"' ? ' active' : '') + '" data-rs-font="' + esc('"' + cf.name + '"') + '">' + esc(cf.name) + '</button>'
   }
   body += '</div>'
-  body += '<div style="padding:4px 0;margin-top:6px"><button style="padding:5px 14px;font-size:.72rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;border-radius:4px" id="rsUploadFont">上传字体 (.ttf/.woff)</button></div>'
+  body += '<div style="padding:4px 0;margin-top:6px"><button class="rs-upload-font-btn" style="padding:5px 14px;font-size:.72rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;border-radius:4px" id="rsUploadFont">上传字体 (.ttf/.woff)</button></div>'
   body += '<div id="rsFontList" style="padding:4px 0">'
   for (var cfi2 = 0; cfi2 < customFonts.length; cfi2++) {
-    body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-rs-del-font="' + cfi2 + '">删除</button></div>'
+    body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button class="rs-delete-font-btn" style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-rs-del-font="' + cfi2 + '">删除</button></div>'
   }
   body += '</div>'
   body += '</div>'
@@ -563,7 +563,7 @@ function openReaderSettingsPanel() {
   ov.innerHTML = '<div style="background:#fff;max-width:520px;width:100%;max-height:75vh;border-radius:16px 16px 0 0;overflow-y:auto;box-shadow:0 -4px 24px rgba(0,0,0,.15);padding:0 0 env(safe-area-inset-bottom)">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #eee;position:sticky;top:0;background:#fff;z-index:1">' +
     '<span style="font-size:1rem;font-weight:600;color:#333">排版设置</span>' +
-    '<button style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="rsClose">×</button>' +
+    '<button class="rs-close-btn" aria-label="关闭排版设置" style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="rsClose">×</button>' +
     '</div>' +
     body +
     '</div>'
