@@ -57,17 +57,59 @@ test("the build plan uses existing configs and isolated output children", () => 
 
 test("successful validation builds sequentially and cleans once", async () => {
   const events = []
+  let markEditorStarted
+  let releaseEditor
+  const editorStarted = new Promise(resolve => { markEditorStarted = resolve })
+  const editorGate = new Promise(resolve => { releaseEditor = resolve })
+  let buildCalls = 0
   const options = dependencies({
-    build: async config => events.push(["build", config]),
+    build: async config => {
+      buildCalls += 1
+      events.push(["build", config])
+      if (buildCalls === 1) {
+        markEditorStarted()
+        await editorGate
+      }
+    },
     remove: async (target, removeOptions) => events.push(["remove", target, removeOptions]),
   })
   const plan = createBuildPlan(options)
+  const expectedEditorBuild = [
+    "build",
+    { configFile: plan[0].configFile, build: { outDir: plan[0].outDir, emptyOutDir: true } },
+  ]
+  const expectedReaderBuild = [
+    "build",
+    { configFile: plan[1].configFile, build: { outDir: plan[1].outDir, emptyOutDir: true } },
+  ]
+  const validation = runBuildValidation(options)
+  let pendingObservationError = null
 
-  await runBuildValidation(options)
+  try {
+    await editorStarted
+    const pendingEvents = [...events]
+    assert.deepEqual(pendingEvents, [expectedEditorBuild])
+  } catch (error) {
+    pendingObservationError = error
+  } finally {
+    releaseEditor()
+  }
+
+  const validationOutcome = await captureOutcome(validation)
+  if (pendingObservationError) {
+    if (validationOutcome.status === "rejected") {
+      throw new AggregateError(
+        [pendingObservationError, validationOutcome.reason],
+        "Pending-build observation and validation both failed",
+      )
+    }
+    throw pendingObservationError
+  }
+  if (validationOutcome.status === "rejected") throw validationOutcome.reason
 
   assert.deepEqual(events, [
-    ["build", { configFile: plan[0].configFile, build: { outDir: plan[0].outDir, emptyOutDir: true } }],
-    ["build", { configFile: plan[1].configFile, build: { outDir: plan[1].outDir, emptyOutDir: true } }],
+    expectedEditorBuild,
+    expectedReaderBuild,
     ["remove", options.tempRoot, { recursive: true, force: true }],
   ])
 })
