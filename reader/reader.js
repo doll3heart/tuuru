@@ -1206,6 +1206,7 @@ function openReaderApp(type, contactIndex) {
     wrapContactPanel('备忘录', h)
   } else if (type === 'gallery') {
     var primaryContact = activeContact && typeof activeContact === 'object' ? activeContact : null
+    var galleryStyle = readerGalleryStyleVariables()
     var photos = (Array.isArray(pd.photos) ? pd.photos : []).filter(function(p) {
       return p && typeof p === 'object' && (!primaryContact || p.contactId === primaryContact.id)
     })
@@ -1215,7 +1216,7 @@ function openReaderApp(type, contactIndex) {
     var albumIds = new Set(albums.map(function(a) { return a.id }))
 
     function renderGalleryPhotoGrid(items) {
-      var grid = '<div class="rd-gallery-grid">'
+      var grid = '<div class="rd-gallery-grid" style="' + galleryStyle + '">'
       if (items.length === 0) grid += '<div class="rd-gallery-empty">暂无照片</div>'
       items.forEach(function(p) {
         grid += '<div class="rd-gallery-photo">'
@@ -1912,6 +1913,7 @@ function getAppSettings(type) {
 // ---- Apply app settings to styles ----
 function appStyle(type) {
   var s = getAppSettings(type)
+  var gallerySettings = normalizedReaderGallerySettings(s)
   var shape = s.avatarShape || 'circle'
   var avRadius = shape === 'circle' ? '50%' : (shape === 'rounded' ? '8px' : '2px')
   return {
@@ -1935,9 +1937,9 @@ function appStyle(type) {
     textColor: s.textColor || '#333',
     fontSize: (s.fontSize || 12) + 'px',
     lineHeight: s.lineHeight || 1.6,
-    columns: s.columns || 3,
-    imageRadius: (s.imageRadius || 4) + 'px',
-    gap: (s.gap || 6) + 'px',
+    columns: gallerySettings.columns,
+    imageRadius: gallerySettings.imageRadius + 'px',
+    gap: gallerySettings.gap + 'px',
     urlColor: s.urlColor || '#999',
     entryRadius: (s.entryRadius || 0) + 'px',
     nameColor: s.nameColor || '#333',
@@ -1946,6 +1948,30 @@ function appStyle(type) {
     nameWeight: s.nameWeight || '500',
     cardStyle: s.cardStyle || 'plain'
   }
+}
+
+function boundedReaderSetting(value, fallback, min, max) {
+  if (typeof value !== 'number' && typeof value !== 'string') return fallback
+  if (typeof value === 'string' && value.trim() === '') return fallback
+  var number = Number(value)
+  if (!Number.isFinite(number) || number < min || number > max) return fallback
+  return number
+}
+
+function normalizedReaderGallerySettings(settings) {
+  var source = settings && typeof settings === 'object' ? settings : {}
+  var columns = Number(source.columns)
+  if (columns !== 2 && columns !== 3 && columns !== 4) columns = 3
+  return {
+    columns: columns,
+    imageRadius: boundedReaderSetting(source.imageRadius, 4, 0, 16),
+    gap: boundedReaderSetting(source.gap, 6, 2, 16)
+  }
+}
+
+function readerGalleryStyleVariables() {
+  var settings = normalizedReaderGallerySettings(getAppSettings('gallery'))
+  return '--rd-gallery-columns:' + settings.columns + ';--rd-gallery-radius:' + settings.imageRadius + 'px;--rd-gallery-gap:' + settings.gap + 'px'
 }
 
 // ---- Modal wrapper ----
@@ -2059,9 +2085,10 @@ function renderCuPreview(type, s) {
     h += '<div style="padding:6px 8px;background:' + memoBg + ';border:1px solid ' + memoBorder + ';border-radius:' + memoRad + ';font-size:' + (s.fontSize || 12) + 'px;color:' + (s.textColor || '#333') + ';line-height:' + (s.lineHeight || 1.6) + '">周三下午三点小组会议</div>'
     h += '</div></div>'
   } else if (type === 'gallery') {
-    var cols = s.columns || 3
-    var imgRad = (s.imageRadius || 4) + 'px'
-    var gap = (s.gap || 6) + 'px'
+    var gallerySettings = normalizedReaderGallerySettings(s)
+    var cols = gallerySettings.columns
+    var imgRad = gallerySettings.imageRadius + 'px'
+    var gap = gallerySettings.gap + 'px'
     var swatches = ['#6366f1', '#8b5cf6', '#d946ef', '#f43f5e', '#f59e0b', '#10b981']
     h += '<div class="cu-preview-gallery" style="border:1px solid #e0e0e0;overflow:hidden">'
     h += '<div style="background:#fff;padding:3px 8px;font-size:.6rem;color:#888;border-bottom:1px solid #eee;display:flex;align-items:center"><span style="flex:1">← 相册</span></div>'
@@ -2117,6 +2144,11 @@ function renderCuPreview(type, s) {
   return h
 }
 
+function assignFiniteSetting(settings, key, value) {
+  var number = Number(value)
+  if (Number.isFinite(number)) settings[key] = number
+}
+
 function readCurrentSettings(modal, type) {
   var s = getAppSettings(type)
   // Read sliders
@@ -2128,7 +2160,7 @@ function readCurrentSettings(modal, type) {
   }
   for (var id in sliderMap) {
     var el = modal.querySelector('#' + id)
-    if (el) s[sliderMap[id]] = parseFloat(el.value) || s[sliderMap[id]]
+    if (el) assignFiniteSetting(s, sliderMap[id], el.value)
   }
   // Read active color buttons
   var colorBtnMap = {
@@ -2171,6 +2203,12 @@ function openReaderAppSettings(type) {
   var title = '美化 - ' + (labels[type] || 'App')
 
   var s = getAppSettings(type)
+  if (type === 'gallery') {
+    var normalizedGallery = normalizedReaderGallerySettings(s)
+    s.columns = normalizedGallery.columns
+    s.imageRadius = normalizedGallery.imageRadius
+    s.gap = normalizedGallery.gap
+  }
   var body = ''
 
   if (type === 'messages') {
@@ -2319,7 +2357,8 @@ function openReaderAppSettings(type) {
     })
     // Sliders
     function readSlider(id, key) {
-      var el = modal.querySelector('#' + id); if (el) s[key] = parseFloat(el.value) || s[key]
+      var el = modal.querySelector('#' + id)
+      if (el) assignFiniteSetting(s, key, el.value)
     }
     readSlider('cuMsgAvSize', 'avatarSize')
     readSlider('cuSelfRadius', 'selfBubbleRadius')

@@ -47,6 +47,138 @@ function seedRecentWork(work) {
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 }
 
+function galleryPhoneWork(id) {
+  return {
+    schemaVersion: 1,
+    id,
+    type: "phone",
+    title: "Styled gallery",
+    placeholders: [],
+    scenes: [],
+    phoneData: {
+      contacts: [],
+      chats: [],
+      moments: [],
+      forumPosts: [],
+      forumNpcs: [],
+      memos: [],
+      photos: [{ id: "photo-a", albumId: null, caption: "Styled photo", imageUrl: "" }],
+      albums: [],
+      browserHistory: [],
+      shoppingItems: [],
+      skin: { readerId: "Reader", showDynamicIsland: false, showHomeIndicator: false },
+      apps: [{
+        id: "gallery-app",
+        type: "gallery",
+        name: "Gallery",
+        icon: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18"/></svg>',
+        color: "#f0f0f0",
+        desktopX: 0,
+        desktopY: 0,
+        enabled: true,
+      }],
+    },
+  }
+}
+
+test("reader gallery applies bounded runtime style settings", async t => {
+  installDom(t)
+  const work = galleryPhoneWork("reader-gallery-runtime-style")
+  seedRecentWork(work)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { gallery: { columns: 2, imageRadius: 0, gap: 14 } },
+  }))
+
+  await import(`../reader/reader.js?reader-gallery-runtime-style=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="gallery"]').click()
+
+  let grid = document.querySelector(".rd-gallery-grid")
+  assert.equal(grid.style.getPropertyValue("--rd-gallery-columns"), "2")
+  assert.equal(grid.style.getPropertyValue("--rd-gallery-radius"), "0px")
+  assert.equal(grid.style.getPropertyValue("--rd-gallery-gap"), "14px")
+
+  document.querySelector(".rd-back-btn").click()
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: {
+      gallery: {
+        columns: '4";outline:999px solid red" data-forged="yes',
+        imageRadius: null,
+        gap: -999,
+      },
+    },
+  }))
+  document.querySelector('[data-app-type="gallery"]').click()
+
+  grid = document.querySelector(".rd-gallery-grid")
+  assert.equal(grid.style.getPropertyValue("--rd-gallery-columns"), "3")
+  assert.equal(grid.style.getPropertyValue("--rd-gallery-radius"), "4px")
+  assert.equal(grid.style.getPropertyValue("--rd-gallery-gap"), "6px")
+  assert.deepEqual(
+    Array.from({ length: grid.style.length }, (_, index) => grid.style.item(index)).sort(),
+    ["--rd-gallery-columns", "--rd-gallery-gap", "--rd-gallery-radius"].sort(),
+  )
+  assert.equal(document.querySelector("[data-forged]"), null)
+})
+
+test("gallery styling preserves zero radius through preview and save", async t => {
+  installDom(t)
+
+  await import(`../reader/reader.js?reader-gallery-zero-style=${Date.now()}`)
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('.rd-app-icon[data-app="gallery"]').click()
+
+  const radius = document.getElementById("cuImgRadius")
+  radius.value = "0"
+  radius.dispatchEvent(new Event("input", { bubbles: true }))
+
+  const previewPhoto = document.querySelector('.cu-preview-gallery [style*="aspect-ratio"]')
+  assert.match(previewPhoto.getAttribute("style") ?? "", /border-radius:\s*0px/)
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(saved.appSettings.gallery.imageRadius, 0)
+})
+
+test("gallery settings normalize corrupted values before rendering controls", async t => {
+  installDom(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: {
+      gallery: {
+        columns: 9,
+        imageRadius: '0" data-forged="yes',
+        gap: -1,
+      },
+    },
+  }))
+
+  await import(`../reader/reader.js?reader-gallery-corrupt-style=${Date.now()}`)
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('.rd-app-icon[data-app="gallery"]').click()
+
+  assert.equal(document.querySelector("[data-forged]"), null)
+  assert.equal(document.getElementById("cuImgRadius").value, "4")
+  assert.equal(document.getElementById("cuGap").value, "6")
+  assert.equal(
+    document.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')?.dataset.cuGalleryCols,
+    "3",
+  )
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.deepEqual(saved.appSettings.gallery, { columns: 3, imageRadius: 4, gap: 6 })
+})
+
+test("reader gallery CSS consumes runtime style variables", () => {
+  const grid = ruleBodiesFor(".rd-gallery-grid")
+  const photo = ruleBodiesFor(".rd-gallery-photo")
+
+  assert.match(grid, /repeat\(var\(--rd-gallery-columns,\s*3\),\s*minmax\(0,\s*1fr\)\)/)
+  assert.match(grid, /gap\s*:\s*var\(--rd-gallery-gap,\s*6px\)/)
+  assert.match(photo, /border-radius\s*:\s*var\(--rd-gallery-radius,\s*4px\)/)
+})
+
 test("article gallery modules preserve album-only data in the reader overlay", async t => {
   installDom(t)
   const work = {
