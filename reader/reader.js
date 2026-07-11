@@ -1,6 +1,7 @@
 import { validateWorkForImport } from '../js/work-schema.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
+import { shouldUseMotion } from '../js/motion-preference.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 
@@ -775,7 +776,7 @@ function renderArticleReader() {
     if (sb) sb.onclick = function() { openReaderSettingsPanel() }
 
     // Typing effect
-    if (ac && rs.typingEffect) {
+    if (ac && shouldUseMotion(rs.typingEffect)) {
       var fullHTML = ac.innerHTML
       ac.innerHTML = ''
       var i = 0
