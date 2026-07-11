@@ -19,6 +19,7 @@ function dependencies(overrides = {}) {
   const paths = fixturePaths()
   return {
     ...paths,
+    canonicalize: async target => path.resolve(target),
     makeTempDir: async prefix => {
       assert.equal(prefix, path.join(paths.tempParent, "tuuru-build-"))
       return paths.tempRoot
@@ -111,16 +112,124 @@ test("build and cleanup failures remain visible together", async () => {
   assert.deepEqual(error.errors, [buildError, cleanupError])
 })
 
-test("unsafe temporary roots are rejected without recursive removal", async () => {
+test("an in-repository temporary parent is rejected before directory creation", async () => {
+  const paths = fixturePaths()
+  const tempParent = path.join(paths.repoRoot, "temporary-builds")
+  let makeTempDirCalls = 0
+  const options = dependencies({
+    tempParent,
+    makeTempDir: async () => {
+      makeTempDirCalls += 1
+      return path.join(tempParent, "tuuru-build-in-repo")
+    },
+  })
+
+  await assert.rejects(runBuildValidation(options), /outside the repository/)
+  assert.equal(makeTempDirCalls, 0)
+})
+
+test("a temporary parent canonically aliased into the repository is rejected before creation", async () => {
+  const paths = fixturePaths()
+  const canonicalInRepoParent = path.join(paths.repoRoot, "linked-temporary-builds")
+  let makeTempDirCalls = 0
+  const options = dependencies({
+    canonicalize: async target => (
+      path.resolve(target) === paths.tempParent
+        ? canonicalInRepoParent
+        : path.resolve(target)
+    ),
+    makeTempDir: async () => {
+      makeTempDirCalls += 1
+      return paths.tempRoot
+    },
+  })
+
+  await assert.rejects(runBuildValidation(options), /outside the repository/)
+  assert.equal(makeTempDirCalls, 0)
+})
+
+test("a temporary root without the required prefix is rejected without recursive removal", async () => {
   const paths = fixturePaths()
   let removeCalls = 0
   const options = dependencies({
-    makeTempDir: async () => paths.repoRoot,
+    makeTempDir: async () => path.join(paths.tempParent, "unprefixed-build"),
+    remove: async () => { removeCalls += 1 },
+  })
+
+  await assert.rejects(runBuildValidation(options), /unique temporary directory/)
+  assert.equal(removeCalls, 0)
+})
+
+test("a nested temporary root is rejected without recursive removal", async () => {
+  const paths = fixturePaths()
+  let removeCalls = 0
+  const options = dependencies({
+    makeTempDir: async () => path.join(paths.tempParent, "nested", "tuuru-build-fixture"),
+    remove: async () => { removeCalls += 1 },
+  })
+
+  await assert.rejects(runBuildValidation(options), /unique temporary directory/)
+  assert.equal(removeCalls, 0)
+})
+
+test("a temporary root outside its parent is rejected without recursive removal", async () => {
+  const paths = fixturePaths()
+  const canonicalOutsideRoot = path.join(path.dirname(paths.tempParent), "tuuru-build-outside")
+  let removeCalls = 0
+  const options = dependencies({
+    canonicalize: async target => (
+      path.resolve(target) === paths.tempRoot
+        ? canonicalOutsideRoot
+        : path.resolve(target)
+    ),
+    remove: async () => { removeCalls += 1 },
+  })
+
+  await assert.rejects(runBuildValidation(options), /unique temporary directory/)
+  assert.equal(removeCalls, 0)
+})
+
+test("a temporary root containing the repository is rejected without recursive removal", async () => {
+  const tempParent = path.resolve("..", "build-verify-ancestor-parent")
+  const tempRoot = path.join(tempParent, "tuuru-build-ancestor")
+  const repoRoot = path.join(tempRoot, "repository")
+  let removeCalls = 0
+  const options = dependencies({
+    repoRoot,
+    tempParent,
+    tempRoot,
+    makeTempDir: async () => tempRoot,
     remove: async () => { removeCalls += 1 },
   })
 
   await assert.rejects(runBuildValidation(options), /outside the repository/)
   assert.equal(removeCalls, 0)
+})
+
+test("only the validated canonical temporary root is built and removed", async () => {
+  const paths = fixturePaths()
+  const returnedRoot = path.join(paths.tempParent, "tuuru-build-returned-alias")
+  const canonicalRoot = path.join(paths.tempParent, "tuuru-build-canonical")
+  const events = []
+  const options = dependencies({
+    makeTempDir: async () => returnedRoot,
+    canonicalize: async target => (
+      path.resolve(target) === returnedRoot
+        ? canonicalRoot
+        : path.resolve(target)
+    ),
+    build: async config => events.push(["build", config]),
+    remove: async (target, removeOptions) => events.push(["remove", target, removeOptions]),
+  })
+  const plan = createBuildPlan({ ...paths, tempRoot: canonicalRoot })
+
+  await runBuildValidation(options)
+
+  assert.deepEqual(events, [
+    ["build", { configFile: plan[0].configFile, build: { outDir: plan[0].outDir, emptyOutDir: true } }],
+    ["build", { configFile: plan[1].configFile, build: { outDir: plan[1].outDir, emptyOutDir: true } }],
+    ["remove", canonicalRoot, { recursive: true, force: true }],
+  ])
 })
 
 test("package exposes clean verification without changing release commands", async () => {

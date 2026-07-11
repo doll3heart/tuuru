@@ -1,5 +1,5 @@
 import { build as viteBuild } from "vite"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -20,17 +20,29 @@ function assertSafeTempRoot({ repoRoot, tempParent, tempRoot }) {
   const resolvedParent = path.resolve(tempParent)
   const resolvedRoot = path.resolve(tempRoot)
   const relative = path.relative(resolvedParent, resolvedRoot)
-  const isChild = Boolean(relative) && (
+  const isDirectChild = Boolean(relative) && (
     relative !== ".." &&
     !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
+    !path.isAbsolute(relative) &&
+    path.dirname(relative) === "."
   )
 
-  if (!isChild || !path.basename(resolvedRoot).startsWith(TEMP_PREFIX) || isWithin(repoRoot, resolvedRoot)) {
+  const overlapsRepository = (
+    isWithin(repoRoot, resolvedRoot) ||
+    isWithin(resolvedRoot, repoRoot)
+  )
+
+  if (!isDirectChild || !path.basename(resolvedRoot).startsWith(TEMP_PREFIX) || overlapsRepository) {
     throw new Error("Build verification output must stay in a unique temporary directory outside the repository")
   }
 
   return resolvedRoot
+}
+
+function assertSafeTempParent({ repoRoot, tempParent }) {
+  if (isWithin(repoRoot, tempParent)) {
+    throw new Error("Build verification output must stay outside the repository")
+  }
 }
 
 export function createBuildPlan({ repoRoot, tempParent, tempRoot }) {
@@ -61,10 +73,22 @@ export async function runBuildValidation({
   makeTempDir = mkdtemp,
   build = viteBuild,
   remove = rm,
+  canonicalize = realpath,
 } = {}) {
-  const resolvedTempParent = path.resolve(tempParent)
-  const tempRoot = await makeTempDir(path.join(resolvedTempParent, TEMP_PREFIX))
-  const plan = createBuildPlan({ repoRoot, tempParent: resolvedTempParent, tempRoot })
+  const canonicalRepoRoot = path.resolve(await canonicalize(path.resolve(repoRoot)))
+  const canonicalTempParent = path.resolve(await canonicalize(path.resolve(tempParent)))
+  assertSafeTempParent({
+    repoRoot: canonicalRepoRoot,
+    tempParent: canonicalTempParent,
+  })
+
+  const createdTempRoot = await makeTempDir(path.join(canonicalTempParent, TEMP_PREFIX))
+  const canonicalTempRoot = path.resolve(await canonicalize(path.resolve(createdTempRoot)))
+  const plan = createBuildPlan({
+    repoRoot: canonicalRepoRoot,
+    tempParent: canonicalTempParent,
+    tempRoot: canonicalTempRoot,
+  })
   let buildError
   let cleanupError
 
@@ -83,7 +107,7 @@ export async function runBuildValidation({
   }
 
   try {
-    await remove(tempRoot, { recursive: true, force: true })
+    await remove(canonicalTempRoot, { recursive: true, force: true })
   } catch (error) {
     cleanupError = error
   }
