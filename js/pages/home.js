@@ -202,6 +202,11 @@ window.expPNG = function(id){
       input.click()
     }
     var exportButton = ov.querySelector('#pngExportBtn')
+    function handleExportError(error) {
+      exportButton.textContent = '导出 PNG'
+      exportButton.disabled = false
+      alert('导出失败：' + (error instanceof Error ? error.message : '未知错误'))
+    }
     exportButton.onclick = function() {
       exportButton.textContent = '编码中...'
       exportButton.disabled = true
@@ -213,11 +218,9 @@ window.expPNG = function(id){
           a.click()
           showToast('PNG 已导出', 'success')
           ov.remove()
-        })
+        }, handleExportError)
       } catch(e) {
-        exportButton.textContent = '导出 PNG'
-        exportButton.disabled = false
-        alert('导出失败：' + (e instanceof Error ? e.message : '未知错误'))
+        handleExportError(e)
       }
     }
   } catch(e) {

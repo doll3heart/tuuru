@@ -90,3 +90,92 @@ test("PNG encoding rejects over-limit text before creating a canvas", t => {
   )
   assert.equal(canvasCreations, 0)
 })
+
+test("PNG cover encoding reports asynchronous canvas failures once", async t => {
+  const OriginalDocument = globalThis.document
+  const OriginalImage = globalThis.Image
+  const asyncThrows = []
+  const failures = []
+  let successes = 0
+  const context = {
+    fillRect() {},
+    drawImage() { throw new Error("cover draw failed") },
+    createLinearGradient() { return { addColorStop() {} } },
+    fillText() {},
+    getImageData() { throw new Error("pixel read failed") },
+  }
+  globalThis.document = {
+    createElement() {
+      return {
+        getContext() { return context },
+        toDataURL() { return "data:image/png;base64,test" },
+      }
+    },
+  }
+  globalThis.Image = class {
+    width = 100
+    height = 100
+    set src(value) {
+      this.currentSrc = value
+      queueMicrotask(() => {
+        for (const handler of [this.onload, this.onerror, this.onload]) {
+          try { handler?.() } catch (error) { asyncThrows.push(error) }
+        }
+      })
+    }
+  }
+  t.after(() => {
+    globalThis.document = OriginalDocument
+    globalThis.Image = OriginalImage
+  })
+
+  encodeSteganoPNG(
+    '{"title":"cover"}',
+    "data:image/png;base64,cover",
+    () => { successes += 1 },
+    error => failures.push(error),
+  )
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  assert.equal(successes, 0)
+  assert.equal(failures.length, 1)
+  assert.match(failures[0].message, /cover draw failed/)
+  assert.deepEqual(asyncThrows, [])
+})
+
+test("PNG encoding still completes once with the default cover", t => {
+  const OriginalDocument = globalThis.document
+  let encodedPixels = null
+  let successes = 0
+  let failures = 0
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext() {
+      return {
+        createLinearGradient() { return { addColorStop() {} } },
+        fillRect() {},
+        fillText() {},
+        getImageData: () => ({ data: new Uint8ClampedArray(canvas.width * canvas.height * 4) }),
+        putImageData(imageData) { encodedPixels = imageData.data },
+      }
+    },
+    toDataURL() { return "data:image/png;base64,encoded" },
+  }
+  globalThis.document = { createElement: () => canvas }
+  t.after(() => { globalThis.document = OriginalDocument })
+
+  encodeSteganoPNG(
+    '{"title":"default"}',
+    "",
+    dataUrl => {
+      successes += 1
+      assert.equal(dataUrl, "data:image/png;base64,encoded")
+    },
+    () => { failures += 1 },
+  )
+
+  assert.equal(successes, 1)
+  assert.equal(failures, 0)
+  assert.equal(new TextDecoder().decode(readSteganoPayload(encodedPixels)), '{"title":"default"}')
+})

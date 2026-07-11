@@ -296,10 +296,11 @@ export function exportWorkAsJSON(wid) {
   return JSON.stringify(copy, null, 2)
 }
 
-export function encodeSteganoPNG(jsonStr, coverImageUrl, callback) {
+export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback) {
   // jsonStr: JSON string to hide
   // coverImageUrl: optional cover image data URL
   // callback: function(dataUrl) called with the result PNG data URL
+  // errorCallback: optional function(error) for asynchronous encoding failures
   
   var encoder = new TextEncoder()
   var data = encoder.encode(jsonStr)
@@ -315,8 +316,21 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback) {
   canvas.width = size
   canvas.height = size
   var ctx = canvas.getContext('2d')
+  var settled = false
+
+  function reportError(error) {
+    if (settled) return
+    settled = true
+    var normalizedError = error instanceof Error ? error : new Error('PNG 编码失败')
+    if (typeof errorCallback === 'function') {
+      errorCallback(normalizedError)
+      return
+    }
+    throw normalizedError
+  }
   
   function encodeOnCanvas() {
+    if (settled) return
     // Get pixel data
     var imageData = ctx.getImageData(0, 0, size, size)
     var pixels = imageData.data
@@ -326,31 +340,51 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback) {
     
     ctx.putImageData(imageData, 0, 0)
     callback(canvas.toDataURL('image/png'))
+    settled = true
+  }
+
+  function drawAndEncode(drawBackground) {
+    if (settled) return
+    try {
+      drawBackground()
+      encodeOnCanvas()
+    } catch (error) {
+      reportError(error)
+    }
   }
   
   if (coverImageUrl) {
-    var img = new Image()
+    var img
+    try {
+      img = new Image()
+    } catch (error) {
+      reportError(error)
+      return
+    }
     img.onload = function() {
-      // Draw cover image scaled to fill
-      var scale = Math.max(size / img.width, size / img.height)
-      var sw = img.width * scale
-      var sh = img.height * scale
-      var sx = (size - sw) / 2
-      var sy = (size - sh) / 2
-      ctx.fillStyle = '#1a1a2e'
-      ctx.fillRect(0, 0, size, size)
-      ctx.drawImage(img, sx, sy, sw, sh)
-      encodeOnCanvas()
+      drawAndEncode(function() {
+        // Draw cover image scaled to fill
+        var scale = Math.max(size / img.width, size / img.height)
+        var sw = img.width * scale
+        var sh = img.height * scale
+        var sx = (size - sw) / 2
+        var sy = (size - sh) / 2
+        ctx.fillStyle = '#1a1a2e'
+        ctx.fillRect(0, 0, size, size)
+        ctx.drawImage(img, sx, sy, sw, sh)
+      })
     }
     img.onerror = function() {
       // Fallback to gradient
-      drawDefaultBg(ctx, size)
-      encodeOnCanvas()
+      drawAndEncode(function() { drawDefaultBg(ctx, size) })
     }
-    img.src = coverImageUrl
+    try {
+      img.src = coverImageUrl
+    } catch (error) {
+      reportError(error)
+    }
   } else {
-    drawDefaultBg(ctx, size)
-    encodeOnCanvas()
+    drawAndEncode(function() { drawDefaultBg(ctx, size) })
   }
 }
 
