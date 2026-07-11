@@ -2,9 +2,11 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   MAX_STEGANO_PAYLOAD_BYTES,
+  assertSteganoPayloadSize,
   readSteganoPayload,
   writeSteganoPayload,
 } from "../js/stegano.js"
+import { encodeSteganoPNG } from "../js/data.js"
 
 function rgbaPixelsFor(rgbByteCapacity, alpha = 255) {
   const pixels = new Uint8ClampedArray(Math.ceil(rgbByteCapacity / 3) * 4)
@@ -56,4 +58,35 @@ test("stegano payloads reject empty and over-limit length headers", () => {
   const oversizedPixels = rgbaPixelsFor(MAX_STEGANO_PAYLOAD_BYTES + 5)
   writeLengthHeader(oversizedPixels, MAX_STEGANO_PAYLOAD_BYTES + 1)
   assert.equal(readSteganoPayload(oversizedPixels), null)
+})
+
+test("stegano writers reject payloads that no decoder can read", () => {
+  const pixels = rgbaPixelsFor(6)
+  assert.equal(assertSteganoPayloadSize(MAX_STEGANO_PAYLOAD_BYTES), MAX_STEGANO_PAYLOAD_BYTES)
+  assert.throws(
+    () => writeSteganoPayload(pixels, new Uint8Array()),
+    /empty/i,
+  )
+  assert.throws(
+    () => writeSteganoPayload(pixels, { length: MAX_STEGANO_PAYLOAD_BYTES + 1 }),
+    /10 MB.*精简/i,
+  )
+})
+
+test("PNG encoding rejects over-limit text before creating a canvas", t => {
+  const OriginalDocument = globalThis.document
+  let canvasCreations = 0
+  globalThis.document = {
+    createElement() {
+      canvasCreations += 1
+      throw new Error("canvas must not be created")
+    },
+  }
+  t.after(() => { globalThis.document = OriginalDocument })
+
+  assert.throws(
+    () => encodeSteganoPNG("x".repeat(MAX_STEGANO_PAYLOAD_BYTES + 1), "", () => {}),
+    /10 MB.*精简/i,
+  )
+  assert.equal(canvasCreations, 0)
 })

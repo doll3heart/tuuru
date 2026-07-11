@@ -9,11 +9,19 @@ function rgbByteCapacity(pixels) {
   return Math.floor(pixels.length / 4) * 3
 }
 
-export function writeSteganoPayload(pixels, payload) {
-  var dataLength = payload && payload.length
+export function assertSteganoPayloadSize(dataLength) {
   if (!Number.isSafeInteger(dataLength) || dataLength < 0 || dataLength > 0xffffffff) {
     throw new TypeError('Invalid stegano payload')
   }
+  if (dataLength === 0) throw new RangeError('Stegano payload is empty')
+  if (dataLength > MAX_STEGANO_PAYLOAD_BYTES) {
+    throw new RangeError('PNG 隐写数据超过 10 MB 上限，请精简作品内容后重试')
+  }
+  return dataLength
+}
+
+export function writeSteganoPayload(pixels, payload) {
+  var dataLength = assertSteganoPayloadSize(payload && payload.length)
 
   var capacity = rgbByteCapacity(pixels)
   if (dataLength + 4 > capacity) throw new RangeError('Stegano payload exceeds pixel capacity')

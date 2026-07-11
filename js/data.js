@@ -2,7 +2,7 @@
 import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
 import { CURRENT_WORK_SCHEMA_VERSION } from "./work-schema.js"
 import { substitutePlaceholders } from "./placeholders.js"
-import { readSteganoPayload, writeSteganoPayload } from "./stegano.js"
+import { assertSteganoPayloadSize, readSteganoPayload, writeSteganoPayload } from "./stegano.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -303,6 +303,7 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback) {
   
   var encoder = new TextEncoder()
   var data = encoder.encode(jsonStr)
+  assertSteganoPayloadSize(data.length)
   var totalBytes = 4 + data.length
   var pixelCount = Math.ceil(totalBytes / 3)
   var size = Math.max(240, Math.ceil(Math.sqrt(pixelCount)))

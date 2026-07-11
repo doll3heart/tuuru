@@ -201,17 +201,24 @@ window.expPNG = function(id){
       }
       input.click()
     }
-    ov.querySelector('#pngExportBtn').onclick = function() {
-      ov.querySelector('#pngExportBtn').textContent = '编码中...'
-      ov.querySelector('#pngExportBtn').disabled = true
-      encodeSteganoPNG(json, coverUrl, function(dataUrl) {
-        var a = document.createElement('a')
-        a.href = dataUrl
-        a.download = title + '.png'
-        a.click()
-        showToast('PNG 已导出', 'success')
-        ov.remove()
-      })
+    var exportButton = ov.querySelector('#pngExportBtn')
+    exportButton.onclick = function() {
+      exportButton.textContent = '编码中...'
+      exportButton.disabled = true
+      try {
+        encodeSteganoPNG(json, coverUrl, function(dataUrl) {
+          var a = document.createElement('a')
+          a.href = dataUrl
+          a.download = title + '.png'
+          a.click()
+          showToast('PNG 已导出', 'success')
+          ov.remove()
+        })
+      } catch(e) {
+        exportButton.textContent = '导出 PNG'
+        exportButton.disabled = false
+        alert('导出失败：' + (e instanceof Error ? e.message : '未知错误'))
+      }
     }
   } catch(e) {
     alert('导出失败：' + e.message)
