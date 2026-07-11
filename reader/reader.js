@@ -1078,7 +1078,7 @@ function bindOverlayApps(wrapper) {
 }
 
 // ---- Reader App Panels ----
-function openReaderApp(type) {
+function openReaderApp(type, contactIndex) {
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
@@ -1086,6 +1086,19 @@ function openReaderApp(type) {
   var contacts = pd.contacts || []
   var w = _work
   var rc = getPhoneCustom()
+  var requestedContactIndex = Number(contactIndex)
+  var activeContactIndex = -1
+  if (contacts.length > 0) {
+    var hasRequestedContact = Number.isInteger(requestedContactIndex)
+      && requestedContactIndex >= 0
+      && requestedContactIndex < contacts.length
+    activeContactIndex = hasRequestedContact ? requestedContactIndex : 0
+  }
+  var activeContact = activeContactIndex >= 0 ? contacts[activeContactIndex] : null
+
+  function belongsToActiveContact(item) {
+    return !activeContact || item.contactId === activeContact.id
+  }
 
   function backToDesktop() {
     if (inOverlay && _work._overlayWrapper) {
@@ -1112,6 +1125,30 @@ function openReaderApp(type) {
     if (backBtn) {
       backBtn.onclick = backToDesktop
       backBtn.focus()
+    }
+  }
+
+  function contactContextHtml() {
+    if (contacts.length < 2) return ''
+    var h = '<div class="rd-contact-context">'
+    h += '<label for="rdContactSelect">联系人</label>'
+    h += '<select class="rd-contact-select" id="rdContactSelect" aria-label="内容联系人">'
+    contacts.forEach(function(contact, index) {
+      h += '<option value="' + index + '"' + (index === activeContactIndex ? ' selected' : '') + '>' + esc(contact.name || '未命名') + '</option>'
+    })
+    h += '</select></div>'
+    return h
+  }
+
+  function wrapContactPanel(title, bodyHtml) {
+    wrapPanel(title, contactContextHtml() + bodyHtml)
+    var select = phoneFrame.querySelector('.rd-contact-select')
+    if (!select) return
+    select.onchange = function() {
+      var nextIndex = Number(select.value)
+      if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= contacts.length) return
+      openReaderApp(type, nextIndex)
+      focusReaderControl(phoneFrame, '.rd-contact-select')
     }
   }
 
@@ -1160,15 +1197,15 @@ function openReaderApp(type) {
       }
     })
   } else if (type === 'memo') {
-    var memos = (pd.memos || []).filter(function(m) { return contacts.length > 0 ? m.contactId === contacts[0].id : true })
+    var memos = (pd.memos || []).filter(belongsToActiveContact)
     var h = ''
     if (memos.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无备忘</div>'
     memos.forEach(function(m) {
       h += '<div style="padding:10px 12px;margin-bottom:8px;background:#fff;border:1px solid #eee;font-size:.8rem;line-height:1.6">' + (m.content || '') + '</div>'
     })
-    wrapPanel('备忘录', h)
+    wrapContactPanel('备忘录', h)
   } else if (type === 'gallery') {
-    var primaryContact = contacts.length > 0 && contacts[0] && typeof contacts[0] === 'object' ? contacts[0] : null
+    var primaryContact = activeContact && typeof activeContact === 'object' ? activeContact : null
     var photos = (Array.isArray(pd.photos) ? pd.photos : []).filter(function(p) {
       return p && typeof p === 'object' && (!primaryContact || p.contactId === primaryContact.id)
     })
@@ -1199,7 +1236,7 @@ function openReaderApp(type) {
       var albumPhotos = photos.filter(function(p) { return p.albumId === album.id })
       var body = '<button type="button" class="rd-gallery-album-back" aria-label="返回相册列表">← 返回相册</button>'
       body += renderGalleryPhotoGrid(albumPhotos)
-      wrapPanel(album.name || '相册', body)
+      wrapContactPanel(album.name || '相册', body)
       var albumBack = phoneFrame.querySelector('.rd-gallery-album-back')
       if (albumBack) {
         albumBack.onclick = function() { renderGalleryMain(albumIndex) }
@@ -1225,7 +1262,7 @@ function openReaderApp(type) {
       }
       var ungrouped = photos.filter(function(p) { return !p.albumId || !albumIds.has(p.albumId) })
       body += renderGalleryPhotoGrid(ungrouped)
-      wrapPanel('相册', body)
+      wrapContactPanel('相册', body)
 
       var albumButtons = phoneFrame.querySelectorAll('.rd-album[data-album-index]')
       albumButtons.forEach(function(button) {
@@ -1241,7 +1278,7 @@ function openReaderApp(type) {
 
     renderGalleryMain()
   } else if (type === 'browser') {
-    var history = (pd.browserHistory || []).filter(function(h) { return contacts.length > 0 ? h.contactId === contacts[0].id : true })
+    var history = (pd.browserHistory || []).filter(belongsToActiveContact)
     var h = '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:#fff;border:1px solid #ddd"><span style="color:#999">🔍</span><span style="font-size:.78rem;color:#999">搜索或输入网址</span></div>'
     if (history.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无记录</div>'
     history.forEach(function(it) {
@@ -1251,9 +1288,9 @@ function openReaderApp(type) {
       h += '<span style="font-size:.65rem;color:#999">' + esc((it.time || '').replace(/\s.*$/, '')) + '</span>'
       h += '</div>'
     })
-    wrapPanel('浏览记录', h)
+    wrapContactPanel('浏览记录', h)
   } else if (type === 'shopping') {
-    var items = (pd.shoppingItems || []).filter(function(s) { return contacts.length > 0 ? s.contactId === contacts[0].id : true })
+    var items = (pd.shoppingItems || []).filter(belongsToActiveContact)
     var cartItems = items.filter(function(s) { return s.status !== 'order' })
     var orderItems = items.filter(function(s) { return s.status === 'order' })
     var h = '<div class="rd-shop-tabs" role="tablist" aria-label="购物内容">'
@@ -1275,7 +1312,7 @@ function openReaderApp(type) {
     }
     h += '<div class="rd-shop-panel" id="rdShopCart" role="tabpanel" aria-labelledby="rdShopCartTab">' + shopList(cartItems) + '</div>'
     h += '<div class="rd-shop-panel" id="rdShopOrder" role="tabpanel" aria-labelledby="rdShopOrderTab" style="display:none" hidden>' + shopList(orderItems) + '</div>'
-    wrapPanel('购物清单', h)
+    wrapContactPanel('购物清单', h)
 
     var tabs = phoneFrame.querySelectorAll('.rd-shop-tab')
     function activateShopTab(tab, moveFocus) {
