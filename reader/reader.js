@@ -1,6 +1,6 @@
-import { validateWorkForImport } from '../js/work-schema.js'
+import { prepareImportedWork } from '../js/work-import.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
-import { escapeHtmlAttribute, sanitizeImportedWork } from '../js/sanitize.js'
+import { escapeHtmlAttribute } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
@@ -427,12 +427,12 @@ function decodeSteganoFromDataUrl(dataUrl) {
 }
 
 function importWork(work) {
-  var result = validateWorkForImport(work)
+  var result = prepareImportedWork(work)
   if (!result.ok) {
     alert(result.message)
     return
   }
-  loadWork(sanitizeImportedWork(result.work))
+  loadWork(result.work)
 }
 
 // ====== Landing Page (work info + password + placeholders) ======
