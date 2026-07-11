@@ -82,11 +82,19 @@ test("successful validation builds sequentially and cleans once", async () => {
     "build",
     { configFile: plan[1].configFile, build: { outDir: plan[1].outDir, emptyOutDir: true } },
   ]
-  const validation = runBuildValidation(options)
+  const capturedValidationOutcome = captureOutcome(runBuildValidation(options))
   let pendingObservationError = null
 
   try {
-    await editorStarted
+    const firstLifecycleEvent = await Promise.race([
+      editorStarted.then(() => ({ type: "editor-started" })),
+      capturedValidationOutcome.then(outcome => ({ type: "validation-settled", outcome })),
+    ])
+    if (firstLifecycleEvent.type === "validation-settled") {
+      throw new Error(
+        `Build validation ${firstLifecycleEvent.outcome.status} before the editor build started`,
+      )
+    }
     const pendingEvents = [...events]
     assert.deepEqual(pendingEvents, [expectedEditorBuild])
   } catch (error) {
@@ -95,7 +103,7 @@ test("successful validation builds sequentially and cleans once", async () => {
     releaseEditor()
   }
 
-  const validationOutcome = await captureOutcome(validation)
+  const validationOutcome = await capturedValidationOutcome
   if (pendingObservationError) {
     if (validationOutcome.status === "rejected") {
       throw new AggregateError(
