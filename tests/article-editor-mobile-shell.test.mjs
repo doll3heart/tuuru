@@ -355,6 +355,36 @@ test("the bounded editor header keeps title and scene controls usable in one row
   )
 })
 
+test("scene selection persists on change without a click double-write", async () => {
+  const work = article("scene-change-work", [{ id: "scene-change-node" }])
+  work.scenes = [{ id: "scene-a", name: "Scene A" }]
+  seed(work)
+  const root = await render(work.id)
+  const scene = root.querySelector('.editor-header [data-a="ss"]')
+  const storagePrototype = Object.getPrototypeOf(localStorage)
+  const originalSetItem = storagePrototype.setItem
+  let databaseWrites = 0
+  storagePrototype.setItem = function(key, value) {
+    if (key === "tuuru_works") databaseWrites += 1
+    return originalSetItem.call(this, key, value)
+  }
+
+  try {
+    scene.value = "scene-a"
+    scene.dispatchEvent(new dom.window.Event("change", { bubbles: true }))
+
+    const saved = JSON.parse(localStorage.getItem("tuuru_works"))
+    const savedNode = saved.works[0].nodes.find(item => item.id === "scene-change-node")
+    assert.equal(savedNode.scene, "scene-a")
+    assert.equal(databaseWrites, 1)
+
+    scene.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }))
+    assert.equal(databaseWrites, 1)
+  } finally {
+    storagePrototype.setItem = originalSetItem
+  }
+})
+
 test("article action rails expose named native controls and an unclipped margin panel", async () => {
   const work = article("action-rail-work", [{ id: "action-rail-node" }])
   seed(work)

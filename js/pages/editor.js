@@ -451,10 +451,6 @@ function handleClick(e) {
     }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
     return
   }
-  if (a === "ss") {
-    updateNode(w, n, {scene: b.value})
-    return
-  }
   if (a === "rn") {
     updateNode(w, n, {title: b.value})
     return
@@ -568,19 +564,23 @@ function handleChange(e) {
   if (!b) return
   var outlineActionTrigger = _outlineActionMenu.closeForAction(b)
   var a = b.dataset.a
+  var w = b.dataset.w || _workId
+  var n = b.dataset.n || _nodeId
 
   // Node title rename (from editor header input)
   if (a === "rn") {
-    var w = b.dataset.w || _workId
-    var n = b.dataset.n || _nodeId
     updateNode(w, n, {title: b.value})
+    return
+  }
+
+  // Native select controls reliably commit through change on touch and keyboard.
+  if (a === "ss") {
+    updateNode(w, n, {scene: b.value})
     return
   }
 
   // Chapter move
   if (a === "mc") {
-    var w = b.dataset.w || _workId
-    var n = b.dataset.n || _nodeId
     var targetCid = b.value
     if (targetCid) {
       var _w3 = getWork(w)
