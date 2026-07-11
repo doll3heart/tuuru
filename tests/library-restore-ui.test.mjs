@@ -60,7 +60,8 @@ test("restore remains gated by recovery download and exact confirmation", async 
 
   const restore = env.dom.window.document.querySelector("#libraryRestoreCommit")
   const phrase = env.dom.window.document.querySelector("#libraryRestorePhrase")
-  assert.match(env.dom.window.document.body.textContent, /当前 1 个作品 \/ 备份 1 个作品/)
+  assert.match(env.dom.window.document.body.textContent, /当前创作库：作品 1；联系人 0；分组 0/)
+  assert.match(env.dom.window.document.body.textContent, /备份：作品 1；联系人 0；分组 0/)
   assert.equal(restore.disabled, true)
   phrase.value = "RESTORE"
   phrase.dispatchEvent(new env.dom.window.Event("input"))
@@ -74,6 +75,40 @@ test("restore remains gated by recovery download and exact confirmation", async 
   assert.equal(env.events.filter(event => event[0] === "download").length, 1)
   assert.equal(env.events.filter(event => event[0] === "reload").length, 1)
   assert.equal(JSON.parse(storage.value).works[0].id, "new")
+})
+
+test("restore preview shows the full current-versus-backup replacement impact and version", async () => {
+  const env = environment()
+  const storage = {
+    value: JSON.stringify({
+      works: [{ id: "kept-count" }],
+      contacts: Array.from({ length: 100 }, (_, index) => ({ id: `contact-${index}` })),
+      groups: Array.from({ length: 10 }, (_, index) => ({ id: `group-${index}` })),
+    }),
+    getItem() { return this.value },
+    setItem(_key, value) { this.value = value },
+  }
+  const controller = startLocalLibraryRestore({
+    storage,
+    documentObject: env.dom.window.document,
+    windowObject: env.dom.window,
+    modal: env.modal,
+    download: env.download,
+    notify: env.notify,
+    reload: env.reload,
+    now: () => new Date("2026-07-11T01:00:00.000Z"),
+  })
+
+  await controller.handleFile(backupFile(backupRaw({
+    works: [{ id: "same-work-count" }],
+    contacts: [],
+    groups: [],
+  })))
+
+  const preview = env.dom.window.document.querySelector(".library-restore-summary").textContent
+  assert.match(preview, /当前创作库：作品 1；联系人 100；分组 10/)
+  assert.match(preview, /备份：作品 1；联系人 0；分组 0/)
+  assert.match(preview, /格式版本：v1/)
 })
 
 test("invalid files never open the destructive confirmation", async () => {
@@ -391,4 +426,44 @@ test("homepage uses the guarded restore controller and accurate download copy", 
   assert.match(homeSource, />检查 \/ 恢复备份<\/button>/)
   assert.match(homeSource, /备份下载已发起；文件包含私密内容，请妥善保管/)
   assert.doesNotMatch(homeSource, /inspectLibraryBackup|showBackupPreview|readLocalDatabaseBackupFile/)
+})
+
+test("homepage restore handler opens the guarded controller file picker at runtime", async t => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="app"></div><button id="backupInspectBtn">restore</button></body></html>', {
+    url: "https://tuuru.local/",
+  })
+  const originalWindow = globalThis.window
+  const originalDocument = globalThis.document
+  const originalLocalStorage = globalThis.localStorage
+  const originalLocation = globalThis.location
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.localStorage = dom.window.localStorage
+  globalThis.location = dom.window.location
+  t.after(() => {
+    dom.window.close()
+    globalThis.window = originalWindow
+    globalThis.document = originalDocument
+    globalThis.localStorage = originalLocalStorage
+    globalThis.location = originalLocation
+  })
+
+  const createElement = dom.window.document.createElement.bind(dom.window.document)
+  let picker
+  let pickerClicks = 0
+  dom.window.document.createElement = function(tagName, options) {
+    const element = createElement(tagName, options)
+    if (String(tagName).toLowerCase() === "input") {
+      picker = element
+      element.click = () => { pickerClicks += 1 }
+    }
+    return element
+  }
+
+  await import(`../js/pages/home.js?restore-runtime=${Date.now()}`)
+  dom.window.restoreLibraryBackup()
+
+  assert.equal(picker?.type, "file")
+  assert.equal(picker?.accept, ".json,application/json")
+  assert.equal(pickerClicks, 1)
 })

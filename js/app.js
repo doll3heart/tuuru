@@ -3,6 +3,7 @@ import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork } from 
 import { discardCorruptLocalDatabase, inspectLocalDatabase } from "./storage.js"
 import { pickReadableColor } from "./color-contrast.js"
 import { startLocalLibraryRestore } from "./library-restore-ui.js"
+import { downloadBlob } from "./download.js"
 
 // ==================== Render helpers ====================
 export function h(tag, attrs={}, ...children){
@@ -179,18 +180,11 @@ import { renderReader } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 
 // ==================== Init ====================
-function downloadRecoveryData(raw) {
-  const blob = new Blob([raw], { type: "text/plain;charset=utf-8" })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement("a")
-  link.href = url
-  link.download = `tuuru-recovery-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
-}
-
 export function renderStorageRecovery(container, status, {
   startRestore = startLocalLibraryRestore,
+  download = downloadBlob,
+  notify = showToast,
+  now = () => new Date(),
 } = {}) {
   empty(container)
 
@@ -216,7 +210,18 @@ export function renderStorageRecovery(container, status, {
   if (status.raw !== null) {
     actions.append(h("button", {
       className: "btn btn-primary",
-      onClick: () => downloadRecoveryData(status.raw),
+      onClick: () => {
+        try {
+          const timestamp = now().toISOString().replace(/[:.]/g, "-")
+          const blob = new Blob([status.raw], { type: "text/plain;charset=utf-8" })
+          download(blob, `tuuru-recovery-${timestamp}.txt`)
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : "无法发起下载"
+          notify(`原始数据下载失败：${detail}`, "error")
+          return
+        }
+        notify("原始数据下载已发起；请确认文件可用后再恢复或重置。", "success")
+      },
     }, "下载原始数据"))
   }
 
@@ -226,7 +231,7 @@ export function renderStorageRecovery(container, status, {
       onClick: event => {
         const controller = startRestore({
           modal,
-          notify: showToast,
+          notify,
           reload: () => location.reload(),
         })
         controller.pickFile(event.currentTarget)
@@ -250,7 +255,7 @@ export function renderStorageRecovery(container, status, {
           discardCorruptLocalDatabase()
           location.reload()
         } catch (error) {
-          showToast(error instanceof Error ? error.message : "重置失败", "error")
+          notify(error instanceof Error ? error.message : "重置失败", "error")
         }
       },
     }, "重置本地数据库"))

@@ -115,17 +115,19 @@ export function startLocalLibraryRestore({
     const summary = plan.summary
     const recoveryRequired = Boolean(plan.recoveryArtifact)
     const currentDescription = plan.previousState === "valid"
-      ? `当前 ${plan.currentSummary.workCount} 个作品 / 备份 ${summary.workCount} 个作品`
+      ? `当前创作库：作品 ${plan.currentSummary.workCount}；联系人 ${plan.currentSummary.contactCount}；分组 ${plan.currentSummary.groupCount}`
       : plan.previousState === "corrupt"
-        ? `当前数据已损坏 / 备份 ${summary.workCount} 个作品`
-        : `当前没有作品库 / 备份 ${summary.workCount} 个作品`
+        ? "当前创作库：数据已损坏，无法安全读取数量。"
+        : "当前创作库：当前没有创作库。"
+    const backupDescription = `备份：作品 ${summary.workCount}；联系人 ${summary.contactCount}；分组 ${summary.groupCount}`
     const body = `
       <div class="library-restore-summary" style="display:flex;flex-direction:column;gap:12px">
         <p><strong>恢复将替换整个当前创作库。</strong></p>
         <p>文件：${escapeHtml(file.name)}</p>
+        <p>备份格式版本：v${escapeHtml(backup.backupVersion)}</p>
         <p>备份时间：${escapeHtml(new Date(backup.exportedAt).toLocaleString())}</p>
         <p>${escapeHtml(currentDescription)}</p>
-        <p>作品：${escapeHtml(summary.workCount)}；联系人：${escapeHtml(summary.contactCount)}；分组：${escapeHtml(summary.groupCount)}</p>
+        <p>${escapeHtml(backupDescription)}</p>
         <div class="form-group" style="margin-bottom:0">
           <label class="form-label" for="libraryRestorePhrase">输入 RESTORE 确认整库替换</label>
           <input id="libraryRestorePhrase" class="form-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="libraryRestoreStatus">

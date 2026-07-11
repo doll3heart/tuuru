@@ -42,6 +42,67 @@ test("corrupt storage offers backup restore before destructive reset", async t =
   assert.equal(restoreCalls, 1)
 })
 
+test("corrupt raw download delegates the exact text Blob and reports initiation", async t => {
+  const container = installDom(t)
+  const { renderStorageRecovery } = await import(`../js/app.js?storage-recovery-download=${Date.now()}`)
+  const raw = "bad\n原始\u0000data"
+  const downloads = []
+  const notifications = []
+
+  renderStorageRecovery(container, {
+    ok: false,
+    code: "invalid-json",
+    raw,
+    message: "invalid",
+  }, {
+    download(blob, filename) { downloads.push({ blob, filename }) },
+    notify(message, type) { notifications.push({ message, type }) },
+    now: () => new Date("2026-07-11T12:34:56.789Z"),
+  })
+
+  const downloadButton = Array.from(container.querySelectorAll("button"))
+    .find(button => button.textContent === "下载原始数据")
+  downloadButton.click()
+
+  assert.equal(downloads.length, 1)
+  assert.equal(downloads[0].blob.type, "text/plain;charset=utf-8")
+  assert.equal(await downloads[0].blob.text(), raw)
+  assert.equal(downloads[0].filename, "tuuru-recovery-2026-07-11T12-34-56-789Z.txt")
+  assert.equal(notifications.length, 1)
+  assert.equal(notifications[0].type, "success")
+  assert.match(notifications[0].message, /下载已发起/)
+  assert.match(notifications[0].message, /确认文件/)
+  assert.match(notifications[0].message, /恢复或重置/)
+  assert.doesNotMatch(notifications[0].message, /已保存/)
+})
+
+test("corrupt raw download reports helper failures without claiming success", async t => {
+  const container = installDom(t)
+  const { renderStorageRecovery } = await import(`../js/app.js?storage-recovery-download-failure=${Date.now()}`)
+  const notifications = []
+
+  renderStorageRecovery(container, {
+    ok: false,
+    code: "invalid-structure",
+    raw: "broken",
+    message: "invalid",
+  }, {
+    download() { throw new Error("download blocked") },
+    notify(message, type) { notifications.push({ message, type }) },
+    now: () => new Date("2026-07-11T12:34:56.789Z"),
+  })
+
+  const downloadButton = Array.from(container.querySelectorAll("button"))
+    .find(button => button.textContent === "下载原始数据")
+  downloadButton.click()
+
+  assert.equal(notifications.length, 1)
+  assert.equal(notifications[0].type, "error")
+  assert.match(notifications[0].message, /原始数据下载失败/)
+  assert.match(notifications[0].message, /download blocked/)
+  assert.doesNotMatch(notifications[0].message, /已发起|已保存/)
+})
+
 test("backup restore is absent when storage is unavailable or the state is unsupported", async t => {
   const container = installDom(t)
   const { renderStorageRecovery } = await import(`../js/app.js?storage-recovery-absence=${Date.now()}`)
