@@ -549,6 +549,7 @@ ul,ol{list-style:none}
 .world-tree .wt-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:2px double var(--c-border);font-size:.8rem;font-weight:600;color:var(--c-text2);letter-spacing:1px}
 .world-tree .wt-header button{padding:2px 8px;font-size:.7rem;border:1px solid var(--c-border);background:var(--c-surface);color:var(--c-text2);cursor:pointer}
 .world-tree .wt-header button:hover{background:var(--c-surface2)}
+.world-tree .wt-header button:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:1px}
 .world-tree .wt-chapter{margin-bottom:2px}
 .world-tree .wt-node{display:flex;align-items:center;gap:0;padding:0;font-size:.8rem;color:var(--c-text2);transition:.08s;border-left:2px solid transparent}
 .world-tree .wt-node:hover{background:rgba(164,198,235,.1);color:var(--c-text)}
@@ -694,6 +695,9 @@ ul,ol{list-style:none}
   .editor-toolbar .toolbar-checkbox{min-height:44px;padding:0 8px}
   .margin-popover{left:8px;right:8px;max-width:calc(100% - 16px);max-height:calc(var(--app-viewport-height) - var(--app-header-height) - 120px);overflow-y:auto;white-space:normal}
   .editor-iconbar button:focus-visible,.editor-toolbar button:focus-visible,.editor-toolbar .toolbar-setting:focus-visible,.editor-toolbar .toolbar-number:focus-visible,.editor-toolbar .margin-num:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
+  .world-tree .wt-header{padding:4px 8px}
+  .world-tree .wt-header > div{display:flex;gap:4px}
+  .world-tree .wt-header button{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:4px 8px}
   .world-tree .wt-node-select,.world-tree .wt-choice{min-height:44px}
   .world-tree .wt-chapter-toggle{min-height:44px}
   .world-tree .wt-node,.world-tree .wt-chapter-title{flex-wrap:wrap}

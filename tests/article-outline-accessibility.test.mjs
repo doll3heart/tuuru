@@ -188,6 +188,26 @@ test("outline destinations have visible focus and coarse-pointer target contract
   assert.match(boundedChoice, /min-height\s*:\s*44px/)
 })
 
+test("outline creation controls are named and touch-safe", () => {
+  const root = render()
+  const addChapter = root.querySelector('.wt-header [data-a="as"]')
+  const addNode = root.querySelector('.wt-header [data-a="an"]')
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
+  const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
+  const focus = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-header button:focus-visible")
+  const boundedButton = ruleBodiesFor(bounded || "", ".world-tree .wt-header button")
+
+  assert.equal(addChapter?.tagName, "BUTTON")
+  assert.equal(addChapter?.type, "button")
+  assert.equal(addChapter?.getAttribute("aria-label"), "添加章节")
+  assert.equal(addNode?.tagName, "BUTTON")
+  assert.equal(addNode?.type, "button")
+  assert.equal(addNode?.getAttribute("aria-label"), "添加节点")
+  assert.match(focus, /outline\s*:\s*2px\s+solid/)
+  assert.match(boundedButton, /min-width\s*:\s*44px/)
+  assert.match(boundedButton, /min-height\s*:\s*44px/)
+})
+
 test("chapter disclosure controls one container for nodes and choices", () => {
   const root = render()
   const chapter = root.querySelector(".wt-chapter")

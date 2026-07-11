@@ -294,8 +294,8 @@ function buildWorldTree(w) {
   var ch = w.chapters || []
   var h = '<div class="world-tree" id="articleOutlinePane">'
   h += '<div class="wt-header"><span>节点列表</span><div>'
-  h += '<button data-a="as" data-w="' + w.id + '">+章</button>'
-  h += '<button data-a="an" data-w="' + w.id + '">+</button></div></div>'
+  h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节">+章</button>'
+  h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点">+</button></div></div>'
   h += '<div class="wt-body">'
   if (ns.length === 0) {
     h += '<div class="wt-empty">暂无节点</div>'
