@@ -388,7 +388,7 @@ export function renderPhoneEditor(wid) {
   var patched = patchApps(apps, pd, wid)
   if (patched) updateWork(wid, { phoneData: pd })
 
-  var h = '<div class="phone-editor-wrap">'
+  var h = '<div class="phone-editor-wrap" data-phone-arrange-mode="false">'
   h += '<div class="phone-frame" id="phoneFrame"'
   h += ' style="--phone-bg:' + (skin.wallpaper !== '#d0e8f5' ? skin.wallpaper : '') + ';'
   h += '--phone-radius:' + skin.borderRadius + 'px;'
@@ -396,6 +396,19 @@ export function renderPhoneEditor(wid) {
   h += '--phone-fontsize:' + skin.fontSize + 'px;'
   h += '--phone-frame:' + skin.frameColor + ';'
   h += '">'
+
+  h += '<div class="phone-editor-controls">'
+  h += '<span class="phone-arrange-hint" aria-hidden="true"></span>'
+  h += '<span class="phone-arrange-instructions" id="phoneArrangeInstructions"></span>'
+  h += '<span class="phone-arrange-status" role="status" aria-live="polite" aria-atomic="true"></span>'
+  h += '<button type="button" class="phone-arrange-toggle" aria-pressed="false" aria-controls="phoneArrangeMoveControls" aria-label="排列 App">排列</button>'
+  h += '</div>'
+  h += '<div class="phone-arrange-move-controls" id="phoneArrangeMoveControls" role="group" aria-label="移动所选 App">'
+  h += '<button type="button" class="phone-arrange-move" data-phone-move="left" data-move-x="-1" data-move-y="0" aria-label="向左移动所选 App" disabled>&larr;</button>'
+  h += '<button type="button" class="phone-arrange-move" data-phone-move="up" data-move-x="0" data-move-y="-1" aria-label="向上移动所选 App" disabled>&uarr;</button>'
+  h += '<button type="button" class="phone-arrange-move" data-phone-move="down" data-move-x="0" data-move-y="1" aria-label="向下移动所选 App" disabled>&darr;</button>'
+  h += '<button type="button" class="phone-arrange-move" data-phone-move="right" data-move-x="1" data-move-y="0" aria-label="向右移动所选 App" disabled>&rarr;</button>'
+  h += '</div>'
 
   if (skin.showDynamicIsland) {
     h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
@@ -495,9 +508,107 @@ function patchApps(apps, pd, wid) {
 // ===== Drag-to-reorder =====
 var _dragHandlers = null
 var PHONE_ICON_DRAG_THRESHOLD = 5
+var PHONE_BOUNDED_LAYOUT_QUERY = '(max-width: 480px), (max-height: 480px) and (pointer: coarse)'
 
 function clearSuppressedPhoneIconClick() {
   _suppressedClickIcon = null
+}
+
+function phoneArrangeModeEnabled(target) {
+  var wrap = target && target.closest ? target.closest('.phone-editor-wrap') : null
+  return !!wrap && wrap.dataset.phoneArrangeMode === 'true'
+}
+
+function phoneBoundedLayoutMedia() {
+  try {
+    return typeof window.matchMedia === 'function' ? window.matchMedia(PHONE_BOUNDED_LAYOUT_QUERY) : null
+  } catch (error) {
+    return null
+  }
+}
+
+function boundedPointerNeedsArrangeMode() {
+  var media = phoneBoundedLayoutMedia()
+  return !!media && media.matches
+}
+
+function phoneArrangeIconName(icon) {
+  return String(icon && icon.getAttribute('aria-label') || 'App')
+}
+
+function setPhoneArrangeStatus(wrap, message) {
+  var status = wrap && wrap.querySelector('.phone-arrange-status')
+  if (status) status.textContent = message || ''
+}
+
+function updatePhoneArrangeMoveControls(wrap, icon) {
+  if (!wrap) return
+  var active = phoneArrangeModeEnabled(wrap)
+  var col = icon ? parseInt(icon.dataset.desktopX) || 0 : 0
+  var row = icon ? parseInt(icon.dataset.desktopY) || 0 : 0
+  wrap.querySelectorAll('.phone-arrange-move').forEach(function(button) {
+    var deltaX = parseInt(button.dataset.moveX) || 0
+    var deltaY = parseInt(button.dataset.moveY) || 0
+    var nextCol = Math.max(0, Math.min(PHONE_GRID_METRICS.columns - 1, col + deltaX))
+    var nextRow = Math.max(0, Math.min(PHONE_GRID_METRICS.rows - 1, row + deltaY))
+    button.disabled = !active || !icon || (nextCol === col && nextRow === row)
+  })
+}
+
+function setPhoneArrangeSelection(wrap, selectedIcon, announce) {
+  if (!wrap || !phoneArrangeModeEnabled(wrap)) return
+  wrap.querySelectorAll('.phone-app-icon').forEach(function(icon) {
+    var selected = icon === selectedIcon
+    if (selected) icon.classList.add('arrange-selected')
+    else icon.classList.remove('arrange-selected')
+    icon.setAttribute('aria-pressed', selected ? 'true' : 'false')
+  })
+  updatePhoneArrangeMoveControls(wrap, selectedIcon)
+  if (selectedIcon && announce !== false) {
+    var col = (parseInt(selectedIcon.dataset.desktopX) || 0) + 1
+    var row = (parseInt(selectedIcon.dataset.desktopY) || 0) + 1
+    setPhoneArrangeStatus(wrap, '已选择' + phoneArrangeIconName(selectedIcon) + '，第' + row + '行第' + col + '列')
+  }
+}
+
+function announcePhoneArrangeMove(wrap, icon, position) {
+  if (!position) return
+  var message = phoneArrangeIconName(icon) + '已移至第' + (position.row + 1) + '行第' + (position.col + 1) + '列'
+  if (position.displacedName) message += '，与' + position.displacedName + '交换位置'
+  setPhoneArrangeStatus(wrap, message)
+}
+
+function setPhoneArrangeMode(wrap, enabled) {
+  if (!wrap) return
+  cancelPhoneIconDrag()
+  clearSuppressedPhoneIconClick()
+
+  var active = enabled === true
+  wrap.dataset.phoneArrangeMode = active ? 'true' : 'false'
+  var toggle = wrap.querySelector('.phone-arrange-toggle')
+  var hint = wrap.querySelector('.phone-arrange-hint')
+  var instructions = wrap.querySelector('.phone-arrange-instructions')
+  if (toggle) {
+    toggle.setAttribute('aria-pressed', active ? 'true' : 'false')
+    toggle.setAttribute('aria-label', active ? '完成 App 排列' : '排列 App')
+    toggle.textContent = active ? '完成' : '排列'
+  }
+  if (hint) hint.textContent = active ? '点选 App 后移动 · Esc 完成' : ''
+  if (instructions) instructions.textContent = active
+    ? '选择 App 后可使用方向按钮移动，也可拖动或使用键盘方向键；按 Esc 完成排列。'
+    : ''
+  setPhoneArrangeStatus(wrap, '')
+  wrap.querySelectorAll('.phone-app-icon').forEach(function(icon) {
+    icon.classList.remove('arrange-selected')
+    if (active) {
+      icon.setAttribute('aria-describedby', 'phoneArrangeInstructions')
+      icon.setAttribute('aria-pressed', 'false')
+    } else {
+      if (icon.getAttribute('aria-describedby') === 'phoneArrangeInstructions') icon.removeAttribute('aria-describedby')
+      icon.removeAttribute('aria-pressed')
+    }
+  })
+  updatePhoneArrangeMoveControls(wrap, null)
 }
 
 function suppressNextPhoneIconClick(icon) {
@@ -582,6 +693,47 @@ function attachDrag(wid) {
 
   _dragHandlers = []
 
+  var wrap = desktop.closest('.phone-editor-wrap')
+  var arrangeToggle = wrap && wrap.querySelector('.phone-arrange-toggle')
+  if (arrangeToggle) {
+    setPhoneArrangeMode(wrap, wrap.dataset.phoneArrangeMode === 'true')
+    rememberPhoneIconDragHandler(arrangeToggle, 'click', function(event) {
+      event.preventDefault()
+      setPhoneArrangeMode(wrap, !phoneArrangeModeEnabled(wrap))
+    })
+
+    var boundedMedia = phoneBoundedLayoutMedia()
+    if (boundedMedia && typeof boundedMedia.addEventListener === 'function') {
+      rememberPhoneIconDragHandler(boundedMedia, 'change', function(event) {
+        if (!event.matches) setPhoneArrangeMode(wrap, false)
+      })
+    }
+
+    rememberPhoneIconDragHandler(wrap, 'keydown', function(event) {
+      if (event.key !== 'Escape' || !phoneArrangeModeEnabled(wrap)) return
+      event.preventDefault()
+      setPhoneArrangeMode(wrap, false)
+      arrangeToggle.focus()
+    })
+
+    wrap.querySelectorAll('.phone-arrange-move').forEach(function(button) {
+      rememberPhoneIconDragHandler(button, 'click', function(event) {
+        event.preventDefault()
+        var selectedIcon = wrap.querySelector('.phone-app-icon.arrange-selected')
+        if (!selectedIcon || button.disabled) return
+        var position = movePhoneIconByGridStep(
+          wid,
+          selectedIcon,
+          parseInt(button.dataset.moveX) || 0,
+          parseInt(button.dataset.moveY) || 0
+        )
+        if (!position) return
+        setPhoneArrangeSelection(wrap, selectedIcon, false)
+        announcePhoneArrangeMove(wrap, selectedIcon, position)
+      })
+    })
+  }
+
   var icons = desktop.querySelectorAll('.phone-app-icon')
   icons.forEach(function(icon) {
     icon.onmouseenter = function() {
@@ -593,6 +745,7 @@ function attachDrag(wid) {
 
     var onPointerDown = function(e) {
       if (_dragState || e.isPrimary === false || e.button !== 0) return
+      if (boundedPointerNeedsArrangeMode() && !phoneArrangeModeEnabled(icon)) return
       clearSuppressedPhoneIconClick()
       startDrag(wid, icon, e)
     }
@@ -611,12 +764,29 @@ function attachDrag(wid) {
     var onLostPointerCapture = function(e) {
       if (_dragState && _dragState.icon === icon) cancelPhoneIconDrag(e.pointerId)
     }
+    var onKeyDown = function(e) {
+      if (!phoneArrangeModeEnabled(icon)) return
+      var deltas = {
+        ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+        ArrowUp: [0, -1], ArrowDown: [0, 1]
+      }
+      var delta = deltas[e.key]
+      if (!delta) return
+      e.preventDefault()
+      setPhoneArrangeSelection(wrap, icon, false)
+      var position = movePhoneIconByGridStep(wid, icon, delta[0], delta[1])
+      if (position) {
+        updatePhoneArrangeMoveControls(wrap, icon)
+        announcePhoneArrangeMove(wrap, icon, position)
+      }
+    }
 
     rememberPhoneIconDragHandler(icon, 'pointerdown', onPointerDown)
     rememberPhoneIconDragHandler(icon, 'pointermove', onPointerMove)
     rememberPhoneIconDragHandler(icon, 'pointerup', onPointerUp)
     rememberPhoneIconDragHandler(icon, 'pointercancel', onPointerCancel)
     rememberPhoneIconDragHandler(icon, 'lostpointercapture', onLostPointerCapture)
+    rememberPhoneIconDragHandler(icon, 'keydown', onKeyDown)
   })
 
   rememberPhoneIconDragHandler(window, 'blur', function() { cancelPhoneIconDrag() })
@@ -627,6 +797,8 @@ function startDrag(wid, icon, event) {
   var desktop = document.getElementById('phoneDesktop')
   if (!desktop) return
   var deskRect = desktop.getBoundingClientRect()
+  var deskScrollLeft = desktop.scrollLeft || 0
+  var deskScrollTop = desktop.scrollTop || 0
   cancelPhoneIconSnapCleanup(icon)
   clearPhoneIconDragAppearance(icon)
   _dragState = {
@@ -634,10 +806,12 @@ function startDrag(wid, icon, event) {
     pointerId: event.pointerId,
     startX: event.clientX, startY: event.clientY,
     offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top,
-    origLeft: rect.left - deskRect.left, origTop: rect.top - deskRect.top,
+    origLeft: rect.left - deskRect.left + deskScrollLeft,
+    origTop: rect.top - deskRect.top + deskScrollTop,
     origCol: parseInt(icon.dataset.desktopX) || 0,
     origRow: parseInt(icon.dataset.desktopY) || 0,
     deskLeft: deskRect.left, deskTop: deskRect.top,
+    desktop: desktop,
     containerWidth: deskRect.width,
     didDrag: false
   }
@@ -675,8 +849,10 @@ function moveDrag(pointerId, mx, my) {
   }
 
   var icon = _dragState.icon
-  icon.style.left = (mx - _dragState.deskLeft - _dragState.offsetX) + 'px'
-  icon.style.top = (my - _dragState.deskTop - _dragState.offsetY) + 'px'
+  var scrollLeft = _dragState.desktop.scrollLeft || 0
+  var scrollTop = _dragState.desktop.scrollTop || 0
+  icon.style.left = (mx - _dragState.deskLeft - _dragState.offsetX + scrollLeft) + 'px'
+  icon.style.top = (my - _dragState.deskTop - _dragState.offsetY + scrollTop) + 'px'
   return true
 }
 
@@ -702,7 +878,42 @@ function commitPhoneIconDrag(state) {
   var col = Math.max(0, Math.min(PHONE_GRID_METRICS.columns - 1, cell.x))
   var row = Math.max(0, Math.min(PHONE_GRID_METRICS.rows - 1, cell.y))
 
-  var wid = state.wid
+  var position = commitPhoneIconGridPosition(state.wid, icon, col, row, state.origCol, state.origRow)
+  var wrap = icon.closest('.phone-editor-wrap')
+  if (wrap && phoneArrangeModeEnabled(wrap)) {
+    var selectedIcon = wrap.querySelector('.phone-app-icon.arrange-selected')
+    updatePhoneArrangeMoveControls(wrap, selectedIcon)
+    if (selectedIcon === icon) {
+      announcePhoneArrangeMove(wrap, icon, position)
+    } else if (selectedIcon && position.displacedIcon === selectedIcon) {
+      announcePhoneArrangeMove(wrap, selectedIcon, {
+        col: position.displacedCol,
+        row: position.displacedRow,
+        displacedName: phoneArrangeIconName(icon)
+      })
+    }
+  }
+}
+
+function movePhoneIconByGridStep(wid, icon, deltaX, deltaY) {
+  var origCol = parseInt(icon.dataset.desktopX) || 0
+  var origRow = parseInt(icon.dataset.desktopY) || 0
+  var col = Math.max(0, Math.min(PHONE_GRID_METRICS.columns - 1, origCol + deltaX))
+  var row = Math.max(0, Math.min(PHONE_GRID_METRICS.rows - 1, origRow + deltaY))
+  if (col === origCol && row === origRow) return null
+
+  var position = commitPhoneIconGridPosition(wid, icon, col, row, origCol, origRow)
+  if (typeof icon.scrollIntoView === 'function') {
+    icon.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }
+  return position
+}
+
+function commitPhoneIconGridPosition(wid, icon, col, row, origCol, origRow) {
+  var position = {
+    col: col, row: row, displacedName: '',
+    displacedIcon: null, displacedCol: null, displacedRow: null
+  }
   var w = getWork(wid)
   if (w && w.phoneData) {
     var apps = w.phoneData.apps || []
@@ -711,9 +922,13 @@ function commitPhoneIconDrag(state) {
       var a = apps[i]
       if (a.id === appId || !a.enabled) continue
       if (a.desktopX === col && a.desktopY === row) {
-        var ec = findEmptyCell(apps, appId, state.origCol, state.origRow)
+        var ec = findEmptyCell(apps, appId, origCol, origRow)
         a.desktopX = ec.x; a.desktopY = ec.y
         var oi = document.querySelector('[data-app-id="' + a.id + '"]')
+        position.displacedName = oi ? phoneArrangeIconName(oi) : String(a.name || 'App')
+        position.displacedIcon = oi
+        position.displacedCol = ec.x
+        position.displacedRow = ec.y
         if (oi) {
           applyPhoneGridItemPosition(oi, a.desktopX, a.desktopY)
           oi.style.transition = 'left .15s, top .15s'
@@ -729,6 +944,7 @@ function commitPhoneIconDrag(state) {
   applyPhoneGridItemPosition(icon, col, row)
   icon.style.transition = 'left .15s, top .15s'
   schedulePhoneIconSnapCleanup(icon)
+  return position
 }
 
 function findEmptyCell(apps, excludeId, prefX, prefY) {
@@ -760,6 +976,12 @@ document.addEventListener('click', function(e) {
   var icon = e.target.closest('.phone-app-icon')
   if (!icon) return
   if (consumeSuppressedPhoneIconClick(icon, e)) { e.preventDefault(); return }
+  if (phoneArrangeModeEnabled(icon)) {
+    e.preventDefault()
+    clearSuppressedPhoneIconClick()
+    setPhoneArrangeSelection(icon.closest('.phone-editor-wrap'), icon, true)
+    return
+  }
   clearSuppressedPhoneIconClick()
 
   e.preventDefault()

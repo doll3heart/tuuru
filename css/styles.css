@@ -382,8 +382,18 @@ ul,ol{list-style:none}
 .im-divider span{flex-shrink:0}
 
 /* Phone editor */
-.phone-editor-wrap{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 56px);padding:20px;background:var(--c-bg)}
+.phone-editor-wrap{display:flex;align-items:center;justify-content:center;min-height:calc(var(--app-viewport-height) - var(--app-header-height));padding:20px;background:var(--c-bg)}
 .phone-frame{width:360px;min-height:680px;background:var(--phone-bg, var(--c-bg));border-radius:var(--phone-radius, 28px);border:5px solid var(--phone-frame, #444);overflow:hidden;display:flex;flex-direction:column;position:relative;box-shadow:0 8px 40px rgba(0,0,0,0.3);font-family:var(--phone-font, sans-serif);font-size:var(--phone-fontsize, 12px);color:var(--c-text);user-select:none}
+.phone-editor-controls{display:none}
+.phone-arrange-hint{font-size:.72rem;color:var(--c-text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.phone-arrange-instructions,.phone-arrange-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.phone-arrange-toggle{min-width:72px;min-height:44px;padding:6px 14px;border:1px solid var(--c-border);border-radius:999px;background:var(--c-surface);color:var(--c-text);cursor:pointer;font-size:.78rem;font-weight:600}
+.phone-editor-wrap[data-phone-arrange-mode="true"] .phone-arrange-toggle{background:var(--c-primary);color:var(--c-btn-text);border-color:var(--c-primary-hover)}
+.phone-arrange-move-controls{display:none;align-items:center;justify-content:center;gap:6px;min-height:52px;padding:4px 8px;background:var(--c-surface);border-bottom:1px solid var(--c-border);flex-shrink:0}
+.phone-arrange-move{width:44px;height:44px;padding:0;border:1px solid var(--c-border);border-radius:50%;background:var(--c-surface2);color:var(--c-text);font-size:1rem;font-weight:700;cursor:pointer}
+.phone-arrange-move:disabled{opacity:.38;cursor:default}
+.phone-arrange-move:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:2px}
+.phone-app-icon.arrange-selected .phone-icon-body{outline:3px solid var(--c-primary-hover)!important;outline-offset:2px}
 
 /* Dynamic Island */
 .phone-island{display:flex;justify-content:center;padding:10px 0 4px}
@@ -647,6 +657,19 @@ ul,ol{list-style:none}
 
 /* Article editor bounded mobile workspace */
 @media(max-width:480px),(max-height:480px) and (pointer:coarse){
+  /* Standalone phone editor */
+  .phone-editor-wrap{height:calc(var(--app-viewport-height) - var(--app-header-height));min-height:0;padding:10px 0;overflow:hidden}
+  .phone-editor-wrap > .phone-frame{width:100%;max-width:360px;height:100%;min-height:0;max-height:680px;border-width:3px}
+  .phone-editor-controls{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-height:44px;padding:0 8px;flex-shrink:0;background:var(--c-surface);border-bottom:1px solid var(--c-border)}
+  .phone-arrange-hint{flex:1;text-align:right}
+  .phone-arrange-toggle{min-height:44px;flex-shrink:0}
+  .phone-editor-wrap[data-phone-arrange-mode="true"] .phone-arrange-move-controls{display:flex}
+  .phone-arrange-move{width:44px;height:44px;flex-shrink:0}
+  .phone-editor-wrap > .phone-frame > .phone-desktop{min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .phone-editor-wrap .phone-app-icon{touch-action:pan-y pinch-zoom}
+  .phone-editor-wrap[data-phone-arrange-mode="true"] .phone-app-icon{touch-action:none}
+
+  /* Article editor */
   .editor-body-area{flex-direction:column;min-height:0}
   .editor-iconbar{width:100%;flex-direction:row;padding:4px 8px;border-right:none;border-bottom:2px double var(--c-border);overflow-x:auto;overflow-y:hidden;overscroll-behavior-inline:contain;touch-action:pan-x;-webkit-overflow-scrolling:touch}
   .editor-iconbar .divider{width:1px;height:20px}
@@ -685,6 +708,12 @@ ul,ol{list-style:none}
   .world-tree{border-left:none;border-top:2px double var(--c-border)}
   .editor-body-area[data-mobile-pane="editor"] .world-tree{display:none}
   .editor-body-area[data-mobile-pane="outline"] .editor-area{display:none}
+}
+
+@media(max-height:480px) and (pointer:coarse){
+  .phone-editor-wrap > .phone-frame > .phone-island,
+  .phone-editor-wrap > .phone-frame > .phone-profile,
+  .phone-editor-wrap > .phone-frame > .phone-home-bar{display:none}
 }
 
 /* Missing editor CSS classes */

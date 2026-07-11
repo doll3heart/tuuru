@@ -249,6 +249,303 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     draft.dispose()
   })
 
+  await t.test("dragging inside a scrolled desktop preserves content coordinates", async () => {
+    const { draft, desktop } = await mount("pointer-scroll-drag")
+    const dragged = desktop.querySelector('[data-app-type="memo"]')
+    desktop.scrollTop = 95
+
+    dragged.getBoundingClientRect = () => {
+      const position = getPhoneGridPosition(
+        314,
+        Number(dragged.dataset.desktopX),
+        Number(dragged.dataset.desktopY),
+      )
+      const top = position.top - desktop.scrollTop
+      return {
+        x: position.left,
+        y: top,
+        left: position.left,
+        top,
+        right: position.left + 72,
+        bottom: top + 72,
+        width: 72,
+        height: 72,
+      }
+    }
+
+    dispatchGesture(dragged, [
+      ["pointerdown", { pointerId: 8, clientX: 11, clientY: 46 }],
+      ["pointermove", { pointerId: 8, clientX: 11, clientY: 141 }],
+      ["pointerup", { pointerId: 8, clientX: 11, clientY: 141 }],
+    ])
+
+    const snapshot = draft.snapshot()
+    const memo = snapshot.phoneData.apps.find(app => app.type === "memo")
+    const profile = snapshot.phoneData.apps.find(app => app.type === "profile")
+    assert.deepEqual([memo.desktopX, memo.desktopY], [0, 2])
+    assert.deepEqual([profile.desktopX, profile.desktopY], [0, 1])
+    draft.dispose()
+  })
+
+  await t.test("dragging follows scroll changes that happen after pointerdown", async () => {
+    const { draft, desktop } = await mount("pointer-live-scroll-drag")
+    const dragged = desktop.querySelector('[data-app-type="memo"]')
+
+    dispatchGesture(dragged, [
+      ["pointerdown", { pointerId: 18, clientX: 11, clientY: 141 }],
+      ["pointermove", { pointerId: 18, clientX: 11, clientY: 151 }],
+    ])
+    desktop.scrollTop = 95
+    dispatchGesture(dragged, [
+      ["pointermove", { pointerId: 18, clientX: 11, clientY: 151 }],
+      ["pointerup", { pointerId: 18, clientX: 11, clientY: 151 }],
+    ])
+
+    const snapshot = draft.snapshot()
+    const memo = snapshot.phoneData.apps.find(app => app.type === "memo")
+    const profile = snapshot.phoneData.apps.find(app => app.type === "profile")
+    assert.deepEqual([memo.desktopX, memo.desktopY], [0, 2])
+    assert.deepEqual([profile.desktopX, profile.desktopY], [0, 1])
+    draft.dispose()
+  })
+
+  await t.test("bounded touch layouts scroll normally until arrangement mode is enabled", async () => {
+    const previousMatchMedia = window.matchMedia
+    const mediaListeners = new Set()
+    const boundedMedia = {
+      matches: true,
+      media: "(max-width: 480px), (max-height: 480px) and (pointer: coarse)",
+      addEventListener(type, listener) { if (type === "change") mediaListeners.add(listener) },
+      removeEventListener(type, listener) { if (type === "change") mediaListeners.delete(listener) },
+      emit() {
+        for (const listener of [...mediaListeners]) listener({ matches: this.matches, media: this.media })
+      },
+    }
+    window.matchMedia = query => {
+      assert.equal(query, boundedMedia.media)
+      return boundedMedia
+    }
+
+    try {
+      const { draft, desktop, captures } = await mount("pointer-arrange-mode")
+      const toggle = document.querySelector(".phone-arrange-toggle")
+      const dragged = desktop.querySelector('[data-app-type="settings"]')
+      const other = desktop.querySelector('[data-app-type="forum"]')
+      const before = draft.snapshot()
+      const updatesBefore = phoneWorkUpdateCalls
+
+      for (const [index, pointerType] of ["touch", "pen", "mouse"].entries()) {
+        const pointerId = 28 + index
+        dispatchGesture(dragged, [
+          ["pointerdown", { pointerId, pointerType, clientX: 11, clientY: 46 }],
+          ["pointermove", { pointerId, pointerType, clientX: 91, clientY: 46 }],
+          ["pointerup", { pointerId, pointerType, clientX: 91, clientY: 46 }],
+        ])
+        assert.equal(captures.get(dragged)(), null, pointerType)
+      }
+      assert.deepEqual(draft.snapshot(), before)
+      assert.equal(phoneWorkUpdateCalls, updatesBefore)
+
+      toggle.click()
+      assert.equal(toggle.getAttribute("aria-pressed"), "true")
+      assert.equal(toggle.closest(".phone-editor-wrap").dataset.phoneArrangeMode, "true")
+
+      dispatchGesture(dragged, [
+        ["pointerdown", { pointerId: 39, clientX: 11, clientY: 46 }],
+        ["pointermove", { pointerId: 39, clientX: 91, clientY: 46 }],
+        ["pointerup", { pointerId: 39, clientX: 91, clientY: 46 }],
+      ])
+      const arranged = draft.snapshot().phoneData.apps.find(app => app.type === "settings")
+      assert.deepEqual([arranged.desktopX, arranged.desktopY], [1, 0])
+      assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
+
+      other.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }))
+      assert.equal(document.getElementById("forumPanel"), null)
+
+      toggle.click()
+      assert.equal(toggle.getAttribute("aria-pressed"), "false")
+      assert.equal(toggle.closest(".phone-editor-wrap").dataset.phoneArrangeMode, "false")
+
+      toggle.click()
+      assert.equal(toggle.getAttribute("aria-pressed"), "true")
+      boundedMedia.matches = false
+      boundedMedia.emit()
+      assert.equal(toggle.getAttribute("aria-pressed"), "false")
+      assert.equal(toggle.closest(".phone-editor-wrap").dataset.phoneArrangeMode, "false")
+
+      dragged.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }))
+      assert.ok(document.getElementById("settingsPanel"))
+      draft.dispose()
+    } finally {
+      window.matchMedia = previousMatchMedia
+    }
+  })
+
+  await t.test("arrangement mode supports keyboard grid moves and Escape", async () => {
+    const { draft, desktop } = await mount("keyboard-arrange-mode")
+    const toggle = document.querySelector(".phone-arrange-toggle")
+    const instructions = document.querySelector(".phone-arrange-instructions")
+    const status = document.querySelector(".phone-arrange-status")
+    const icon = desktop.querySelector('[data-app-type="settings"]')
+    const other = desktop.querySelector('[data-app-type="customize"]')
+    const updatesBefore = phoneWorkUpdateCalls
+
+    toggle.click()
+    assert.equal(icon.getAttribute("aria-describedby"), "phoneArrangeInstructions")
+    assert.match(instructions.textContent, /方向键/)
+
+    const toggleEscape = new dom.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    })
+    toggle.dispatchEvent(toggleEscape)
+    assert.equal(toggleEscape.defaultPrevented, true)
+    assert.equal(toggle.getAttribute("aria-pressed"), "false")
+    assert.equal(document.activeElement, toggle)
+
+    toggle.click()
+    icon.focus()
+    const move = new dom.window.KeyboardEvent("keydown", {
+      key: "ArrowRight",
+      bubbles: true,
+      cancelable: true,
+    })
+    icon.dispatchEvent(move)
+
+    const snapshot = draft.snapshot()
+    const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
+    const customize = snapshot.phoneData.apps.find(app => app.type === "customize")
+    assert.equal(move.defaultPrevented, true)
+    assert.deepEqual([settings.desktopX, settings.desktopY], [1, 0])
+    assert.deepEqual([customize.desktopX, customize.desktopY], [0, 0])
+    assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
+    assert.match(status.textContent, /第1行第2列/)
+    assert.match(status.textContent, /交换位置/)
+    assert.match(instructions.textContent, /方向键/)
+    assert.doesNotMatch(instructions.textContent, /第1行第2列/)
+    assert.equal(other.getAttribute("aria-describedby"), "phoneArrangeInstructions")
+    assert.equal(document.activeElement, icon)
+
+    const boundary = new dom.window.KeyboardEvent("keydown", {
+      key: "ArrowUp",
+      bubbles: true,
+      cancelable: true,
+    })
+    icon.dispatchEvent(boundary)
+    assert.equal(boundary.defaultPrevented, true)
+    assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
+
+    const escape = new dom.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    })
+    icon.dispatchEvent(escape)
+    assert.equal(escape.defaultPrevented, true)
+    assert.equal(toggle.getAttribute("aria-pressed"), "false")
+    assert.equal(document.activeElement, toggle)
+    draft.dispose()
+  })
+
+  await t.test("arrangement mode offers touch-sized non-drag movement controls", async () => {
+    const { draft, desktop } = await mount("touch-arrange-controls")
+    const toggle = document.querySelector(".phone-arrange-toggle")
+    const status = document.querySelector(".phone-arrange-status")
+    const icon = desktop.querySelector('[data-app-type="settings"]')
+    const other = desktop.querySelector('[data-app-type="customize"]')
+    const left = document.querySelector('[data-phone-move="left"]')
+    const right = document.querySelector('[data-phone-move="right"]')
+    const up = document.querySelector('[data-phone-move="up"]')
+    const down = document.querySelector('[data-phone-move="down"]')
+    const updatesBefore = phoneWorkUpdateCalls
+
+    assert.equal(left.disabled, true)
+    assert.equal(right.disabled, true)
+    toggle.click()
+    icon.click()
+
+    assert.equal(icon.getAttribute("aria-pressed"), "true")
+    assert.equal(other.getAttribute("aria-pressed"), "false")
+    assert.equal(left.disabled, true)
+    assert.equal(up.disabled, true)
+    assert.equal(right.disabled, false)
+    assert.equal(down.disabled, false)
+
+    right.click()
+    const snapshot = draft.snapshot()
+    const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
+    const customize = snapshot.phoneData.apps.find(app => app.type === "customize")
+    assert.deepEqual([settings.desktopX, settings.desktopY], [1, 0])
+    assert.deepEqual([customize.desktopX, customize.desktopY], [0, 0])
+    assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
+    assert.match(status.textContent, /第1行第2列/)
+    assert.equal(icon.getAttribute("aria-pressed"), "true")
+    assert.equal(left.disabled, false)
+
+    const scrollCalls = []
+    icon.scrollIntoView = options => scrollCalls.push(options)
+    down.click()
+    down.click()
+    down.click()
+    down.click()
+    const movedToLastRow = draft.snapshot().phoneData.apps.find(app => app.type === "settings")
+    assert.deepEqual([movedToLastRow.desktopX, movedToLastRow.desktopY], [1, 3])
+    assert.equal(phoneWorkUpdateCalls, updatesBefore + 4)
+    assert.equal(down.disabled, true)
+    assert.deepEqual(scrollCalls, [
+      { block: "nearest", inline: "nearest" },
+      { block: "nearest", inline: "nearest" },
+      { block: "nearest", inline: "nearest" },
+    ])
+
+    other.click()
+    assert.equal(icon.getAttribute("aria-pressed"), "false")
+    assert.equal(other.getAttribute("aria-pressed"), "true")
+    draft.dispose()
+  })
+
+  await t.test("pointer rearrangement refreshes controls for selected and displaced Apps", async () => {
+    const { draft, desktop } = await mount("arrange-controls-after-drag")
+    const toggle = document.querySelector(".phone-arrange-toggle")
+    const selected = desktop.querySelector('[data-app-type="settings"]')
+    const dragged = desktop.querySelector('[data-app-type="memo"]')
+    const left = document.querySelector('[data-phone-move="left"]')
+    const right = document.querySelector('[data-phone-move="right"]')
+    const up = document.querySelector('[data-phone-move="up"]')
+    const down = document.querySelector('[data-phone-move="down"]')
+    const status = document.querySelector(".phone-arrange-status")
+    const updatesBefore = phoneWorkUpdateCalls
+
+    toggle.click()
+    selected.click()
+    dispatchGesture(selected, [
+      ["pointerdown", { pointerId: 49, clientX: 11, clientY: 46 }],
+      ["pointermove", { pointerId: 49, clientX: 251, clientY: 331 }],
+      ["pointerup", { pointerId: 49, clientX: 251, clientY: 331 }],
+    ])
+    assert.equal(left.disabled, false)
+    assert.equal(up.disabled, false)
+    assert.equal(right.disabled, true)
+    assert.equal(down.disabled, true)
+
+    dispatchGesture(dragged, [
+      ["pointerdown", { pointerId: 50, clientX: 11, clientY: 141 }],
+      ["pointermove", { pointerId: 50, clientX: 251, clientY: 331 }],
+      ["pointerup", { pointerId: 50, clientX: 251, clientY: 331 }],
+    ])
+    const settings = draft.snapshot().phoneData.apps.find(app => app.type === "settings")
+    assert.deepEqual([settings.desktopX, settings.desktopY], [0, 1])
+    assert.equal(left.disabled, true)
+    assert.equal(up.disabled, false)
+    assert.equal(right.disabled, false)
+    assert.equal(down.disabled, false)
+    assert.match(status.textContent, /第2行第1列/)
+    assert.match(status.textContent, /交换位置/)
+    assert.equal(phoneWorkUpdateCalls, updatesBefore + 2)
+    draft.dispose()
+  })
+
   await t.test("pointerup consumes a coalesced final position before deciding tap or drag", async () => {
     const { draft, desktop } = await mount("pointer-fast-release")
     const icon = desktop.querySelector('[data-app-type="settings"]')
