@@ -9,6 +9,7 @@ import {
   phoneGridContainerStyle,
   phoneGridItemStyle,
 } from "../phone-grid.js"
+import { runTarotTransition } from "../tarot-transition.js"
 import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
@@ -1612,48 +1613,43 @@ function bindTarotEvents(frame, wid, type, contacts, activeIdx, origHTML, title)
     //
     // dir = -1 (click LEFT card → content flows RIGHT): mirrored.
     //
-    // The CSS transition on .tarot-card handles the motion (0.55s elastic).
-    // Content is swapped at the midpoint when cards are edge-on and least
-    // recognizable. After the full transition, inline transforms are cleared.
+    // The CSS transition on .tarot-card handles the 0.55s elastic motion.
+    // System reduced-motion requests skip the transforms and both timers, but
+    // still commit the card swap and release the interaction lock in order.
+    runTarotTransition({
+      start() {
+        if (dir === 1) {
+          // Flow LEFT: cards slide left; left+middle flip to back, right flips to front
+          if (c0) c0.style.transform = 'translateX(-32%) rotateY(180deg) scale(.78)'
+          if (c1) c1.style.transform = 'translateX(-32%) rotateY(180deg) scale(.78)'
+          if (c2) c2.style.transform = 'translateX(-32%) rotateY(0deg) scale(1.05)'
+        } else {
+          // Flow RIGHT: cards slide right; right+middle flip to back, left flips to front
+          if (c0) c0.style.transform = 'translateX(32%) rotateY(0deg) scale(1.05)'
+          if (c1) c1.style.transform = 'translateX(32%) rotateY(-180deg) scale(.78)'
+          if (c2) c2.style.transform = 'translateX(32%) rotateY(-180deg) scale(.78)'
+        }
+      },
+      midpoint() {
+        activeIdx = wrap(activeIdx + dir)
+        frame.dataset._tarotActiveIdx = activeIdx
 
-    var T = 550  // CSS transition duration (ms)
-    var half = Math.round(T / 2)
+        updateCardContent(0)
+        updateCardContent(1)
+        updateCardContent(2)
 
-    if (dir === 1) {
-      // Flow LEFT: cards slide left; left+middle flip to back, right flips to front
-      if (c0) c0.style.transform = 'translateX(-32%) rotateY(180deg) scale(.78)'
-      if (c1) c1.style.transform = 'translateX(-32%) rotateY(180deg) scale(.78)'
-      if (c2) c2.style.transform = 'translateX(-32%) rotateY(0deg) scale(1.05)'
-    } else {
-      // Flow RIGHT: cards slide right; right+middle flip to back, left flips to front
-      if (c0) c0.style.transform = 'translateX(32%) rotateY(0deg) scale(1.05)'
-      if (c1) c1.style.transform = 'translateX(32%) rotateY(-180deg) scale(.78)'
-      if (c2) c2.style.transform = 'translateX(32%) rotateY(-180deg) scale(.78)'
-    }
-
-    // At midpoint: swap card content while cards are edge‑on
-    setTimeout(function() {
-      activeIdx = wrap(activeIdx + dir)
-      frame.dataset._tarotActiveIdx = activeIdx
-
-      updateCardContent(0)
-      updateCardContent(1)
-      updateCardContent(2)
-
-      // Clear inline transform so cards flip/glide back to their
-      // stationary CSS position classes (.tarot-card-0/1/2)
-      if (c0) c0.style.transform = ''
-      if (c1) c1.style.transform = ''
-      if (c2) c2.style.transform = ''
-    }, half)
-
-    // Safety unlock
-    setTimeout(function() {
-      animating = false
-      if (c0) { c0.style.transition = ''; c0.style.transform = '' }
-      if (c1) { c1.style.transition = ''; c1.style.transform = '' }
-      if (c2) { c2.style.transition = ''; c2.style.transform = '' }
-    }, T + 80)
+        // Clear inline transform so cards return to their stationary classes.
+        if (c0) c0.style.transform = ''
+        if (c1) c1.style.transform = ''
+        if (c2) c2.style.transform = ''
+      },
+      complete() {
+        animating = false
+        if (c0) { c0.style.transition = ''; c0.style.transform = '' }
+        if (c1) { c1.style.transition = ''; c1.style.transform = '' }
+        if (c2) { c2.style.transition = ''; c2.style.transform = '' }
+      },
+    })
   }
 
   function bindTarotCloseInternal() {
