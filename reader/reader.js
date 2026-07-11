@@ -47,6 +47,7 @@ function avatarColor(id) {
 var _work = null
 var _nodeId = null
 var _visitedNodes = []
+var _renderedRecentIds = []
 
 // ---- render ----
 function render(el, html) {
@@ -118,18 +119,29 @@ function renderHome() {
 }
 
 document.addEventListener('click', function(event) {
-  var trigger = event.target && event.target.closest
-    ? event.target.closest('[data-reader-home]')
-    : null
-  if (!trigger) return
+  var target = event.target && event.target.closest ? event.target : null
+  if (!target) return
+
+  var homeTrigger = target.closest('[data-reader-home]')
+  if (homeTrigger) {
+    event.preventDefault()
+    renderHome()
+    return
+  }
+
+  var recentTrigger = target.closest('[data-reader-recent-index]')
+  if (!recentTrigger) return
+  var recentIndex = Number(recentTrigger.dataset.readerRecentIndex)
+  if (!Number.isInteger(recentIndex) || recentIndex < 0 || recentIndex >= _renderedRecentIds.length) return
   event.preventDefault()
-  renderHome()
+  reimportRecent(_renderedRecentIds[recentIndex])
 })
 
 // ====== Personal Page ======
 function renderPersonalPage() {
   var profile = getProfile()
   var recents = getRecents()
+  _renderedRecentIds = recents.map(function(r) { return r.id })
   var h = '<div class="rd-personal">'
   // Profile card
   h += '<div class="rd-profile-card">'
@@ -158,11 +170,11 @@ function renderPersonalPage() {
   if (recents.length === 0) {
     h += '<div class="rd-empty">还没有阅读记录</div>'
   } else {
-    recents.forEach(function(r) {
-      h += '<div class="rd-recent-item" onclick="reimportRecent(\'' + r.id + '\')">'
-      h += '<div class="rd-recent-title">' + esc(r.title) + '</div>'
-      h += '<div class="rd-recent-meta">' + (r.type === 'phone' ? '小手机' : '互动文章') + ' · ' + timeAgo(r.importedAt) + '</div>'
-      h += '</div>'
+    recents.forEach(function(r, recentIndex) {
+      h += '<button type="button" class="rd-recent-item" data-reader-recent-index="' + recentIndex + '">'
+      h += '<span class="rd-recent-title">' + esc(r.title) + '</span>'
+      h += '<span class="rd-recent-meta">' + (r.type === 'phone' ? '小手机' : '互动文章') + ' · ' + timeAgo(r.importedAt) + '</span>'
+      h += '</button>'
     })
   }
   h += '</div>'
@@ -203,7 +215,7 @@ window.savePlaceholderPreset = function() {
   lsSet('placeholders', presets)
 }
 
-window.reimportRecent = function(id) {
+function reimportRecent(id) {
   // Load work from localStorage
   try {
     var db = JSON.parse(localStorage.getItem('moirain_work_' + id))

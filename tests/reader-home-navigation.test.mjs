@@ -23,11 +23,53 @@ test("reader home controls navigate without relying on module globals", async t 
   globalThis.requestAnimationFrame = callback => { callback(); return 1 }
   t.after(() => dom.window.close())
 
+  const baseWork = title => ({
+    schemaVersion: 1,
+    type: "article",
+    title,
+    nodes: [{ id: "node-a", title: "Start", content: "<p>Safe</p>", choices: [] }],
+    chapters: [],
+    scenes: [],
+    placeholders: [],
+    phoneModules: [],
+    startNode: "node-a",
+  })
+  const hostileId = `recent');window.__readerInjected=true;//`
+  const cachedWorks = [
+    { ...baseWork("Hostile ID, safe content"), id: hostileId },
+    { ...baseWork("Null ID"), id: null },
+    baseWork("Missing ID"),
+    { ...baseWork("Control character ID"), id: "nul\u0000line\rbreak" },
+  ]
+  const recents = cachedWorks.map(work => {
+    const recent = { title: work.title, type: work.type, importedAt: Date.now() }
+    if (Object.hasOwn(work, "id")) recent.id = work.id
+    localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+    return recent
+  })
+  localStorage.setItem("moirain_recent", JSON.stringify(recents))
+
   await import(`../reader/reader.js?reader-home-navigation=${Date.now()}`)
   assert.ok(document.querySelector(".rd-home"))
   assert.equal(window.renderHome, undefined)
   assert.doesNotMatch(readerSource, /onclick=["']renderHome\(\)["']/)
   assert.match(readerSource, /data-reader-home/)
+  assert.doesNotMatch(readerSource, /onclick=["']reimportRecent\(/)
+  assert.doesNotMatch(readerSource, /data-reader-recent-id/)
+  assert.match(readerSource, /data-reader-recent-index/)
+
+  const recentButtons = [...document.querySelectorAll(".rd-recent-item")]
+  assert.equal(recentButtons.length, cachedWorks.length)
+  for (const [index, recent] of recentButtons.entries()) {
+    assert.equal(recent.tagName, "BUTTON")
+    assert.equal(recent.type, "button")
+    assert.equal(recent.getAttribute("onclick"), null)
+    assert.equal(recent.dataset.readerRecentIndex, String(index))
+    recent.click()
+    assert.equal(window.__readerInjected, undefined)
+    assert.equal(document.querySelector(".rd-landing-title").textContent, cachedWorks[index].title)
+    document.querySelector(".modal-overlay").remove()
+  }
 
   document.getElementById("app").innerHTML = `
     <div class="drop-zone">
