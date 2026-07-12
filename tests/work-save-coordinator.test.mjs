@@ -1555,3 +1555,141 @@ test("the final source prototype trap is followed by fixed-chain validation", ()
   assert.equal(child.status, 0, child.stderr)
   assert.match(child.stdout, /final-prototype-pollution-rejected/)
 })
+
+test("a null-prototype child ownKeys trap cannot pollute its ordinary parent clone", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON")
+    let hookCalls = 0
+    let ownKeysCalls = 0
+    let stageFailure = null
+    let operation = null
+    const childTarget = Object.create(null)
+    childTarget.value = "safe"
+    const child = new Proxy(childTarget, {
+      ownKeys(current) {
+        ownKeysCalls += 1
+        Object.defineProperty(Object.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls += 1
+            return { polluted: true }
+          },
+        })
+        return Reflect.ownKeys(current)
+      },
+      getOwnPropertyDescriptor(current, key) {
+        return Reflect.getOwnPropertyDescriptor(current, key)
+      },
+    })
+    try {
+      try {
+        operation = coordinator.stage({
+          key: "field:a",
+          payload: { child },
+          apply() {},
+        })
+      } catch (failure) {
+        stageFailure = failure
+      }
+      if (operation !== null) JSON.stringify(operation.payload)
+    } finally {
+      if (originalToJson === undefined) delete Object.prototype.toJSON
+      else Object.defineProperty(Object.prototype, "toJSON", originalToJson)
+    }
+    if (stageFailure instanceof TypeError && hookCalls === 0 && ownKeysCalls === 1) {
+      console.log("ordinary-parent-pollution-rejected")
+    } else {
+      console.error(JSON.stringify({
+        stageRejected: stageFailure instanceof TypeError,
+        hookCalls,
+        ownKeysCalls,
+      }))
+      process.exitCode = 2
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /ordinary-parent-pollution-rejected/)
+})
+
+test("a null-prototype child descriptor trap cannot pollute its array parent clone", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    const originalToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON")
+    let hookCalls = 0
+    let descriptorCalls = 0
+    let stageFailure = null
+    let operation = null
+    const childTarget = Object.create(null)
+    childTarget.value = "safe"
+    const child = new Proxy(childTarget, {
+      ownKeys(current) {
+        return Reflect.ownKeys(current)
+      },
+      getOwnPropertyDescriptor(current, key) {
+        descriptorCalls += 1
+        Object.defineProperty(Array.prototype, "toJSON", {
+          configurable: true,
+          value() {
+            hookCalls += 1
+            return { polluted: true }
+          },
+        })
+        return Reflect.getOwnPropertyDescriptor(current, key)
+      },
+    })
+    try {
+      try {
+        operation = coordinator.stage({
+          key: "field:a",
+          payload: [child],
+          apply() {},
+        })
+      } catch (failure) {
+        stageFailure = failure
+      }
+      if (operation !== null) JSON.stringify(operation.payload)
+    } finally {
+      if (originalToJson === undefined) delete Array.prototype.toJSON
+      else Object.defineProperty(Array.prototype, "toJSON", originalToJson)
+    }
+    if (stageFailure instanceof TypeError && hookCalls === 0 && descriptorCalls === 1) {
+      console.log("array-parent-pollution-rejected")
+    } else {
+      console.error(JSON.stringify({
+        stageRejected: stageFailure instanceof TypeError,
+        hookCalls,
+        descriptorCalls,
+      }))
+      process.exitCode = 2
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /array-parent-pollution-rejected/)
+})

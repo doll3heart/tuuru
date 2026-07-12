@@ -27,8 +27,8 @@ function cloneJsonPrimitive(value) {
   return { matched: false }
 }
 
-function assertSafeJsonBuiltins(prototype, isArray) {
-  if (isArray) {
+function assertSafeJsonBuiltins(usesObjectPrototype, usesArrayPrototype) {
+  if (usesArrayPrototype) {
     if (Object.getPrototypeOf(Array.prototype) !== Object.prototype) {
       throw new TypeError("JSON Array.prototype must inherit directly from Object.prototype")
     }
@@ -36,7 +36,7 @@ function assertSafeJsonBuiltins(prototype, isArray) {
       throw new TypeError("JSON payloads must not define or inherit toJSON")
     }
   }
-  if (prototype !== null) {
+  if (usesObjectPrototype) {
     if (Object.getPrototypeOf(Object.prototype) !== null) {
       throw new TypeError("JSON Object.prototype must terminate at null")
     }
@@ -58,6 +58,8 @@ function isCanonicalArrayIndex(key) {
 function inspectJsonContainer(source) {
   const prototype = Object.getPrototypeOf(source)
   const isArray = Array.isArray(source)
+  const usesArrayPrototype = isArray
+  const usesObjectPrototype = prototype !== null
 
   if (isArray) {
     if (prototype !== Array.prototype) {
@@ -67,7 +69,7 @@ function inspectJsonContainer(source) {
     throw new TypeError("JSON objects must use an ordinary or null prototype")
   }
 
-  assertSafeJsonBuiltins(prototype, isArray)
+  assertSafeJsonBuiltins(usesObjectPrototype, usesArrayPrototype)
   const descriptors = Object.getOwnPropertyDescriptors(source)
   const keys = Reflect.ownKeys(descriptors)
   for (let index = 0; index < keys.length; index += 1) {
@@ -78,7 +80,7 @@ function inspectJsonContainer(source) {
   if (Object.getPrototypeOf(source) !== prototype) {
     throw new TypeError("JSON payload prototypes must remain stable during inspection")
   }
-  assertSafeJsonBuiltins(prototype, isArray)
+  assertSafeJsonBuiltins(usesObjectPrototype, usesArrayPrototype)
 
   if (isArray) {
     const lengthDescriptor = descriptors.length
@@ -105,7 +107,12 @@ function inspectJsonContainer(source) {
         throw new TypeError("JSON arrays must not be sparse")
       }
     }
-    return { target: new Array(length), entries }
+    return {
+      target: new Array(length),
+      entries,
+      usesObjectPrototype,
+      usesArrayPrototype,
+    }
   }
 
   const entries = []
@@ -122,6 +129,8 @@ function inspectJsonContainer(source) {
   return {
     target: prototype === null ? Object.create(null) : {},
     entries,
+    usesObjectPrototype,
+    usesArrayPrototype,
   }
 }
 
@@ -142,6 +151,8 @@ function cloneAndFreezeJson(value) {
   }
 
   const root = inspectJsonContainer(value)
+  let usesObjectPrototype = root.usesObjectPrototype
+  let usesArrayPrototype = root.usesArrayPrototype
   const states = new WeakMap([[value, "visiting"]])
   const clones = new WeakMap([[value, root.target]])
   const stack = [{ source: value, target: root.target, entries: root.entries, index: 0 }]
@@ -174,6 +185,8 @@ function cloneAndFreezeJson(value) {
     }
 
     const inspected = inspectJsonContainer(child)
+    usesObjectPrototype ||= inspected.usesObjectPrototype
+    usesArrayPrototype ||= inspected.usesArrayPrototype
     defineJsonValue(frame.target, key, inspected.target)
     states.set(child, "visiting")
     clones.set(child, inspected.target)
@@ -185,6 +198,7 @@ function cloneAndFreezeJson(value) {
     })
   }
 
+  assertSafeJsonBuiltins(usesObjectPrototype, usesArrayPrototype)
   return root.target
 }
 
