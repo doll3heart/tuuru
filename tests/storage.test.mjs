@@ -16,7 +16,10 @@ import {
   readLocalDatabaseBackupFile,
   readLocalDatabase,
   restoreLocalDatabaseBackup,
+  serializeLocalDatabaseBackupFromDatabase,
   serializeLocalDatabaseBackup,
+  serializeValidatedLocalDatabase,
+  validateLocalDatabase,
   writeLocalDatabase,
 } from "../js/storage.js"
 
@@ -69,6 +72,157 @@ function deeplyNestedDatabaseRaw(depth = 5000) {
   const nested = `${'{"child":'.repeat(depth)}null${"}".repeat(depth)}`
   return `{"works":[{"type":"article","nodes":[],"future":${nested}}],"contacts":[],"groups":[]}`
 }
+
+test("exports pure local database validation and serialization helpers", () => {
+  assert.equal(typeof validateLocalDatabase, "function")
+  assert.equal(typeof serializeValidatedLocalDatabase, "function")
+  assert.equal(typeof serializeLocalDatabaseBackupFromDatabase, "function")
+})
+
+test("pure database helpers validate and serialize normalized unknown JSON fields without storage", () => {
+  const database = {
+    works: [{ id: "work-1", privateEditorState: { zoom: 1.25 } }],
+    contacts: [{ id: "contact-1", future: true }],
+    groups: [{ id: "group-1" }],
+    futureRoot: { enabled: true, values: [null, 1, "two"] },
+  }
+
+  const status = validateLocalDatabase(database)
+  const raw = serializeValidatedLocalDatabase(database)
+
+  assert.deepEqual(status, { ok: true, raw: null, data: database })
+  assert.equal(raw, JSON.stringify(database))
+  assert.deepEqual(inspectLocalDatabaseRaw(raw), { ok: true, raw, data: database })
+})
+
+test("pure database validation reports ordinary invalid structures without throwing", () => {
+  const status = validateLocalDatabase({ works: {} })
+
+  assert.equal(status.ok, false)
+  assert.equal(status.code, "invalid-structure")
+  assert.equal(status.raw, null)
+  assert.ok(status.issues.length > 0)
+})
+
+test("validated database serialization rejects invalid and non-JSON-compatible values", () => {
+  const cyclic = { works: [], contacts: [], groups: [] }
+  cyclic.future = cyclic
+  const unsupported = {
+    works: [],
+    contacts: [],
+    groups: [],
+    future: undefined,
+  }
+
+  for (const database of [{ works: {} }, cyclic, unsupported]) {
+    assert.throws(
+      () => serializeValidatedLocalDatabase(database),
+      error => error instanceof LocalDatabaseError
+        && error.code === "invalid-write"
+        && (error.details?.issues !== undefined || error.cause instanceof Error),
+    )
+  }
+})
+
+test("pure backup serialization validates input and preserves the legacy byte format", () => {
+  const exportedAt = "2026-07-10T05:30:00.000Z"
+  const database = {
+    works: [{ id: "work-1", future: { private: true } }],
+    contacts: [],
+    groups: [],
+    futureRoot: "kept",
+  }
+  const expected = JSON.stringify({
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt,
+    database,
+  }, null, 2)
+
+  assert.equal(serializeLocalDatabaseBackupFromDatabase(database, exportedAt), expected)
+  assert.deepEqual(JSON.parse(expected).database, database)
+})
+
+test("pure backup serialization rejects invalid data and hostile timestamps without coercion", () => {
+  let coercions = 0
+  const hostileTimestamp = {
+    toString() {
+      coercions += 1
+      throw new Error("must not stringify")
+    },
+    toJSON() {
+      coercions += 1
+      throw new Error("must not serialize")
+    },
+  }
+  const validDatabase = { works: [], contacts: [], groups: [] }
+
+  for (const [database, exportedAt] of [
+    [{ works: {} }, "2026-07-10T05:30:00.000Z"],
+    [validDatabase, "not-an-iso-timestamp"],
+    [validDatabase, "2026-07-10T05:30:00Z"],
+    [validDatabase, hostileTimestamp],
+  ]) {
+    assert.throws(
+      () => serializeLocalDatabaseBackupFromDatabase(database, exportedAt),
+      error => error instanceof LocalDatabaseError && error.code === "backup-failed",
+    )
+  }
+  assert.equal(coercions, 0)
+})
+
+test("legacy backup serialization delegates with one clock read and identical bytes", () => {
+  const exportedAt = "2026-07-10T05:30:00.000Z"
+  const database = {
+    works: [{ id: "work-1", future: true }],
+    contacts: [],
+    groups: [],
+  }
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify(database)]])
+  let clockCalls = 0
+  const clock = {
+    toISOString() {
+      clockCalls += 1
+      return exportedAt
+    },
+  }
+
+  const legacyRaw = serializeLocalDatabaseBackup(storage, clock)
+  const pureRaw = serializeLocalDatabaseBackupFromDatabase(database, exportedAt)
+
+  assert.equal(clockCalls, 1)
+  assert.equal(legacyRaw, pureRaw)
+  assert.equal(storage.count("getItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+})
+
+test("legacy backup delegation keeps a single backup error layer and the direct cause", () => {
+  const database = { works: [], contacts: [], groups: [] }
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify(database)]])
+  const clockCause = new Error("clock failed")
+
+  assert.throws(
+    () => serializeLocalDatabaseBackup(storage, { toISOString() { throw clockCause } }),
+    error => error instanceof LocalDatabaseError
+      && error.code === "backup-failed"
+      && error.cause === clockCause,
+  )
+  assert.throws(
+    () => serializeLocalDatabaseBackup(storage, { toISOString() { return "not-canonical" } }),
+    error => error instanceof LocalDatabaseError
+      && error.code === "backup-failed"
+      && error.cause instanceof RangeError,
+  )
+})
+
+test("LocalDatabaseError preserves falsy causes and details", () => {
+  const error = new LocalDatabaseError("failure", "test", 0, false)
+
+  assert.equal(Object.hasOwn(error, "cause"), true)
+  assert.equal(error.cause, 0)
+  assert.equal(Object.hasOwn(error, "details"), true)
+  assert.equal(error.details, false)
+})
 
 test("a missing database starts empty without writing", () => {
   const storage = createKeyedStorage([[UNRELATED_KEY, UNRELATED_VALUE]])

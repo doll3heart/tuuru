@@ -28,8 +28,8 @@ export class LocalDatabaseError extends Error {
     super(message)
     this.name = "LocalDatabaseError"
     this.code = code
-    if (cause) this.cause = cause
-    if (details) this.details = details
+    if (cause !== undefined) this.cause = cause
+    if (details !== undefined) this.details = details
   }
 }
 
@@ -142,6 +142,148 @@ export function inspectLocalDatabaseRaw(raw) {
   return validateDatabaseObject(data, { context: "local-database", raw })
 }
 
+export function validateLocalDatabase(data) {
+  return validateDatabaseObject(data, { context: "local-database", raw: null })
+}
+
+function assertJsonCompatible(value) {
+  const active = new WeakSet()
+  const stack = [{ value, exiting: false }]
+
+  while (stack.length > 0) {
+    const frame = stack.pop()
+    const current = frame.value
+    if (current === null || typeof current === "string" || typeof current === "boolean") continue
+    if (typeof current === "number") {
+      if (!Number.isFinite(current)) throw new TypeError("database numbers must be finite")
+      continue
+    }
+    if (typeof current !== "object") {
+      throw new TypeError("database values must be JSON-compatible")
+    }
+    if (frame.exiting) {
+      active.delete(current)
+      continue
+    }
+    if (active.has(current)) throw new RangeError("database values must not be cyclic")
+
+    active.add(current)
+    stack.push({ value: current, exiting: true })
+
+    if (Array.isArray(current)) {
+      for (const key of Reflect.ownKeys(current)) {
+        if (typeof key === "symbol") {
+          throw new TypeError("database arrays must not have symbol properties")
+        }
+        if (key === "length") continue
+        const index = Number(key)
+        if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key) {
+          throw new TypeError("database arrays must not have named properties")
+        }
+      }
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        if (!Object.hasOwn(current, index)) throw new TypeError("database arrays must not be sparse")
+        stack.push({ value: current[index], exiting: false })
+      }
+      continue
+    }
+
+    const prototype = Object.getPrototypeOf(current)
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("database objects must be plain JSON objects")
+    }
+    for (const key of Reflect.ownKeys(current)) {
+      if (typeof key === "symbol") {
+        throw new TypeError("database objects must not have symbol properties")
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      if (descriptor.get !== undefined || descriptor.set !== undefined) {
+        throw new TypeError("database objects must not have accessor properties")
+      }
+      if (descriptor.enumerable) stack.push({ value: descriptor.value, exiting: false })
+    }
+  }
+}
+
+function invalidWriteError(cause, issues) {
+  return new LocalDatabaseError(
+    "Refused to serialize an invalid local database.",
+    "invalid-write",
+    cause,
+    issues === undefined ? undefined : { issues },
+  )
+}
+
+export function serializeValidatedLocalDatabase(data) {
+  try {
+    assertJsonCompatible(data)
+  } catch (error) {
+    throw invalidWriteError(error)
+  }
+
+  let candidate
+  try {
+    candidate = validateLocalDatabase(data)
+  } catch (error) {
+    throw invalidWriteError(error)
+  }
+  if (!candidate.ok) throw invalidWriteError(undefined, candidate.issues)
+
+  let raw
+  try {
+    assertJsonCompatible(candidate.data)
+    raw = JSON.stringify(candidate.data)
+  } catch (error) {
+    throw invalidWriteError(error)
+  }
+  const verified = inspectLocalDatabaseRaw(raw)
+  if (!verified.ok) throw invalidWriteError(undefined, verified.issues)
+  return raw
+}
+
+function backupSerializationError(cause, issues) {
+  return new LocalDatabaseError(
+    "Unable to create a complete local library backup.",
+    "backup-failed",
+    cause,
+    issues === undefined ? undefined : { issues },
+  )
+}
+
+function assertCanonicalIsoTimestamp(exportedAt) {
+  if (typeof exportedAt !== "string") {
+    throw new TypeError("backup timestamp must be a canonical ISO string")
+  }
+  const parsed = new Date(exportedAt)
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== exportedAt) {
+    throw new RangeError("backup timestamp must be a canonical ISO string")
+  }
+}
+
+export function serializeLocalDatabaseBackupFromDatabase(database, exportedAt) {
+  try {
+    assertCanonicalIsoTimestamp(exportedAt)
+    assertJsonCompatible(database)
+  } catch (error) {
+    throw backupSerializationError(error)
+  }
+
+  let status
+  try {
+    status = validateLocalDatabase(database)
+  } catch (error) {
+    throw backupSerializationError(error)
+  }
+  if (!status.ok) throw backupSerializationError(undefined, status.issues)
+
+  try {
+    assertJsonCompatible(status.data)
+    return serializeBackupDatabase(status.data, exportedAt)
+  } catch (error) {
+    throw backupSerializationError(error)
+  }
+}
+
 export function inspectLocalDatabase(storage = localStorage) {
   let raw
 
@@ -249,9 +391,10 @@ function freezeRestorePlan(plan) {
 
 export function serializeLocalDatabaseBackup(storage = localStorage, exportedAt = new Date()) {
   const database = readLocalDatabase(storage)
+  let isoTimestamp
 
   try {
-    return serializeBackupDatabase(database, exportedAt.toISOString())
+    isoTimestamp = exportedAt.toISOString()
   } catch (error) {
     throw new LocalDatabaseError(
       "无法创建完整创作库备份。请确认浏览器仍有足够可用内存。",
@@ -259,6 +402,7 @@ export function serializeLocalDatabaseBackup(storage = localStorage, exportedAt 
       error,
     )
   }
+  return serializeLocalDatabaseBackupFromDatabase(database, isoTimestamp)
 }
 
 function backupValidationError(message, code) {
