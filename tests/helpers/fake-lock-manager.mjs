@@ -1,3 +1,5 @@
+const LOCK_TERMINATION_REASON = Symbol.for("tuuru:lock-termination-reason")
+
 function createAbortError(message = "The lock request was aborted") {
   if (typeof DOMException === "function") {
     return new DOMException(message, "AbortError")
@@ -5,6 +7,17 @@ function createAbortError(message = "The lock request was aborted") {
   const error = new Error(message)
   error.name = "AbortError"
   return error
+}
+
+function markTermination(error, reason) {
+  Object.defineProperty(error, LOCK_TERMINATION_REASON, { value: reason })
+  return error
+}
+
+function modelAbortedTermination(cause) {
+  const error = new Error("Held lock terminated")
+  error.cause = cause
+  return markTermination(error, "aborted")
 }
 
 function createNotSupportedError(message) {
@@ -200,7 +213,10 @@ export function createFakeLockManager() {
     record.resource = resource
 
     if (record.steal) {
-      const abortError = createAbortError(`Lock "${record.name}" was stolen`)
+      const abortError = markTermination(
+        createAbortError(`Lock "${record.name}" was stolen`),
+        "stolen",
+      )
       for (const heldRecord of [...resource.held]) {
         terminateRecord(heldRecord, abortError, false)
       }
@@ -263,7 +279,7 @@ export function createFakeLockManager() {
       if (signal) {
         record.abortHandler = () => {
           const cause = signalReason(signal)
-          queueMicrotask(() => abortPending(record, cause))
+          abortPending(record, cause)
         }
         signal.addEventListener("abort", record.abortHandler, { once: true })
       }
@@ -291,8 +307,9 @@ export function createFakeLockManager() {
     if (!resource) return false
 
     let terminated = false
+    const terminationCause = modelAbortedTermination(cause)
     for (const record of [...resource.held]) {
-      terminated = terminateRecord(record, cause, false) || terminated
+      terminated = terminateRecord(record, terminationCause, false) || terminated
     }
     if (!terminated) return false
 

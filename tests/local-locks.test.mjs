@@ -428,6 +428,37 @@ test("custom signal reasons remain pending-abort causes for request and hold", a
   await Promise.all([requestHolder.released, holdHolder.released])
 })
 
+test("pending abort wins when holder release is queued before grant", async () => {
+  const { adapter, manager } = createAvailableAdapter()
+  const holder = await adapter.hold("abort-before-grant")
+  const controller = new AbortController()
+  const abortCause = new Error("abort before queued grant")
+  let callbackCalls = 0
+
+  const pending = adapter.request(
+    "abort-before-grant",
+    { signal: controller.signal },
+    () => { callbackCalls += 1 },
+  )
+  await waitFor(() => manager.snapshot().pending.length === 1, "the abort-race request")
+
+  holder.release()
+  controller.abort(abortCause)
+
+  await assert.rejects(
+    pending,
+    error => assertAdapterError(error, {
+      code: "mutation-lock-aborted",
+      cause: abortCause,
+    }),
+  )
+  await holder.released
+  await nextTurn()
+
+  assert.equal(callbackCalls, 0)
+  assert.deepEqual(manager.snapshot(), { held: [], pending: [] })
+})
+
 test("AbortSignal is ignored after its request has been granted", async () => {
   const { adapter, manager } = createAvailableAdapter()
   const controller = new AbortController()
@@ -641,6 +672,23 @@ test("native held termination wins over a same-turn explicit release", async () 
     code: "mutation-lock-aborted",
     cause: terminationCause,
   })
+})
+
+test("modeled AbortError termination remains aborted without steal provenance", async () => {
+  const { adapter, manager } = createAvailableAdapter()
+  const handle = await adapter.hold("modeled-abort-error")
+  const abortCause = new DOMException("modeled context termination", "AbortError")
+
+  assert.equal(manager.terminateHeld("modeled-abort-error", abortCause), true)
+  const loss = await handle.lost
+  await handle.released
+
+  assert.equal(loss.reason, "aborted")
+  assertAdapterError(loss.error, {
+    code: "mutation-lock-aborted",
+    cause: abortCause,
+  })
+  assert.deepEqual(manager.snapshot(), { held: [], pending: [] })
 })
 
 test("modeled held-lock termination reports aborted and settles each lifecycle once", async () => {

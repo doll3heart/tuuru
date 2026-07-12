@@ -1,6 +1,8 @@
 export const LIBRARY_SESSION_LOCK_NAME = "tuuru:library-session"
 export const DATABASE_WRITE_LOCK_NAME = "tuuru:database-write"
 
+const LOCK_TERMINATION_REASON = Symbol.for("tuuru:lock-termination-reason")
+
 export function getWorkLockName(workId) {
   return `tuuru:work:${encodeURIComponent(String(workId))}`
 }
@@ -76,13 +78,21 @@ function pendingAbortError(name, cause) {
 }
 
 function heldTermination(name, cause) {
-  if (isAbortError(cause)) {
+  const markedReason = cause?.[LOCK_TERMINATION_REASON]
+  const modeledReason = markedReason === "stolen" || markedReason === "aborted"
+    ? markedReason
+    : null
+  const originalCause = modeledReason === "aborted" && Object.hasOwn(cause, "cause")
+    ? cause.cause
+    : cause
+
+  if (modeledReason === "stolen" || (modeledReason === null && isAbortError(cause))) {
     return {
       reason: "stolen",
       error: new LocalLockUnavailableError(
         `Local lock "${name}" was stolen`,
         "mutation-lock-stolen",
-        cause,
+        originalCause,
       ),
     }
   }
@@ -91,7 +101,7 @@ function heldTermination(name, cause) {
     error: new LocalLockUnavailableError(
       `Local lock "${name}" ended unexpectedly`,
       "mutation-lock-aborted",
-      cause,
+      originalCause,
     ),
   }
 }
