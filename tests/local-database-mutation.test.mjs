@@ -625,6 +625,69 @@ test("normal mutation rejects a hidden candidate toJSON before callback or stora
   })
 })
 
+test("normal mutation rejects inherited Array prototype toJSON before write", async () => {
+  const database = {
+    works: [{ id: "work-1", value: "before" }],
+    contacts: [],
+    groups: [],
+  }
+  const fixture = createMutationFixture({ database })
+  const expectedCurrentRaw = fixture.keyedStorage.peek(LOCAL_DATABASE_KEY)
+  const previousDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON")
+  let callbackCalls = 0
+  let result
+  let error
+
+  Object.defineProperty(Array.prototype, "toJSON", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value() {
+      callbackCalls += 1
+      return []
+    },
+  })
+  try {
+    try {
+      result = await commitLocalDatabaseMutation(mutationArgs({
+        expectedWorkToken: createJsonToken(database.works[0]),
+        apply(latest) {
+          return {
+            ...latest,
+            works: latest.works.map(work => ({ ...work, value: "after" })),
+          }
+        },
+      }), mutationDependencies(fixture))
+    } catch (caught) {
+      error = caught
+    }
+  } finally {
+    if (previousDescriptor === undefined) delete Array.prototype.toJSON
+    else Object.defineProperty(Array.prototype, "toJSON", previousDescriptor)
+  }
+
+  assert.deepEqual({
+    errorCode: error?.code,
+    phase: error?.details?.phase,
+    commitState: error?.details?.commitState,
+    callbackCalls,
+    setCalls: fixture.keyedStorage.count("setItem", LOCAL_DATABASE_KEY),
+    removeCalls: fixture.keyedStorage.count("removeItem", LOCAL_DATABASE_KEY),
+    storedRaw: fixture.keyedStorage.peek(LOCAL_DATABASE_KEY),
+    resultOk: result?.ok,
+  }, {
+    errorCode: "mutation-invalid",
+    phase: "validate-candidate",
+    commitState: "unchanged",
+    callbackCalls: 0,
+    setCalls: 0,
+    removeCalls: 0,
+    storedRaw: expectedCurrentRaw,
+    resultOk: undefined,
+  })
+  assert.deepEqual(Object.getOwnPropertyDescriptor(Array.prototype, "toJSON"), previousDescriptor)
+})
+
 test("setItem failure is unchanged, retains both exact raws, and is never retried", async () => {
   const database = {
     works: [{ id: "work-1", value: "before" }],

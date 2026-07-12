@@ -147,6 +147,19 @@ export function validateLocalDatabase(data) {
   return validateDatabaseObject(data, { context: "local-database", raw: null })
 }
 
+function assertNoJsonSerializationHook(value) {
+  const inspected = new WeakSet()
+  let current = value
+  while (current !== null) {
+    if (inspected.has(current)) throw new TypeError("database prototype chains must not be cyclic")
+    inspected.add(current)
+    if (Object.getOwnPropertyDescriptor(current, "toJSON") !== undefined) {
+      throw new TypeError("database values must not define or inherit toJSON")
+    }
+    current = Object.getPrototypeOf(current)
+  }
+}
+
 function assertJsonCompatible(value) {
   const active = new WeakSet()
   const stack = [{ value, exiting: false }]
@@ -162,6 +175,7 @@ function assertJsonCompatible(value) {
     if (typeof current !== "object") {
       throw new TypeError("database values must be JSON-compatible")
     }
+    assertNoJsonSerializationHook(current)
     if (frame.exiting) {
       active.delete(current)
       continue

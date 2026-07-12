@@ -91,6 +91,22 @@ function databaseWithHiddenToJson(onCall) {
   }
 }
 
+function withTemporaryPrototypeToJson(prototype, hook, callback) {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(prototype, "toJSON")
+  Object.defineProperty(prototype, "toJSON", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: hook,
+  })
+  try {
+    return callback()
+  } finally {
+    if (previousDescriptor === undefined) delete prototype.toJSON
+    else Object.defineProperty(prototype, "toJSON", previousDescriptor)
+  }
+}
+
 test("exports pure local database validation and serialization helpers", () => {
   assert.equal(typeof validateLocalDatabase, "function")
   assert.equal(typeof serializeValidatedLocalDatabase, "function")
@@ -175,6 +191,83 @@ test("pure encoders reject hidden toJSON before it can replace unknown data", ()
       raw: undefined,
     })
   }
+})
+
+test("pure encoders reject inherited Array prototype toJSON before works can disappear", () => {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON")
+  for (const [name, encode, expectedCode] of [
+    ["database", serializeValidatedLocalDatabase, "invalid-write"],
+    [
+      "backup",
+      database => serializeLocalDatabaseBackupFromDatabase(
+        database,
+        "2026-07-12T00:00:00.000Z",
+      ),
+      "backup-failed",
+    ],
+  ]) {
+    let callbackCalls = 0
+    let raw
+    let error
+    withTemporaryPrototypeToJson(
+      Array.prototype,
+      () => {
+        callbackCalls += 1
+        return []
+      },
+      () => {
+        try {
+          raw = encode({
+            works: [{ id: "must-stay" }],
+            contacts: [],
+            groups: [],
+          })
+        } catch (caught) {
+          error = caught
+        }
+      },
+    )
+
+    const parsed = raw === undefined ? undefined : JSON.parse(raw)
+    assert.deepEqual({
+      name,
+      errorCode: error?.code,
+      callbackCalls,
+      encodedWorks: parsed?.database?.works ?? parsed?.works,
+    }, {
+      name,
+      errorCode: expectedCode,
+      callbackCalls: 0,
+      encodedWorks: undefined,
+    })
+    assert.deepEqual(Object.getOwnPropertyDescriptor(Array.prototype, "toJSON"), previousDescriptor)
+  }
+})
+
+test("database serialization rejects inherited Object prototype toJSON without calling it", () => {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON")
+  let callbackCalls = 0
+  let error
+
+  withTemporaryPrototypeToJson(
+    Object.prototype,
+    () => {
+      callbackCalls += 1
+      return []
+    },
+    () => {
+      try {
+        serializeValidatedLocalDatabase({ works: [], contacts: [], groups: [] })
+      } catch (caught) {
+        error = caught
+      }
+    },
+  )
+
+  assert.equal(error instanceof LocalDatabaseError, true)
+  assert.equal(error.code, "invalid-write")
+  assert.equal(callbackCalls, 0)
+  assert.deepEqual(Object.getOwnPropertyDescriptor(Object.prototype, "toJSON"), previousDescriptor)
 })
 
 test("pure encoders reject named array fields at and above the array-index boundary", () => {
