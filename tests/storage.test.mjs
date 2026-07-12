@@ -20,6 +20,38 @@ import {
 
 const storageSource = readFileSync(new URL("../js/storage.js", import.meta.url), "utf8")
 
+function javascriptDataUrl(source) {
+  return `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`
+}
+
+let reliableWriteStorageModule
+
+function loadStorageWithReliableWrites() {
+  if (reliableWriteStorageModule) return reliableWriteStorageModule
+
+  const workSchemaSpecifier = '"./work-schema.js"'
+  const featureFlagsSpecifier = '"./feature-flags.js"'
+  assert.equal(storageSource.split(workSchemaSpecifier).length - 1, 1)
+  assert.equal(storageSource.split(featureFlagsSpecifier).length - 1, 1)
+
+  const enabledFeatureFlagsUrl = javascriptDataUrl(`
+    export const FEATURE_FLAGS = Object.freeze({ reliableLocalWrites: true })
+
+    export function featureEnabled(name, flags = FEATURE_FLAGS) {
+      return flags?.[name] === true
+    }
+  `)
+  const isolatedStorageSource = storageSource
+    .replace(
+      workSchemaSpecifier,
+      JSON.stringify(new URL("../js/work-schema.js", import.meta.url).href),
+    )
+    .replace(featureFlagsSpecifier, JSON.stringify(enabledFeatureFlagsUrl))
+
+  reliableWriteStorageModule = import(javascriptDataUrl(isolatedStorageSource))
+  return reliableWriteStorageModule
+}
+
 function createStorage(initialValue = null, options = {}) {
   let value = initialValue
   const calls = { get: 0, set: 0, remove: 0 }
@@ -205,19 +237,47 @@ test("legacy write assertion blocks only a strict enabled reliable-write flag", 
   )
 })
 
-test("enabled reliable writes stop before a fake storage records any mutation", () => {
+test("enabled reliable writes block the actual ordinary writer before storage access", async () => {
+  const enabledStorageModule = await loadStorageWithReliableWrites()
   const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
 
   assert.throws(
-    () => {
-      assertLegacyWritesAllowed({ reliableLocalWrites: true })
-      storage.setItem(LOCAL_DATABASE_KEY, "replacement")
-      storage.removeItem(LOCAL_DATABASE_KEY)
-    },
-    error => error instanceof LocalDatabaseError && error.code === "legacy-write-disabled",
+    () => enabledStorageModule.writeLocalDatabase(
+      { works: [{ id: "blocked" }], contacts: [], groups: [] },
+      storage,
+    ),
+    error => error instanceof enabledStorageModule.LocalDatabaseError
+      && error.code === "legacy-write-disabled",
   )
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
+  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
+  assert.deepEqual(storage.events, [])
+})
+
+test("enabled reliable writes block the actual restore writer before storage access", async () => {
+  const enabledStorageModule = await loadStorageWithReliableWrites()
+  const currentRaw = JSON.stringify({ works: [{ id: "current" }], contacts: [], groups: [] })
+  const preparationStorage = createStorage(currentRaw)
+  const parsed = enabledStorageModule.parseLocalDatabaseBackup(JSON.stringify({
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-11T00:00:00.000Z",
+    database: { works: [{ id: "backup" }], contacts: [], groups: [] },
+  }))
+  const plan = enabledStorageModule.prepareLocalDatabaseRestore(
+    parsed,
+    preparationStorage,
+    new Date("2026-07-11T01:00:00.000Z"),
+  )
+  const storage = createStorage(currentRaw)
+
+  assert.equal(Object.isFrozen(plan), true)
+  assert.throws(
+    () => enabledStorageModule.restoreLocalDatabaseBackup(plan, storage),
+    error => error instanceof enabledStorageModule.LocalDatabaseError
+      && error.code === "legacy-write-disabled",
+  )
+  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
+  assert.deepEqual(storage.events, [])
 })
 
 test("both legacy database writers call the shared guard before mutating storage", () => {
