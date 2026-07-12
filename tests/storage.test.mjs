@@ -2,6 +2,8 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 
+import { createKeyedStorage } from "./helpers/keyed-storage.mjs"
+
 import {
   LOCAL_DATABASE_KEY,
   LocalDatabaseError,
@@ -19,6 +21,8 @@ import {
 } from "../js/storage.js"
 
 const storageSource = readFileSync(new URL("../js/storage.js", import.meta.url), "utf8")
+const UNRELATED_KEY = "unrelated:key"
+const UNRELATED_VALUE = "keep"
 
 function javascriptDataUrl(source) {
   return `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`
@@ -52,40 +56,6 @@ function loadStorageWithReliableWrites() {
   return reliableWriteStorageModule
 }
 
-function createStorage(initialValue = null, options = {}) {
-  let value = initialValue
-  const calls = { get: 0, set: 0, remove: 0 }
-  const events = []
-
-  return {
-    calls,
-    events,
-    get value() { return value },
-    getItem() {
-      calls.get += 1
-      events.push("get")
-      if (options.getErrorAt === calls.get) throw options.getError || new Error("read failed")
-      if (options.getValues && calls.get <= options.getValues.length) {
-        return options.getValues[calls.get - 1]
-      }
-      if (options.getError) throw options.getError
-      return value
-    },
-    setItem(_key, nextValue) {
-      calls.set += 1
-      events.push("set")
-      if (options.setError) throw options.setError
-      value = nextValue
-    },
-    removeItem() {
-      calls.remove += 1
-      events.push("remove")
-      if (options.removeError) throw options.removeError
-      value = null
-    },
-  }
-}
-
 function parsedBackup(database) {
   return parseLocalDatabaseBackup(JSON.stringify({
     format: "tuuru-local-library-backup",
@@ -101,15 +71,19 @@ function deeplyNestedDatabaseRaw(depth = 5000) {
 }
 
 test("a missing database starts empty without writing", () => {
-  const storage = createStorage()
+  const storage = createKeyedStorage([[UNRELATED_KEY, UNRELATED_VALUE]])
 
   assert.deepEqual(readLocalDatabase(storage), { works: [], contacts: [], groups: [] })
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("legacy valid data receives in-memory defaults without being rewritten", () => {
   const raw = JSON.stringify({ works: [{ id: "work-1" }], futureField: true })
-  const storage = createStorage(raw)
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, raw],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
 
   assert.deepEqual(readLocalDatabase(storage), {
     works: [{ id: "work-1" }],
@@ -117,8 +91,9 @@ test("legacy valid data receives in-memory defaults without being rewritten", ()
     groups: [],
     futureField: true,
   })
-  assert.equal(storage.value, raw)
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), raw)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("raw inspection normalizes missing legacy collections without writing", () => {
@@ -143,7 +118,7 @@ test("known nested corruption fails closed and preserves exact raw data", () => 
     contacts: [],
     groups: [],
   })
-  const storage = createStorage(raw)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, raw]])
 
   const status = inspectLocalDatabase(storage)
 
@@ -152,7 +127,7 @@ test("known nested corruption fails closed and preserves exact raw data", () => 
   assert.equal(status.raw, raw)
   assert.equal(status.issues[0].path, "$.works[0].phoneData.contacts[0]")
   assert.throws(() => readLocalDatabase(storage), LocalDatabaseError)
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("present wrong-typed top-level collections are never defaulted away", () => {
@@ -168,7 +143,10 @@ test("present wrong-typed top-level collections are never defaulted away", () =>
 })
 
 test("invalid outgoing nested data never reaches setItem", () => {
-  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const storage = createKeyedStorage([[
+    LOCAL_DATABASE_KEY,
+    JSON.stringify({ works: [], contacts: [], groups: [] }),
+  ]])
 
   assert.throws(
     () => writeLocalDatabase({
@@ -178,7 +156,7 @@ test("invalid outgoing nested data never reaches setItem", () => {
     }, storage),
     error => error instanceof LocalDatabaseError && error.code === "invalid-write",
   )
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("backup parsing and local inspection share nested work validation", () => {
@@ -239,7 +217,10 @@ test("legacy write assertion blocks only a strict enabled reliable-write flag", 
 
 test("enabled reliable writes block the actual ordinary writer before storage access", async () => {
   const enabledStorageModule = await loadStorageWithReliableWrites()
-  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, JSON.stringify({ works: [], contacts: [], groups: [] })],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
 
   assert.throws(
     () => enabledStorageModule.writeLocalDatabase(
@@ -249,14 +230,14 @@ test("enabled reliable writes block the actual ordinary writer before storage ac
     error => error instanceof enabledStorageModule.LocalDatabaseError
       && error.code === "legacy-write-disabled",
   )
-  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
-  assert.deepEqual(storage.events, [])
+  assert.deepEqual(storage.calls, [])
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("enabled reliable writes block the actual restore writer before storage access", async () => {
   const enabledStorageModule = await loadStorageWithReliableWrites()
   const currentRaw = JSON.stringify({ works: [{ id: "current" }], contacts: [], groups: [] })
-  const preparationStorage = createStorage(currentRaw)
+  const preparationStorage = createKeyedStorage([[LOCAL_DATABASE_KEY, currentRaw]])
   const parsed = enabledStorageModule.parseLocalDatabaseBackup(JSON.stringify({
     format: "tuuru-local-library-backup",
     backupVersion: 1,
@@ -268,7 +249,10 @@ test("enabled reliable writes block the actual restore writer before storage acc
     preparationStorage,
     new Date("2026-07-11T01:00:00.000Z"),
   )
-  const storage = createStorage(currentRaw)
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, currentRaw],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
 
   assert.equal(Object.isFrozen(plan), true)
   assert.throws(
@@ -276,8 +260,8 @@ test("enabled reliable writes block the actual restore writer before storage acc
     error => error instanceof enabledStorageModule.LocalDatabaseError
       && error.code === "legacy-write-disabled",
   )
-  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
-  assert.deepEqual(storage.events, [])
+  assert.deepEqual(storage.calls, [])
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("both legacy database writers call the shared guard before mutating storage", () => {
@@ -308,7 +292,10 @@ test("both legacy database writers call the shared guard before mutating storage
 
 test("invalid JSON is preserved and blocks every write", () => {
   const raw = '{"works":['
-  const storage = createStorage(raw)
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, raw],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
   const status = inspectLocalDatabase(storage)
 
   assert.equal(status.ok, false)
@@ -316,45 +303,69 @@ test("invalid JSON is preserved and blocks every write", () => {
   assert.equal(status.raw, raw)
   assert.throws(() => readLocalDatabase(storage), LocalDatabaseError)
   assert.throws(() => writeLocalDatabase({ works: [] }, storage), LocalDatabaseError)
-  assert.equal(storage.value, raw)
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), raw)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 for (const value of [null, [], "text", {}, { works: {} }]) {
   test(`invalid database structure is rejected: ${JSON.stringify(value)}`, () => {
-    const storage = createStorage(JSON.stringify(value))
+    const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify(value)]])
     const status = inspectLocalDatabase(storage)
 
     assert.equal(status.ok, false)
     assert.equal(status.code, "invalid-structure")
-    assert.equal(storage.calls.set, 0)
+    assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
   })
 }
 
 test("invalid outgoing data is never written", () => {
-  const storage = createStorage(JSON.stringify({ works: [] }))
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify({ works: [] })]])
 
   assert.throws(
     () => writeLocalDatabase({ works: {} }, storage),
     error => error instanceof LocalDatabaseError && error.code === "invalid-write",
   )
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("write failures are wrapped without replacing the previous value", () => {
   const raw = JSON.stringify({ works: [] })
-  const storage = createStorage(raw, { setError: new Error("quota exceeded") })
+  const storage = createKeyedStorage(
+    [[LOCAL_DATABASE_KEY, raw], [UNRELATED_KEY, UNRELATED_VALUE]],
+    { setErrors: new Map([[LOCAL_DATABASE_KEY, new Error("quota exceeded")]]) },
+  )
 
   assert.throws(
     () => writeLocalDatabase({ works: [{ id: "new" }] }, storage),
     error => error instanceof LocalDatabaseError && error.code === "write-failed",
   )
-  assert.equal(storage.value, raw)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), raw)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
+})
+
+test("ordinary database writes target only the database key", () => {
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, JSON.stringify({ works: [], contacts: [], groups: [] })],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
+
+  writeLocalDatabase({ works: [{ id: "new" }], contacts: [], groups: [] }, storage)
+
+  assert.deepEqual(JSON.parse(storage.peek(LOCAL_DATABASE_KEY)), {
+    works: [{ id: "new" }],
+    contacts: [],
+    groups: [],
+  })
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(storage.count("setItem", UNRELATED_KEY), 0)
+  assert.equal(storage.count("removeItem", UNRELATED_KEY), 0)
 })
 
 test("a full library backup has a versioned envelope without writing", () => {
   const exportedAt = new Date("2026-07-10T05:30:00.000Z")
-  const storage = createStorage()
+  const storage = createKeyedStorage([[UNRELATED_KEY, UNRELATED_VALUE]])
 
   const backup = JSON.parse(serializeLocalDatabaseBackup(storage, exportedAt))
 
@@ -364,8 +375,9 @@ test("a full library backup has a versioned envelope without writing", () => {
     exportedAt: "2026-07-10T05:30:00.000Z",
     database: { works: [], contacts: [], groups: [] },
   })
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("a full library backup preserves private editor and future fields", () => {
@@ -380,7 +392,7 @@ test("a full library backup preserves private editor and future fields", () => {
     groups: [{ id: "group-1" }],
     futureField: { enabled: true },
   }
-  const storage = createStorage(JSON.stringify(database))
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify(database)]])
 
   const backup = JSON.parse(serializeLocalDatabaseBackup(
     storage,
@@ -388,12 +400,14 @@ test("a full library backup preserves private editor and future fields", () => {
   ))
 
   assert.deepEqual(backup.database, database)
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("a full library backup refuses corrupt or unavailable storage", () => {
-  const corruptStorage = createStorage("not-json")
-  const unavailableStorage = createStorage(null, { getError: new Error("denied") })
+  const corruptStorage = createKeyedStorage([[LOCAL_DATABASE_KEY, "not-json"]])
+  const unavailableStorage = createKeyedStorage([], {
+    getErrors: new Map([[LOCAL_DATABASE_KEY, new Error("denied")]]),
+  })
 
   assert.throws(
     () => serializeLocalDatabaseBackup(corruptStorage),
@@ -403,8 +417,8 @@ test("a full library backup refuses corrupt or unavailable storage", () => {
     () => serializeLocalDatabaseBackup(unavailableStorage),
     error => error instanceof LocalDatabaseError && error.code === "storage-unavailable",
   )
-  assert.equal(corruptStorage.calls.set, 0)
-  assert.equal(unavailableStorage.calls.set, 0)
+  assert.equal(corruptStorage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(unavailableStorage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("a full library backup can be parsed into a read-only summary", () => {
@@ -419,7 +433,7 @@ test("a full library backup can be parsed into a read-only summary", () => {
     futureField: true,
   }
   const raw = serializeLocalDatabaseBackup(
-    createStorage(JSON.stringify(database)),
+    createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify(database)]]),
     new Date("2026-07-10T05:30:00.000Z"),
   )
 
@@ -560,7 +574,9 @@ test("backup file read failures use a stable local error", async () => {
 })
 
 test("unavailable storage blocks reads, writes, and destructive reset", () => {
-  const storage = createStorage(null, { getError: new Error("denied") })
+  const storage = createKeyedStorage([[UNRELATED_KEY, UNRELATED_VALUE]], {
+    getErrors: new Map([[LOCAL_DATABASE_KEY, new Error("denied")]]),
+  })
 
   assert.equal(inspectLocalDatabase(storage).code, "storage-unavailable")
   assert.throws(() => readLocalDatabase(storage), LocalDatabaseError)
@@ -569,26 +585,33 @@ test("unavailable storage blocks reads, writes, and destructive reset", () => {
     () => discardCorruptLocalDatabase(storage),
     error => error instanceof LocalDatabaseError && error.code === "storage-unavailable",
   )
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("only a confirmed corrupt database can be discarded", () => {
-  const corruptStorage = createStorage("not-json")
+  const corruptStorage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, "not-json"],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
   discardCorruptLocalDatabase(corruptStorage)
-  assert.equal(corruptStorage.value, null)
+  assert.equal(corruptStorage.peek(LOCAL_DATABASE_KEY), null)
+  assert.equal(corruptStorage.peek(UNRELATED_KEY), UNRELATED_VALUE)
+  assert.equal(corruptStorage.count("removeItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(corruptStorage.count("removeItem", UNRELATED_KEY), 0)
 
-  const validStorage = createStorage(JSON.stringify({ works: [] }))
+  const validStorage = createKeyedStorage([[LOCAL_DATABASE_KEY, JSON.stringify({ works: [] })]])
   assert.throws(
     () => discardCorruptLocalDatabase(validStorage),
     error => error instanceof LocalDatabaseError && error.code === "database-valid",
   )
-  assert.equal(validStorage.calls.remove, 0)
+  assert.equal(validStorage.count("removeItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("restore preparation is read-only and creates a valid-library recovery artifact", () => {
   const currentRaw = JSON.stringify({ works: [{ id: "old" }], contacts: [], groups: [] })
-  const storage = createStorage(currentRaw)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, currentRaw]])
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [], future: true }),
     storage,
@@ -602,12 +625,12 @@ test("restore preparation is read-only and creates a valid-library recovery arti
   assert.equal(plan.recoveryArtifact.kind, "library-backup")
   assert.match(plan.recoveryArtifact.filename, /^tuuru-library-before-restore-/)
   assert.deepEqual(JSON.parse(plan.candidateRaw).future, true)
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("restore preparation preserves corrupt raw data as the recovery artifact", () => {
-  const storage = createStorage('{"works":[')
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, '{"works":[']])
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [], contacts: [], groups: [] }),
     storage,
@@ -617,12 +640,15 @@ test("restore preparation preserves corrupt raw data as the recovery artifact", 
   assert.equal(plan.previousState, "corrupt")
   assert.equal(plan.recoveryArtifact.kind, "corrupt-raw")
   assert.equal(plan.recoveryArtifact.contents, '{"works":[')
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("a successful restore performs one replacement and exact readback", () => {
   const oldRaw = JSON.stringify({ works: [{ id: "old" }], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw)
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, oldRaw],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [], future: true }),
     storage,
@@ -632,27 +658,44 @@ test("a successful restore performs one replacement and exact readback", () => {
 
   assert.equal(result.code, "restored")
   assert.equal(result.previousState, "valid")
-  assert.equal(storage.calls.set, 1)
-  assert.equal(storage.calls.remove, 0)
-  assert.equal(storage.value, plan.candidateRaw)
-  assert.deepEqual(storage.events, ["get", "get", "set", "get"])
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), plan.candidateRaw)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
+  assert.deepEqual(
+    storage.calls.map(call => [call.method, call.key]),
+    [
+      ["getItem", LOCAL_DATABASE_KEY],
+      ["getItem", LOCAL_DATABASE_KEY],
+      ["setItem", LOCAL_DATABASE_KEY],
+      ["getItem", LOCAL_DATABASE_KEY],
+    ],
+  )
 })
 
 test("restore from corrupt storage bypasses only the ordinary-write guard", () => {
-  const storage = createStorage("not-json")
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, "not-json"]])
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [], contacts: [], groups: [] }),
     storage,
   )
 
-  assert.throws(() => writeLocalDatabase({ works: [] }, createStorage("not-json")), LocalDatabaseError)
+  assert.throws(
+    () => writeLocalDatabase(
+      { works: [] },
+      createKeyedStorage([[LOCAL_DATABASE_KEY, "not-json"]]),
+    ),
+    LocalDatabaseError,
+  )
   assert.equal(restoreLocalDatabaseBackup(plan, storage).code, "restored")
 })
 
 test("a stale restore plan performs no write", () => {
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
   const changedRaw = JSON.stringify({ works: [{ id: "other-tab" }], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw, { getValues: [oldRaw, changedRaw] })
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, oldRaw]], {
+    getSequences: new Map([[LOCAL_DATABASE_KEY, [oldRaw, changedRaw]]]),
+  })
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "backup" }], contacts: [], groups: [] }),
     storage,
@@ -662,12 +705,15 @@ test("a stale restore plan performs no write", () => {
     () => restoreLocalDatabaseBackup(plan, storage),
     error => error.code === "restore-conflict" && error.details.commitState === "unchanged",
   )
-  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("quota failure preserves the exact old raw value", () => {
   const oldRaw = JSON.stringify({ works: [{ id: "old" }], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw, { setError: new Error("quota") })
+  const storage = createKeyedStorage(
+    [[LOCAL_DATABASE_KEY, oldRaw], [UNRELATED_KEY, UNRELATED_VALUE]],
+    { setErrors: new Map([[LOCAL_DATABASE_KEY, new Error("quota")]]) },
+  )
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
     storage,
@@ -677,14 +723,15 @@ test("quota failure preserves the exact old raw value", () => {
     () => restoreLocalDatabaseBackup(plan, storage),
     error => error.code === "restore-write-failed" && error.details.commitState === "unchanged",
   )
-  assert.equal(storage.value, oldRaw)
-  assert.equal(storage.calls.set, 1)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), oldRaw)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("mutable forged restore plans are rejected before storage access", () => {
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, oldRaw]])
   const forgedPlan = {
     candidateRaw: JSON.stringify({ works: [{ id: "forged" }], contacts: [], groups: [] }),
     expectedCurrentRaw: oldRaw,
@@ -699,14 +746,13 @@ test("mutable forged restore plans are rejected before storage access", () => {
       && error.details.phase === "replace"
       && error.details.commitState === "unchanged",
   )
-  assert.deepEqual(storage.events, [])
-  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
-  assert.equal(storage.value, oldRaw)
+  assert.deepEqual(storage.calls, [])
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), oldRaw)
 })
 
 test("frozen forged restore plans are rejected before storage access", () => {
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, oldRaw]])
   const forgedPlan = Object.freeze({
     candidateRaw: JSON.stringify({ works: [{ id: "forged" }], contacts: [], groups: [] }),
     expectedCurrentRaw: oldRaw,
@@ -721,14 +767,13 @@ test("frozen forged restore plans are rejected before storage access", () => {
       && error.details.phase === "replace"
       && error.details.commitState === "unchanged",
   )
-  assert.deepEqual(storage.events, [])
-  assert.deepEqual(storage.calls, { get: 0, set: 0, remove: 0 })
-  assert.equal(storage.value, oldRaw)
+  assert.deepEqual(storage.calls, [])
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), oldRaw)
 })
 
 test("registered restore candidates are revalidated before storage access", { concurrency: false }, () => {
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, oldRaw]])
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
     storage,
@@ -748,10 +793,12 @@ test("registered restore candidates are revalidated before storage access", { co
     JSON.parse = originalParse
   }
 
-  assert.deepEqual(storage.events, ["get"])
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
-  assert.equal(storage.value, oldRaw)
+  assert.deepEqual(storage.calls, [
+    { method: "getItem", key: LOCAL_DATABASE_KEY, value: oldRaw },
+  ])
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), oldRaw)
 })
 
 test("restore summaries are derived from the revalidated candidate", () => {
@@ -768,7 +815,10 @@ test("restore summaries are derived from the revalidated candidate", () => {
     contactCount: 999,
     groupCount: 999,
   }
-  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const storage = createKeyedStorage([[
+    LOCAL_DATABASE_KEY,
+    JSON.stringify({ works: [], contacts: [], groups: [] }),
+  ]])
   const plan = prepareLocalDatabaseRestore(backup, storage)
   const expectedSummary = {
     workCount: 2,
@@ -784,7 +834,10 @@ test("restore summaries are derived from the revalidated candidate", () => {
 })
 
 test("UTF-8 byte measurement failures stop during preparation without writing", { concurrency: false }, () => {
-  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const storage = createKeyedStorage([[
+    LOCAL_DATABASE_KEY,
+    JSON.stringify({ works: [], contacts: [], groups: [] }),
+  ]])
   const cause = new Error("encoder unavailable")
   const OriginalTextEncoder = globalThis.TextEncoder
 
@@ -807,12 +860,15 @@ test("UTF-8 byte measurement failures stop during preparation without writing", 
     globalThis.TextEncoder = OriginalTextEncoder
   }
 
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("restore commit returns the prepared UTF-8 byte count without fallible work after verify", { concurrency: false }, () => {
-  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+  const storage = createKeyedStorage([[
+    LOCAL_DATABASE_KEY,
+    JSON.stringify({ works: [], contacts: [], groups: [] }),
+  ]])
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "作品" }], contacts: [], groups: [] }),
     storage,
@@ -832,7 +888,15 @@ test("restore commit returns the prepared UTF-8 byte count without fallible work
 
   assert.equal(plan.restoredBytes, expectedBytes)
   assert.equal(result.restoredBytes, expectedBytes)
-  assert.deepEqual(storage.events, ["get", "get", "set", "get"])
+  assert.deepEqual(
+    storage.calls.map(call => [call.method, call.key]),
+    [
+      ["getItem", LOCAL_DATABASE_KEY],
+      ["getItem", LOCAL_DATABASE_KEY],
+      ["setItem", LOCAL_DATABASE_KEY],
+      ["getItem", LOCAL_DATABASE_KEY],
+    ],
+  )
 })
 
 test("invalid and hostile restore times fail with a stable unchanged preparation error", () => {
@@ -844,7 +908,10 @@ test("invalid and hostile restore times fail with a stable unchanged preparation
   ]
 
   for (const now of values) {
-    const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+    const storage = createKeyedStorage([[
+      LOCAL_DATABASE_KEY,
+      JSON.stringify({ works: [], contacts: [], groups: [] }),
+    ]])
     assert.throws(
       () => prepareLocalDatabaseRestore(
         parsedBackup({ works: [], contacts: [], groups: [] }),
@@ -856,8 +923,8 @@ test("invalid and hostile restore times fail with a stable unchanged preparation
         && error.details.phase === "prepare"
         && error.details.commitState === "unchanged",
     )
-    assert.equal(storage.calls.set, 0)
-    assert.equal(storage.calls.remove, 0)
+    assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+    assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
   }
 })
 
@@ -872,7 +939,7 @@ test("restore preparation serializes time once and reuses its ISO value", () => 
     },
   }
   const currentRaw = JSON.stringify({ works: [{ id: "old" }], contacts: [], groups: [] })
-  const storage = createStorage(currentRaw)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, currentRaw]])
 
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
@@ -883,13 +950,15 @@ test("restore preparation serializes time once and reuses its ISO value", () => 
   assert.equal(calls, 1)
   assert.equal(plan.recoveryArtifact.filename, "tuuru-library-before-restore-2026-07-11T01-02-03-004Z.json")
   assert.equal(JSON.parse(plan.recoveryArtifact.contents).exportedAt, iso)
-  assert.equal(storage.calls.set, 0)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("restore reads report preparation and replacement phases before writing", () => {
   const prepareCause = new Error("prepare read failed")
-  const prepareStorage = createStorage(null, { getError: prepareCause })
+  const prepareStorage = createKeyedStorage([], {
+    getErrors: new Map([[LOCAL_DATABASE_KEY, prepareCause]]),
+  })
   assert.throws(
     () => prepareLocalDatabaseRestore(
       parsedBackup({ works: [], contacts: [], groups: [] }),
@@ -901,14 +970,12 @@ test("restore reads report preparation and replacement phases before writing", (
       && error.details.commitState === "unchanged"
       && error.cause === prepareCause,
   )
-  assert.equal(prepareStorage.calls.set, 0)
+  assert.equal(prepareStorage.count("setItem", LOCAL_DATABASE_KEY), 0)
 
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
   const replaceCause = new Error("replace read failed")
-  const replaceStorage = createStorage(oldRaw, {
-    getValues: [oldRaw],
-    getErrorAt: 2,
-    getError: replaceCause,
+  const replaceStorage = createKeyedStorage([[LOCAL_DATABASE_KEY, oldRaw]], {
+    getSequences: new Map([[LOCAL_DATABASE_KEY, [oldRaw, replaceCause]]]),
   })
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
@@ -922,19 +989,23 @@ test("restore reads report preparation and replacement phases before writing", (
       && error.details.commitState === "unchanged"
       && error.cause === replaceCause,
   )
-  assert.deepEqual(replaceStorage.events, ["get", "get"])
-  assert.equal(replaceStorage.calls.set, 0)
-  assert.equal(replaceStorage.calls.remove, 0)
+  assert.deepEqual(
+    replaceStorage.calls.map(call => [call.method, call.key]),
+    [["getItem", LOCAL_DATABASE_KEY], ["getItem", LOCAL_DATABASE_KEY]],
+  )
+  assert.equal(replaceStorage.count("setItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(replaceStorage.count("removeItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("a readback exception is unknown and never triggers retry or rollback", () => {
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
   const cause = new Error("readback failed")
-  const storage = createStorage(oldRaw, {
-    getValues: [oldRaw, oldRaw],
-    getErrorAt: 3,
-    getError: cause,
-  })
+  const storage = createKeyedStorage(
+    [[LOCAL_DATABASE_KEY, oldRaw], [UNRELATED_KEY, UNRELATED_VALUE]],
+    {
+      getSequences: new Map([[LOCAL_DATABASE_KEY, [oldRaw, oldRaw, cause]]]),
+    },
+  )
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
     storage,
@@ -948,16 +1019,28 @@ test("a readback exception is unknown and never triggers retry or rollback", () 
       && error.details.commitState === "unknown"
       && error.cause === cause,
   )
-  assert.deepEqual(storage.events, ["get", "get", "set", "get"])
-  assert.equal(storage.calls.set, 1)
-  assert.equal(storage.calls.remove, 0)
-  assert.equal(storage.value, plan.candidateRaw)
+  assert.deepEqual(
+    storage.calls.map(call => [call.method, call.key]),
+    [
+      ["getItem", LOCAL_DATABASE_KEY],
+      ["getItem", LOCAL_DATABASE_KEY],
+      ["setItem", LOCAL_DATABASE_KEY],
+      ["getItem", LOCAL_DATABASE_KEY],
+    ],
+  )
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), plan.candidateRaw)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
 test("uncertain readback never reports success or rolls back", () => {
   const oldRaw = JSON.stringify({ works: [], contacts: [], groups: [] })
   const mismatchedRaw = JSON.stringify({ works: [{ id: "other" }], contacts: [], groups: [] })
-  const storage = createStorage(oldRaw, { getValues: [oldRaw, oldRaw, mismatchedRaw] })
+  const storage = createKeyedStorage(
+    [[LOCAL_DATABASE_KEY, oldRaw], [UNRELATED_KEY, UNRELATED_VALUE]],
+    { getSequences: new Map([[LOCAL_DATABASE_KEY, [oldRaw, oldRaw, mismatchedRaw]]]) },
+  )
   const plan = prepareLocalDatabaseRestore(
     parsedBackup({ works: [{ id: "new" }], contacts: [], groups: [] }),
     storage,
@@ -967,6 +1050,7 @@ test("uncertain readback never reports success or rolls back", () => {
     () => restoreLocalDatabaseBackup(plan, storage),
     error => error.code === "restore-verification-failed" && error.details.commitState === "unknown",
   )
-  assert.equal(storage.calls.set, 1)
-  assert.equal(storage.calls.remove, 0)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+  assert.equal(storage.count("removeItem", LOCAL_DATABASE_KEY), 0)
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
