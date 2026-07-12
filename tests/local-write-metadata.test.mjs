@@ -540,6 +540,30 @@ test("conditional owner clear leaves missing and nonmatching ownership untouched
   assert.equal(cases[1].peek(key), raw)
 })
 
+test("conditional owner clear keeps a matching owner with a different lease", () => {
+  const key = getWorkOwnerKey("work")
+  const raw = ownerRaw({ workId: "work", ownerId: "owner", leaseId: "other-lease" })
+  const storage = createKeyedStorage([[key, raw], ["unrelated", "keep"]])
+
+  assert.equal(clearWorkOwnerIfOwned("work", "owner", "lease", storage), false)
+  assert.equal(storage.count("getItem", key), 1)
+  assert.equal(storage.count("removeItem", key), 0)
+  assert.equal(storage.peek(key), raw)
+  assert.equal(storage.peek("unrelated"), "keep")
+})
+
+test("conditional owner clear keeps a matching lease with a different owner", () => {
+  const key = getWorkOwnerKey("work")
+  const raw = ownerRaw({ workId: "work", ownerId: "other-owner", leaseId: "lease" })
+  const storage = createKeyedStorage([[key, raw], ["unrelated", "keep"]])
+
+  assert.equal(clearWorkOwnerIfOwned("work", "owner", "lease", storage), false)
+  assert.equal(storage.count("getItem", key), 1)
+  assert.equal(storage.count("removeItem", key), 0)
+  assert.equal(storage.peek(key), raw)
+  assert.equal(storage.peek("unrelated"), "keep")
+})
+
 test("conditional owner clear validates identifiers and corrupt bytes before removal", () => {
   const key = getWorkOwnerKey("work")
   const storage = createKeyedStorage([[key, "{"], ["unrelated", "keep"]])
