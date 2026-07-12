@@ -1,4 +1,5 @@
 import { validateAndNormalizeWork } from "./work-schema.js"
+import { FEATURE_FLAGS, featureEnabled } from "./feature-flags.js"
 
 export const LOCAL_DATABASE_KEY = "tuuru_works"
 const DATABASE_KEY = LOCAL_DATABASE_KEY
@@ -29,6 +30,15 @@ export class LocalDatabaseError extends Error {
     this.code = code
     if (cause) this.cause = cause
     if (details) this.details = details
+  }
+}
+
+export function assertLegacyWritesAllowed(flags = FEATURE_FLAGS) {
+  if (featureEnabled("reliableLocalWrites", flags)) {
+    throw new LocalDatabaseError(
+      "旧版本地写入已关闭。请重新加载页面后重试。",
+      "legacy-write-disabled",
+    )
   }
 }
 
@@ -162,6 +172,8 @@ export function readLocalDatabase(storage = localStorage) {
 }
 
 export function writeLocalDatabase(data, storage = localStorage) {
+  assertLegacyWritesAllowed()
+
   const current = inspectLocalDatabase(storage)
   if (!current.ok) throw integrityError(current)
 
@@ -398,6 +410,8 @@ export function prepareLocalDatabaseRestore(parsedBackup, storage = localStorage
 }
 
 export function restoreLocalDatabaseBackup(plan, storage = localStorage) {
+  assertLegacyWritesAllowed()
+
   if (!preparedRestorePlans.has(plan)) {
     throw restoreError(
       "恢复计划无效，请重新检查备份。",

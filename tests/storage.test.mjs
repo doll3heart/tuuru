@@ -1,9 +1,11 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 
 import {
   LOCAL_DATABASE_KEY,
   LocalDatabaseError,
+  assertLegacyWritesAllowed,
   discardCorruptLocalDatabase,
   inspectLocalDatabase,
   inspectLocalDatabaseRaw,
@@ -15,6 +17,8 @@ import {
   serializeLocalDatabaseBackup,
   writeLocalDatabase,
 } from "../js/storage.js"
+
+const storageSource = readFileSync(new URL("../js/storage.js", import.meta.url), "utf8")
 
 function createStorage(initialValue = null, options = {}) {
   let value = initialValue
@@ -190,6 +194,56 @@ test("deep backup work data reports the stable backup database error", () => {
 
 test("database key remains a stable public storage contract", () => {
   assert.equal(LOCAL_DATABASE_KEY, "tuuru_works")
+})
+
+test("legacy write assertion blocks only a strict enabled reliable-write flag", () => {
+  assert.doesNotThrow(() => assertLegacyWritesAllowed({ reliableLocalWrites: false }))
+  assert.doesNotThrow(() => assertLegacyWritesAllowed({ reliableLocalWrites: 1 }))
+  assert.throws(
+    () => assertLegacyWritesAllowed({ reliableLocalWrites: true }),
+    error => error instanceof LocalDatabaseError && error.code === "legacy-write-disabled",
+  )
+})
+
+test("enabled reliable writes stop before a fake storage records any mutation", () => {
+  const storage = createStorage(JSON.stringify({ works: [], contacts: [], groups: [] }))
+
+  assert.throws(
+    () => {
+      assertLegacyWritesAllowed({ reliableLocalWrites: true })
+      storage.setItem(LOCAL_DATABASE_KEY, "replacement")
+      storage.removeItem(LOCAL_DATABASE_KEY)
+    },
+    error => error instanceof LocalDatabaseError && error.code === "legacy-write-disabled",
+  )
+  assert.equal(storage.calls.set, 0)
+  assert.equal(storage.calls.remove, 0)
+})
+
+test("both legacy database writers call the shared guard before mutating storage", () => {
+  const writerSource = storageSource.slice(
+    storageSource.indexOf("export function writeLocalDatabase"),
+    storageSource.indexOf("function serializeBackupDatabase"),
+  )
+  const restoreSource = storageSource.slice(
+    storageSource.indexOf("export function restoreLocalDatabaseBackup"),
+    storageSource.indexOf("export async function readLocalDatabaseBackupFile"),
+  )
+
+  for (const [name, source] of [
+    ["writeLocalDatabase", writerSource],
+    ["restoreLocalDatabaseBackup", restoreSource],
+  ]) {
+    const guardIndex = source.indexOf("assertLegacyWritesAllowed()")
+    const mutationIndexes = [source.indexOf("storage.setItem("), source.indexOf("storage.removeItem(")]
+      .filter(index => index >= 0)
+    assert.notEqual(guardIndex, -1, `${name} must call the shared legacy-write guard`)
+    assert.ok(mutationIndexes.length > 0, `${name} must expose a storage mutation boundary`)
+    assert.ok(
+      mutationIndexes.every(index => guardIndex < index),
+      `${name} must guard before every storage mutation`,
+    )
+  }
 })
 
 test("invalid JSON is preserved and blocks every write", () => {
