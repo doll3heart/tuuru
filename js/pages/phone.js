@@ -1,6 +1,7 @@
 // Tuuru Works - Phone Editor
 import { uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
+import { escapeHtmlAttribute, sanitizeCssColor, sanitizeIconHtml } from "../sanitize.js"
 import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
 import {
   PHONE_GRID_METRICS,
@@ -435,10 +436,10 @@ export function renderPhoneEditor(wid) {
     if (!Number.isFinite(desktopY)) desktopY = 0
     var appName = String(app.name ?? '').trim()
     if (!appName) appName = String(PHONE_APP_DEFS[app.type]?.label || 'App')
-    h += '<button type="button" class="phone-app-icon" aria-label="' + escAttr(appName) + '" data-app-id="' + app.id + '" data-app-type="' + app.type + '" data-desktop-x="' + desktopX + '" data-desktop-y="' + desktopY + '" onselectstart="return false"'
+    h += '<button type="button" class="phone-app-icon" aria-label="' + escAttr(appName) + '" data-app-id="' + escapeHtmlAttribute(app.id || '') + '" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" data-desktop-x="' + desktopX + '" data-desktop-y="' + desktopY + '" onselectstart="return false"'
     h += ' style="' + phoneGridItemStyle(desktopX, desktopY) + 'border:none!important;box-shadow:none!important">'
-    h += '<span class="phone-icon-body icon-shadow" style="background:' + (app.color || 'var(--c-surface2)') + ';">'
-    h += '<span class="phone-icon-char">' + (app.icon || '?') + '</span>'
+    h += '<span class="phone-icon-body icon-shadow" style="background:' + sanitizeCssColor(app.color, { fallback: 'var(--c-surface2)' }) + ';">'
+    h += '<span class="phone-icon-char">' + (sanitizeIconHtml(app.icon || '?') || '?') + '</span>'
     h += '</span>'
     if (skin.showAppLabels !== false) {
       h += '<span class="phone-icon-label">' + esc(appName) + '</span>'
@@ -1089,12 +1090,14 @@ function renderAppIconsTab(skin, apps) {
   var h = '<div class="cu-section"><div class="cu-section-title">APP 图标与名称</div>'
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
+    var safeColor = sanitizeCssColor(app.color, { fallback: 'var(--c-surface2)' })
+    var safeIcon = sanitizeIconHtml(app.icon || '?') || '?'
     h += '<div class="cu-app-row">'
-    h += '<div class="cu-app-preview" style="background:' + (app.color || 'var(--c-surface2)') + ';"><span style="color: var(--c-text)">' + (app.icon || '?') + '</span></div>'
+    h += '<div class="cu-app-preview" style="background:' + safeColor + ';"><span style="color: var(--c-text)">' + safeIcon + '</span></div>'
     h += '<div class="cu-app-fields">'
-    h += '<input class="cu-input cu-input-sm" data-cu-app="icon" data-cu-idx="' + i + '" value="' + esc(app.icon || '') + '" placeholder="图标(SVG/文字)">'
-    h += '<input class="cu-input cu-input-sm" data-cu-app="name" data-cu-idx="' + i + '" value="' + esc(app.name || '') + '" placeholder="名称">'
-    h += '<input class="cu-input cu-input-sm" data-cu-app="color" data-cu-idx="' + i + '" value="' + esc(app.color || '') + '" placeholder="底色 #hex">'
+    h += '<input class="cu-input cu-input-sm" data-cu-app="icon" data-cu-idx="' + i + '" value="' + escapeHtmlAttribute(safeIcon) + '" placeholder="图标(SVG/文字)">'
+    h += '<input class="cu-input cu-input-sm" data-cu-app="name" data-cu-idx="' + i + '" value="' + escapeHtmlAttribute(app.name || '') + '" placeholder="名称">'
+    h += '<input class="cu-input cu-input-sm" data-cu-app="color" data-cu-idx="' + i + '" value="' + escapeHtmlAttribute(safeColor) + '" placeholder="底色 #hex">'
     h += '<label class="cu-checkbox"><input type="checkbox" data-cu-app="enabled" data-cu-idx="' + i + '"' + (app.enabled !== false ? ' checked' : '') + '> 显示</label>'
     h += '</div>'
     h += '</div>'

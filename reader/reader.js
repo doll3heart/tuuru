@@ -1,6 +1,6 @@
 import { prepareImportedWork } from '../js/work-import.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
-import { escapeHtmlAttribute } from '../js/sanitize.js'
+import { escapeHtmlAttribute, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
@@ -1097,12 +1097,13 @@ function buildPhoneHTML(pd, custom) {
     var appName = readerAppName(app)
     h += '<button type="button" class="phone-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;border:none!important;box-shadow:none!important">'
     var customIcon = readerCustomIconUrl(rc.customIcons && rc.customIcons[app.type])
-    h += '<span class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + (app.color || '#f0f0f0') + ';position:relative">'
+    h += '<span class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + sanitizeCssColor(app.color) + ';position:relative">'
+    var safeAppIcon = sanitizeIconHtml(app.icon || '?') || '?'
     if (customIcon) {
       h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:14px" onerror="this.style.display=\'none\'">'
-      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
+      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
     } else {
-      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + (app.icon || '?') + '</span>'
+      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
     }
     if (app.hasUpdate) {
       h += '<span style="position:absolute;top:2px;right:2px;width:14px;height:14px;background:#ef4444;border-radius:50%;border:2px solid #fff"></span>'

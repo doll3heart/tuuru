@@ -1,5 +1,7 @@
 export const CURRENT_WORK_SCHEMA_VERSION = 1
 
+import { isSafeCssColor, isSafeIconValue, isSafeIdentifier } from "./safe-values.js"
+
 const SUPPORTED_WORK_TYPES = new Set(["article", "phone"])
 const ARTICLE_COLLECTIONS = ["chapters", "phoneModules", "placeholders", "scenes"]
 const PHONE_COLLECTIONS = [
@@ -128,6 +130,61 @@ function asWorkFailure(result, code, message) {
   return result.ok ? result : failure(code, message, result.issues)
 }
 
+function unsafeRenderValue(path, message) {
+  return failure("unsafe-render-value", "作品包含不安全的显示字段。", [{
+    code: "unsafe-render-value",
+    path,
+    message,
+  }])
+}
+
+function validateOptionalIdentifier(value, path) {
+  if (value === undefined) return { ok: true }
+  return isSafeIdentifier(value)
+    ? { ok: true }
+    : unsafeRenderValue(path, "标识符包含不能安全显示的字符。")
+}
+
+function validateAppsForRendering(value, path) {
+  if (!Array.isArray(value)) return { ok: true }
+  for (let index = 0; index < value.length; index += 1) {
+    const app = value[index]
+    if (!isRecord(app)) continue
+    const appPath = `${path}[${index}]`
+    const idResult = validateOptionalIdentifier(app.id, `${appPath}.id`)
+    if (!idResult.ok) return idResult
+    if (app.type !== undefined && !isSafeIdentifier(app.type)) {
+      return unsafeRenderValue(`${appPath}.type`, "App 类型包含不能安全显示的字符。")
+    }
+    if (app.color !== undefined && !isSafeCssColor(app.color)) {
+      return unsafeRenderValue(`${appPath}.color`, "App 颜色不是受支持的安全颜色。")
+    }
+    if (app.icon !== undefined && !isSafeIconValue(app.icon)) {
+      return unsafeRenderValue(`${appPath}.icon`, "App 图标包含可执行内容。")
+    }
+  }
+  return { ok: true }
+}
+
+function validateWorkRenderValues(work, path, { strictPresentation }) {
+  if (!strictPresentation) return { ok: true }
+  const idResult = validateOptionalIdentifier(work.id, `${path}.id`)
+  if (!idResult.ok) return idResult
+
+  const phoneAppsResult = validateAppsForRendering(work.phoneData?.apps, `${path}.phoneData.apps`)
+  if (!phoneAppsResult.ok) return phoneAppsResult
+  if (Array.isArray(work.phoneModules)) {
+    for (let index = 0; index < work.phoneModules.length; index += 1) {
+      const result = validateAppsForRendering(
+        work.phoneModules[index]?.data?.apps,
+        `${path}.phoneModules[${index}].data.apps`,
+      )
+      if (!result.ok) return result
+    }
+  }
+  return { ok: true }
+}
+
 function normalizeArticle(input, path) {
   const nodesResult = recordArray(input.nodes, `${path}.nodes`, { required: true })
   if (!nodesResult.ok) return asWorkFailure(nodesResult, "invalid-article", "文章作品结构无效。")
@@ -250,12 +307,22 @@ function validateAndNormalizeWorkUnchecked(input, {
     )
   }
 
+  if (context !== "reader-import") {
+    const identityResult = validateOptionalIdentifier(input.id, `${path}.id`)
+    if (!identityResult.ok) return identityResult
+  }
+
   if (!SUPPORTED_WORK_TYPES.has(input.type)) {
     const preservesLegacyType = context !== "reader-import"
       && (input.type === undefined || typeof input.type === "string")
     if (preservesLegacyType) {
       const nestingResult = inspectNesting(input, path)
       if (!nestingResult.ok) return nestingResult
+      if (input.type !== undefined && !isSafeIdentifier(input.type)) {
+        return unsafeRenderValue(`${path}.type`, "作品类型包含不能安全显示的字符。")
+      }
+      const renderValuesResult = validateWorkRenderValues(input, path, { strictPresentation: true })
+      if (!renderValuesResult.ok) return renderValuesResult
       return {
         ok: true,
         work: cloneJsonValue(input),
@@ -285,6 +352,11 @@ function validateAndNormalizeWorkUnchecked(input, {
       : asWorkFailure(phoneResult, "invalid-phone", "手机作品结构无效。")
   }
   if (!normalized.ok) return normalized
+
+  const renderValuesResult = validateWorkRenderValues(normalized.work, path, {
+    strictPresentation: context !== "reader-import",
+  })
+  if (!renderValuesResult.ok) return renderValuesResult
 
   normalized.work.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
   for (const key of ["placeholders", "scenes"]) {

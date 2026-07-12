@@ -101,6 +101,16 @@ test("rendered phone App icons are native named controls with native activation"
           desktopY: 0,
           enabled: true,
         },
+        {
+          id: "hostile-render-value",
+          type: "memo",
+          name: "Hostile",
+          icon: '<svg onload="window.__phonePwned=true"></svg>',
+          color: 'red;\"><img id="phone-pwn" src=x onerror="window.__phonePwned=true">',
+          desktopX: 2,
+          desktopY: 0,
+          enabled: true,
+        },
       ],
     },
   })
@@ -119,11 +129,25 @@ test("rendered phone App icons are native named controls with native activation"
     assert.equal(icon.style.getPropertyPriority("outline"), "")
   }
 
-  const settings = document.querySelector('[data-app-type="settings"]')
-  const customize = document.querySelector('[data-app-type="customize"]')
+  let settings = document.querySelector('[data-app-type="settings"]')
+  let customize = document.querySelector('[data-app-type="customize"]')
   assert.equal(settings.getAttribute("aria-label"), specialName)
   assert.equal(customize.getAttribute("aria-label"), PHONE_APP_DEFS.customize.label)
   assert.equal(settings.querySelector(".phone-icon-label"), null)
+  const hostile = document.querySelector('[data-app-type="memo"]')
+  assert.ok(hostile)
+  assert.equal(document.getElementById("phone-pwn"), null)
+  assert.doesNotMatch(hostile.innerHTML, /onload|onerror|phonePwned/i)
+  assert.equal(hostile.querySelector(".phone-icon-body").style.background, "rgb(240, 240, 240)")
+  customize.click()
+  document.querySelector('[data-cu-tab="appIcons"]').click()
+  assert.equal(document.getElementById("phone-pwn"), null)
+  assert.doesNotMatch(document.getElementById("cuPanel").innerHTML, /onload|onerror|phonePwned/i)
+  document.getElementById("cuCancel").click()
+  settings = document.querySelector('[data-app-type="settings"]')
+  customize = document.querySelector('[data-app-type="customize"]')
+  assert.ok(settings)
+  assert.ok(customize)
   settings.focus()
   assert.equal(document.activeElement, settings)
 

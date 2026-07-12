@@ -926,6 +926,89 @@ test("unavailable storage blocks reads, writes, and destructive reset", () => {
   assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 
+test("backup parsing rejects values that can escape into executable markup", () => {
+  const base = {
+    format: "tuuru-local-library-backup",
+    backupVersion: 1,
+    exportedAt: "2026-07-10T05:30:00.000Z",
+  }
+  const payloads = [
+    {
+      works: [{
+        id: '\"><img src=x onerror="alert(1)">',
+        type: "article",
+        nodes: [],
+      }],
+      contacts: [],
+      groups: [],
+    },
+    {
+      works: [{
+        id: "&apos;);alert(1);//",
+        type: "article",
+        nodes: [],
+      }],
+      contacts: [],
+      groups: [],
+    },
+    {
+      works: [{
+        id: "phone-1",
+        type: "phone",
+        phoneData: {
+          apps: [{
+            id: "memo",
+            type: "memo",
+            color: 'red;\"><img src=x onerror="alert(1)">',
+          }],
+        },
+      }],
+      contacts: [],
+      groups: [],
+    },
+    {
+      works: [{
+        id: "legacy-1",
+        type: "legacy",
+        phoneData: {
+          apps: [{
+            id: "memo",
+            type: "memo",
+            color: 'red;\"><img src=x onerror="alert(1)">',
+          }],
+        },
+      }],
+      contacts: [],
+      groups: [],
+    },
+    {
+      works: [{
+        id: "phone-1",
+        type: "phone",
+        phoneData: {
+          apps: [{
+            id: "memo",
+            type: "memo",
+            color: "#f0f0f0",
+            icon: '<svg onload="alert(1)"></svg>',
+          }],
+        },
+      }],
+      contacts: [],
+      groups: [],
+    },
+  ]
+
+  for (const database of payloads) {
+    assert.throws(
+      () => parseLocalDatabaseBackup(JSON.stringify({ ...base, database })),
+      error => error instanceof LocalDatabaseError
+        && error.code === "invalid-backup-database"
+        && error.details?.issues?.some(issue => issue.code === "unsafe-render-value"),
+    )
+  }
+})
+
 test("only a confirmed corrupt database can be discarded", () => {
   const corruptStorage = createKeyedStorage([
     [LOCAL_DATABASE_KEY, "not-json"],

@@ -1,4 +1,5 @@
 import createDOMPurify from "dompurify"
+import { normalizeCssColor } from "./safe-values.js"
 
 const ALLOWED_TAGS = [
   "p", "div", "br", "b", "strong", "i", "em", "u", "span", "img",
@@ -56,6 +57,10 @@ export function isSafeImageUrl(value) {
   if (/[\s"'<>`]/.test(url) || /[();{}\\]/.test(url)) return false
   if (/^https?:\/\//i.test(url) || /^\/\//.test(url)) return true
   return !/^[a-z][a-z0-9+.-]*:/i.test(url)
+}
+
+export function sanitizeCssColor(value, { fallback = "#f0f0f0" } = {}) {
+  return normalizeCssColor(value, fallback)
 }
 
 function allowedClassMap(profile) {
@@ -167,6 +172,7 @@ export function sanitizeImportedWork(work, windowObject = window) {
     }))
     copy.phoneData.apps = apps.filter(app => app && typeof app === "object" && !Array.isArray(app)).map(app => ({
       ...app,
+      color: sanitizeCssColor(app.color),
       icon: sanitizeIconHtml(app.icon, windowObject),
     }))
   }
@@ -176,6 +182,11 @@ export function sanitizeImportedWork(work, windowObject = window) {
       ...module,
       data: module.data ? {
         ...module.data,
+        apps: (Array.isArray(module.data.apps) ? module.data.apps : []).filter(app => app && typeof app === "object" && !Array.isArray(app)).map(app => ({
+          ...app,
+          color: sanitizeCssColor(app.color),
+          icon: sanitizeIconHtml(app.icon, windowObject),
+        })),
         memos: (Array.isArray(module.data.memos) ? module.data.memos : []).filter(memo => memo && typeof memo === "object" && !Array.isArray(memo)).map(memo => ({
           ...memo,
           content: sanitizeRichHtml(memo.content, { profile: "memo", windowObject }),

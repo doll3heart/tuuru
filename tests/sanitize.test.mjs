@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom"
 
 import {
   escapeHtmlAttribute,
+  sanitizeCssColor,
   isSafeImageUrl,
   sanitizeIconHtml,
   sanitizeImportedWork,
@@ -46,6 +47,15 @@ test("unsafe image schemes are rejected while supported images remain", () => {
   )
   assert.doesNotMatch(clean, /javascript|svg\+xml/i)
   assert.match(clean, /https:\/\/example\.com\/a\.png/)
+})
+
+test("CSS colors keep supported values and reject HTML breakout payloads", () => {
+  assert.equal(sanitizeCssColor("#f0f0f0", { windowObject }), "#f0f0f0")
+  assert.equal(sanitizeCssColor("rgb(10, 20, 30)", { windowObject }), "rgb(10, 20, 30)")
+  assert.equal(
+    sanitizeCssColor('red;\"><img id="pwn" src=x onerror="alert(1)">', { windowObject }),
+    "#f0f0f0",
+  )
 })
 
 test("valid phone module metadata survives but forged modules are neutralized", () => {
@@ -97,7 +107,10 @@ test("import sanitation is immutable and covers articles, memos, icons, and medi
     phoneData: {
       wallpaperImage: "javascript:alert(1)",
       memos: [{ content: '<i onclick="alert(1)">memo</i>' }],
-      apps: [{ icon: '<svg onload="alert(1)"><circle cx="1" cy="1" r="1"></circle></svg>' }],
+      apps: [{
+        color: 'red;\"><img id="pwn" src=x onerror="alert(1)">',
+        icon: '<svg onload="alert(1)"><circle cx="1" cy="1" r="1"></circle></svg>',
+      }],
     },
   }
   const original = JSON.parse(JSON.stringify(work))
@@ -108,6 +121,7 @@ test("import sanitation is immutable and covers articles, memos, icons, and medi
   assert.doesNotMatch(clean.phoneModules[0].data.memos[0].content, /svg|onload/)
   assert.doesNotMatch(clean.phoneData.memos[0].content, /onclick/)
   assert.doesNotMatch(clean.phoneData.apps[0].icon, /onload/)
+  assert.equal(clean.phoneData.apps[0].color, "#f0f0f0")
   assert.equal(clean.phoneData.wallpaperImage, "")
 })
 
