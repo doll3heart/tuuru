@@ -158,6 +158,35 @@ test("JSON tokens reject non-JSON values and cycles without calling toJSON or mu
   assert.equal(toJsonCalls, 0)
 })
 
+test("JSON tokens remain stack-safe for deeply nested valid values", () => {
+  let value = { leaf: "end" }
+  for (let depth = 0; depth < 5000; depth += 1) value = { child: value }
+
+  const token = createJsonToken(value)
+
+  assert.equal(typeof token, "string")
+  assert.equal(token.includes('"end"'), true)
+})
+
+test("JSON tokens reject named array fields at and above the array-index boundary", () => {
+  const accepted = []
+  for (const key of ["4294967295", "4294967296", "named"]) {
+    const value = []
+    Object.defineProperty(value, key, {
+      configurable: true,
+      enumerable: true,
+      value: "must-not-disappear",
+    })
+    try {
+      createJsonToken(value)
+      accepted.push(key)
+    } catch (error) {
+      assert.equal(error instanceof TypeError, true)
+    }
+  }
+  assert.deepEqual(accepted, [])
+})
+
 test("normal mutation commits the latest validated database in the exact locked order", async () => {
   const before = {
     works: [{ id: "work-1", title: "before", future: { kept: true } }],
@@ -544,6 +573,56 @@ test("apply failures and invalid candidates are mutation-invalid and never write
     assert.equal(fixture.keyedStorage.count("setItem", LOCAL_DATABASE_KEY), 0)
     assert.equal(fixture.keyedStorage.count("removeItem", LOCAL_DATABASE_KEY), 0)
   }
+})
+
+test("normal mutation rejects a hidden candidate toJSON before callback or storage write", async () => {
+  const database = {
+    works: [{ id: "work-1", value: "before" }],
+    contacts: [],
+    groups: [],
+  }
+  const fixture = createMutationFixture({ database })
+  let callbackCalls = 0
+  let result
+  let error
+
+  try {
+    result = await commitLocalDatabaseMutation(mutationArgs({
+      expectedWorkToken: createJsonToken(database.works[0]),
+      apply(latest) {
+        const hidden = { original: true }
+        Object.defineProperty(hidden, "toJSON", {
+          configurable: true,
+          enumerable: false,
+          value() {
+            callbackCalls += 1
+            return { replacement: true }
+          },
+        })
+        return { ...latest, futureRoot: { hidden } }
+      },
+    }), mutationDependencies(fixture))
+  } catch (caught) {
+    error = caught
+  }
+
+  assert.deepEqual({
+    errorCode: error?.code,
+    phase: error?.details?.phase,
+    commitState: error?.details?.commitState,
+    callbackCalls,
+    setCalls: fixture.keyedStorage.count("setItem", LOCAL_DATABASE_KEY),
+    removeCalls: fixture.keyedStorage.count("removeItem", LOCAL_DATABASE_KEY),
+    resultOk: result?.ok,
+  }, {
+    errorCode: "mutation-invalid",
+    phase: "validate-candidate",
+    commitState: "unchanged",
+    callbackCalls: 0,
+    setCalls: 0,
+    removeCalls: 0,
+    resultOk: undefined,
+  })
 })
 
 test("setItem failure is unchanged, retains both exact raws, and is never retried", async () => {

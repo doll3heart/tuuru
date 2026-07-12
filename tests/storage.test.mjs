@@ -73,6 +73,24 @@ function deeplyNestedDatabaseRaw(depth = 5000) {
   return `{"works":[{"type":"article","nodes":[],"future":${nested}}],"contacts":[],"groups":[]}`
 }
 
+function databaseWithHiddenToJson(onCall) {
+  const hidden = { original: true }
+  Object.defineProperty(hidden, "toJSON", {
+    configurable: true,
+    enumerable: false,
+    value() {
+      onCall()
+      return { replacement: true }
+    },
+  })
+  return {
+    works: [],
+    contacts: [],
+    groups: [],
+    futureRoot: { hidden },
+  }
+}
+
 test("exports pure local database validation and serialization helpers", () => {
   assert.equal(typeof validateLocalDatabase, "function")
   assert.equal(typeof serializeValidatedLocalDatabase, "function")
@@ -122,6 +140,77 @@ test("validated database serialization rejects invalid and non-JSON-compatible v
         && (error.details?.issues !== undefined || error.cause instanceof Error),
     )
   }
+})
+
+test("pure encoders reject hidden toJSON before it can replace unknown data", () => {
+  for (const [name, encode, expectedCode] of [
+    ["database", serializeValidatedLocalDatabase, "invalid-write"],
+    [
+      "backup",
+      database => serializeLocalDatabaseBackupFromDatabase(
+        database,
+        "2026-07-12T00:00:00.000Z",
+      ),
+      "backup-failed",
+    ],
+  ]) {
+    let callbackCalls = 0
+    let raw
+    let error
+    try {
+      raw = encode(databaseWithHiddenToJson(() => { callbackCalls += 1 }))
+    } catch (caught) {
+      error = caught
+    }
+
+    assert.deepEqual({
+      name,
+      errorCode: error?.code,
+      callbackCalls,
+      raw,
+    }, {
+      name,
+      errorCode: expectedCode,
+      callbackCalls: 0,
+      raw: undefined,
+    })
+  }
+})
+
+test("pure encoders reject named array fields at and above the array-index boundary", () => {
+  const accepted = []
+  for (const key of ["4294967295", "4294967296", "named"]) {
+    for (const [name, encode] of [
+      ["database", serializeValidatedLocalDatabase],
+      [
+        "backup",
+        database => serializeLocalDatabaseBackupFromDatabase(
+          database,
+          "2026-07-12T00:00:00.000Z",
+        ),
+      ],
+    ]) {
+      const futureArray = []
+      Object.defineProperty(futureArray, key, {
+        configurable: true,
+        enumerable: true,
+        value: "must-not-disappear",
+      })
+      const database = {
+        works: [],
+        contacts: [],
+        groups: [],
+        futureArray,
+      }
+      try {
+        encode(database)
+        accepted.push(`${name}:${key}`)
+      } catch (error) {
+        assert.equal(error instanceof LocalDatabaseError, true)
+      }
+    }
+  }
+  assert.deepEqual(accepted, [])
 })
 
 test("pure backup serialization validates input and preserves the legacy byte format", () => {

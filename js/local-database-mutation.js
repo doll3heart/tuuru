@@ -10,9 +10,7 @@ import {
   createWebLocksAdapter,
 } from "./local-locks.js"
 
-function notImplemented() {
-  throw new Error("Local database mutation is not implemented")
-}
+const MAX_JSON_ARRAY_INDEX = (2 ** 32) - 2
 
 function assertRecord(value, name) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -588,65 +586,107 @@ export async function recheckUnknownLocalDatabaseCommit(args, dependencies = {})
   })
 }
 
-function canonicalizeJsonValue(value, active) {
-  if (value === null) return ["null"]
-  if (typeof value === "string") return ["string", value]
-  if (typeof value === "boolean") return ["boolean", value]
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new TypeError("JSON token numbers must be finite")
-    return ["number", Object.is(value, -0) ? 0 : value]
-  }
-  if (typeof value !== "object") {
-    throw new TypeError("JSON tokens require JSON-compatible values")
-  }
-  if (active.has(value)) throw new RangeError("JSON tokens do not support cyclic values")
+export function createJsonToken(value) {
+  const chunks = []
+  const active = new WeakSet()
+  const stack = [{ kind: "value", value }]
 
-  active.add(value)
-  try {
-    if (Array.isArray(value)) {
-      for (const key of Reflect.ownKeys(value)) {
+  while (stack.length > 0) {
+    const action = stack.pop()
+    if (action.kind === "raw") {
+      chunks.push(action.text)
+      continue
+    }
+    if (action.kind === "exit") {
+      active.delete(action.value)
+      continue
+    }
+
+    const current = action.value
+    if (current === null) {
+      chunks.push('["null"]')
+      continue
+    }
+    if (typeof current === "string") {
+      chunks.push('["string",', JSON.stringify(current), "]")
+      continue
+    }
+    if (typeof current === "boolean") {
+      chunks.push(current ? '["boolean",true]' : '["boolean",false]')
+      continue
+    }
+    if (typeof current === "number") {
+      if (!Number.isFinite(current)) throw new TypeError("JSON token numbers must be finite")
+      chunks.push('["number",', JSON.stringify(Object.is(current, -0) ? 0 : current), "]")
+      continue
+    }
+    if (typeof current !== "object") {
+      throw new TypeError("JSON tokens require JSON-compatible values")
+    }
+    if (active.has(current)) throw new RangeError("JSON tokens do not support cyclic values")
+
+    active.add(current)
+    stack.push({ kind: "exit", value: current })
+
+    if (Array.isArray(current)) {
+      const descriptors = new Map()
+      for (const key of Reflect.ownKeys(current)) {
         if (typeof key === "symbol") throw new TypeError("JSON arrays cannot have symbol fields")
         if (key === "length") continue
         const index = Number(key)
-        if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key) {
+        if (
+          !Number.isSafeInteger(index)
+          || index < 0
+          || index > MAX_JSON_ARRAY_INDEX
+          || String(index) !== key
+        ) {
           throw new TypeError("JSON arrays cannot have named fields")
         }
-        const descriptor = Object.getOwnPropertyDescriptor(value, key)
+        const descriptor = Object.getOwnPropertyDescriptor(current, key)
         if (!descriptor.enumerable || descriptor.get !== undefined || descriptor.set !== undefined) {
           throw new TypeError("JSON arrays require ordinary indexed values")
         }
+        descriptors.set(index, descriptor)
       }
-      const items = []
-      for (let index = 0; index < value.length; index += 1) {
-        if (!Object.hasOwn(value, index)) throw new TypeError("JSON arrays cannot be sparse")
-        items.push(canonicalizeJsonValue(value[index], active))
+
+      chunks.push('["array",[')
+      stack.push({ kind: "raw", text: "]]" })
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        const descriptor = descriptors.get(index)
+        if (descriptor === undefined) throw new TypeError("JSON arrays cannot be sparse")
+        stack.push({ kind: "value", value: descriptor.value })
+        if (index > 0) stack.push({ kind: "raw", text: "," })
       }
-      return ["array", items]
+      continue
     }
 
-    const prototype = Object.getPrototypeOf(value)
+    const prototype = Object.getPrototypeOf(current)
     if (prototype !== Object.prototype && prototype !== null) {
       throw new TypeError("JSON tokens require plain objects")
     }
     const entries = []
-    for (const key of Reflect.ownKeys(value)) {
+    for (const key of Reflect.ownKeys(current)) {
       if (typeof key === "symbol") throw new TypeError("JSON objects cannot have symbol fields")
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
       if (!descriptor.enumerable || descriptor.get !== undefined || descriptor.set !== undefined) {
         throw new TypeError("JSON objects require ordinary enumerable fields")
       }
       entries.push([key, descriptor.value])
     }
     entries.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-    return [
-      "object",
-      entries.map(([key, child]) => [key, canonicalizeJsonValue(child, active)]),
-    ]
-  } finally {
-    active.delete(value)
-  }
-}
 
-export function createJsonToken(value) {
-  return JSON.stringify(canonicalizeJsonValue(value, new WeakSet()))
+    chunks.push('["object",[')
+    stack.push({ kind: "raw", text: "]]" })
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, child] = entries[index]
+      stack.push({ kind: "raw", text: "]" })
+      stack.push({ kind: "value", value: child })
+      stack.push({ kind: "raw", text: "," })
+      stack.push({ kind: "raw", text: JSON.stringify(key) })
+      stack.push({ kind: "raw", text: "[" })
+      if (index > 0) stack.push({ kind: "raw", text: "," })
+    }
+  }
+
+  return chunks.join("")
 }

@@ -10,6 +10,7 @@ export const MAX_LOCAL_DATABASE_BACKUP_BYTES = 25 * 1024 * 1024
 
 const SUPPORTED_LOCAL_DATABASE_BACKUP_VERSIONS = new Set([1])
 const preparedRestorePlans = new WeakSet()
+const MAX_JSON_ARRAY_INDEX = (2 ** 32) - 2
 
 function createEmptyDatabase() {
   return { works: [], contacts: [], groups: [] }
@@ -177,8 +178,17 @@ function assertJsonCompatible(value) {
         }
         if (key === "length") continue
         const index = Number(key)
-        if (!Number.isSafeInteger(index) || index < 0 || String(index) !== key) {
+        if (
+          !Number.isSafeInteger(index)
+          || index < 0
+          || index > MAX_JSON_ARRAY_INDEX
+          || String(index) !== key
+        ) {
           throw new TypeError("database arrays must not have named properties")
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(current, key)
+        if (!descriptor.enumerable || descriptor.get !== undefined || descriptor.set !== undefined) {
+          throw new TypeError("database arrays require ordinary enumerable indexed values")
         }
       }
       for (let index = current.length - 1; index >= 0; index -= 1) {
@@ -197,10 +207,10 @@ function assertJsonCompatible(value) {
         throw new TypeError("database objects must not have symbol properties")
       }
       const descriptor = Object.getOwnPropertyDescriptor(current, key)
-      if (descriptor.get !== undefined || descriptor.set !== undefined) {
-        throw new TypeError("database objects must not have accessor properties")
+      if (!descriptor.enumerable || descriptor.get !== undefined || descriptor.set !== undefined) {
+        throw new TypeError("database objects require ordinary enumerable fields")
       }
-      if (descriptor.enumerable) stack.push({ value: descriptor.value, exiting: false })
+      stack.push({ value: descriptor.value, exiting: false })
     }
   }
 }
