@@ -54,6 +54,11 @@ function isAbortError(error) {
   return error?.name === "AbortError"
 }
 
+function isSignalAbort(options, cause) {
+  const signal = options.signal
+  return signal?.aborted === true && Object.is(signal.reason, cause)
+}
+
 function unavailableError(name, cause) {
   return new LocalLockUnavailableError(
     `Unable to acquire local lock "${name}"`,
@@ -143,7 +148,9 @@ export function createWebLocksAdapter({
 
     return Promise.resolve(nativeRequest).catch(cause => {
       if (callbackStarted) throw cause
-      if (isAbortError(cause)) throw pendingAbortError(stringName, cause)
+      if (isAbortError(cause) || isSignalAbort(normalizedOptions, cause)) {
+        throw pendingAbortError(stringName, cause)
+      }
       throw unavailableError(stringName, cause)
     })
   }
@@ -162,6 +169,7 @@ export function createWebLocksAdapter({
     return new Promise((resolveAcquisition, rejectAcquisition) => {
       let acquired = false
       let acquisitionSettled = false
+      let lossDetected = false
       let lostSettled = false
       let releasedSettled = false
       let resolveReleaseGate
@@ -178,8 +186,9 @@ export function createWebLocksAdapter({
         resolveReleased = resolve
       })
 
-      function markLost(reason, error) {
+      function settleLost(reason, error) {
         if (lostSettled) return false
+        lossDetected = true
         lostSettled = true
         resolveLost({ reason, error })
         return true
@@ -195,7 +204,7 @@ export function createWebLocksAdapter({
         if (acquisitionSettled) return
         acquisitionSettled = true
         rejectAcquisition(
-          isAbortError(cause)
+          isAbortError(cause) || isSignalAbort(normalizedOptions, cause)
             ? pendingAbortError(stringName, cause)
             : unavailableError(stringName, cause),
         )
@@ -210,13 +219,14 @@ export function createWebLocksAdapter({
 
         acquired = true
         const release = () => {
-          if (!markLost("released", null)) return
+          if (lossDetected) return
+          lossDetected = true
           resolveReleaseGate()
         }
         const handle = Object.freeze({
           name: lock.name,
           mode: lock.mode,
-          isLost: () => lostSettled,
+          isLost: () => lossDetected,
           lost,
           released,
           release,
@@ -242,7 +252,7 @@ export function createWebLocksAdapter({
       Promise.resolve(nativeRequest).then(
         () => {
           if (!acquired) return
-          markLost("released", null)
+          settleLost("released", null)
           resolveReleaseGate()
           finishReleased()
         },
@@ -254,7 +264,7 @@ export function createWebLocksAdapter({
 
           if (!lostSettled) {
             const termination = heldTermination(stringName, cause)
-            markLost(termination.reason, termination.error)
+            settleLost(termination.reason, termination.error)
           }
           resolveReleaseGate()
           finishReleased()

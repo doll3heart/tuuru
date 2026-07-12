@@ -388,6 +388,46 @@ test("a signal aborts pending requests with a stable code and the original cause
   await holder.released
 })
 
+test("custom signal reasons remain pending-abort causes for request and hold", async () => {
+  const { adapter, manager } = createAvailableAdapter()
+  const requestHolder = await adapter.hold("custom-request-abort")
+  const holdHolder = await adapter.hold("custom-hold-abort")
+  const requestController = new AbortController()
+  const holdController = new AbortController()
+  const requestCause = new Error("custom request cancellation")
+  const holdCause = { source: "custom hold cancellation" }
+
+  const pendingRequest = adapter.request(
+    "custom-request-abort",
+    { signal: requestController.signal },
+    () => assert.fail("an aborted pending callback must not run"),
+  )
+  const pendingHold = adapter.hold(
+    "custom-hold-abort",
+    { signal: holdController.signal },
+  )
+  await waitFor(() => manager.snapshot().pending.length === 2, "both custom-reason requests")
+
+  requestController.abort(requestCause)
+  holdController.abort(holdCause)
+  const [requestResult, holdResult] = await Promise.allSettled([pendingRequest, pendingHold])
+
+  assert.equal(requestResult.status, "rejected")
+  assertAdapterError(requestResult.reason, {
+    code: "mutation-lock-aborted",
+    cause: requestCause,
+  })
+  assert.equal(holdResult.status, "rejected")
+  assertAdapterError(holdResult.reason, {
+    code: "mutation-lock-aborted",
+    cause: holdCause,
+  })
+
+  requestHolder.release()
+  holdHolder.release()
+  await Promise.all([requestHolder.released, holdHolder.released])
+})
+
 test("AbortSignal is ignored after its request has been granted", async () => {
   const { adapter, manager } = createAvailableAdapter()
   const controller = new AbortController()
@@ -492,6 +532,41 @@ test("the fake manager steals held locks and grants the replacement before queue
   await queued
 })
 
+test("a granted callback still runs once when a same-turn steal preempts it", async () => {
+  const manager = createFakeLockManager()
+  const events = []
+  let oldCallbackCalls = 0
+
+  const oldRequest = manager.request("pre-callback-steal", () => {
+    oldCallbackCalls += 1
+    events.push("old-callback")
+    return "ignored-after-steal"
+  })
+  const oldOutcome = oldRequest.then(
+    value => ({ status: "fulfilled", value }),
+    error => {
+      events.push("old-rejected")
+      return { status: "rejected", error }
+    },
+  )
+  const replacement = manager.request(
+    "pre-callback-steal",
+    { steal: true },
+    () => {
+      assert.deepEqual(events, ["old-callback", "old-rejected"])
+      events.push("replacement")
+      return "replacement-value"
+    },
+  )
+
+  assert.equal(await replacement, "replacement-value")
+  const oldResult = await oldOutcome
+  assert.equal(oldResult.status, "rejected")
+  assert.equal(oldResult.error.name, "AbortError")
+  assert.equal(oldCallbackCalls, 1)
+  assert.deepEqual(events, ["old-callback", "old-rejected", "replacement"])
+})
+
 test("steal marks a held adapter handle lost before the replacement callback", async () => {
   const { adapter } = createAvailableAdapter()
   const oldHandle = await adapter.hold("adapter-steal")
@@ -524,6 +599,48 @@ test("steal marks a held adapter handle lost before the replacement callback", a
   oldHandle.release()
   oldHandle.release()
   assert.equal((await oldHandle.lost).reason, "stolen")
+})
+
+test("a queued steal wins over a same-turn explicit release", async () => {
+  const { adapter } = createAvailableAdapter()
+  const oldHandle = await adapter.hold("steal-release-race")
+
+  const replacement = adapter.request(
+    "steal-release-race",
+    { steal: true },
+    () => {
+      assert.equal(oldHandle.isLost(), true)
+      return "replacement"
+    },
+  )
+  oldHandle.release()
+
+  assert.equal(oldHandle.isLost(), true)
+  assert.equal(await replacement, "replacement")
+  const loss = await oldHandle.lost
+  await oldHandle.released
+
+  assert.equal(loss.reason, "stolen")
+  assertAdapterError(loss.error, { code: "mutation-lock-stolen" })
+  assert.equal(loss.error.cause.name, "AbortError")
+})
+
+test("native held termination wins over a same-turn explicit release", async () => {
+  const { adapter, manager } = createAvailableAdapter()
+  const handle = await adapter.hold("termination-release-race")
+  const terminationCause = new Error("native termination won")
+
+  assert.equal(manager.terminateHeld("termination-release-race", terminationCause), true)
+  handle.release()
+  assert.equal(handle.isLost(), true)
+
+  const loss = await handle.lost
+  await handle.released
+  assert.equal(loss.reason, "aborted")
+  assertAdapterError(loss.error, {
+    code: "mutation-lock-aborted",
+    cause: terminationCause,
+  })
 })
 
 test("modeled held-lock termination reports aborted and settles each lifecycle once", async () => {

@@ -94,7 +94,7 @@ export function createFakeLockManager() {
 
   function invokeGrantedCallback(record) {
     queueMicrotask(() => {
-      if (record.state !== "held") return
+      if (record.state !== "held" && record.state !== "terminated") return
 
       let callbackResult
       try {
