@@ -31,6 +31,12 @@ function assertNoJsonHook(value, prototype, isArray) {
   if (Object.getPrototypeOf(value) !== prototype) {
     throw new TypeError("JSON payload prototypes must remain stable during inspection")
   }
+  if (isArray && Object.getPrototypeOf(Array.prototype) !== Object.prototype) {
+    throw new TypeError("JSON Array.prototype must inherit directly from Object.prototype")
+  }
+  if (prototype !== null && Object.getPrototypeOf(Object.prototype) !== null) {
+    throw new TypeError("JSON Object.prototype must terminate at null")
+  }
   const visited = new WeakSet()
   const permittedChain = isArray
     ? [value, Array.prototype, Object.prototype]

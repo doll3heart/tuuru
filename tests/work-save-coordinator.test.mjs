@@ -1355,3 +1355,57 @@ test("infinitely fresh forged prototypes fail in a bounded child process", () =>
   assert.equal(child.status, 0, child.stderr)
   assert.match(child.stdout, /bounded-fresh-type-error/)
 })
+
+test("polluted Array prototype chains are rejected before inherited toJSON can run", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    const originalPrototype = Object.getPrototypeOf(Array.prototype)
+    const pollutedPrototype = Object.create(originalPrototype)
+    let hookCalls = 0
+    let stageFailure = null
+    let operation = null
+    Object.defineProperty(pollutedPrototype, "toJSON", {
+      configurable: true,
+      value() {
+        hookCalls += 1
+        return { polluted: true }
+      },
+    })
+    try {
+      Object.setPrototypeOf(Array.prototype, pollutedPrototype)
+      try {
+        operation = coordinator.stage({
+          key: "field:a",
+          payload: ["safe"],
+          apply() {},
+        })
+      } catch (failure) {
+        stageFailure = failure
+      }
+      if (operation !== null) JSON.stringify(operation.payload)
+    } finally {
+      Object.setPrototypeOf(Array.prototype, originalPrototype)
+    }
+    if (stageFailure instanceof TypeError && hookCalls === 0) {
+      console.log("polluted-array-prototype-rejected")
+    } else {
+      console.error("polluted Array prototype was accepted or its hook ran")
+      process.exitCode = 2
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /polluted-array-prototype-rejected/)
+})
