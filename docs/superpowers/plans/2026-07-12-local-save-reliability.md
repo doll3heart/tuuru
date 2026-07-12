@@ -599,6 +599,8 @@ git commit -m "feat(storage): verify atomic local mutations"
 
 ### Task 7: Implement the save coordinator state machine
 
+> Detailed, authoritative Task 7 contract: [`2026-07-12-work-save-coordinator.md`](./2026-07-12-work-save-coordinator.md). It splits implementation into two atomic commits and closes the flush-target, structural-barrier, disposal-quiescence, and context-sensitive error-mapping gaps discovered during pre-implementation review.
+
 **Files:**
 - Create: `js/work-save-coordinator.js`
 - Create: `tests/work-save-coordinator.test.mjs`
@@ -616,6 +618,7 @@ Prove:
 - a structural operation first consumes the named pending keys, then applies itself in the same batch;
 - `commitNow()` resolves only when its own operation generation is verified;
 - simultaneous `flush()` calls share one active commit;
+- a `flush()` called while an older batch is active also waits for edits already pending at that call boundary, but not edits staged later;
 - simultaneous `drain()` calls share one drain Promise and still include edits staged while the first batch is active;
 - `drain()` loops when edits arrive during an active commit and resolves only after generations stabilize;
 - a confirmed unchanged `mutation-write-failed` batch remains queued and `retry()` reuses its operation IDs;
@@ -647,19 +650,24 @@ The error mapping is fixed:
 | Error code | Coordinator state | Allowed direct action |
 |---|---|---|
 | `mutation-write-failed` with `unchanged` | `error-retryable` | `retry()` |
-| `mutation-invalid` | `error-invalid` | corrected stage only |
+| `mutation-read-failed` with `unchanged` | `error-retryable` | `retry()` |
+| `mutation-invalid` with `unchanged` in `apply` / `validate-candidate` | `error-invalid` | corrected same-key stage only |
+| source/input `mutation-invalid` outside recheck | `conflict` (fail closed) | backup/reload |
+| `mutation-invalid` thrown while rechecking an unknown write | keep `error-unknown` | `recheck()` / backup |
 | `mutation-readback-failed` / `mutation-verification-failed` | `error-unknown` | `recheck()` |
 | `mutation-conflict` | `conflict` | backup/reload |
 | `mutation-lease-lost`, `work-locked` | `lease-lost` | backup/leave/takeover when stale |
 | `mutation-lock-unavailable` | `lease-lost` with distinct error code | read-only/export/leave |
 
-- [ ] **Step 3: Verify GREEN and commit**
+- [ ] **Step 3: Follow the detailed two-commit Task 7 plan**
 
-Run the focused test and global verification loop. Commit:
+Run the focused test and global verification loop after each atomic half. Commit:
 
 ```powershell
 git add js/work-save-coordinator.js tests/work-save-coordinator.test.mjs
-git commit -m "feat(editor): coordinate reliable save batches"
+git commit -m "feat(editor): add deterministic save batching"
+git add js/work-save-coordinator.js tests/work-save-coordinator.test.mjs
+git commit -m "feat(editor): add save recovery states"
 ```
 
 ---
