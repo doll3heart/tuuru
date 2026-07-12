@@ -14,6 +14,7 @@ import {
 } from "./local-write-metadata.js"
 
 const HEARTBEAT_INTERVAL_MS = 15_000
+const NO_FAILURE = Object.freeze({ failed: false })
 
 const DEFAULT_SCHEDULER = Object.freeze({
   setInterval(callback, delay) {
@@ -153,6 +154,18 @@ function hasSameOwnerToken(left, right) {
     && left.leaseId === right.leaseId
 }
 
+function getWorkAdmissionLockName(workId) {
+  return `tuuru:work-admission:${encodeURIComponent(workId)}`
+}
+
+function failed(error) {
+  return { failed: true, error }
+}
+
+function keepFirstFailure(outcome, error) {
+  return outcome.failed ? outcome : failed(error)
+}
+
 export function inspectWorkEditAvailability(options) {
   const normalized = normalizeInspectOptions(options)
   const timestamp = readNow(normalized.now)
@@ -198,19 +211,16 @@ async function releaseHandle(handle) {
   await handle.released
 }
 
-async function releaseHandles(workHandle, libraryHandle) {
-  let firstError = null
-  try {
-    await releaseHandle(workHandle)
-  } catch (error) {
-    firstError = error
+async function releaseHandles(...handles) {
+  let firstFailure = NO_FAILURE
+  for (const handle of handles) {
+    try {
+      await releaseHandle(handle)
+    } catch (error) {
+      firstFailure = keepFirstFailure(firstFailure, error)
+    }
   }
-  try {
-    await releaseHandle(libraryHandle)
-  } catch (error) {
-    firstError ??= error
-  }
-  if (firstError !== null) throw firstError
+  if (firstFailure.failed) throw firstFailure.error
 }
 
 function leaseLostError(workId, cause, message = "The edit session can no longer prove ownership") {
@@ -255,15 +265,15 @@ function createSession({
   let ownerCleanupAttempted = false
 
   function cancelHeartbeat() {
-    if (!timerScheduled) return null
+    if (!timerScheduled) return NO_FAILURE
     const handle = timerHandle
     timerScheduled = false
     timerHandle = undefined
     try {
       scheduler.clearInterval(handle)
-      return null
+      return NO_FAILURE
     } catch (error) {
-      return error
+      return failed(error)
     }
   }
 
@@ -363,8 +373,8 @@ function createSession({
     return operation
   }
 
-  async function performDispose(cancellationError) {
-    let firstError = cancellationError
+  async function performDispose(cancellationFailure) {
+    let firstFailure = cancellationFailure
 
     if (!ownerCleanupAttempted) {
       try {
@@ -373,17 +383,17 @@ function createSession({
           clearWorkOwnerIfOwned(workId, ownerId, leaseId, storage)
         })
       } catch (error) {
-        firstError = error
+        firstFailure = keepFirstFailure(firstFailure, error)
       }
     }
 
     try {
       await releaseHandles(workHandle, libraryHandle)
     } catch (error) {
-      firstError ??= error
+      firstFailure = keepFirstFailure(firstFailure, error)
     }
     state = "disposed"
-    if (firstError !== null) throw firstError
+    if (firstFailure.failed) throw firstFailure.error
   }
 
   function dispose() {
@@ -395,8 +405,8 @@ function createSession({
         rejectDispose = reject
       })
       state = "disposing"
-      const cancellationError = cancelHeartbeat()
-      void performDispose(cancellationError).then(resolveDispose, rejectDispose)
+      const cancellationFailure = cancelHeartbeat()
+      void performDispose(cancellationFailure).then(resolveDispose, rejectDispose)
     }
     return disposePromise
   }
@@ -434,6 +444,7 @@ async function cleanupFailedOpen({
   storage,
   lockManager,
   libraryHandle,
+  admissionHandle,
   workHandle,
   ownerMayExist,
   ownerCleanupAttempted,
@@ -448,7 +459,7 @@ async function cleanupFailedOpen({
     }
   }
   try {
-    await releaseHandles(workHandle, libraryHandle)
+    await releaseHandles(workHandle, admissionHandle, libraryHandle)
   } catch {
     // Cleanup is best effort; the original opening failure remains primary.
   }
@@ -470,10 +481,11 @@ export async function openWorkEditSession(options) {
     return unavailableResult(new LocalLockUnavailableError("Web Locks are unavailable in this context"))
   }
 
-  const openingTimestamp = readNow(now)
+  readNow(now)
   const ownerId = createIdentity(createId, "owner")
   const leaseId = createIdentity(createId, "lease")
   let libraryHandle = null
+  let admissionHandle = null
   let workHandle = null
   let ownerMayExist = false
   let ownerCleanupAttempted = false
@@ -485,12 +497,17 @@ export async function openWorkEditSession(options) {
       { mode: "shared", ifAvailable: true },
     )
     if (libraryHandle === null) {
-      const availability = inspectWorkEditAvailability({
-        workId,
-        storage,
-        now: () => openingTimestamp,
-      })
-      return workLockedResult(workId, availability)
+      return workLockedResult(workId, null)
+    }
+
+    admissionHandle = await lockManager.hold(
+      getWorkAdmissionLockName(workId),
+      { mode: "exclusive", ifAvailable: true },
+    )
+    if (admissionHandle === null) {
+      await releaseHandle(libraryHandle)
+      libraryHandle = null
+      return workLockedResult(workId, null)
     }
 
     workHandle = await lockManager.hold(
@@ -506,6 +523,8 @@ export async function openWorkEditSession(options) {
       const availability = availabilityFromOwner(currentOwner, takeoverTimestamp)
 
       if (!takeover || currentOwner === null || !availability.isStale) {
+        await releaseHandle(admissionHandle)
+        admissionHandle = null
         await releaseHandle(libraryHandle)
         libraryHandle = null
         return workLockedResult(workId, availability)
@@ -525,18 +544,25 @@ export async function openWorkEditSession(options) {
     }
 
     let restoreGeneration
+    const assertRegistrationHandles = () => {
+      if (
+        libraryHandle.isLost()
+        || admissionHandle.isLost()
+        || workHandle.isLost()
+      ) {
+        throw leaseLostError(
+          workId,
+          undefined,
+          "A native edit-session lock ended before owner registration",
+        )
+      }
+    }
     await requestDatabase(lockManager, () => {
+      assertRegistrationHandles()
       restoreGeneration = generationId(readRestoreGeneration(storage))
       const currentOwner = readWorkOwner(workId, storage)
 
       if (takeoverPreflight !== null) {
-        if (workHandle.isLost()) {
-          throw leaseLostError(
-            workId,
-            undefined,
-            "The takeover work lock ended before owner registration",
-          )
-        }
         if (restoreGeneration !== takeoverPreflight.restoreGeneration) {
           throw leaseLostError(
             workId,
@@ -553,13 +579,15 @@ export async function openWorkEditSession(options) {
         }
       }
 
+      const heartbeatAt = readNow(now)
+      assertRegistrationHandles()
       ownerMayExist = true
       try {
         writeAndVerifyWorkOwner({
           workId,
           ownerId,
           leaseId,
-          heartbeatAt: readNow(now),
+          heartbeatAt,
         }, storage)
       } catch (error) {
         ownerCleanupAttempted = true
@@ -571,6 +599,9 @@ export async function openWorkEditSession(options) {
         throw error
       }
     })
+
+    await releaseHandle(admissionHandle)
+    admissionHandle = null
 
     const session = createSession({
       workId,
@@ -593,6 +624,7 @@ export async function openWorkEditSession(options) {
       storage,
       lockManager,
       libraryHandle,
+      admissionHandle,
       workHandle,
       ownerMayExist,
       ownerCleanupAttempted,
@@ -606,22 +638,21 @@ export async function runWithWorkEditSession(options, callback) {
   const result = await openWorkEditSession(options)
   if (!result.ok) return result
 
-  let value
-  let callbackError = null
+  let callbackOutcome
   try {
-    value = await callback(result.session)
+    callbackOutcome = { failed: false, value: await callback(result.session) }
   } catch (error) {
-    callbackError = error
+    callbackOutcome = failed(error)
   }
 
-  let cleanupError = null
+  let cleanupOutcome = NO_FAILURE
   try {
     await result.session.dispose()
   } catch (error) {
-    cleanupError = error
+    cleanupOutcome = failed(error)
   }
 
-  if (callbackError !== null) throw callbackError
-  if (cleanupError !== null) throw cleanupError
-  return Object.freeze({ ok: true, value })
+  if (callbackOutcome.failed) throw callbackOutcome.error
+  if (cleanupOutcome.failed) throw cleanupOutcome.error
+  return Object.freeze({ ok: true, value: callbackOutcome.value })
 }
