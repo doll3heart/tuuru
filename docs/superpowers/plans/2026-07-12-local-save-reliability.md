@@ -14,7 +14,7 @@
 
 施工时先把新零件做好并单独测试，但不让正式页面使用。然后依次把首页、整库恢复、文章编辑器和手机编辑器接到新零件上。所有页面都接完、旧写入口也被封住以后，才在最后一个很小的提交里打开总开关。这样施工中不会出现“一半页面用新保存、一半页面仍会覆盖它”的状态。
 
-每个编号任务都是一个独立 Git 提交。一个任务失败，只回退那个提交，不改写 Git 历史。每次提交之后都跑完整测试和两套构建，工作区干净后才开始下一项。
+每个编号任务默认对应一个独立 Git 提交；如果实现审查证明任务仍然太大，就先更新计划，再拆成多个写明边界的原子提交。Task 7 因此明确拆成四个提交。一个提交失败，只回退那个提交，不改写 Git 历史。每次提交之后都跑完整测试和两套构建，工作区干净后才开始下一项。
 
 ## Global Constraints
 
@@ -158,17 +158,18 @@ export function createWorkSaveCoordinator({
   commitMutation,
   commitPreparedCandidate,
   recheckUnknown,
-  scheduler,
+  scheduler = { setTimeout, clearTimeout },
+  now = Date.now,
   debounceMs = 600,
   maxWaitMs = 3000,
-  createOperationId,
+  createOperationId = defaultCreateOperationId,
   onSnapshot,
 }) {
   return {
-    stage({ key, payload, apply }),
-    commitNow({ key, payload, consumes = [], apply }),
+    stage({ key, payload, apply, correctsOperationId = undefined }),
+    commitNow({ key, payload, consumes = [], apply, correctsOperationId = undefined }),
     flush(),
-    drain(reason),
+    drain(),
     retry(),
     recheck(),
     markLeaseLost(error),
@@ -218,10 +219,11 @@ export async function openWorkSaveRuntime({
     stage(operation),
     commitNow(operation),
     flush(),
-    drain(reason),
+    drain(),
     retry(),
     recheck(),
     snapshot(),
+    recoveryMaterial(),
     subscribe(listener),
     prepareEmergencyBackup(),
     suspend(),
@@ -231,6 +233,8 @@ export async function openWorkSaveRuntime({
   // failure => { ok: false, code, error, work, snapshot }
 }
 ```
+
+The runtime passes `correctsOperationId` through unchanged when forwarding `stage()` / `commitNow()` input. It never invents an implicit correction from a matching key.
 
 Coordinator snapshots use exactly these states:
 
@@ -584,7 +588,7 @@ Return success only as:
 }
 ```
 
-`createJsonToken()` recursively tags JSON primitive types, preserves array order, and sorts object keys before serialization; it therefore ignores harmless object-key insertion order without confusing missing fields with present values. Phone scope tokens wrap each selected field as `{ key, present, value }` before calling it, so absence is distinct. `recheckUnknownLocalDatabaseCommit()` uses database-lock admission and exact comparison only. `commitPreparedLocalDatabaseCandidate()` uses the same admission check and the same owner/lease/generation pre-write fence as a normal commit, validates, and writes the supplied raw string directly. Neither invokes `apply()`. Attach `{ phase, commitState, expectedCurrentRaw, candidateRaw }` to every `LocalDatabaseError` where available. Do not roll back after an unknown result.
+`createJsonToken()` recursively tags JSON primitive types, preserves array order, and sorts object keys before serialization; it therefore ignores harmless object-key insertion order without confusing missing fields with present values. Phone scope tokens wrap each selected field as `{ key, present, value }` before calling it, so absence is distinct. `recheckUnknownLocalDatabaseCommit()` uses database-lock admission and exact comparison only. `commitPreparedLocalDatabaseCandidate()` uses the same admission check and the same owner/lease/generation pre-write fence as a normal commit, validates, and writes the supplied raw string directly. Neither invokes `apply()`. Attach `{ phase, commitState, expectedCurrentRaw, candidateRaw }` under `error.details` on each `LocalDatabaseError` where available. Do not roll back after an unknown result.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -599,7 +603,7 @@ git commit -m "feat(storage): verify atomic local mutations"
 
 ### Task 7: Implement the save coordinator state machine
 
-> Detailed, authoritative Task 7 contract: [`2026-07-12-work-save-coordinator.md`](./2026-07-12-work-save-coordinator.md). It splits implementation into two atomic commits and closes the flush-target, structural-barrier, disposal-quiescence, and context-sensitive error-mapping gaps discovered during pre-implementation review.
+> Detailed, authoritative Task 7 contract: [`2026-07-12-work-save-coordinator.md`](./2026-07-12-work-save-coordinator.md). It splits implementation into four atomic commits and closes the flush-target, structural-barrier, disposal-quiescence, typed-waiter, explicit-correction, and context-sensitive recovery gaps discovered during implementation review.
 
 **Files:**
 - Create: `js/work-save-coordinator.js`
@@ -607,68 +611,62 @@ git commit -m "feat(storage): verify atomic local mutations"
 
 **Behavior:** Coalesce field edits by key, preserve immutable payloads and generations, batch pending field edits before structural operations, and expose reliable `flush()`, `drain()`, retry, unknown recheck, lease loss, subscription, and disposal behavior.
 
-- [ ] **Step 1: Write RED tests with a fake scheduler**
+- [ ] **Step 1: Use the detailed per-commit RED suites and keep this final acceptance matrix**
 
-Prove:
+The authoritative detailed plan decides which RED tests are added before each of the four implementations. Do not accumulate this entire matrix in one uncommitted tree. By the end of Task 7, prove:
 
 - a field edit waits for 600 ms of quiet;
 - continuous edits commit no later than 3000 ms after the first dirty generation;
 - repeated staging of one key keeps only the newest immutable payload;
 - different staged fields apply in staging sequence;
-- a structural operation first consumes the named pending keys, then applies itself in the same batch;
+- a structural operation captures every field pending at its call boundary, records `consumes` only as ownership metadata, then applies itself last in that same frozen batch;
 - `commitNow()` resolves only when its own operation generation is verified;
 - simultaneous `flush()` calls share one active commit;
 - a `flush()` called while an older batch is active also waits for edits already pending at that call boundary, but not edits staged later;
 - simultaneous `drain()` calls share one drain Promise and still include edits staged while the first batch is active;
 - `drain()` loops when edits arrive during an active commit and resolves only after generations stabilize;
 - a confirmed unchanged `mutation-write-failed` batch remains queued and `retry()` reuses its operation IDs;
-- `error-invalid` cannot retry the invalid candidate, but a later corrected stage replaces it and may save successfully;
+- `error-invalid` cannot retry the invalid candidate; only a stage/structural input that explicitly names the blocked operation ID and matches its key/kind may correct it;
 - `error-unknown` freezes all later writes until `recheck()` returns saved/not-written/conflict;
 - edits staged while the uncertain batch was still in flight remain as later pending generations; once unknown is observed, new staging is rejected but those earlier later generations are never discarded;
 - unknown not-written retries through `commitPreparedLocalDatabaseCandidate()` with the frozen raw strings and without calling the old operation `apply()` again;
 - `markLeaseLost()` and `dispose()` reject new staging and settle pending callers with stable errors;
 - subscription emits snapshots without repeating identical `clean` announcements.
 
-Run:
+- [ ] **Step 2: Keep these shared invariants while implementing the four detailed tasks**
 
-```powershell
-node --test tests/work-save-coordinator.test.mjs
-```
+Implement only the slice assigned to the current detailed task, verify it, commit it, and return to a clean tree before starting the next slice.
 
-Expected RED: coordinator module is absent.
+Clone each payload at `stage()`/`commitNow()` time and freeze the operation descriptor. A batch stores its exact included generations; success clears only a key whose current generation still equals the included generation. Keep structural operations FIFO. Copy trusted `expectedCurrentRaw` and `candidateRaw` from recognized unknown errors into a separate callback-free frozen envelope.
 
-- [ ] **Step 2: Implement immutable batches and exact states**
+The injected `recheckUnknown(frozenUnknownBatch)` returns `{ outcome: "saved", result }`, `{ outcome: "not-written" }`, or `{ outcome: "conflict", result }`. `result`, when present, contains verified `raw`, `database`, and `workToken` for the runtime baseline. After `not-written`, `retry()` must call injected `commitPreparedCandidate(frozenUnknownBatch)`; it never calls `commitMutation()` or an old uncertain operation callback. When saved/prepared retry succeeds, the coordinator adopts that baseline and continues draining later pending generations. `recoveryMaterial()` returns `null`, frozen `{ kind: "ordinary", pendingOperations, correctableOperationIds }`, or frozen `{ kind: "unknown", uncertainBatch, laterPendingOperations }`. In `error-invalid`, `correctableOperationIds` contains only the blocked invalid batch IDs; later ready/pending IDs are excluded, and every other state uses an empty frozen array. Unknown provenance remains `kind: "unknown"` after not-written and in later terminal states. The uncertain batch's callbacks are never exposed for replay, but operations staged while it was in flight remain recoverable.
 
-Clone each payload at `stage()`/`commitNow()` time and freeze the operation descriptor. A batch stores its exact included generations; success clears only a key whose current generation still equals the included generation. Keep structural operations FIFO. Store `expectedCurrentRaw` and `candidateRaw` from unknown errors on the frozen active batch.
-
-The injected `recheckUnknown(frozenBatch)` returns `{ outcome: "saved", result }`, `{ outcome: "not-written" }`, or `{ outcome: "conflict", result }`. `result`, when present, contains verified `raw`, `database`, and `workToken` for the runtime baseline. After `not-written`, `retry()` must call injected `commitPreparedCandidate(frozenBatch)`; it never calls `commitMutation()` or an old uncertain operation callback. When saved/prepared retry succeeds, the coordinator adopts that baseline and continues draining later pending generations. `recoveryMaterial()` returns ordinary frozen pending descriptors; in `error-unknown` it returns `{ uncertainBatch: { expectedCurrentRaw, candidateRaw }, laterPendingOperations }`. The uncertain batch's callbacks are never exposed for replay, but operations staged while it was in flight remain recoverable.
-
-`error-invalid` blocks `retry()` but not an explicit user correction. A later `stage()` or `commitNow()` creates a new generation; an operation with the same key supersedes the invalid queued operation, while other queued field edits remain. The coordinator rebuilds and revalidates from the last verified baseline. It never silently drops an invalid operation merely because time passed.
+`error-invalid` blocks `retry()` and ordinary new input. An explicit correction uses `correctsOperationId` to name one blocked operation and must match its key and method-implied kind. The replacement receives a new operation ID but keeps the old generation, the rebuilt batch receives a new ID, other operations remain identical, and later same-key input stays behind it. The coordinator never silently drops an invalid operation merely because time passed.
 
 The error mapping is fixed:
 
-| Error code | Coordinator state | Allowed direct action |
+| Error code | Coordinator state | Allowed recovery action |
 |---|---|---|
 | `mutation-write-failed` with `unchanged` | `error-retryable` | `retry()` |
 | `mutation-read-failed` with `unchanged` | `error-retryable` | `retry()` |
-| `mutation-invalid` with `unchanged` in `apply` / `validate-candidate` | `error-invalid` | corrected same-key stage only |
+| `mutation-invalid` with `unchanged` in `apply` / `validate-candidate` | `error-invalid` | matching `correctsOperationId` correction only |
 | source/input `mutation-invalid` outside recheck | `conflict` (fail closed) | backup/reload |
 | `mutation-invalid` thrown while rechecking an unknown write | keep `error-unknown` | `recheck()` / backup |
-| `mutation-readback-failed` / `mutation-verification-failed` | `error-unknown` | `recheck()` |
+| recognized `mutation-readback-failed` / `mutation-verification-failed` with complete trusted raw material | `error-unknown` | `recheck()` |
 | `mutation-conflict` | `conflict` | backup/reload |
 | `mutation-lease-lost`, `work-locked` | `lease-lost` | backup/leave/takeover when stale |
 | `mutation-lock-unavailable` | `lease-lost` with distinct error code | read-only/export/leave |
 
-- [ ] **Step 3: Follow the detailed two-commit Task 7 plan**
+- [ ] **Step 3: Follow the detailed four-commit Task 7 plan**
 
-Run the focused test and global verification loop after each atomic half. Commit:
+Run the focused test and global verification loop after each atomic task. The commit map is:
 
-```powershell
-git add js/work-save-coordinator.js tests/work-save-coordinator.test.mjs
-git commit -m "feat(editor): add deterministic save batching"
-git add js/work-save-coordinator.js tests/work-save-coordinator.test.mjs
-git commit -m "feat(editor): add save recovery states"
-```
+| Detailed task | Commit message |
+|---|---|
+| Successful batching | `feat(editor): add deterministic save batching` |
+| Ordinary retry ledger | `feat(editor): add ordinary save retry ledger` |
+| Callback-free unknown recovery | `feat(editor): add callback-free unknown recovery` |
+| Terminal recovery lifecycle | `feat(editor): finalize terminal save lifecycle` |
 
 ---
 
@@ -742,7 +740,7 @@ git commit -m "feat(editor): compose reliable work runtime"
 
 Test these exact branches:
 
-- clean/dirty/retryable starts from the newest valid stored database and builds one recovery-only candidate from the coordinator's current immutable pending operations;
+- clean/dirty and ordinary retryable recovery start from the newest valid stored database and build one recovery-only candidate from the coordinator's current immutable pending operations; unknown provenance, including not-written in `error-retryable`, follows the unknown branches below;
 - storage unreadable falls back to the runtime's last verified valid raw;
 - invalid candidate returns a valid last-known library artifact plus a separate `restorable: false` raw-draft artifact only when safe serialization succeeds;
 - unknown with current raw equal to `candidateRaw` backs up current storage;
@@ -781,7 +779,7 @@ prepareEmergencyLocalDatabaseBackup({
 // => { artifacts, warning, otherActiveEditors: [{ workId, ownerId, expiresAt }] }
 ```
 
-Validate every restorable full-library candidate with `inspectLocalDatabaseRaw()` and serialize it with `serializeLocalDatabaseBackupFromDatabase()`. For ordinary pending/retryable operations, the runtime may apply their immutable payloads to a recovery-only clone; it must not schedule or write that clone. For an unknown batch it uses the stored raw strings for the uncertain generation, never invokes that batch's callbacks, and may apply only separately retained later pending operations to a clone of `candidateRaw`. Recovery metadata contains source work ID, source state, and recovered timestamp; it contains no device or network identifier.
+Validate every restorable full-library candidate with `inspectLocalDatabaseRaw()` and serialize it with `serializeLocalDatabaseBackupFromDatabase()`. For `kind: "ordinary"` recovery, including ordinary retryable state, the runtime may apply immutable pending payloads to a recovery-only clone; it must not schedule or write that clone. For `kind: "unknown"`, including not-written provenance, it uses the stored raw strings for the uncertain generation, never invokes that batch's callbacks, and may apply only separately retained later pending operations to a clone of `candidateRaw`. Recovery metadata contains source work ID, source state, and recovered timestamp; it contains no device or network identifier.
 
 - [ ] **Step 3: Verify GREEN and commit**
 
@@ -813,14 +811,14 @@ Render every coordinator state and assert exact visible actions:
 | `dirty` | 未保存 | none |
 | `saving` | 正在保存 | none |
 | `error-retryable` | 保存失败，原数据未改变 | 重试、下载紧急备份、放弃修改并离开 |
-| `error-invalid` | 当前内容无法安全保存 | 下载紧急备份 |
+| `error-invalid` | 当前内容无法安全保存 | 纠正内容、下载紧急备份 |
 | `error-unknown` | 无法确认刚才是否保存 | 重新检查、下载紧急备份 |
 | `conflict` | 本地创作库已发生冲突 | 下载紧急备份、重新加载 |
 | `lease-lost` + `mutation-lease-lost` | 此页面已失去编辑权 | 下载紧急备份、返回作品列表；过期后确认接管 |
 | `lease-lost` + `work-locked` | 此作品正在另一个标签页编辑 | 重新检查、返回作品列表；过期后确认接管 |
 | `lease-lost` + `mutation-lock-unavailable` | 当前浏览器不能保证可靠本地保存 | 保持只读、导出已有作品、返回作品列表 |
 
-Also prove role selection (`status` for quiet announcements, `alert` for persistent failure), keyboard activation, disabled/single-flight actions, focus retention after action failure, a second confirmation before discard, hidden takeover while a lease is valid, and persistent copy when `otherActiveEditors` says another tab's in-memory edits are not included. Run at least two full `clean → dirty → saving → clean` cycles: visible text may change on every state, but the separate quiet live region announces only the first unsaved entry, final verified completion, and recovery from an error; it never repeats `saving` or chatters on every autosave cycle. JSDOM covers DOM, ARIA, focus, and action state only. A source-contract assertion covers the 44px minimum, 320px wrapping rule, safe-area variables, and reduced-motion media query; real computed layout remains in the final browser matrix.
+Also prove role selection (`status` for quiet announcements, `alert` for persistent failure), keyboard activation, disabled/single-flight actions, focus retention after action failure, a second confirmation before discard, hidden takeover while a lease is valid, and persistent copy when `otherActiveEditors` says another tab's in-memory edits are not included. The invalid correction action passes the exact frozen ordinary recovery record to `onCorrectInvalid` and performs no retry or mutation itself. When later pending operations also exist, the chooser offers only IDs in `correctableOperationIds`, never every `pendingOperations` entry. Run at least two full `clean → dirty → saving → clean` cycles: visible text may change on every state, but the separate quiet live region announces only the first unsaved entry, final verified completion, and recovery from an error; it never repeats `saving` or chatters on every autosave cycle. JSDOM covers DOM, ARIA, focus, and action state only. A source-contract assertion covers the 44px minimum, 320px wrapping rule, safe-area variables, and reduced-motion media query; real computed layout remains in the final browser matrix.
 
 Run:
 
@@ -842,6 +840,7 @@ mountSaveStatus({
   onReload,
   onLeave,
   onDiscardAndLeave,
+  onCorrectInvalid,
   confirmDiscard,
   onRecheckLock,
   onTakeover,
@@ -851,7 +850,7 @@ mountSaveStatus({
 // => { render(snapshot), focusError(), dispose() }
 ```
 
-The component accepts either a live runtime or an `initialSnapshot` from a failed open result and keeps visible status text separate from its quiet announcement node. Per mounted editor, the quiet node announces the first transition into dirty and the first later verified clean once, then suppresses routine dirty/saving/clean autosave cycles; each distinct persistent error uses the alert, and the first verified recovery from that error may announce once. `download` calls `runtime.prepareEmergencyBackup()` and then the existing `downloadBlob()` for each artifact. A download attempt never changes the save state to clean and copy must say the browser only confirmed that the download was started. The view selects lock-unavailable, work-locked, and lease-lost copy from `snapshot.error.code`; it does not collapse them into one generic message. `onTakeover` is rendered only when `snapshot.availability.canTakeover === true` and still requires explicit confirmation in the page controller.
+The component accepts either a live runtime or an `initialSnapshot` from a failed open result and keeps visible status text separate from its quiet announcement node. Per mounted editor, the quiet node announces the first transition into dirty and the first later verified clean once, then suppresses routine dirty/saving/clean autosave cycles; each distinct persistent error uses the alert, and the first verified recovery from that error may announce once. In `error-invalid`, the correction action calls `onCorrectInvalid(runtime.recoveryMaterial())`; it never guesses a key or retries by itself. The page controller must restrict selection to `correctableOperationIds`, resolve the matching blocked operation from `pendingOperations`, and pass only that exact ID to the owning adapter. `download` calls `runtime.prepareEmergencyBackup()` and then the existing `downloadBlob()` for each artifact. A download attempt never changes the save state to clean and copy must say the browser only confirmed that the download was started. The view selects lock-unavailable, work-locked, and lease-lost copy from `snapshot.error.code`; it does not collapse them into one generic message. `onTakeover` is rendered only when `snapshot.availability.canTakeover === true` and still requires explicit confirmation in the page controller.
 
 - [ ] **Step 3: Verify GREEN and commit**
 
@@ -1152,7 +1151,9 @@ createArticleSaveAdapter({ runtime, createId, now })
 // deletePhoneModuleCard({ moduleId, nodeId })
 ```
 
-Prove IDs are allocated outside `apply`, inputs are cloned, missing records return stable invalid errors, unknown fields survive, and each public structural call creates one `commitNow()` operation.
+Every mutation method accepts an optional final `{ correctsOperationId }` options object. Ordinary calls omit it. A correction forwards that exact ID to the one underlying runtime `stage()` or `commitNow()` input; the adapter never infers a correction from a matching key.
+
+Prove IDs are allocated outside `apply`, inputs are cloned, missing records return stable invalid errors, unknown fields survive, and each public structural call creates one `commitNow()` operation. Add one field and one structural correction test that select an ID from `runtime.recoveryMaterial().correctableOperationIds`, resolve its exact operation from `pendingOperations`, and assert the adapter forwards only that ID. A later pending ID must never be offered as a target.
 
 Run:
 
@@ -1212,6 +1213,7 @@ With injected flags/runtime/controller factories, prove:
 - `visibilitychange` to hidden refreshes the lease and starts a best-effort flush; becoming visible rechecks native lock, owner/lease, generation, and work token before enabling edits;
 - pagehide/pageshow call runtime suspend/resume and a generation mismatch leaves the page read-only;
 - `error-unknown`, `conflict`, `mutation-lease-lost`, and `mutation-lock-unavailable` disable further editable controls while preserving copy/export/recovery actions;
+- `error-invalid` correction shows only operations named by frozen `correctableOperationIds`, requires an explicit user selection, and forwards that exact operation ID through the article adapter without calling `retry()`;
 - remaining recoverable data or a composing input installs `beforeunload`; clean/disposed state removes it.
 
 Run:
@@ -1224,7 +1226,7 @@ Expected RED: editor still writes every input synchronously and lacks runtime li
 
 - [ ] **Step 2: Wire the reliable branch without changing the false branch**
 
-Make `renderEditor()` return/await a Promise only through the async-capable router. Create a small exported `createArticleEditorRuntimeController()` used by JSDOM tests. In the true branch, all body mutations call `articleSaveAdapter.stageNodeContent()`; never call `updateNode()` directly. Mount status in both desktop and mobile shells without duplicating the live region.
+Make `renderEditor()` return/await a Promise only through the async-capable router. Create a small exported `createArticleEditorRuntimeController()` used by JSDOM tests. In the true branch, all body mutations call `articleSaveAdapter.stageNodeContent()`; never call `updateNode()` directly. Mount status in both desktop and mobile shells without duplicating the live region. Wire `onCorrectInvalid` to present only operations whose IDs occur in ordinary recovery `correctableOperationIds`; after the user selects one and edits its owning control/form, the controller calls the matching adapter method with `{ correctsOperationId: selected.id }`. It never auto-selects by key, exposes a later pending ID, or calls `retry()` for invalid state.
 
 The takeover button appears only when owner metadata is older than 60 seconds, includes explicit confirmation, and reopens the whole runtime with `takeover: true`; it does not mutate heartbeat metadata itself.
 
@@ -1257,7 +1259,7 @@ git commit -m "feat(editor): stage reliable article input"
 
 - [ ] **Step 1: Add RED source and behavior tests**
 
-Exercise work/editor settings, nodes, scenes, and placeholders and assert exactly one matching adapter call with zero injected legacy helper calls. Rendering settings must produce zero writes. Dirty settings/scene/placeholder forms block navigation; Save validates, awaits its adapter call and `drain()`; Continue retains DOM/focus; only Discard clears.
+Exercise work/editor settings, nodes, scenes, and placeholders and assert exactly one matching adapter call with zero injected legacy helper calls. Rendering settings must produce zero writes. Dirty settings/scene/placeholder forms block navigation; Save validates, awaits its adapter call and `drain()`; Continue retains DOM/focus; only Discard clears. For one invalid ordinary field, prove the correction chooser accepts only `correctableOperationIds`, passes the user-selected ID into that same adapter method, and does not expose or overwrite a later same-key draft.
 
 Run:
 
@@ -1363,7 +1365,7 @@ git commit -m "feat(modal): await guarded close actions"
 
 - [ ] **Step 1: Add RED structural integration tests**
 
-Prove chapter deletion, complete choice replacement, and each phone-module card operation call one adapter method and one database commit; pending body content is preserved first; failure leaves no partial candidate and keeps the modal/DOM; dirty chapter/choice/module forms use save/discard/continue; success toast occurs only after verification. Add a source/DI assertion that every mutating legacy article helper receives zero calls in the reliable branch.
+Prove chapter deletion, complete choice replacement, and each phone-module card operation call one adapter method and one database commit; pending body content is preserved first; failure leaves no partial candidate and keeps the modal/DOM; dirty chapter/choice/module forms use save/discard/continue; success toast occurs only after verification. For one invalid structural operation, explicitly select its ID from `correctableOperationIds` and prove the controller passes it through the owning adapter's correction options without exposing later IDs or implicitly replacing any sibling operation. Add a source/DI assertion that every mutating legacy article helper receives zero calls in the reliable branch.
 
 Run:
 
@@ -1413,6 +1415,7 @@ Cover:
 - a mutation changing any field outside `scope.writes` is rejected with `code: "mutation-invalid"` and `details.reason: "out-of-scope-write"`;
 - returned token reflects the verified committed scope;
 - a per-panel queue serializes rapid saves and passes the first result token into the second call.
+- an invalid real-work panel correction accepts one explicitly selected recovery operation ID, carries it through the queue, and forwards it unchanged to runtime input; an ordinary mutation never invents that field.
 
 Run:
 
@@ -1437,10 +1440,10 @@ Export from `phone-work-access.js`:
 ```js
 registerPhoneWorkRuntime(workId, runtime)
 readStoredPhoneWorkScope(workId, scope)
-mutateStoredPhoneWork(workId, mutation)
+mutateStoredPhoneWork(workId, mutation, { correctsOperationId = undefined } = {})
 ```
 
-The runtime operation key is `phone:<sorted-write-fields>`. Preallocated record IDs live in the payload, never inside `apply()`. Update the in-memory expected scope token only after verified resolution; failure retains the last confirmed token and queue order.
+The runtime operation key is `phone:<sorted-write-fields>`. Preallocated record IDs live in the payload, never inside `apply()`. The panel queue accepts the same optional correction options object and carries its exact ID to `mutateStoredPhoneWork()` and then the runtime operation; it never derives correction from scope/key equality. Update the in-memory expected scope token only after verified resolution; failure retains the last confirmed token and queue order.
 
 - [ ] **Step 3: Verify GREEN and commit**
 
@@ -1617,6 +1620,7 @@ Prove:
 - phone route guard waits for runtime drain and dirty modal forms; pagehide/pageshow suspend/resume; beforeunload remains while recovery material exists.
 - phone `visibilitychange` hidden refreshes the lease and starts best-effort flush, while visible revalidates native lock, owner/lease, generation, and scope baseline before controls are enabled;
 - lock-unavailable, work-locked, conflict, unknown, and lease-lost phone states keep the virtual phone content readable but disable real-work mutations and expose their distinct shared-status actions.
+- error-invalid exposes only phone operations named by `correctableOperationIds`; after explicit user selection, the owning panel resubmits current valid input with `{ correctsOperationId: selected.id }`, while later pending IDs are hidden, cancel performs no mutation, and ordinary retry is never used.
 
 Run:
 
@@ -1628,7 +1632,7 @@ Expected RED: page callers discard Promises and phone has no shared recovery lif
 
 - [ ] **Step 2: Complete page integration**
 
-Mount `save-status-view` once in the phone editor shell. Register phone modal forms in the shared form-draft registry. Route navigation through `drain()` and the same save/discard/continue choices as article. Use runtime backup for phone failures. Ensure async modal failure never falls back to toast-only reporting.
+Mount `save-status-view` once in the phone editor shell. Register phone modal forms in the shared form-draft registry. Route navigation through `drain()` and the same save/discard/continue choices as article. Wire `onCorrectInvalid` to a user-selected operation restricted by ordinary recovery `correctableOperationIds`, then pass that exact ID through the panel queue and phone adapter. Use runtime backup for phone failures. Ensure async modal failure never falls back to toast-only reporting.
 
 - [ ] **Step 3: Verify GREEN and commit**
 
@@ -1915,8 +1919,8 @@ After the commit, rerun all four focused family commands, the Task 3 background 
 
 ## Rollback Rule
 
-If one numbered improvement is harmful, use `git revert <that-commit>` after explaining the impact. Do not manually undo a phase, reset the branch, rewrite history, force-push, or squash. If Task 27 activation reveals a broad architectural problem, revert only the activation commit first; the tested dormant foundations can remain while the issue is investigated.
+If one atomic improvement commit is harmful, use `git revert <that-commit>` after explaining the impact. Do not manually undo a phase, reset the branch, rewrite history, force-push, or squash. If Task 27 activation reveals a broad architectural problem, revert only the activation commit first; the tested dormant foundations can remain while the issue is investigated.
 
 ## Completion Definition
 
-The work is complete only when all 27 tasks are committed independently, every post-commit verification is recorded as passing, the real-browser lock harness passes, the final production flag is true, the working tree is clean, and no user data path was moved off-device.
+The work is complete only when all 27 top-level tasks and every explicitly split atomic commit (including all four Task 7 commits) are complete, every post-commit verification is recorded as passing, the real-browser lock harness passes, the final production flag is true, the working tree is clean, and no user data path was moved off-device.
