@@ -27,26 +27,20 @@ function cloneJsonPrimitive(value) {
   return { matched: false }
 }
 
-function assertNoJsonHook(value, prototype, isArray) {
-  if (Object.getPrototypeOf(value) !== prototype) {
-    throw new TypeError("JSON payload prototypes must remain stable during inspection")
-  }
-  if (isArray && Object.getPrototypeOf(Array.prototype) !== Object.prototype) {
-    throw new TypeError("JSON Array.prototype must inherit directly from Object.prototype")
-  }
-  if (prototype !== null && Object.getPrototypeOf(Object.prototype) !== null) {
-    throw new TypeError("JSON Object.prototype must terminate at null")
-  }
-  const visited = new WeakSet()
-  const permittedChain = isArray
-    ? [value, Array.prototype, Object.prototype]
-    : prototype === null ? [value] : [value, Object.prototype]
-  for (const current of permittedChain) {
-    if (visited.has(current)) {
-      throw new TypeError("JSON payload prototype chains must not contain cycles")
+function assertSafeJsonBuiltins(prototype, isArray) {
+  if (isArray) {
+    if (Object.getPrototypeOf(Array.prototype) !== Object.prototype) {
+      throw new TypeError("JSON Array.prototype must inherit directly from Object.prototype")
     }
-    visited.add(current)
-    if (Object.getOwnPropertyDescriptor(current, "toJSON") !== undefined) {
+    if (Object.getOwnPropertyDescriptor(Array.prototype, "toJSON") !== undefined) {
+      throw new TypeError("JSON payloads must not define or inherit toJSON")
+    }
+  }
+  if (prototype !== null) {
+    if (Object.getPrototypeOf(Object.prototype) !== null) {
+      throw new TypeError("JSON Object.prototype must terminate at null")
+    }
+    if (Object.getOwnPropertyDescriptor(Object.prototype, "toJSON") !== undefined) {
       throw new TypeError("JSON payloads must not define or inherit toJSON")
     }
   }
@@ -73,9 +67,18 @@ function inspectJsonContainer(source) {
     throw new TypeError("JSON objects must use an ordinary or null prototype")
   }
 
-  assertNoJsonHook(source, prototype, isArray)
+  assertSafeJsonBuiltins(prototype, isArray)
   const descriptors = Object.getOwnPropertyDescriptors(source)
-  const keys = Reflect.ownKeys(source)
+  const keys = Reflect.ownKeys(descriptors)
+  for (let index = 0; index < keys.length; index += 1) {
+    if (keys[index] === "toJSON") {
+      throw new TypeError("JSON payloads must not define or inherit toJSON")
+    }
+  }
+  if (Object.getPrototypeOf(source) !== prototype) {
+    throw new TypeError("JSON payload prototypes must remain stable during inspection")
+  }
+  assertSafeJsonBuiltins(prototype, isArray)
 
   if (isArray) {
     const lengthDescriptor = descriptors.length

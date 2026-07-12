@@ -1409,3 +1409,149 @@ test("polluted Array prototype chains are rejected before inherited toJSON can r
   assert.equal(child.status, 0, child.stderr)
   assert.match(child.stdout, /polluted-array-prototype-rejected/)
 })
+
+test("an Array ownKeys trap cannot pollute inherited toJSON after validation", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    const originalPrototype = Object.getPrototypeOf(Array.prototype)
+    const pollutedPrototype = Object.create(originalPrototype)
+    let hookCalls = 0
+    let ownKeysCalls = 0
+    let stageFailure = null
+    let operation = null
+    Object.defineProperty(pollutedPrototype, "toJSON", {
+      configurable: true,
+      value() {
+        hookCalls += 1
+        return { polluted: true }
+      },
+    })
+    const target = ["safe"]
+    const source = new Proxy(target, {
+      getPrototypeOf() {
+        return Array.prototype
+      },
+      ownKeys(current) {
+        ownKeysCalls += 1
+        Object.setPrototypeOf(Array.prototype, pollutedPrototype)
+        return Reflect.ownKeys(current)
+      },
+      getOwnPropertyDescriptor(current, key) {
+        return Reflect.getOwnPropertyDescriptor(current, key)
+      },
+    })
+    try {
+      try {
+        operation = coordinator.stage({
+          key: "field:a",
+          payload: source,
+          apply() {},
+        })
+      } catch (failure) {
+        stageFailure = failure
+      }
+      if (operation !== null) JSON.stringify(operation.payload)
+    } finally {
+      Object.setPrototypeOf(Array.prototype, originalPrototype)
+    }
+    if (stageFailure instanceof TypeError && hookCalls === 0 && ownKeysCalls === 1) {
+      console.log("own-keys-pollution-rejected")
+    } else {
+      console.error(JSON.stringify({
+        stageRejected: stageFailure instanceof TypeError,
+        hookCalls,
+        ownKeysCalls,
+      }))
+      process.exitCode = 2
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /own-keys-pollution-rejected/)
+})
+
+test("the final source prototype trap is followed by fixed-chain validation", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    const originalPrototype = Object.getPrototypeOf(Array.prototype)
+    const pollutedPrototype = Object.create(originalPrototype)
+    let descriptorsCaptured = false
+    let hookCalls = 0
+    let prototypeReads = 0
+    let stageFailure = null
+    Object.defineProperty(pollutedPrototype, "toJSON", {
+      configurable: true,
+      value() {
+        hookCalls += 1
+        return { polluted: true }
+      },
+    })
+    const target = ["safe"]
+    const source = new Proxy(target, {
+      getPrototypeOf() {
+        prototypeReads += 1
+        if (descriptorsCaptured) {
+          Object.setPrototypeOf(Array.prototype, pollutedPrototype)
+        }
+        return Array.prototype
+      },
+      ownKeys(current) {
+        descriptorsCaptured = true
+        return Reflect.ownKeys(current)
+      },
+      getOwnPropertyDescriptor(current, key) {
+        return Reflect.getOwnPropertyDescriptor(current, key)
+      },
+    })
+    try {
+      try {
+        coordinator.stage({
+          key: "field:a",
+          payload: source,
+          apply() {},
+        })
+      } catch (failure) {
+        stageFailure = failure
+      }
+    } finally {
+      Object.setPrototypeOf(Array.prototype, originalPrototype)
+    }
+    if (stageFailure instanceof TypeError && hookCalls === 0 && prototypeReads === 2) {
+      console.log("final-prototype-pollution-rejected")
+    } else {
+      console.error(JSON.stringify({
+        stageRejected: stageFailure instanceof TypeError,
+        hookCalls,
+        prototypeReads,
+      }))
+      process.exitCode = 2
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /final-prototype-pollution-rejected/)
+})
