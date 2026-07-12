@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en" data-result="running">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tuuru local lock browser harness</title>
+    <style>
+      :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+      body { margin: 0; padding: 2rem; }
+      main { margin: 0 auto; max-width: 70rem; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid currentColor; padding: 0.55rem; text-align: left; vertical-align: top; }
+      th:nth-child(2), td:nth-child(2) { width: 6rem; }
+      tr[data-status="pass"] td:nth-child(2) { color: #16803a; font-weight: 700; }
+      tr[data-status="fail"] td:nth-child(2) { color: #c52b2b; font-weight: 700; }
+      pre { border: 1px solid currentColor; max-height: 28rem; overflow: auto; padding: 1rem; white-space: pre-wrap; }
+      .peer-contexts { height: 1px; overflow: hidden; position: fixed; width: 1px; }
+      .peer-contexts iframe { border: 0; height: 1px; width: 1px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Tuuru local lock browser harness</h1>
+      <p id="harness-status" role="status" aria-live="polite">Running seven same-origin Web Locks scenarios.</p>
+      <table>
+        <caption>Real-browser lock scenario results</caption>
+        <thead>
+          <tr><th scope="col">Scenario</th><th scope="col">Status</th><th scope="col">Details</th></tr>
+        </thead>
+        <tbody id="scenario-results">
+          <tr data-scenario-id="same-work-exclusion">
+            <th scope="row">same-work-exclusion</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+          <tr data-scenario-id="different-work-concurrency">
+            <th scope="row">different-work-concurrency</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+          <tr data-scenario-id="database-write-serialization">
+            <th scope="row">database-write-serialization</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+          <tr data-scenario-id="explicit-stale-takeover">
+            <th scope="row">explicit-stale-takeover</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+          <tr data-scenario-id="context-destruction-release">
+            <th scope="row">context-destruction-release</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+          <tr data-scenario-id="resume-reacquire">
+            <th scope="row">resume-reacquire</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+          <tr data-scenario-id="missing-locks-fail-closed">
+            <th scope="row">missing-locks-fail-closed</th><td>PENDING</td><td>Waiting to run.</td>
+          </tr>
+        </tbody>
+      </table>
+      <h2>Machine result</h2>
+      <pre id="result" aria-live="polite">{"status":"running","results":[]}</pre>
+      <div id="peer-contexts" class="peer-contexts" aria-hidden="true"></div>
+    </main>
+    <script>
+      (() => {
+        const bootstrapRunId = `bootstrap-${Date.now().toString(36)}`
+        const serializeError = value => ({
+          name: typeof value?.name === "string" ? value.name : "Error",
+          code: typeof value?.code === "string" ? value.code : null,
+          message: typeof value?.message === "string" ? value.message : String(value),
+        })
+        window.__tuuruLockHarnessFail = value => {
+          const error = serializeError(value)
+          const results = [...document.querySelectorAll("#scenario-results tr[data-scenario-id]")]
+            .map(row => {
+              const cells = row.querySelectorAll("th, td")
+              row.dataset.status = "fail"
+              cells[1].textContent = "FAIL"
+              cells[2].textContent = error.message
+              return {
+                id: row.dataset.scenarioId,
+                status: "fail",
+                details: { error },
+              }
+            })
+          const failure = {
+            runId: bootstrapRunId,
+            status: "fail",
+            results,
+            topLevelError: error,
+          }
+          document.documentElement.dataset.result = "fail"
+          document.getElementById("harness-status").textContent = `Harness failed: ${error.message}`
+          document.getElementById("result").textContent = JSON.stringify(failure, null, 2)
+        }
+        window.addEventListener("error", event => {
+          window.__tuuruLockHarnessFail(event.error ?? new Error(event.message || "module load failed"))
+        }, true)
+        window.addEventListener("unhandledrejection", event => {
+          window.__tuuruLockHarnessFail(event.reason)
+        })
+      })()
+    </script>
+    <script type="module">
+      import("/browser-tests/local-lock-harness.js")
+        .catch(error => window.__tuuruLockHarnessFail(error))
+    </script>
+  </body>
+</html>
