@@ -17,6 +17,22 @@ function assertNonEmptyString(value, name) {
   }
 }
 
+function readOwnDataProperty(value, key) {
+  if ((typeof value !== "object" || value === null) && typeof value !== "function") {
+    return { found: false }
+  }
+  let descriptor
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key)
+  } catch {
+    return { found: false }
+  }
+  if (descriptor === undefined || !("value" in descriptor)) {
+    return { found: false }
+  }
+  return { found: true, value: descriptor.value }
+}
+
 function cloneJsonPrimitive(value) {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return { matched: true, value }
@@ -263,6 +279,7 @@ export function createWorkSaveCoordinator(options) {
   const usedIds = new Set()
   const pendingFields = new Map()
   const readyBatches = []
+  const recoveryResumeBatches = new WeakSet()
   const generationWaiters = new Set()
   const flushWaiters = new Map()
   let generation = 0
@@ -276,11 +293,13 @@ export function createWorkSaveCoordinator(options) {
   let activeBatch = null
   let blockedBatch = null
   let activeAction = null
+  let activeActionControl = null
   let disposePromise = null
   let drainPromise = null
   let emptyFlushGeneration = null
   let emptyFlushPromise = null
   let disposedFailure = null
+  let actionUnavailableFailure = null
   let synchronousAdmission = false
   let announcingSnapshots = false
   let clearListenersAfterAnnouncements = false
@@ -295,10 +314,16 @@ export function createWorkSaveCoordinator(options) {
     return state === "conflict" || state === "disposed"
   }
 
+  function isRecoveryPaused() {
+    return state === "error-retryable" || state === "error-invalid"
+  }
+
   function createActionUnavailableError() {
-    const unavailable = new Error("The save coordinator cannot start another action")
-    unavailable.code = "save-action-unavailable"
-    return unavailable
+    if (actionUnavailableFailure === null) {
+      actionUnavailableFailure = new Error("The save coordinator cannot start another action")
+      actionUnavailableFailure.code = "save-action-unavailable"
+    }
+    return actionUnavailableFailure
   }
 
   function terminalAdmissionFailure() {
@@ -308,8 +333,17 @@ export function createWorkSaveCoordinator(options) {
     return createActionUnavailableError()
   }
 
-  function beginSynchronousAdmission() {
-    assertAvailable()
+  function beginSynchronousAdmission({
+    allowRetryableField = false,
+    allowInvalidCorrection = false,
+  } = {}) {
+    if (state === "disposed") assertAvailable()
+    if (state === "conflict"
+      || (isRecoveryPaused()
+        && !(allowRetryableField && state === "error-retryable")
+        && !(allowInvalidCorrection && state === "error-invalid"))) {
+      throw createActionUnavailableError()
+    }
     if (terminalEpoch !== 0) throw terminalAdmissionFailure()
     if (synchronousAdmission) throw createActionUnavailableError()
     synchronousAdmission = true
@@ -342,7 +376,7 @@ export function createWorkSaveCoordinator(options) {
       activeBatchId: activeBatch?.id ?? blockedBatch?.id ?? null,
       lastSavedAt,
       error,
-      canRetry: false,
+      canRetry: state === "error-retryable",
       canRecheck: false,
       hasRecoverableCandidate: count > 0,
       generation,
@@ -401,16 +435,38 @@ export function createWorkSaveCoordinator(options) {
       }
       throw disposedFailure
     }
-    if (state === "conflict") {
+    if (state === "conflict" || isRecoveryPaused()) {
       throw createActionUnavailableError()
     }
   }
 
-  function prepareOperation(kind, input, admissionEpoch) {
+  function prepareOperation(kind, input, admissionEpoch, { correctionMode = false } = {}) {
     assertAdmissionCurrent(admissionEpoch)
     assertRecord(input, "operation input")
+    const correctionDescriptor = Object.getOwnPropertyDescriptor(input, "correctsOperationId")
+    assertAdmissionCurrent(admissionEpoch)
+    if (!correctionMode && correctionDescriptor !== undefined) {
+      throw new TypeError("ordinary operation input must omit correctsOperationId")
+    }
     const key = input.key
     assertNonEmptyString(key, "operation key")
+    assertAdmissionCurrent(admissionEpoch)
+    let correctedOperation = null
+    if (correctionMode) {
+      if (correctionDescriptor === undefined || !("value" in correctionDescriptor)) {
+        throw createActionUnavailableError()
+      }
+      const correctionId = correctionDescriptor.value
+      if (typeof correctionId !== "string" || correctionId.length === 0) {
+        throw createActionUnavailableError()
+      }
+      correctedOperation = blockedBatch?.operations.find(operation => operation.id === correctionId) ?? null
+      if (correctedOperation === null
+        || correctedOperation.kind !== kind
+        || correctedOperation.key !== key) {
+        throw createActionUnavailableError()
+      }
+    }
     const apply = input.apply
     assertFunction(apply, "operation apply")
     const suppliedPayload = input.payload
@@ -425,6 +481,7 @@ export function createWorkSaveCoordinator(options) {
       payload,
       consumes,
       apply,
+      correctedOperation,
     }
   }
 
@@ -451,23 +508,72 @@ export function createWorkSaveCoordinator(options) {
     return freezeOperation(kind, prepared, id, generation)
   }
 
+  function acceptCorrection(kind, prepared, admissionEpoch) {
+    assertAdmissionCurrent(admissionEpoch)
+    const originalBatch = blockedBatch
+    const correctedOperation = prepared.correctedOperation
+    if (state !== "error-invalid"
+      || originalBatch === null
+      || correctedOperation === null
+      || !originalBatch.operations.includes(correctedOperation)) {
+      throw createActionUnavailableError()
+    }
+    const replacementId = createIdCandidate(kind, [], admissionEpoch)
+    const replacementBatchId = createIdCandidate("batch", [replacementId], admissionEpoch)
+    const replacement = freezeOperation(
+      kind,
+      prepared,
+      replacementId,
+      correctedOperation.generation,
+    )
+    const replacementOperations = originalBatch.operations.map(operation => (
+      operation === correctedOperation ? replacement : operation
+    ))
+    const replacementBatch = freezeBatch(replacementOperations, replacementBatchId)
+    assertAdmissionCurrent(admissionEpoch)
+    if (state !== "error-invalid" || blockedBatch !== originalBatch) {
+      throw terminalAdmissionFailure()
+    }
+
+    usedIds.add(replacementId)
+    usedIds.add(replacementBatchId)
+    blockedBatch = null
+    readyBatches.unshift(replacementBatch)
+    recoveryResumeBatches.add(replacementBatch)
+    state = "dirty"
+    error = null
+    return replacement
+  }
+
   function stage(input) {
-    const admissionEpoch = beginSynchronousAdmission()
+    const correctionMode = state === "error-invalid"
+    const admissionEpoch = beginSynchronousAdmission({
+      allowRetryableField: true,
+      allowInvalidCorrection: correctionMode,
+    })
     let operation
     try {
-      operation = createOperation("field", input, admissionEpoch)
-      pendingFields.set(operation.key, operation)
-      if (activeBatch === null) state = "dirty"
-      try {
-        schedulePendingTimers()
-      } catch (failure) {
-        throw enterConflict(failure)
+      if (correctionMode) {
+        const prepared = prepareOperation("field", input, admissionEpoch, { correctionMode: true })
+        operation = acceptCorrection("field", prepared, admissionEpoch)
+      } else {
+        operation = createOperation("field", input, admissionEpoch)
+        pendingFields.set(operation.key, operation)
+      }
+      if (!correctionMode && state !== "error-retryable") {
+        if (activeBatch === null) state = "dirty"
+        try {
+          schedulePendingTimers()
+        } catch (failure) {
+          throw enterConflict(failure)
+        }
       }
       assertAdmissionCurrent(admissionEpoch)
     } finally {
       endSynchronousAdmission()
     }
     announceSnapshot()
+    if (correctionMode) startNextBatch()
     return operation
   }
 
@@ -543,7 +649,7 @@ export function createWorkSaveCoordinator(options) {
     return operation
   }
 
-  function createGenerationWaiter(targetGeneration) {
+  function createGenerationWaiter(targetGeneration, kind, operationId = null) {
     if (targetGeneration <= verifiedGeneration) return Promise.resolve(lastCommitResult)
     let resolve
     let reject
@@ -551,7 +657,13 @@ export function createWorkSaveCoordinator(options) {
       resolve = resolvePromise
       reject = rejectPromise
     })
-    generationWaiters.add({ targetGeneration, resolve, reject })
+    generationWaiters.add({
+      kind,
+      targetGeneration,
+      operationId,
+      resolve,
+      reject,
+    })
     return promise
   }
 
@@ -570,11 +682,54 @@ export function createWorkSaveCoordinator(options) {
     }
   }
 
+  function rejectFailedBatchWaiters(batch, failure) {
+    const batchOperationIds = new Set(batch.operationIds)
+    const batchGeneration = batch.generations[batch.generations.length - 1]
+    for (const waiter of [...generationWaiters]) {
+      const ownsFailedOperation = waiter.kind === "commit"
+        && batchOperationIds.has(waiter.operationId)
+      const crossesFailedBatch = (waiter.kind === "flush" || waiter.kind === "drain")
+        && waiter.targetGeneration >= batchGeneration
+      if (!ownsFailedOperation && !crossesFailedBatch) continue
+      generationWaiters.delete(waiter)
+      waiter.reject(failure)
+    }
+  }
+
   function normalizeCommitFailure(cause) {
     if (cause instanceof Error) return cause
     const failure = new Error("The local save action failed", { cause })
     failure.code = "save-action-unavailable"
     return failure
+  }
+
+  function classifyOrdinaryFailure(failure, batch) {
+    const codeProperty = readOwnDataProperty(failure, "code")
+    const detailsProperty = readOwnDataProperty(failure, "details")
+    if (!codeProperty.found || !detailsProperty.found) return "conflict"
+    const details = detailsProperty.value
+    if (details === null || typeof details !== "object" || Array.isArray(details)) {
+      return "conflict"
+    }
+    const operationId = readOwnDataProperty(details, "operationId")
+    const commitState = readOwnDataProperty(details, "commitState")
+    const phase = readOwnDataProperty(details, "phase")
+    if (!operationId.found
+      || operationId.value !== batch.id
+      || !commitState.found
+      || commitState.value !== "unchanged") {
+      return "conflict"
+    }
+    if (codeProperty.value === "mutation-read-failed"
+      || codeProperty.value === "mutation-write-failed") {
+      return "error-retryable"
+    }
+    if (codeProperty.value === "mutation-invalid"
+      && phase.found
+      && (phase.value === "apply" || phase.value === "validate-candidate")) {
+      return "error-invalid"
+    }
+    return "conflict"
   }
 
   function cancelQuietTimer() {
@@ -627,6 +782,23 @@ export function createWorkSaveCoordinator(options) {
     const failure = error
     cancelPendingTimers()
     rejectAllWaiters(failure)
+    announceSnapshot()
+    return failure
+  }
+
+  function enterOrdinaryFailure(suppliedFailure, batch) {
+    const failure = normalizeCommitFailure(suppliedFailure)
+    const nextState = classifyOrdinaryFailure(failure, batch)
+    if (isTerminalState()) return error ?? failure
+    if (nextState === "conflict") return enterConflict(failure, batch)
+    if (blockedBatch !== null && blockedBatch !== batch) {
+      return enterConflict(failure, batch)
+    }
+    blockedBatch = batch
+    state = nextState
+    error = failure
+    cancelPendingTimers()
+    rejectFailedBatchWaiters(batch, failure)
     announceSnapshot()
     return failure
   }
@@ -709,17 +881,26 @@ export function createWorkSaveCoordinator(options) {
     if (activeAction !== null
       || activeBatch !== null
       || readyBatches.length === 0
-      || isTerminalState()) {
+      || isTerminalState()
+      || isRecoveryPaused()) {
       return
     }
 
     const batch = readyBatches.shift()
     const admissionEpoch = terminalEpoch
-    let settleAction
-    const action = new Promise(resolve => {
-      settleAction = resolve
+    let settleCompletion
+    const completion = new Promise(resolve => {
+      settleCompletion = resolve
+    })
+    const action = Object.freeze({
+      kind: "commit",
+      materialId: batch.id,
+      publicPromise: completion,
+      completion,
+      epoch: admissionEpoch,
     })
     activeAction = action
+    activeActionControl = null
     activeBatch = batch
     state = "saving"
     announceSnapshot()
@@ -732,9 +913,12 @@ export function createWorkSaveCoordinator(options) {
     }
 
     function finishAction() {
-      if (activeAction === action) activeAction = null
-      settleAction()
-      if (!isTerminalState()) startNextBatch()
+      if (activeAction === action) {
+        activeAction = null
+        activeActionControl = null
+      }
+      settleCompletion()
+      if (!isTerminalState() && !isRecoveryPaused()) startNextBatch()
     }
 
     if (isTerminalState() || terminalEpoch !== admissionEpoch) {
@@ -780,9 +964,23 @@ export function createWorkSaveCoordinator(options) {
           lastSavedAt = attemptedAt
           if (activeBatch === batch) activeBatch = null
           if (blockedBatch === batch) blockedBatch = null
+          const resumesRecovery = recoveryResumeBatches.has(batch)
+          recoveryResumeBatches.delete(batch)
           if (isTerminalState() || terminalEpoch !== admissionEpoch) {
             announceSnapshot()
             return
+          }
+          if (resumesRecovery && pendingFields.size > 0) {
+            try {
+              capturePendingWithAdmission()
+            } catch (failure) {
+              if (isTerminalState() || terminalEpoch !== admissionEpoch) {
+                announceSnapshot()
+                return
+              }
+              enterConflict(failure)
+              return
+            }
           }
           state = readyBatches.length > 0 || pendingFields.size > 0 ? "dirty" : "clean"
           announceSnapshot()
@@ -793,7 +991,7 @@ export function createWorkSaveCoordinator(options) {
             return
           }
           activeBatch = null
-          enterConflict(suppliedFailure, batch)
+          enterOrdinaryFailure(suppliedFailure, batch)
         },
       )
       .catch(suppliedFailure => {
@@ -802,32 +1000,43 @@ export function createWorkSaveCoordinator(options) {
           return
         }
         if (activeBatch === batch) activeBatch = null
-        enterConflict(suppliedFailure, batch)
+        enterOrdinaryFailure(suppliedFailure, batch)
       })
       .finally(finishAction)
   }
 
   function commitNow(input) {
-    const admissionEpoch = beginSynchronousAdmission()
+    const correctionMode = state === "error-invalid"
+    const admissionEpoch = beginSynchronousAdmission({
+      allowInvalidCorrection: correctionMode,
+    })
     let prepared
     try {
-      prepared = prepareOperation("structural", input, admissionEpoch)
+      prepared = prepareOperation(
+        "structural",
+        input,
+        admissionEpoch,
+        { correctionMode },
+      )
     } catch (failure) {
       endSynchronousAdmission()
       throw failure
     }
     let operation
     try {
-      operation = acceptStructuralBatch(prepared, admissionEpoch)
+      operation = correctionMode
+        ? acceptCorrection("structural", prepared, admissionEpoch)
+        : acceptStructuralBatch(prepared, admissionEpoch)
     } catch (failure) {
       endSynchronousAdmission()
       if (terminalEpoch !== admissionEpoch || terminalEpoch !== 0 || isTerminalState()) {
         throw terminalAdmissionFailure()
       }
+      if (correctionMode) throw failure
       throw enterConflict(failure)
     }
     endSynchronousAdmission()
-    const promise = createGenerationWaiter(operation.generation)
+    const promise = createGenerationWaiter(operation.generation, "commit", operation.id)
     if (activeBatch === null) state = "dirty"
     announceSnapshot()
     startNextBatch()
@@ -893,7 +1102,7 @@ export function createWorkSaveCoordinator(options) {
     }
     endSynchronousAdmission()
 
-    createGenerationWaiter(targetGeneration).then(
+    createGenerationWaiter(targetGeneration, "flush").then(
       resolveFlush,
       rejectFlush,
     )
@@ -919,7 +1128,7 @@ export function createWorkSaveCoordinator(options) {
       startNextBatch()
 
       if (targetGeneration > verifiedGeneration) {
-        await createGenerationWaiter(targetGeneration)
+        await createGenerationWaiter(targetGeneration, "drain")
         continue
       }
       if (activeBatch !== null || readyBatches.length > 0 || pendingFields.size > 0) {
@@ -956,6 +1165,157 @@ export function createWorkSaveCoordinator(options) {
       },
     )
     return promise
+  }
+
+  function retry() {
+    if (activeAction !== null) {
+      if (activeAction.kind === "retry") {
+        return activeAction.publicPromise
+      }
+      return Promise.reject(createActionUnavailableError())
+    }
+    if (state !== "error-retryable" || blockedBatch === null) {
+      return Promise.reject(createActionUnavailableError())
+    }
+
+    const batch = blockedBatch
+    const actionEpoch = terminalEpoch
+    let resolveOwner
+    let rejectOwner
+    const publicPromise = new Promise((resolve, reject) => {
+      resolveOwner = resolve
+      rejectOwner = reject
+    })
+    let settleCompletion
+    const completion = new Promise(resolve => {
+      settleCompletion = resolve
+    })
+    const action = Object.freeze({
+      kind: "retry",
+      materialId: batch.id,
+      publicPromise,
+      completion,
+      epoch: actionEpoch,
+    })
+    const control = { rejectOwner }
+    activeAction = action
+    activeActionControl = control
+    state = "saving"
+    error = null
+    announceSnapshot()
+
+    let finished = false
+    function finishAction() {
+      if (finished) return
+      finished = true
+      if (activeAction === action) {
+        activeAction = null
+        activeActionControl = null
+      }
+      settleCompletion()
+      if (!isTerminalState() && !isRecoveryPaused()) startNextBatch()
+    }
+
+    function currentTerminalFailure() {
+      if (state === "disposed" && disposedFailure !== null) return disposedFailure
+      return error ?? createActionUnavailableError()
+    }
+
+    function rejectForTerminalState() {
+      const failure = currentTerminalFailure()
+      finishAction()
+      rejectOwner(failure)
+    }
+
+    function handleFailure(suppliedFailure) {
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+        return
+      }
+      const failure = enterOrdinaryFailure(suppliedFailure, batch)
+      finishAction()
+      rejectOwner(failure)
+    }
+
+    function handleSuccess(suppliedResult, attemptedAt) {
+      let result
+      try {
+        result = validateCommitResult(suppliedResult, batch)
+      } catch (failure) {
+        handleFailure(failure)
+        return
+      }
+      recordVerifiedBatch(batch, result)
+      lastSavedAt = attemptedAt
+      if (blockedBatch === batch) blockedBatch = null
+      recoveryResumeBatches.delete(batch)
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        announceSnapshot()
+        rejectForTerminalState()
+        return
+      }
+
+      if (pendingFields.size > 0) {
+        try {
+          capturePendingWithAdmission()
+        } catch (failure) {
+          if (isTerminalState() || terminalEpoch !== actionEpoch) {
+            announceSnapshot()
+            rejectForTerminalState()
+            return
+          }
+          enterConflict(failure)
+          finishAction()
+          resolveOwner(result)
+          return
+        }
+      }
+      state = readyBatches.length > 0 || pendingFields.size > 0 ? "dirty" : "clean"
+      announceSnapshot()
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+        return
+      }
+      finishAction()
+      resolveOwner(result)
+    }
+
+    if (isTerminalState() || terminalEpoch !== actionEpoch) {
+      rejectForTerminalState()
+      return publicPromise
+    }
+
+    let attemptedAt
+    try {
+      attemptedAt = readAttemptTime()
+    } catch (failure) {
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+      } else {
+        const finalFailure = enterConflict(failure, batch)
+        finishAction()
+        rejectOwner(finalFailure)
+      }
+      return publicPromise
+    }
+    if (isTerminalState() || terminalEpoch !== actionEpoch) {
+      rejectForTerminalState()
+      return publicPromise
+    }
+
+    Promise.resolve()
+      .then(() => {
+        if (isTerminalState() || terminalEpoch !== actionEpoch) {
+          throw currentTerminalFailure()
+        }
+        return options.commitMutation(batch)
+      })
+      .then(
+        result => handleSuccess(result, attemptedAt),
+        handleFailure,
+      )
+      .catch(handleFailure)
+    return publicPromise
   }
 
   function snapshot() {
@@ -1002,9 +1362,10 @@ export function createWorkSaveCoordinator(options) {
     error = disposedFailure
     cancelPendingTimers()
     rejectAllWaiters(disposedFailure)
+    activeActionControl?.rejectOwner(disposedFailure)
     clearListenersAfterAnnouncements = true
     announceSnapshot()
-    const quiescence = admittedAction ?? Promise.resolve()
+    const quiescence = admittedAction?.completion ?? Promise.resolve()
     quiescence.then(
       () => settleDispose(currentSnapshot),
       () => settleDispose(currentSnapshot),
@@ -1027,6 +1388,7 @@ export function createWorkSaveCoordinator(options) {
     commitNow,
     flush,
     drain,
+    retry,
     snapshot,
     subscribe,
     dispose,
