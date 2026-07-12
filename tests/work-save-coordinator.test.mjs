@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 
 import { createWorkSaveCoordinator } from "../js/work-save-coordinator.js"
 
@@ -65,6 +66,28 @@ function createFakeScheduler() {
     },
     now() {
       return currentTime
+    },
+  }
+}
+
+function createThrowingClearScheduler({ always = false } = {}) {
+  const failure = new Error(always ? "clear always failed" : "clear failed once")
+  let nextHandle = 0
+  let clearCalls = 0
+  return {
+    failure,
+    scheduler: {
+      setTimeout() {
+        nextHandle += 1
+        return nextHandle
+      },
+      clearTimeout() {
+        clearCalls += 1
+        if (always || clearCalls === 1) throw failure
+      },
+    },
+    clearCalls() {
+      return clearCalls
     },
   }
 }
@@ -831,4 +854,337 @@ test("dispose closes synchronously but waits for already-started I/O", async () 
   assert.equal(announcements.filter(snapshot => snapshot.state === "disposed").length, 1)
   await assert.rejects(coordinator.flush(), failure => failure.code === "save-disposed")
   await assert.rejects(coordinator.drain(), failure => failure.code === "save-disposed")
+})
+
+test("a conflict raised before the commit microtask performs zero I/O and retains its batch", async () => {
+  const ids = ["structural-a", "batch-a", "structural-b", "batch-a"]
+  let commitCalls = 0
+  let admissionFailure = null
+  let coordinator
+  ;({ coordinator } = createHarness({
+    createOperationId() {
+      return ids.shift()
+    },
+    commitMutation(batch) {
+      commitCalls += 1
+      return verifiedResult(batch)
+    },
+  }))
+  coordinator.subscribe(snapshot => {
+    if (snapshot.state !== "saving" || admissionFailure !== null) return
+    try {
+      coordinator.commitNow({
+        key: "structure:reentrant",
+        payload: "reentrant",
+        consumes: [],
+        apply() {},
+      })
+    } catch (failure) {
+      admissionFailure = failure
+    }
+  })
+
+  const admittedCommit = coordinator.commitNow({
+    key: "structure:admitted",
+    payload: "admitted",
+    consumes: [],
+    apply() {},
+  })
+  void admittedCommit.catch(() => {})
+  await settleMicrotasks()
+
+  assert.notEqual(admissionFailure, null)
+  await assert.rejects(admittedCommit, failure => failure === admissionFailure)
+  assert.equal(commitCalls, 0)
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(coordinator.snapshot().error, admissionFailure)
+  assert.equal(coordinator.snapshot().pendingCount, 1)
+  assert.equal(coordinator.snapshot().hasRecoverableCandidate, true)
+})
+
+test("a late verified result cannot revive a conflict or start a later batch", async () => {
+  const ids = ["structural-a", "batch-a", "field-b", "structural-c", "batch-a"]
+  const gate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    createOperationId() {
+      return ids.shift()
+    },
+    commitMutation(batch) {
+      batches.push(batch)
+      return gate.promise
+    },
+  })
+  const admittedCommit = coordinator.commitNow({
+    key: "structure:a",
+    payload: "A",
+    consumes: [],
+    apply() {},
+  })
+  void admittedCommit.catch(() => {})
+  await settleMicrotasks()
+  assert.equal(batches.length, 1)
+  coordinator.stage({ key: "field:b", payload: "B", apply() {} })
+  let terminalFailure
+  assert.throws(
+    () => coordinator.commitNow({
+      key: "structure:c",
+      payload: "C",
+      consumes: [],
+      apply() {},
+    }),
+    failure => {
+      terminalFailure = failure
+      return true
+    },
+  )
+  await assert.rejects(admittedCommit, failure => failure === terminalFailure)
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(coordinator.snapshot().error, terminalFailure)
+
+  gate.resolve(verifiedResult(batches[0], "-late"))
+  await settleMicrotasks()
+  assert.equal(batches.length, 1)
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(coordinator.snapshot().error, terminalFailure)
+  assert.equal(coordinator.snapshot().lastSavedAt, 100)
+  assert.equal(coordinator.snapshot().pendingCount, 1)
+  assert.throws(
+    () => coordinator.stage({ key: "field:later", payload: "later", apply() {} }),
+    failure => failure.code === "save-action-unavailable",
+  )
+})
+
+test("a one-time clearTimeout failure attempts both timers and loses no descriptor", async () => {
+  const throwingScheduler = createThrowingClearScheduler()
+  let commitCalls = 0
+  const { coordinator } = createHarness({
+    scheduler: throwingScheduler.scheduler,
+    commitMutation(batch) {
+      commitCalls += 1
+      return verifiedResult(batch)
+    },
+  })
+  coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+  let flushPromise
+  assert.doesNotThrow(() => {
+    flushPromise = coordinator.flush()
+  })
+  await assert.rejects(flushPromise, failure => failure === throwingScheduler.failure)
+
+  assert.equal(throwingScheduler.clearCalls(), 2)
+  assert.equal(commitCalls, 0)
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(coordinator.snapshot().pendingCount, 1)
+  assert.equal(coordinator.snapshot().hasRecoverableCandidate, true)
+  const disposed = await coordinator.dispose()
+  assert.equal(disposed.state, "disposed")
+})
+
+test("dispose settles even when every clearTimeout call throws", async () => {
+  const throwingScheduler = createThrowingClearScheduler({ always: true })
+  const { coordinator } = createHarness({ scheduler: throwingScheduler.scheduler })
+  coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+  let disposePromise
+  assert.doesNotThrow(() => {
+    disposePromise = coordinator.dispose()
+  })
+  const disposed = await disposePromise
+
+  assert.equal(throwingScheduler.clearCalls(), 2)
+  assert.equal(disposed.state, "disposed")
+  assert.equal(disposed.pendingCount, 1)
+  assert.equal(disposed.error?.code, "save-disposed")
+  assert.equal(coordinator.dispose(), disposePromise)
+})
+
+test("a null timer-cancellation failure keeps its exact cause and still disposes", async () => {
+  let clearCalls = 0
+  const scheduler = {
+    setTimeout() {
+      return Symbol("timer")
+    },
+    clearTimeout() {
+      clearCalls += 1
+      if (clearCalls === 1) throw null
+    },
+  }
+  const { coordinator } = createHarness({ scheduler })
+  coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+
+  await assert.rejects(
+    coordinator.flush(),
+    failure => failure.code === "save-action-unavailable" && failure.cause === null,
+  )
+  assert.equal(clearCalls, 2)
+  assert.equal(coordinator.snapshot().pendingCount, 1)
+  assert.equal((await coordinator.dispose()).state, "disposed")
+})
+
+test("now re-entering dispose cannot start I/O or revive the coordinator", async () => {
+  let coordinator
+  let reentrantDispose = null
+  let commitCalls = 0
+  ;({ coordinator } = createHarness({
+    now() {
+      if (reentrantDispose === null) reentrantDispose = coordinator.dispose()
+      return 100
+    },
+    commitMutation(batch) {
+      commitCalls += 1
+      return verifiedResult(batch)
+    },
+  }))
+  coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+  const flushPromise = coordinator.flush()
+  void flushPromise.catch(() => {})
+  await settleMicrotasks()
+
+  assert.notEqual(reentrantDispose, null)
+  await assert.rejects(flushPromise, failure => failure.code === "save-disposed")
+  const disposed = await reentrantDispose
+  assert.equal(coordinator.dispose(), reentrantDispose)
+  assert.equal(disposed.state, "disposed")
+  assert.equal(coordinator.snapshot().state, "disposed")
+  assert.equal(commitCalls, 0)
+  assert.throws(
+    () => coordinator.stage({ key: "field:later", payload: "later", apply() {} }),
+    failure => failure.code === "save-disposed",
+  )
+})
+
+test("cyclic prototype traps fail in a bounded child process", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    let cyclicPrototype
+    cyclicPrototype = new Proxy({}, {
+      getPrototypeOf() { return cyclicPrototype },
+    })
+    try {
+      coordinator.stage({ key: "field:a", payload: { child: cyclicPrototype }, apply() {} })
+      process.exitCode = 2
+    } catch (failure) {
+      if (!(failure instanceof TypeError)) throw failure
+      console.log("bounded-type-error")
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /bounded-type-error/)
+})
+
+test("null-prototype payloads remain isolated from Object prototype pollution", () => {
+  const toJsonDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON")
+  const inheritedKey = "__tuuruSaveCoordinatorInheritedProbe__"
+  const inheritedDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, inheritedKey)
+  let hookCalls = 0
+  let clonedPrototype
+  let inheritedValue
+  let serialized
+  try {
+    Object.defineProperty(Object.prototype, "toJSON", {
+      configurable: true,
+      value() {
+        hookCalls += 1
+        return { poisoned: true }
+      },
+    })
+    Object.defineProperty(Object.prototype, inheritedKey, {
+      configurable: true,
+      value: "inherited",
+    })
+    const payload = Object.create(null)
+    payload.value = "safe"
+    const { coordinator } = createHarness()
+    const operation = coordinator.stage({ key: "field:a", payload, apply() {} })
+    clonedPrototype = Object.getPrototypeOf(operation.payload)
+    inheritedValue = operation.payload[inheritedKey]
+    serialized = JSON.stringify(operation.payload)
+  } finally {
+    if (toJsonDescriptor === undefined) delete Object.prototype.toJSON
+    else Object.defineProperty(Object.prototype, "toJSON", toJsonDescriptor)
+    if (inheritedDescriptor === undefined) delete Object.prototype[inheritedKey]
+    else Object.defineProperty(Object.prototype, inheritedKey, inheritedDescriptor)
+  }
+
+  assert.equal(clonedPrototype, null)
+  assert.equal(inheritedValue, undefined)
+  assert.equal(serialized, '{"value":"safe"}')
+  assert.equal(hookCalls, 0)
+})
+
+test("operation envelope fields are captured exactly once before acceptance", async () => {
+  const reads = { key: 0, payload: 0, apply: 0, consumes: 0 }
+  const apply = () => {}
+  const batches = []
+  const envelope = {
+    get key() {
+      reads.key += 1
+      return reads.key === 1 ? "structure:valid" : ""
+    },
+    get payload() {
+      reads.payload += 1
+      return reads.payload === 1 ? { value: "valid" } : undefined
+    },
+    get apply() {
+      reads.apply += 1
+      return reads.apply === 1 ? apply : null
+    },
+    get consumes() {
+      reads.consumes += 1
+      return reads.consumes === 1 ? ["field:a"] : null
+    },
+  }
+  const { coordinator } = createHarness({
+    commitMutation: async batch => {
+      batches.push(batch)
+      return verifiedResult(batch)
+    },
+  })
+
+  await coordinator.commitNow(envelope)
+  const operation = batches[0].operations.at(-1)
+  assert.deepEqual(reads, { key: 1, payload: 1, apply: 1, consumes: 1 })
+  assert.equal(operation.key, "structure:valid")
+  assert.deepEqual(operation.payload, { value: "valid" })
+  assert.equal(operation.apply, apply)
+  assert.deepEqual(operation.consumes, ["field:a"])
+})
+
+test("an invalid first envelope read consumes no ID or generation", () => {
+  let keyReads = 0
+  let applyReads = 0
+  const { coordinator, idCalls } = createHarness()
+  assert.throws(
+    () => coordinator.stage({
+      get key() {
+        keyReads += 1
+        return keyReads === 1 ? "" : "field:valid"
+      },
+      payload: null,
+      get apply() {
+        applyReads += 1
+        return applyReads === 1 ? null : () => {}
+      },
+    }),
+    TypeError,
+  )
+
+  assert.equal(keyReads, 1)
+  assert.equal(applyReads, 0)
+  assert.deepEqual(idCalls, [])
+  assert.equal(coordinator.snapshot().generation, 0)
+  assert.equal(coordinator.snapshot().pendingCount, 0)
 })

@@ -28,8 +28,13 @@ function cloneJsonPrimitive(value) {
 }
 
 function assertNoJsonHook(value) {
+  const visited = new WeakSet()
   let current = value
   while (current !== null) {
+    if (visited.has(current)) {
+      throw new TypeError("JSON payload prototype chains must not contain cycles")
+    }
+    visited.add(current)
     if (Object.getOwnPropertyDescriptor(current, "toJSON") !== undefined) {
       throw new TypeError("JSON payloads must not define or inherit toJSON")
     }
@@ -47,15 +52,22 @@ function isCanonicalArrayIndex(key) {
 }
 
 function inspectJsonContainer(source) {
-  assertNoJsonHook(source)
   const prototype = Object.getPrototypeOf(source)
-  const descriptors = Object.getOwnPropertyDescriptors(source)
-  const keys = Reflect.ownKeys(source)
+  const isArray = Array.isArray(source)
 
-  if (Array.isArray(source)) {
+  if (isArray) {
     if (prototype !== Array.prototype) {
       throw new TypeError("JSON arrays must use the ordinary Array prototype")
     }
+  } else if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError("JSON objects must use an ordinary or null prototype")
+  }
+
+  assertNoJsonHook(source)
+  const descriptors = Object.getOwnPropertyDescriptors(source)
+  const keys = Reflect.ownKeys(source)
+
+  if (isArray) {
     const lengthDescriptor = descriptors.length
     if (lengthDescriptor === undefined || !("value" in lengthDescriptor)) {
       throw new TypeError("JSON arrays must have an ordinary length")
@@ -83,9 +95,6 @@ function inspectJsonContainer(source) {
     return { target: new Array(length), entries }
   }
 
-  if (prototype !== Object.prototype && prototype !== null) {
-    throw new TypeError("JSON objects must use an ordinary or null prototype")
-  }
   const entries = []
   for (const key of keys) {
     if (typeof key !== "string") {
@@ -97,7 +106,10 @@ function inspectJsonContainer(source) {
     }
     entries.push([key, descriptor.value])
   }
-  return { target: {}, entries }
+  return {
+    target: prototype === null ? Object.create(null) : {},
+    entries,
+  }
 }
 
 function defineJsonValue(target, key, value) {
@@ -228,6 +240,7 @@ export function createWorkSaveCoordinator(options) {
   const flushWaiters = new Map()
   let generation = 0
   let verifiedGeneration = 0
+  let terminalEpoch = 0
   let state = "clean"
   let lastSavedAt = null
   let lastCommitResult = null
@@ -249,6 +262,10 @@ export function createWorkSaveCoordinator(options) {
   let maxTimerActive = false
   let quietTimerToken = 0
   let maxTimerToken = 0
+
+  function isTerminalState() {
+    return state === "conflict" || state === "disposed"
+  }
 
   function pendingCount() {
     let count = pendingFields.size
@@ -334,17 +351,21 @@ export function createWorkSaveCoordinator(options) {
   function prepareOperation(kind, input) {
     assertAvailable()
     assertRecord(input, "operation input")
-    assertNonEmptyString(input.key, "operation key")
-    assertFunction(input.apply, "operation apply")
-    const payload = cloneAndFreezeJson(input.payload)
+    const key = input.key
+    assertNonEmptyString(key, "operation key")
+    const apply = input.apply
+    assertFunction(apply, "operation apply")
+    const suppliedPayload = input.payload
+    const payload = cloneAndFreezeJson(suppliedPayload)
+    const suppliedConsumes = kind === "structural" ? input.consumes : undefined
     const consumes = kind === "structural"
-      ? validateConsumes(input.consumes ?? [])
+      ? validateConsumes(suppliedConsumes ?? [])
       : Object.freeze([])
     return {
-      key: input.key,
+      key,
       payload,
       consumes,
-      apply: input.apply,
+      apply,
     }
   }
 
@@ -400,8 +421,9 @@ export function createWorkSaveCoordinator(options) {
     if (fields.length === 0) return null
     const batch = freezeBatch(fields)
     pendingFields.clear()
-    cancelPendingTimers()
     readyBatches.push(batch)
+    const cancellation = cancelPendingTimers()
+    if (cancellation.failed) throw cancellation.cause
     return batch
   }
 
@@ -426,8 +448,9 @@ export function createWorkSaveCoordinator(options) {
     usedIds.add(batchId)
     generation = nextGeneration
     pendingFields.clear()
-    cancelPendingTimers()
     readyBatches.push(batch)
+    const cancellation = cancelPendingTimers()
+    if (cancellation.failed) throw cancellation.cause
     return operation
   }
 
@@ -467,28 +490,52 @@ export function createWorkSaveCoordinator(options) {
 
   function cancelQuietTimer() {
     quietTimerToken += 1
-    if (quietTimerActive) scheduler.clearTimeout(quietTimerHandle)
+    const wasActive = quietTimerActive
+    const handle = quietTimerHandle
     quietTimerActive = false
     quietTimerHandle = null
+    if (wasActive) scheduler.clearTimeout(handle)
   }
 
   function cancelMaxTimer() {
     maxTimerToken += 1
-    if (maxTimerActive) scheduler.clearTimeout(maxTimerHandle)
+    const wasActive = maxTimerActive
+    const handle = maxTimerHandle
     maxTimerActive = false
     maxTimerHandle = null
+    if (wasActive) scheduler.clearTimeout(handle)
   }
 
   function cancelPendingTimers() {
-    cancelQuietTimer()
-    cancelMaxTimer()
+    let failed = false
+    let cause
+    try {
+      cancelQuietTimer()
+    } catch (failure) {
+      failed = true
+      cause = failure
+    }
+    try {
+      cancelMaxTimer()
+    } catch (failure) {
+      if (!failed) {
+        failed = true
+        cause = failure
+      }
+    }
+    return { failed, cause }
   }
 
   function enterConflict(suppliedFailure, batch = null) {
-    const failure = normalizeCommitFailure(suppliedFailure)
-    if (batch !== null) blockedBatch = batch
-    state = "conflict"
-    error = failure
+    const supplied = normalizeCommitFailure(suppliedFailure)
+    if (state === "disposed") return disposedFailure ?? supplied
+    if (batch !== null && blockedBatch === null) blockedBatch = batch
+    if (state !== "conflict") {
+      terminalEpoch += 1
+      state = "conflict"
+      error = supplied
+    }
+    const failure = error
     cancelPendingTimers()
     rejectAllWaiters(failure)
     announceSnapshot()
@@ -573,43 +620,78 @@ export function createWorkSaveCoordinator(options) {
     if (activeAction !== null
       || activeBatch !== null
       || readyBatches.length === 0
-      || state === "conflict"
-      || state === "disposed") {
+      || isTerminalState()) {
       return
     }
-    const batch = readyBatches[0]
-    let attemptedAt
-    try {
-      attemptedAt = readAttemptTime()
-    } catch (failure) {
-      readyBatches.shift()
-      enterConflict(failure, batch)
-      return
-    }
-    readyBatches.shift()
+
+    const batch = readyBatches.shift()
+    const admissionEpoch = terminalEpoch
+    let settleAction
+    const action = new Promise(resolve => {
+      settleAction = resolve
+    })
+    activeAction = action
     activeBatch = batch
     state = "saving"
     announceSnapshot()
 
+    function retainUnverifiedBatch() {
+      if (activeBatch === batch) activeBatch = null
+      if (blockedBatch === null) blockedBatch = batch
+      else if (blockedBatch !== batch && !readyBatches.includes(batch)) readyBatches.unshift(batch)
+      announceSnapshot()
+    }
+
+    function finishAction() {
+      if (activeAction === action) activeAction = null
+      settleAction()
+      if (!isTerminalState()) startNextBatch()
+    }
+
+    if (isTerminalState() || terminalEpoch !== admissionEpoch) {
+      retainUnverifiedBatch()
+      finishAction()
+      return
+    }
+
+    let attemptedAt
+    try {
+      attemptedAt = readAttemptTime()
+    } catch (failure) {
+      if (isTerminalState() || terminalEpoch !== admissionEpoch) {
+        retainUnverifiedBatch()
+        finishAction()
+        return
+      }
+      activeBatch = null
+      enterConflict(failure, batch)
+      finishAction()
+      return
+    }
+    if (isTerminalState() || terminalEpoch !== admissionEpoch) {
+      retainUnverifiedBatch()
+      finishAction()
+      return
+    }
+
     const skippedBeforeIo = Symbol("skipped-before-io")
-    const action = Promise.resolve()
+    Promise.resolve()
       .then(() => {
-        if (state === "disposed") return skippedBeforeIo
+        if (isTerminalState() || terminalEpoch !== admissionEpoch) return skippedBeforeIo
         return options.commitMutation(batch)
       })
       .then(
         suppliedResult => {
           if (suppliedResult === skippedBeforeIo) {
-            blockedBatch = batch
-            activeBatch = null
-            announceSnapshot()
+            retainUnverifiedBatch()
             return
           }
           const result = validateCommitResult(suppliedResult, batch)
           recordVerifiedBatch(batch, result)
           lastSavedAt = attemptedAt
-          activeBatch = null
-          if (state === "disposed") {
+          if (activeBatch === batch) activeBatch = null
+          if (blockedBatch === batch) blockedBatch = null
+          if (isTerminalState() || terminalEpoch !== admissionEpoch) {
             announceSnapshot()
             return
           }
@@ -617,31 +699,23 @@ export function createWorkSaveCoordinator(options) {
           announceSnapshot()
         },
         suppliedFailure => {
-          activeBatch = null
-          if (state === "disposed") {
-            blockedBatch = batch
-            announceSnapshot()
+          if (isTerminalState() || terminalEpoch !== admissionEpoch) {
+            retainUnverifiedBatch()
             return
           }
+          activeBatch = null
           enterConflict(suppliedFailure, batch)
         },
       )
       .catch(suppliedFailure => {
-        if (activeBatch === batch) {
-          activeBatch = null
-        }
-        if (state === "disposed") {
-          blockedBatch = batch
-          announceSnapshot()
+        if (isTerminalState() || terminalEpoch !== admissionEpoch) {
+          retainUnverifiedBatch()
           return
         }
+        if (activeBatch === batch) activeBatch = null
         enterConflict(suppliedFailure, batch)
       })
-      .finally(() => {
-        if (activeAction === action) activeAction = null
-        startNextBatch()
-      })
-    activeAction = action
+      .finally(finishAction)
   }
 
   function commitNow(input) {
@@ -797,6 +871,7 @@ export function createWorkSaveCoordinator(options) {
       disposedFailure = new Error("The save coordinator has been disposed")
       disposedFailure.code = "save-disposed"
     }
+    terminalEpoch += 1
     state = "disposed"
     error = disposedFailure
     cancelPendingTimers()
