@@ -1188,3 +1188,170 @@ test("an invalid first envelope read consumes no ID or generation", () => {
   assert.equal(coordinator.snapshot().generation, 0)
   assert.equal(coordinator.snapshot().pendingCount, 0)
 })
+
+test("a field ID callback cannot accept work after re-entering dispose", async () => {
+  let coordinator
+  let reentrantDispose = null
+  let commitCalls = 0
+  const idCalls = []
+  let stageFailure = null
+  ;({ coordinator } = createHarness({
+    createOperationId(kind) {
+      idCalls.push(kind)
+      if (kind === "field" && reentrantDispose === null) {
+        reentrantDispose = coordinator.dispose()
+      }
+      return "field-discarded"
+    },
+    commitMutation(batch) {
+      commitCalls += 1
+      return verifiedResult(batch)
+    },
+  }))
+  try {
+    coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+  } catch (failure) {
+    stageFailure = failure
+  }
+  const flushOutcome = await coordinator.flush().then(
+    value => ({ value }),
+    failure => ({ failure }),
+  )
+  const disposed = await reentrantDispose
+
+  assert.equal(stageFailure?.code, "save-disposed")
+  assert.equal(flushOutcome.failure, stageFailure)
+  assert.equal(disposed.state, "disposed")
+  assert.equal(coordinator.snapshot().state, "disposed")
+  assert.equal(coordinator.snapshot().generation, 0)
+  assert.equal(coordinator.snapshot().pendingCount, 0)
+  assert.deepEqual(idCalls, ["field"])
+  assert.equal(commitCalls, 0)
+  assert.equal(coordinator.dispose(), reentrantDispose)
+})
+
+test("a batch ID callback cannot accept a structural operation after disposing", async () => {
+  let coordinator
+  let reentrantDispose = null
+  let commitCalls = 0
+  let sequence = 0
+  ;({ coordinator } = createHarness({
+    createOperationId(kind) {
+      sequence += 1
+      if (kind === "batch" && reentrantDispose === null) {
+        reentrantDispose = coordinator.dispose()
+      }
+      return `${kind}-${sequence}`
+    },
+    commitMutation(batch) {
+      commitCalls += 1
+      return verifiedResult(batch)
+    },
+  }))
+  coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+  let structuralFailure = null
+  let structuralPromise = null
+  try {
+    structuralPromise = coordinator.commitNow({
+      key: "structure:a",
+      payload: "structure",
+      consumes: ["field:a"],
+      apply() {},
+    })
+  } catch (failure) {
+    structuralFailure = failure
+  }
+  const structuralOutcome = structuralPromise === null
+    ? null
+    : await structuralPromise.then(
+        value => ({ value }),
+        failure => ({ failure }),
+      )
+  const disposed = await reentrantDispose
+
+  assert.equal(structuralFailure?.code, "save-disposed")
+  assert.equal(structuralOutcome, null)
+  assert.equal(disposed.state, "disposed")
+  assert.equal(coordinator.snapshot().state, "disposed")
+  assert.equal(coordinator.snapshot().generation, 1)
+  assert.equal(coordinator.snapshot().pendingCount, 1)
+  assert.equal(commitCalls, 0)
+  assert.equal(coordinator.dispose(), reentrantDispose)
+})
+
+test("a batch ID callback re-entering flush shares the fixed-target Promise", async () => {
+  let coordinator
+  let innerFlush = null
+  let reentered = false
+  let idSequence = 0
+  const batches = []
+  ;({ coordinator } = createHarness({
+    createOperationId(kind) {
+      idSequence += 1
+      if (kind === "batch" && !reentered) {
+        reentered = true
+        innerFlush = coordinator.flush()
+      }
+      return `${kind}-${idSequence}`
+    },
+    commitMutation: async batch => {
+      batches.push(batch)
+      return verifiedResult(batch)
+    },
+  }))
+  const field = coordinator.stage({ key: "field:a", payload: "A", apply() {} })
+
+  const outerFlush = coordinator.flush()
+  const [outerResult, innerResult] = await Promise.all([outerFlush, innerFlush])
+
+  assert.equal(innerFlush, outerFlush)
+  assert.equal(innerResult, outerResult)
+  assert.equal(batches.length, 1)
+  assert.equal(
+    batches.flatMap(batch => batch.operationIds).filter(id => id === field.id).length,
+    1,
+  )
+  assert.equal(coordinator.snapshot().state, "clean")
+  assert.equal(coordinator.snapshot().pendingCount, 0)
+})
+
+test("infinitely fresh forged prototypes fail in a bounded child process", () => {
+  const moduleUrl = new URL("../js/work-save-coordinator.js", import.meta.url).href
+  const script = `
+    import { createWorkSaveCoordinator } from ${JSON.stringify(moduleUrl)}
+    const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
+    const coordinator = createWorkSaveCoordinator({
+      commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      scheduler,
+    })
+    const freshHandler = {
+      getPrototypeOf() { return new Proxy({}, freshHandler) },
+    }
+    let firstRead = true
+    const source = new Proxy({}, {
+      getPrototypeOf() {
+        if (firstRead) {
+          firstRead = false
+          return Object.prototype
+        }
+        return new Proxy({}, freshHandler)
+      },
+    })
+    try {
+      coordinator.stage({ key: "field:a", payload: { child: source }, apply() {} })
+      process.exitCode = 2
+    } catch (failure) {
+      if (!(failure instanceof TypeError)) throw failure
+      console.log("bounded-fresh-type-error")
+    }
+  `
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", timeout: 2000 },
+  )
+
+  assert.equal(child.error, undefined, child.error?.message)
+  assert.equal(child.status, 0, child.stderr)
+  assert.match(child.stdout, /bounded-fresh-type-error/)
+})

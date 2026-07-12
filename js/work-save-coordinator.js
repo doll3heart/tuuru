@@ -27,10 +27,15 @@ function cloneJsonPrimitive(value) {
   return { matched: false }
 }
 
-function assertNoJsonHook(value) {
+function assertNoJsonHook(value, prototype, isArray) {
+  if (Object.getPrototypeOf(value) !== prototype) {
+    throw new TypeError("JSON payload prototypes must remain stable during inspection")
+  }
   const visited = new WeakSet()
-  let current = value
-  while (current !== null) {
+  const permittedChain = isArray
+    ? [value, Array.prototype, Object.prototype]
+    : prototype === null ? [value] : [value, Object.prototype]
+  for (const current of permittedChain) {
     if (visited.has(current)) {
       throw new TypeError("JSON payload prototype chains must not contain cycles")
     }
@@ -38,7 +43,6 @@ function assertNoJsonHook(value) {
     if (Object.getOwnPropertyDescriptor(current, "toJSON") !== undefined) {
       throw new TypeError("JSON payloads must not define or inherit toJSON")
     }
-    current = Object.getPrototypeOf(current)
   }
 }
 
@@ -63,7 +67,7 @@ function inspectJsonContainer(source) {
     throw new TypeError("JSON objects must use an ordinary or null prototype")
   }
 
-  assertNoJsonHook(source)
+  assertNoJsonHook(source, prototype, isArray)
   const descriptors = Object.getOwnPropertyDescriptors(source)
   const keys = Reflect.ownKeys(source)
 
@@ -254,6 +258,7 @@ export function createWorkSaveCoordinator(options) {
   let emptyFlushGeneration = null
   let emptyFlushPromise = null
   let disposedFailure = null
+  let synchronousAdmission = false
   let announcingSnapshots = false
   let clearListenersAfterAnnouncements = false
   let quietTimerHandle = null
@@ -265,6 +270,37 @@ export function createWorkSaveCoordinator(options) {
 
   function isTerminalState() {
     return state === "conflict" || state === "disposed"
+  }
+
+  function createActionUnavailableError() {
+    const unavailable = new Error("The save coordinator cannot start another action")
+    unavailable.code = "save-action-unavailable"
+    return unavailable
+  }
+
+  function terminalAdmissionFailure() {
+    if (disposedFailure !== null && (state === "disposed" || error === disposedFailure)) {
+      return disposedFailure
+    }
+    return createActionUnavailableError()
+  }
+
+  function beginSynchronousAdmission() {
+    assertAvailable()
+    if (terminalEpoch !== 0) throw terminalAdmissionFailure()
+    if (synchronousAdmission) throw createActionUnavailableError()
+    synchronousAdmission = true
+    return terminalEpoch
+  }
+
+  function endSynchronousAdmission() {
+    synchronousAdmission = false
+  }
+
+  function assertAdmissionCurrent(admissionEpoch) {
+    if (admissionEpoch !== terminalEpoch || terminalEpoch !== 0 || isTerminalState()) {
+      throw terminalAdmissionFailure()
+    }
   }
 
   function pendingCount() {
@@ -318,8 +354,9 @@ export function createWorkSaveCoordinator(options) {
     return currentSnapshot
   }
 
-  function createIdCandidate(kind, reservedIds = []) {
+  function createIdCandidate(kind, reservedIds = [], admissionEpoch = null) {
     const id = createOperationId(kind)
+    if (admissionEpoch !== null) assertAdmissionCurrent(admissionEpoch)
     assertNonEmptyString(id, `${kind} operation ID`)
     if (usedIds.has(id) || reservedIds.includes(id)) {
       throw new TypeError(`operation ID "${id}" must be unique`)
@@ -327,8 +364,8 @@ export function createWorkSaveCoordinator(options) {
     return id
   }
 
-  function allocateId(kind) {
-    const id = createIdCandidate(kind)
+  function allocateId(kind, admissionEpoch = null) {
+    const id = createIdCandidate(kind, [], admissionEpoch)
     usedIds.add(id)
     return id
   }
@@ -342,14 +379,12 @@ export function createWorkSaveCoordinator(options) {
       throw disposedFailure
     }
     if (state === "conflict") {
-      const unavailable = new Error("The save coordinator cannot start another action")
-      unavailable.code = "save-action-unavailable"
-      throw unavailable
+      throw createActionUnavailableError()
     }
   }
 
-  function prepareOperation(kind, input) {
-    assertAvailable()
+  function prepareOperation(kind, input, admissionEpoch) {
+    assertAdmissionCurrent(admissionEpoch)
     assertRecord(input, "operation input")
     const key = input.key
     assertNonEmptyString(key, "operation key")
@@ -361,6 +396,7 @@ export function createWorkSaveCoordinator(options) {
     const consumes = kind === "structural"
       ? validateConsumes(suppliedConsumes ?? [])
       : Object.freeze([])
+    assertAdmissionCurrent(admissionEpoch)
     return {
       key,
       payload,
@@ -381,58 +417,84 @@ export function createWorkSaveCoordinator(options) {
     })
   }
 
-  function createOperation(kind, input) {
-    const prepared = prepareOperation(kind, input)
+  function createOperation(kind, input, admissionEpoch) {
+    const prepared = prepareOperation(kind, input, admissionEpoch)
     if (generation >= Number.MAX_SAFE_INTEGER) {
       throw new RangeError("operation generation limit reached")
     }
-    const id = allocateId(kind)
+    const id = allocateId(kind, admissionEpoch)
+    assertAdmissionCurrent(admissionEpoch)
     generation += 1
     return freezeOperation(kind, prepared, id, generation)
   }
 
   function stage(input) {
-    const operation = createOperation("field", input)
-    pendingFields.set(operation.key, operation)
-    if (activeBatch === null) state = "dirty"
+    const admissionEpoch = beginSynchronousAdmission()
+    let operation
     try {
-      schedulePendingTimers()
-    } catch (failure) {
-      throw enterConflict(failure)
+      operation = createOperation("field", input, admissionEpoch)
+      pendingFields.set(operation.key, operation)
+      if (activeBatch === null) state = "dirty"
+      try {
+        schedulePendingTimers()
+      } catch (failure) {
+        throw enterConflict(failure)
+      }
+      assertAdmissionCurrent(admissionEpoch)
+    } finally {
+      endSynchronousAdmission()
     }
     announceSnapshot()
     return operation
   }
 
-  function freezeBatch(operations, suppliedId = null) {
+  function freezeBatch(operations, suppliedId = null, admissionEpoch = null) {
     const orderedOperations = Object.freeze([...operations])
     return Object.freeze({
       kind: "mutation",
-      id: suppliedId ?? allocateId("batch"),
+      id: suppliedId ?? allocateId("batch", admissionEpoch),
       operationIds: Object.freeze(orderedOperations.map(operation => operation.id)),
       generations: Object.freeze(orderedOperations.map(operation => operation.generation)),
       operations: orderedOperations,
     })
   }
 
-  function capturePending() {
+  function capturePending(admissionEpoch = terminalEpoch) {
+    assertAdmissionCurrent(admissionEpoch)
     const fields = [...pendingFields.values()]
       .sort((left, right) => left.generation - right.generation)
     if (fields.length === 0) return null
-    const batch = freezeBatch(fields)
-    pendingFields.clear()
+    const batch = freezeBatch(fields, null, admissionEpoch)
+    assertAdmissionCurrent(admissionEpoch)
+    for (const operation of fields) {
+      if (pendingFields.get(operation.key) === operation) {
+        pendingFields.delete(operation.key)
+      }
+    }
     readyBatches.push(batch)
     const cancellation = cancelPendingTimers()
     if (cancellation.failed) throw cancellation.cause
+    assertAdmissionCurrent(admissionEpoch)
     return batch
   }
 
-  function acceptStructuralBatch(prepared) {
+  function capturePendingWithAdmission() {
+    const admissionEpoch = beginSynchronousAdmission()
+    try {
+      return capturePending(admissionEpoch)
+    } finally {
+      endSynchronousAdmission()
+    }
+  }
+
+  function acceptStructuralBatch(prepared, admissionEpoch) {
+    assertAdmissionCurrent(admissionEpoch)
     if (generation >= Number.MAX_SAFE_INTEGER) {
       throw new RangeError("operation generation limit reached")
     }
-    const structuralId = createIdCandidate("structural")
-    const batchId = createIdCandidate("batch", [structuralId])
+    const structuralId = createIdCandidate("structural", [], admissionEpoch)
+    const batchId = createIdCandidate("batch", [structuralId], admissionEpoch)
+    assertAdmissionCurrent(admissionEpoch)
     const nextGeneration = generation + 1
     const operation = freezeOperation(
       "structural",
@@ -444,13 +506,17 @@ export function createWorkSaveCoordinator(options) {
       .sort((left, right) => left.generation - right.generation)
     const batch = freezeBatch([...fields, operation], batchId)
 
+    assertAdmissionCurrent(admissionEpoch)
     usedIds.add(structuralId)
     usedIds.add(batchId)
     generation = nextGeneration
-    pendingFields.clear()
+    for (const field of fields) {
+      if (pendingFields.get(field.key) === field) pendingFields.delete(field.key)
+    }
     readyBatches.push(batch)
     const cancellation = cancelPendingTimers()
     if (cancellation.failed) throw cancellation.cause
+    assertAdmissionCurrent(admissionEpoch)
     return operation
   }
 
@@ -545,7 +611,7 @@ export function createWorkSaveCoordinator(options) {
   function capturePendingFromTimer() {
     if (pendingFields.size === 0 || state === "conflict" || state === "disposed") return
     try {
-      capturePending()
+      capturePendingWithAdmission()
     } catch (failure) {
       enterConflict(failure)
       return
@@ -719,13 +785,25 @@ export function createWorkSaveCoordinator(options) {
   }
 
   function commitNow(input) {
-    const prepared = prepareOperation("structural", input)
+    const admissionEpoch = beginSynchronousAdmission()
+    let prepared
+    try {
+      prepared = prepareOperation("structural", input, admissionEpoch)
+    } catch (failure) {
+      endSynchronousAdmission()
+      throw failure
+    }
     let operation
     try {
-      operation = acceptStructuralBatch(prepared)
+      operation = acceptStructuralBatch(prepared, admissionEpoch)
     } catch (failure) {
+      endSynchronousAdmission()
+      if (terminalEpoch !== admissionEpoch || terminalEpoch !== 0 || isTerminalState()) {
+        throw terminalAdmissionFailure()
+      }
       throw enterConflict(failure)
     }
+    endSynchronousAdmission()
     const promise = createGenerationWaiter(operation.generation)
     if (activeBatch === null) state = "dirty"
     announceSnapshot()
@@ -752,12 +830,13 @@ export function createWorkSaveCoordinator(options) {
     }
     const existing = flushWaiters.get(targetGeneration)
     if (existing !== undefined) return existing
-    try {
-      capturePending()
-    } catch (failure) {
-      return Promise.reject(enterConflict(failure))
-    }
-    const promise = createGenerationWaiter(targetGeneration)
+
+    let resolveFlush
+    let rejectFlush
+    const promise = new Promise((resolve, reject) => {
+      resolveFlush = resolve
+      rejectFlush = reject
+    })
     flushWaiters.set(targetGeneration, promise)
     promise.then(
       () => {
@@ -771,6 +850,30 @@ export function createWorkSaveCoordinator(options) {
         }
       },
     )
+
+    let admissionEpoch
+    let admissionStarted = false
+    try {
+      admissionEpoch = beginSynchronousAdmission()
+      admissionStarted = true
+      capturePending(admissionEpoch)
+      assertAdmissionCurrent(admissionEpoch)
+    } catch (failure) {
+      if (admissionStarted) endSynchronousAdmission()
+      const finalFailure = admissionStarted
+        ? terminalEpoch !== admissionEpoch || terminalEpoch !== 0 || isTerminalState()
+          ? terminalAdmissionFailure()
+          : enterConflict(failure)
+        : failure
+      rejectFlush(finalFailure)
+      return promise
+    }
+    endSynchronousAdmission()
+
+    createGenerationWaiter(targetGeneration).then(
+      resolveFlush,
+      rejectFlush,
+    )
     if (activeBatch === null) state = "dirty"
     announceSnapshot()
     startNextBatch()
@@ -783,7 +886,7 @@ export function createWorkSaveCoordinator(options) {
       const targetGeneration = generation
       if (pendingFields.size > 0) {
         try {
-          capturePending()
+          capturePendingWithAdmission()
         } catch (failure) {
           throw enterConflict(failure)
         }
