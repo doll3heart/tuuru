@@ -34,6 +34,11 @@ function ruleBody(css, selector) {
   return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] || ""
 }
 
+function hexTokenAnywhere(css, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return css.match(new RegExp(`${escaped}\\s*:\\s*(#[0-9a-f]{6})`, "i"))?.[1]
+}
+
 test("default secondary and accent text meet AA across light surfaces", () => {
   for (const [name, css] of [["editor", editorCss], ["reader", readerCss]]) {
     const tokens = rootHexTokens(css)
@@ -176,5 +181,29 @@ test("every generated theme chooses readable primary and hover ink", async () =>
       else globalThis[key] = value
     }
     dom.window.close()
+  }
+})
+
+test("reader call presets and transcript paper preserve AA contrast", () => {
+  const ink = hexTokenAnywhere(readerCss, "--rd-call-ink")
+  const oldInk = hexTokenAnywhere(readerCss, "--rd-call-old-ink")
+  const paper = hexTokenAnywhere(readerCss, "--rd-call-paper")
+  const surfaces = [
+    "--rd-call-plain-start", "--rd-call-plain-end",
+    "--rd-call-rose-start", "--rd-call-rose-end",
+    "--rd-call-water-start", "--rd-call-water-end",
+    "--rd-call-cream-start", "--rd-call-cream-end",
+  ].map(name => [name, hexTokenAnywhere(readerCss, name)])
+
+  assert.ok(ink && oldInk && paper)
+  for (const [name, surface] of surfaces) {
+    assert.ok(surface, `${name} exists`)
+    assert.ok(contrastRatio(ink, surface) >= 4.5, `${name} keeps call ink readable`)
+  }
+  assert.ok(contrastRatio(ink, paper) >= 4.5)
+  assert.ok(contrastRatio(oldInk, paper) >= 4.5)
+  assert.match(ruleBody(readerCss, ".rd-call-scene"), /rgba\(0,\s*0,\s*0,\s*\.58\)/)
+  for (const selector of [".rd-call-duration", ".rd-call-note", ".rd-call-line.old"]) {
+    assert.doesNotMatch(ruleBody(readerCss, selector), /opacity\s*:\s*(?:0?\.)\d+/)
   }
 })

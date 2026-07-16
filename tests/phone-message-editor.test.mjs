@@ -1,0 +1,410 @@
+import test from "node:test"
+import assert from "node:assert/strict"
+import { JSDOM } from "jsdom"
+
+function installDom() {
+  const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
+    url: "http://localhost/",
+  })
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.localStorage = dom.window.localStorage
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.Node = dom.window.Node
+  globalThis.Event = dom.window.Event
+  globalThis.MouseEvent = dom.window.MouseEvent
+  globalThis.MutationObserver = dom.window.MutationObserver
+  return dom
+}
+
+function makePhoneData(
+  contact = { id: "contact-1", name: "林澈", avatarUrl: "" },
+  chatId = "chat-1",
+) {
+  return {
+    contacts: [contact],
+    chats: [{
+      id: chatId,
+      type: "single",
+      contactIds: [contact.id],
+      groupName: "",
+      messages: [],
+      rounds: [{ id: "round-1", label: "第1轮", messages: [] }],
+    }],
+    moments: [],
+    forumPosts: [],
+    forumNpcs: [],
+    memos: [],
+    photos: [],
+    albums: [],
+    browserHistory: [],
+    shoppingItems: [],
+    skin: { readerId: "Reader" },
+    apps: [],
+  }
+}
+
+async function openSingleChat(id, phoneData = makePhoneData()) {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({
+    id,
+    type: "article",
+    phoneData,
+  })
+  const overlay = openPhoneAppModal(draft.id, "messages")
+  const chatCard = overlay.querySelector("[data-chat-id]")
+  assert.ok(chatCard, "the seeded chat should be visible in the messages list")
+  assert.equal(chatCard.dataset.chatId, phoneData.chats[0].id)
+  chatCard.click()
+  return { dom, draft, overlay }
+}
+
+function closeFixture({ dom, draft }) {
+  draft.dispose()
+  dom.window.close()
+}
+
+test("the author message page exposes the demo editor skeleton", async () => {
+  const fixture = await openSingleChat("message-editor-skeleton")
+  const { overlay } = fixture
+
+  try {
+    const shell = overlay.querySelector(".chat-author-shell")
+    assert.ok(shell, "missing the author-only message editor shell")
+    assert.ok(shell.querySelector(".chat-author-status"), "missing the author save/status row")
+    assert.ok(shell.querySelector(".chat-round-header"), "missing the current round header")
+    assert.ok(shell.querySelector("#chatMsgArea"), "missing the message canvas")
+
+    const speakerStrip = shell.querySelector(".chat-speaker-strip")
+    assert.ok(speakerStrip, "missing the speaker selection strip")
+    for (const speaker of ["reader", "contact", "system", "add"]) {
+      assert.equal(
+        speakerStrip.querySelectorAll(`[data-speaker="${speaker}"]`).length,
+        1,
+        `expected one ${speaker} speaker button`,
+      )
+    }
+
+    assert.ok(shell.querySelector("#chatPlusBtn"), "missing the compact composer multi-function button")
+    assert.ok(shell.querySelector("#chatInput"), "missing the compact composer input")
+    const sendButton = shell.querySelector("#chatSendBtn")
+    assert.ok(sendButton, "missing the compact composer add button")
+    assert.equal(sendButton.textContent.trim(), "添加")
+    assert.ok(shell.querySelector(".chat-editor-modebar"), "missing the bottom editor mode bar")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("the selected speaker owns each complete sentence added by the author", async () => {
+  const fixture = await openSingleChat("message-editor-speakers")
+  const { draft, overlay } = fixture
+
+  try {
+    const contactSpeaker = overlay.querySelector(
+      '.chat-speaker-strip [data-speaker="contact"][data-sender-id="contact-1"]',
+    )
+    assert.ok(contactSpeaker, "missing the seeded contact speaker button")
+    contactSpeaker.click()
+
+    let input = overlay.querySelector("#chatInput")
+    let addButton = overlay.querySelector("#chatSendBtn")
+    assert.ok(input)
+    assert.ok(addButton)
+    input.value = "你今天是不是又忘记带伞了？"
+    addButton.click()
+
+    let messages = draft.snapshot().phoneData.chats[0].rounds[0].messages
+    assert.equal(messages.at(-1).senderId, "contact-1")
+    assert.equal(messages.at(-1).text, "你今天是不是又忘记带伞了？")
+
+    const readerSpeaker = overlay.querySelector(
+      '.chat-speaker-strip [data-speaker="reader"][data-sender-id="self"]',
+    )
+    assert.ok(readerSpeaker, "missing the reader speaker button")
+    readerSpeaker.click()
+
+    input = overlay.querySelector("#chatInput")
+    addButton = overlay.querySelector("#chatSendBtn")
+    assert.ok(input)
+    assert.ok(addButton)
+    input.value = "没有，我只是想等你来接我。"
+    addButton.click()
+
+    messages = draft.snapshot().phoneData.chats[0].rounds[0].messages
+    assert.equal(messages.at(-1).senderId, "self")
+    assert.equal(messages.at(-1).text, "没有，我只是想等你来接我。")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("the author multi-function tools open as an in-editor sheet", async () => {
+  const fixture = await openSingleChat("message-editor-tool-sheet")
+  const { overlay } = fixture
+
+  try {
+    const shell = overlay.querySelector(".chat-author-shell")
+    assert.ok(shell)
+    const bodyModalCount = document.body.querySelectorAll(":scope > .modal-overlay").length
+    shell.querySelector("#chatPlusBtn").click()
+
+    const sheet = shell.querySelector(".chat-tool-sheet")
+    assert.ok(sheet, "the tools should stay inside the author editor shell")
+    assert.equal(sheet.closest(".chat-author-shell"), shell)
+    assert.ok(sheet.querySelector(".chat-tool-grid"), "missing the tool grid")
+
+    for (const tool of [
+      "image",
+      "voice-call",
+      "video-call",
+      "voice",
+      "transfer",
+      "location",
+      "time",
+      "system",
+    ]) {
+      assert.ok(sheet.querySelector(`[data-chat-tool="${tool}"]`), `missing ${tool} tool`)
+    }
+
+    assert.ok(sheet.querySelector("#chatToolClose"), "missing the tool sheet close button")
+    assert.equal(
+      document.body.querySelectorAll(":scope > .modal-overlay").length,
+      bodyModalCount,
+      "opening tools should not append a generic document-level modal",
+    )
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("saving an authored voice call appends its scripted lines to the draft", async () => {
+  const fixture = await openSingleChat("message-editor-voice-call")
+  const { draft, overlay } = fixture
+
+  try {
+    const shell = overlay.querySelector(".chat-author-shell")
+    assert.ok(shell)
+    shell.querySelector("#chatPlusBtn").click()
+    const voiceCallTool = shell.querySelector('[data-chat-tool="voice-call"]')
+    assert.ok(voiceCallTool, "missing the voice call tool")
+    voiceCallTool.click()
+
+    const lines = shell.querySelector("#chatCallLines")
+    const save = shell.querySelector("#chatCallSave")
+    assert.ok(lines, "missing the call script textarea")
+    assert.ok(save, "missing the call save button")
+
+    lines.value = "Can you hear me?\nI will wait downstairs."
+    save.click()
+
+    const messages = draft.snapshot().phoneData.chats[0].rounds[0].messages
+    assert.deepEqual(messages.at(-1), {
+      ...messages.at(-1),
+      type: "call",
+      callMode: "voice",
+      senderId: "contact-1",
+      callLines: ["Can you hear me?", "I will wait downstairs."],
+    })
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("contact ids stay data instead of becoming injected author-editor attributes", async () => {
+  const maliciousId = 'contact-1" data-pwned="yes'
+  const fixture = await openSingleChat(
+    "message-editor-contact-attribute-safety",
+    makePhoneData({ id: maliciousId, name: "林澈", avatarUrl: "" }),
+  )
+  const { overlay } = fixture
+
+  try {
+    const contactSpeaker = overlay.querySelector('.chat-speaker-btn[data-speaker="contact"]')
+    assert.ok(contactSpeaker)
+    assert.equal(contactSpeaker.dataset.senderId, maliciousId)
+    assert.equal(contactSpeaker.hasAttribute("data-pwned"), false)
+
+    overlay.querySelector("#chatPlusBtn").click()
+    overlay.querySelector('[data-chat-tool="voice-call"]').click()
+    const contactOption = overlay.querySelector("#chatCallSender option")
+    assert.ok(contactOption)
+    assert.equal(contactOption.value, maliciousId)
+    assert.equal(contactOption.hasAttribute("data-pwned"), false)
+
+    overlay.querySelector("#chatCallCancel").click()
+    overlay.querySelector('.chat-speaker-btn[data-speaker="add"]').click()
+    const picker = document.querySelector('.chat-speaker-pick[data-sender-id]:not([data-sender-id="self"])')
+    assert.ok(picker)
+    assert.equal(picker.dataset.senderId, maliciousId)
+    assert.equal(picker.hasAttribute("data-pwned"), false)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("mixed legacy messages and rounds are merged instead of hiding old messages", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "round-message",
+    type: "text",
+    senderId: "contact-1",
+    text: "轮次里的消息",
+  })
+  phoneData.chats[0].messages.push({
+    id: "legacy-message",
+    type: "text",
+    senderId: "self",
+    text: "旧字段里的消息",
+  })
+  const fixture = await openSingleChat("message-editor-mixed-chat-shapes", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const visibleText = [...overlay.querySelectorAll(".chat-bubble")]
+      .map(bubble => bubble.textContent)
+      .join("\n")
+    assert.match(visibleText, /轮次里的消息/)
+    assert.match(visibleText, /旧字段里的消息/)
+
+    const chat = draft.snapshot().phoneData.chats[0]
+    assert.deepEqual(chat.messages, [])
+    assert.equal(chat.rounds[0].messages.length, 2)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("author choice buttons edit their owner instead of executing a reader branch", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "owner-message",
+    type: "text",
+    senderId: "contact-1",
+    text: "你想怎么回答？",
+    choices: [
+      {
+        id: "choice-stable-a",
+        text: "第一句",
+        replyText: "第一句",
+        customMeta: { keep: true },
+        followUpMessages: [{
+          id: "follow-stable-a",
+          senderId: "contact-1",
+          text: "我听见了。",
+          type: "text",
+        }],
+      },
+      { id: "choice-stable-b", text: "第二句", replyText: "第二句", followUpMessages: [] },
+    ],
+  })
+  const fixture = await openSingleChat("message-editor-choice-owner", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const choiceButton = overlay.querySelector(".chat-choice-btn")
+    assert.ok(choiceButton)
+    choiceButton.click()
+
+    const editor = document.querySelector("#chGroupsList")
+    assert.ok(editor, "clicking an authored choice should open its local option editor")
+    assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
+
+    editor.querySelectorAll(".ch-grp-text")[0].value = "改过的第一句"
+    document.querySelector("#chSave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.choices[0].id, "choice-stable-a")
+    assert.equal(saved.choices[0].text, "改过的第一句")
+    assert.equal(saved.choices[0].followUpMessages[0].id, "follow-stable-a")
+    assert.deepEqual(saved.choices[0].customMeta, { keep: true })
+    assert.equal(saved.choices[0].used, undefined)
+    assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("chat ids and avatar urls cannot inject attributes into author message views", async () => {
+  const maliciousChatId = 'chat-1" data-pwned="chat'
+  const maliciousAvatar = 'x)" onmouseover="globalThis.__avatarPwned=1" data-pwned="avatar'
+  const phoneData = makePhoneData(
+    { id: "contact-1", name: "林澈", avatarUrl: maliciousAvatar },
+    maliciousChatId,
+  )
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "avatar-message",
+    type: "text",
+    senderId: "contact-1",
+    text: "看这里。",
+  })
+  const fixture = await openSingleChat("message-editor-attribute-boundaries", phoneData)
+  const { overlay } = fixture
+
+  try {
+    const messageAvatar = overlay.querySelector(".chat-avatar")
+    assert.ok(messageAvatar)
+    assert.equal(messageAvatar.hasAttribute("onmouseover"), false)
+    assert.equal(messageAvatar.hasAttribute("data-pwned"), false)
+
+    overlay.querySelector("#chatBack").click()
+    const chatCard = overlay.querySelector("[data-chat-id]")
+    const deleteButton = overlay.querySelector("[data-chat-del]")
+    assert.equal(chatCard.dataset.chatId, maliciousChatId)
+    assert.equal(deleteButton.dataset.chatDel, maliciousChatId)
+    assert.equal(chatCard.hasAttribute("data-pwned"), false)
+    assert.equal(deleteButton.hasAttribute("data-pwned"), false)
+
+    overlay.querySelector("#msgTabContacts").click()
+    const contactAvatar = overlay.querySelector(".forum-npc-avatar")
+    assert.ok(contactAvatar)
+    assert.equal(contactAvatar.hasAttribute("onmouseover"), false)
+    assert.equal(contactAvatar.hasAttribute("data-pwned"), false)
+    assert.equal(globalThis.__avatarPwned, undefined)
+  } finally {
+    delete globalThis.__avatarPwned
+    closeFixture(fixture)
+  }
+})
+
+test("legacy addChatMessage writes into the active round when rounds already exist", async () => {
+  const dom = installDom()
+  const {
+    WORK_TYPE,
+    addChatMessage,
+    createWork,
+    deleteWork,
+    getWork,
+    updateWork,
+  } = await import("../js/data.js")
+  const work = createWork({ type: WORK_TYPE.PHONE, title: "round api test" })
+
+  try {
+    const phoneData = getWork(work.id).phoneData
+    phoneData.chats = [{
+      id: "chat-api",
+      type: "single",
+      contactIds: [],
+      messages: [],
+      rounds: [{ id: "round-api", label: "第1轮", messages: [] }],
+    }]
+    updateWork(work.id, { phoneData })
+
+    addChatMessage(work.id, "chat-api", {
+      senderId: "self",
+      text: "写进当前轮次",
+      time: "12:00",
+    })
+
+    const savedChat = getWork(work.id).phoneData.chats[0]
+    assert.equal(savedChat.messages.length, 0)
+    assert.equal(savedChat.rounds[0].messages.length, 1)
+    assert.equal(savedChat.rounds[0].messages[0].text, "写进当前轮次")
+  } finally {
+    deleteWork(work.id)
+    dom.window.close()
+  }
+})

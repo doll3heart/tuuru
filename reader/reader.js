@@ -1,11 +1,16 @@
 import { prepareImportedWork } from '../js/work-import.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
-import { escapeHtmlAttribute, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
+import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 import { parsePngDimensionsFromDataUrl, readerPngDimensionError } from './png-import-policy.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
+import { advanceCallPlayback, createCallPlaybackState } from './call-playback.js'
+import { applyChatChoice, rollbackChatChoice } from '../js/chat-choice-runtime.js'
+import { applyThreadChoice, rollbackThreadChoice } from '../js/thread-choice-runtime.js'
+import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
+import { prepareEditorPreview } from './editor-preview.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -53,15 +58,165 @@ function avatarColor(id) {
   return AC[Math.abs(h) % AC.length]
 }
 
+var _readerThreadChoiceId = 0
+
+function cloneReaderThreadItems(items) {
+  if (!Array.isArray(items)) return []
+  return JSON.parse(JSON.stringify(items))
+}
+
+function readerThreadDisplayName(pd, custom) {
+  var customName = String(custom && custom.readerId || '').trim()
+  var authoredName = String(pd && pd.skin && pd.skin.readerId || '').trim()
+  return customName || authoredName || '我'
+}
+
+function readerThreadActorName(pd, contactId, authoredName, fallbackName) {
+  var name = String(authoredName || '').trim()
+  if (name) return name
+  var actors = (pd && Array.isArray(pd.contacts) ? pd.contacts : [])
+    .concat(pd && Array.isArray(pd.forumNpcs) ? pd.forumNpcs : [])
+  var actor = actors.find(function(candidate) { return candidate && candidate.id === contactId })
+  return String(actor && actor.name || fallbackName || '角色').trim() || '角色'
+}
+
+function readerThreadRuntimeOptions(pd, custom, scope) {
+  var readerName = readerThreadDisplayName(pd, custom)
+  return {
+    idFactory: function() {
+      _readerThreadChoiceId += 1
+      return 'reader-' + scope + '-' + Date.now().toString(36) + '-' + _readerThreadChoiceId.toString(36)
+    },
+    createReply: function(context) {
+      var text = String(context.choice && context.choice.replyText || '')
+      return {
+        id: context.id,
+        contactId: 'self',
+        senderId: 'self',
+        contactName: readerName,
+        content: text,
+        text: text,
+        time: ''
+      }
+    },
+    createFollowUp: function(context) {
+      var template = context.template || {}
+      var owner = context.owner || {}
+      var contactId = template.contactId || template.senderId || owner.contactId || owner.senderId || ''
+      var content = String(template.content != null ? template.content : (template.text != null ? template.text : ''))
+      var contactName = readerThreadActorName(pd, contactId, template.contactName, owner.contactName)
+      return Object.assign({}, template, {
+        id: context.id,
+        contactId: contactId,
+        senderId: template.senderId || contactId,
+        contactName: contactName,
+        content: content,
+        text: content,
+        time: template.time || ''
+      })
+    }
+  }
+}
+
+function resolveReaderThreadOwnerId(items, serializedId) {
+  var matches = (Array.isArray(items) ? items : []).filter(function(item) {
+    return item && String(item.id) === String(serializedId)
+  })
+  return matches.length === 1 ? matches[0].id : null
+}
+
+function readerThreadRunKey(containerKey, ownerId) {
+  return String(containerKey) + '::' + String(ownerId)
+}
+
+function readerThreadReplyRun(runs, containerKey, itemId) {
+  var found = null
+  runs.forEach(function(entry, key) {
+    if (found || !entry || entry.containerKey !== containerKey) return
+    if (!entry.run) return
+    var generatedIds = Array.isArray(entry.run.generatedItemIds) ? entry.run.generatedItemIds : []
+    var anchorId = entry.run.replyItemId != null
+      ? entry.run.replyItemId
+      : (generatedIds.length > 0 ? generatedIds[0] : entry.run.ownerItemId)
+    if (anchorId != null && String(anchorId) === String(itemId)) found = { key: key, entry: entry }
+  })
+  return found
+}
+
+function readerThreadGeneratedItem(runs, containerKey, itemId) {
+  var generated = false
+  runs.forEach(function(entry) {
+    if (generated || !entry || entry.containerKey !== containerKey || !entry.run) return
+    var ids = Array.isArray(entry.run.generatedItemIds) ? entry.run.generatedItemIds : []
+    generated = ids.some(function(id) { return String(id) === String(itemId) })
+  })
+  return generated
+}
+
+function renderReaderThreadChoiceControls(item, scope, containerKey, runs) {
+  if (!item || !Array.isArray(item.choices) || item.choices.length === 0) return ''
+  var runKey = readerThreadRunKey(containerKey, item.id)
+  if (runs.has(runKey)) return ''
+  var h = '<div class="rd-thread-choice-list" role="group" aria-label="选择完整回复">'
+  item.choices.forEach(function(choice, choiceIndex) {
+    var label = String(choice && (choice.text || choice.replyText) || '').trim()
+    if (!label) return
+    h += '<button type="button" class="rd-thread-choice-option" data-thread-scope="' + escapeHtmlAttribute(scope) + '" data-thread-container="' + escapeHtmlAttribute(containerKey) + '" data-thread-owner-id="' + escapeHtmlAttribute(String(item.id)) + '" data-thread-choice-index="' + choiceIndex + '">' + esc(label) + '</button>'
+  })
+  h += '</div>'
+  return h
+}
+
+function renderReaderThreadReselect(item, scope, containerKey, runs) {
+  var activeRun = readerThreadReplyRun(runs, containerKey, item && item.id)
+  if (!activeRun) return ''
+  return '<button type="button" class="rd-thread-choice-reselect" data-thread-scope="' + escapeHtmlAttribute(scope) + '" data-thread-run-key="' + escapeHtmlAttribute(activeRun.key) + '" aria-label="重选这条回复">重选</button>'
+}
+
 var _work = null
 var _nodeId = null
 var _visitedNodes = []
 var _renderedRecentIds = []
+var _readerPhoneChoiceSession = null
+var _editorPreviewMode = false
+
+function resetReaderPhoneChoiceSession(work) {
+  _readerPhoneChoiceSession = {
+    workId: String(work && work.id || ''),
+    moments: null,
+    momentChoiceRuns: new Map(),
+    chats: new Map(),
+    forumPosts: new Map()
+  }
+  return _readerPhoneChoiceSession
+}
+
+function readerPhoneChoiceSession(work) {
+  var workId = String(work && work.id || '')
+  if (!_readerPhoneChoiceSession || _readerPhoneChoiceSession.workId !== workId) {
+    return resetReaderPhoneChoiceSession(work)
+  }
+  return _readerPhoneChoiceSession
+}
 
 // ---- render ----
 function render(el, html) {
   if (typeof el === 'string') el = document.getElementById(el)
   if (el) el.innerHTML = html
+}
+
+function editorHomeUrl() {
+  return new URL('../index.html', location.href).href
+}
+
+function renderEditorPreviewError(message) {
+  var h = '<main class="rd-home rd-preview-error">'
+  h += '<div class="drop-zone"><div class="drop-zone-inner">'
+  h += '<div class="drop-title">无法打开预览</div>'
+  h += '<div class="drop-desc">' + esc(message) + '</div>'
+  h += '<button type="button" class="drop-btn" data-reader-home>返回创作端</button>'
+  h += '</div></div></main>'
+  render('app', h)
 }
 
 // ---- localStorage helpers ----
@@ -168,6 +323,10 @@ document.addEventListener('click', function(event) {
   var homeTrigger = target.closest('[data-reader-home]')
   if (homeTrigger) {
     event.preventDefault()
+    if (_editorPreviewMode) {
+      location.assign(editorHomeUrl())
+      return
+    }
     renderHome()
     return
   }
@@ -534,16 +693,20 @@ function showLandingPage(work, callback) {
 }
 
 // ====== Load Work ======
-function loadWork(work) {
+function loadWork(work, options) {
   if (!work.type) { alert('无效的作品文件'); return }
   _work = work
+  resetReaderPhoneChoiceSession(work)
   _nodeId = null
   _visitedNodes = []
-  var cached = tryReaderStorageWrite(function() {
-    localStorage.setItem('moirain_work_' + work.id, JSON.stringify(work))
-  })
-  if (cached) {
-    tryReaderStorageWrite(function() { addRecent(work) })
+  var rememberWork = !options || options.remember !== false
+  if (rememberWork) {
+    var cached = tryReaderStorageWrite(function() {
+      localStorage.setItem('moirain_work_' + work.id, JSON.stringify(work))
+    })
+    if (cached) {
+      tryReaderStorageWrite(function() { addRecent(work) })
+    }
   }
   showLandingPage(work, function() {
     if (_work.type === 'phone') {
@@ -889,7 +1052,10 @@ function renderArticleReader() {
   if (choices.length > 0) {
     h += '<div class="article-choices">'
     choices.forEach(function(c, ci) {
-      h += '<button class="article-choice-btn" data-target="' + escapeHtmlAttribute(c.targetId || '') + '"><span class="label">' + (ci + 1) + '.</span>' + esc(c.text || '选项') + '</button>'
+      var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
+      var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
+      var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
+      h += '<button class="article-choice-btn" data-target="' + escapeHtmlAttribute(c.targetId || '') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
     })
     h += '</div>'
   } else {
@@ -939,10 +1105,10 @@ function renderArticleReader() {
   var btns = document.querySelectorAll('.article-choice-btn')
   btns.forEach(function(btn) {
     btn.onclick = function() {
-      var target = btn.dataset.target
-      if (target) {
+      var targetState = resolveArticleChoiceTarget(nodes, btn.dataset.target)
+      if (targetState.ok) {
         _visitedNodes.push(_nodeId)
-        _nodeId = target
+        _nodeId = targetState.targetId
         renderArticleReader()
       }
     }
@@ -1007,6 +1173,7 @@ function renderArticleReader() {
         albums: albums,
         browserHistory: d.browserHistory || [],
         shoppingItems: d.shoppingItems || [],
+        appConnections: d.appConnections || {},
         skin: rc,
         apps: apps
       }
@@ -1063,15 +1230,16 @@ function buildPhoneHTML(pd, custom) {
   var apps = pd.apps || []
 
   var h = ''
-  var readerBgStyle = '--phone-bg:transparent;'
-  readerBgStyle += '--phone-radius:' + (skin.borderRadius || 28) + 'px;'
+  var usesDefaultWallpaper = (skin.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && skin.wallpaperType !== 'image' && !skin.wallpaperImage
+  var readerBgStyle = '--phone-bg:' + sanitizeCssColor(skin.wallpaper || '#eee6e7') + ';'
+  readerBgStyle += '--phone-radius:' + (skin.borderRadius ?? 18) + 'px;'
   readerBgStyle += '--phone-font:\'' + (skin.fontFamily || 'Noto Sans SC').replace(/'/g, '') + '\', sans-serif;'
   readerBgStyle += '--phone-fontsize:' + (skin.fontSize || 12) + 'px;'
-  readerBgStyle += '--phone-frame:' + (skin.frameColor || '#ccc')
+  readerBgStyle += '--phone-frame:' + (skin.frameColor || '#8f7b81')
   if (skin.wallpaperType === 'image' && skin.wallpaperImage) {
     readerBgStyle += ';background-image:url(' + esc(skin.wallpaperImage) + ');background-size:cover;background-position:center'
   }
-  h += '<div class="phone-frame" style="' + readerBgStyle + '">'
+  h += '<div class="phone-frame' + (usesDefaultWallpaper ? ' phone-default-wallpaper' : '') + '" style="' + readerBgStyle + '">'
 
   if (skin.showDynamicIsland !== false) {
     h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
@@ -1082,25 +1250,29 @@ function buildPhoneHTML(pd, custom) {
   if (coverBg) h += ' style="background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center"'
   h += '>'
   h += '<div class="phone-profile-overlay"></div>'
+  h += '<div class="phone-widget-copy">'
+  h += '<div class="phone-widget-kicker">MY POCKET / READER</div>'
+  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
+  h += '<div class="phone-widget-status"><span></span> LOCAL PROFILE</div>'
+  h += '</div>'
   h += '<div class="phone-avatar">'
   if (skin.readerAvatar) h += '<img src="' + esc(skin.readerAvatar) + '" alt="">'
   h += '</div>'
-  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
   h += '</div>'
 
   h += '<div id="phoneDesktopReader" class="phone-desktop" style="flex:1;position:relative;min-height:420px;padding:10px 20px;' + phoneGridContainerStyle() + '">'
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
     if (app.enabled === false) continue
-    if (app.type === 'settings' || app.type === 'customize') continue
+    if (app.type === 'settings' || app.type === 'customize' || app.type === 'profile') continue
     var gridStyle = phoneGridItemStyle(app.desktopX || 0, app.desktopY || 0)
     var appName = readerAppName(app)
     h += '<button type="button" class="phone-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;border:none!important;box-shadow:none!important">'
     var customIcon = readerCustomIconUrl(rc.customIcons && rc.customIcons[app.type])
-    h += '<span class="phone-icon-body icon-shadow" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;border-radius:14px;margin:0 auto;background:' + sanitizeCssColor(app.color) + ';position:relative">'
+    h += '<span class="phone-icon-body icon-shadow" style="background:' + sanitizeCssColor(app.color) + ';position:relative">'
     var safeAppIcon = sanitizeIconHtml(app.icon || '?') || '?'
     if (customIcon) {
-      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:14px" onerror="this.style.display=\'none\'">'
+      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:54px;height:54px;object-fit:cover;border-radius:6px" onerror="this.style.display=\'none\'">'
       h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
     } else {
       h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
@@ -1156,7 +1328,7 @@ function bindOverlayApps(wrapper) {
 }
 
 // ---- Reader App Panels ----
-function openReaderApp(type, contactIndex) {
+function openReaderApp(type, contactIndex, connectionConfirmed) {
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
@@ -1164,9 +1336,24 @@ function openReaderApp(type, contactIndex) {
   var contacts = pd.contacts || []
   var w = _work
   var rc = getPhoneCustom()
+  var lockedApp = type === 'memo' || type === 'gallery' || type === 'browser' || type === 'shopping'
+  var appConnections = pd.appConnections && typeof pd.appConnections === 'object' ? pd.appConnections : null
+  var hasConfiguredConnection = lockedApp && !!appConnections && Object.prototype.hasOwnProperty.call(appConnections, type)
+  var connection = hasConfiguredConnection ? appConnections[type] : null
+  var configuredContactMatches = []
+  if (connection && typeof connection.contactId === 'string') {
+    contacts.forEach(function(contact, index) {
+      if (contact.id === connection.contactId) configuredContactMatches.push(index)
+    })
+  }
+  var configuredContactIndex = configuredContactMatches.length === 1 ? configuredContactMatches[0] : -1
+  var hasAuthoredConnection = hasConfiguredConnection && configuredContactIndex >= 0
+  var hasBrokenConnection = hasConfiguredConnection && !hasAuthoredConnection
   var requestedContactIndex = Number(contactIndex)
   var activeContactIndex = -1
-  if (contacts.length > 0) {
+  if (hasAuthoredConnection) {
+    activeContactIndex = configuredContactIndex
+  } else if (!hasBrokenConnection && contacts.length > 0) {
     var hasRequestedContact = Number.isInteger(requestedContactIndex)
       && requestedContactIndex >= 0
       && requestedContactIndex < contacts.length
@@ -1190,13 +1377,14 @@ function openReaderApp(type, contactIndex) {
   }
 
   function wrapPanel(title, bodyHtml) {
-    var h = '<div class="cu-panel cu-panel-embedded" style="z-index:10">'
+    var panelType = String(type || '').replace(/[^a-z0-9_-]/gi, '')
+    var h = '<div class="cu-panel cu-panel-embedded rd-phone-app-panel rd-phone-app-' + panelType + '" style="z-index:10">'
     h += '<div class="cu-header" style="justify-content:flex-start;gap:8px">'
     h += '<button type="button" class="rd-back-btn" aria-label="返回手机桌面" style="color:var(--c-text2)">←</button>'
     h += '<span class="cu-title" style="flex:1;text-align:center">' + esc(title) + '</span>'
     h += '<span class="rd-back-spacer" aria-hidden="true"></span>'
     h += '</div>'
-    h += '<div class="cu-body" style="padding:8px 10px">' + bodyHtml + '</div>'
+    h += '<div class="cu-body rd-phone-app-body" style="padding:8px 10px">' + bodyHtml + '</div>'
     h += '</div>'
     phoneFrame.innerHTML = h
     var backBtn = phoneFrame.querySelector('.rd-back-btn')
@@ -1207,6 +1395,9 @@ function openReaderApp(type, contactIndex) {
   }
 
   function contactContextHtml() {
+    if (hasAuthoredConnection && activeContact) {
+      return '<div class="rd-contact-source"><span>EXTERNAL SOURCE</span><strong>' + esc((activeContact.name || '未命名') + '的手机') + '</strong></div>'
+    }
     if (contacts.length < 2) return ''
     var h = '<div class="rd-contact-context">'
     h += '<label for="rdContactSelect">联系人</label>'
@@ -1230,39 +1421,220 @@ function openReaderApp(type, contactIndex) {
     }
   }
 
+  function showConnectionGate() {
+    if (!activeContact) return
+    var appLabels = { memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单' }
+    var appDescriptions = {
+      memo: '设备中包含一组可查看的备忘记录。',
+      gallery: '设备中包含一组可查看的照片与相册。',
+      browser: '设备中保留了一段可查看的浏览记录。',
+      shopping: '设备中包含一组购物与订单记录。'
+    }
+    var appLabel = appLabels[type] || '角色记录'
+    var prompt = String(connection && connection.prompt || '').trim() || '剧情中出现了一段来自对方设备的信号。'
+    var name = activeContact.name || '未命名'
+    var h = '<section class="rd-connection-gate" aria-label="' + escapeHtmlAttribute('确认接入' + name + '的手机') + '">'
+    h += '<div class="rd-connection-status"><span>UNKNOWN LINK</span><span>' + esc(appLabel) + ' / WAITING</span></div>'
+    h += '<div class="rd-connection-card">'
+    h += '<div class="rd-connection-device">'
+    h += '<span class="rd-connection-avatar">'
+    if (activeContact.avatarUrl) h += '<img src="' + escapeHtmlAttribute(activeContact.avatarUrl) + '" alt="">'
+    else h += '<span>' + esc(name.charAt(0)) + '</span>'
+    h += '</span><span><strong>' + esc(name) + '的手机</strong><small>来源已由剧情指定</small></span></div>'
+    h += '<div class="rd-connection-prompt">' + esc(prompt) + '</div>'
+    h += '<p>' + esc(appDescriptions[type] || '设备中包含一组可查看的角色记录。') + '<br>对方似乎没有察觉这次连接。</p>'
+    h += '<div class="rd-connection-actions"><button type="button" class="rd-connection-action" data-connection-action="cancel">暂时不要</button><button type="button" class="rd-connection-action primary" data-connection-action="confirm">接入看看</button></div>'
+    h += '</div><div class="rd-connection-footer"><span>× DISCONNECT</span><span>✓ CONNECT</span></div></section>'
+    phoneFrame.innerHTML = h
+
+    var cancel = phoneFrame.querySelector('[data-connection-action="cancel"]')
+    var confirm = phoneFrame.querySelector('[data-connection-action="confirm"]')
+    if (cancel) cancel.onclick = backToDesktop
+    if (confirm) {
+      confirm.onclick = function() { openReaderApp(type, activeContactIndex, true) }
+      confirm.focus()
+    }
+  }
+
+  function showUnavailableConnection() {
+    var appLabels = { memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单' }
+    var appLabel = appLabels[type] || '角色记录'
+    var h = '<section class="rd-connection-gate" data-connection-state="unavailable" aria-label="角色来源已失效">'
+    h += '<div class="rd-connection-status"><span>LINK ERROR</span><span>' + esc(appLabel) + ' / UNAVAILABLE</span></div>'
+    h += '<div class="rd-connection-card">'
+    h += '<div class="rd-connection-device"><span class="rd-connection-avatar"><span>!</span></span><span><strong>暂时无法接入</strong><small>作者指定的角色来源已失效</small></span></div>'
+    h += '<div class="rd-connection-prompt">这位联系人可能已被作者删除或更换。</div>'
+    h += '<p>为了避免显示错误角色的内容，这里不会自动切换到其他联系人。</p>'
+    h += '<div class="rd-connection-actions"><button type="button" class="rd-connection-action primary" data-connection-action="cancel">返回手机</button></div>'
+    h += '</div><div class="rd-connection-footer"><span>× DISCONNECTED</span><span>— SOURCE LOST</span></div></section>'
+    phoneFrame.innerHTML = h
+
+    var cancel = phoneFrame.querySelector('[data-connection-action="cancel"]')
+    if (cancel) {
+      cancel.onclick = backToDesktop
+      cancel.focus()
+    }
+  }
+
+  if (hasBrokenConnection) {
+    showUnavailableConnection()
+    return
+  }
+
+  if (hasAuthoredConnection && connectionConfirmed !== true) {
+    showConnectionGate()
+    return
+  }
+
   if (type === 'messages') {
     var chats = pd.chats || []
-    var h = ''
-    if (chats.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无对话</div>'
-    chats.forEach(function(ch, chatIndex) {
-      var name = ''
-      if (ch.type === 'group') name = ch.groupName || '群聊'
-      else {
-        var cc = contacts.find(function(x) { return x.id === ch.contactIds[0] })
-        name = cc ? cc.name : '未知'
+    var phoneChoiceSession = readerPhoneChoiceSession(w)
+    if (phoneChoiceSession.moments === null) phoneChoiceSession.moments = cloneReaderThreadItems(pd.moments)
+    var moments = phoneChoiceSession.moments
+    var momentChoiceRuns = phoneChoiceSession.momentChoiceRuns
+
+    function renderMomentComment(moment, comment) {
+      var containerKey = String(moment.id)
+      var isReader = comment && (comment.contactId === 'self' || comment.senderId === 'self')
+      var name = String(comment && comment.contactName || (isReader ? readerThreadDisplayName(pd, rc) : '角色')).trim() || (isReader ? '我' : '角色')
+      var content = String(comment && (comment.content != null ? comment.content : comment.text) || '')
+      var h = '<div class="rd-thread-comment' + (isReader ? ' is-reader' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '">'
+      h += '<div class="rd-thread-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
+      if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
+      h += '</div>'
+      h += '<div class="rd-thread-comment-content">' + esc(content) + '</div>'
+      h += renderReaderThreadReselect(comment, 'moment', containerKey, momentChoiceRuns)
+      h += renderReaderThreadChoiceControls(comment, 'moment', containerKey, momentChoiceRuns)
+      h += '</div>'
+      return h
+    }
+
+    function renderMessagesHome(section, moveFocus) {
+      var activeSection = section === 'moments' ? 'moments' : 'chats'
+      var h = '<div class="rd-message-section-tabs" role="tablist" aria-label="消息内容">'
+      h += '<button type="button" class="rd-message-section-tab' + (activeSection === 'chats' ? ' active' : '') + '" role="tab" aria-selected="' + (activeSection === 'chats' ? 'true' : 'false') + '" aria-controls="rdMessageChats" tabindex="' + (activeSection === 'chats' ? '0' : '-1') + '" data-message-section="chats">聊天</button>'
+      h += '<button type="button" class="rd-message-section-tab' + (activeSection === 'moments' ? ' active' : '') + '" role="tab" aria-selected="' + (activeSection === 'moments' ? 'true' : 'false') + '" aria-controls="rdMessageMoments" tabindex="' + (activeSection === 'moments' ? '0' : '-1') + '" data-message-section="moments">动态</button>'
+      h += '</div>'
+
+      if (activeSection === 'chats') {
+        h += '<div id="rdMessageChats" class="rd-message-section" role="tabpanel">'
+        if (chats.length === 0) h += '<div class="rd-app-empty">暂无对话</div>'
+        chats.forEach(function(ch, chatIndex) {
+          var name = ''
+          if (ch.type === 'group') name = ch.groupName || '群聊'
+          else {
+            var cc = contacts.find(function(x) { return x.id === ch.contactIds[0] })
+            name = cc ? cc.name : '未知'
+          }
+          h += '<button type="button" class="rd-chat-card" data-chat-index="' + chatIndex + '" aria-label="' + escapeHtmlAttribute('打开与 ' + name + ' 的对话') + '">'
+          h += '<span class="rd-message-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(ch.type === 'group' ? '#769b8f' : avatarColor(ch.contactIds && ch.contactIds[0])) + '">' + esc(name.charAt(0)) + '</span>'
+          h += '<span class="rd-message-card-copy"><strong>' + esc(name) + '</strong><small>打开聊天</small></span>'
+          h += '</button>'
+        })
+        h += '</div>'
+      } else {
+        h += '<div id="rdMessageMoments" class="rd-message-section rd-moment-feed" role="tabpanel">'
+        if (moments.length === 0) h += '<div class="rd-app-empty">暂无动态</div>'
+        moments.forEach(function(moment) {
+          var momentName = String(moment.contactName || readerThreadActorName(pd, moment.contactId, '', '角色'))
+          h += '<article class="rd-moment-card" data-moment-id="' + escapeHtmlAttribute(String(moment.id)) + '">'
+          h += '<header class="rd-moment-head"><span class="rd-moment-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(moment.contactId)) + '">' + esc(momentName.charAt(0)) + '</span>'
+          h += '<span><strong>' + esc(momentName) + '</strong><time>' + esc(moment.time || '') + '</time></span></header>'
+          h += '<div class="rd-moment-content">' + esc(moment.content || '') + '</div>'
+          if (Array.isArray(moment.images) && moment.images.length > 0) {
+            h += '<div class="rd-moment-images">'
+            moment.images.forEach(function(image) {
+              var src = typeof image === 'string' ? image : (image && (image.url || image.src) || '')
+              if (src) h += '<img src="' + escapeHtmlAttribute(src) + '" alt="" onerror="this.style.display=\'none\'">'
+            })
+            h += '</div>'
+          }
+          h += '<div class="rd-moment-comments">'
+          var comments = Array.isArray(moment.comments) ? moment.comments : []
+          comments.forEach(function(comment) { h += renderMomentComment(moment, comment) })
+          h += '</div></article>'
+        })
+        h += '</div>'
       }
-      h += '<button type="button" class="rd-chat-card" data-chat-index="' + chatIndex + '" aria-label="' + escapeHtmlAttribute('打开与 ' + name + ' 的对话') + '">'
-      h += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;flex-shrink:0;background:' + (ch.type === 'group' ? '#10b981' : '#6366f1') + '">' + esc(name.charAt(0)) + '</div>'
-      h += '<div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(name) + '</div></div>'
-      h += '</button>'
-    })
-    wrapPanel('消息', h)
-    var cards = phoneFrame.querySelectorAll('.rd-chat-card')
-    cards.forEach(function(card) {
-      card.onclick = function() {
-        var index = Number(card.dataset.chatIndex)
-        if (!Number.isInteger(index) || !chats[index]) return
-        openReaderChat(phoneFrame, w, pd, chats[index], index)
+
+      wrapPanel('消息', h)
+
+      var sectionTabs = phoneFrame.querySelectorAll('.rd-message-section-tab')
+      sectionTabs.forEach(function(tab) {
+        tab.onclick = function() { renderMessagesHome(tab.dataset.messageSection, true) }
+        tab.onkeydown = function(event) {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+          event.preventDefault()
+          renderMessagesHome(activeSection === 'chats' ? 'moments' : 'chats', true)
+        }
+      })
+      if (moveFocus) focusReaderControl(phoneFrame, '[data-message-section="' + activeSection + '"]')
+
+      if (activeSection === 'chats') {
+        phoneFrame.querySelectorAll('.rd-chat-card').forEach(function(card) {
+          card.onclick = function() {
+            var index = Number(card.dataset.chatIndex)
+            if (!Number.isInteger(index) || !chats[index]) return
+            openReaderChat(phoneFrame, w, pd, chats[index], index)
+          }
+        })
+        return
       }
-    })
+
+      phoneFrame.querySelectorAll('.rd-thread-choice-option[data-thread-scope="moment"]').forEach(function(button) {
+        button.onclick = function() {
+          var moment = moments.find(function(candidate) { return String(candidate.id) === String(button.dataset.threadContainer) })
+          if (!moment || !Array.isArray(moment.comments)) return
+          var ownerId = resolveReaderThreadOwnerId(moment.comments, button.dataset.threadOwnerId)
+          if (ownerId === null) return
+          var runKey = readerThreadRunKey(String(moment.id), ownerId)
+          if (momentChoiceRuns.has(runKey)) return
+          var choiceIndex = Number(button.dataset.threadChoiceIndex)
+          var result = applyThreadChoice(moment.comments, ownerId, choiceIndex, readerThreadRuntimeOptions(pd, rc, 'moment'))
+          if (!result.ok) return
+          moment.comments = result.items
+          momentChoiceRuns.set(runKey, { containerKey: String(moment.id), momentId: moment.id, run: result.run })
+          renderMessagesHome('moments')
+          var reselectButtons = phoneFrame.querySelectorAll('.rd-thread-choice-reselect')
+          for (var i = 0; i < reselectButtons.length; i++) {
+            if (reselectButtons[i].dataset.threadRunKey !== runKey) continue
+            reselectButtons[i].focus()
+            break
+          }
+        }
+      })
+
+      phoneFrame.querySelectorAll('.rd-thread-choice-reselect[data-thread-scope="moment"]').forEach(function(button) {
+        button.onclick = function() {
+          var runKey = button.dataset.threadRunKey
+          var entry = momentChoiceRuns.get(runKey)
+          if (!entry) return
+          var moment = moments.find(function(candidate) { return candidate.id === entry.momentId })
+          if (!moment || !Array.isArray(moment.comments)) return
+          moment.comments = rollbackThreadChoice(moment.comments, entry.run)
+          momentChoiceRuns.delete(runKey)
+          renderMessagesHome('moments')
+          var choiceButtons = phoneFrame.querySelectorAll('.rd-thread-choice-option')
+          for (var i = 0; i < choiceButtons.length; i++) {
+            if (choiceButtons[i].dataset.threadOwnerId !== String(entry.run.ownerItemId)) continue
+            choiceButtons[i].focus()
+            break
+          }
+        }
+      })
+    }
+
+    renderMessagesHome('chats')
   } else if (type === 'forum') {
     var posts = pd.forumPosts || []
+    var forumVisual = appStyle('forum')
     var h = ''
-    if (posts.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无帖子</div>'
+    if (posts.length === 0) h += '<div class="rd-app-empty">暂无帖子</div>'
     posts.forEach(function(p, postIndex) {
-      h += '<button type="button" class="rd-post-card" data-post-index="' + postIndex + '" aria-label="' + escapeHtmlAttribute('查看帖子 ' + (p.title || '')) + '">'
-      h += '<div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.75rem;font-weight:600;flex-shrink:0;background:' + avatarColor(p.contactId) + '">' + esc((p.contactName || '?').charAt(0)) + '</div>'
-      h += '<div style="flex:1;min-width:0"><div style="font-size:.8rem;font-weight:500;color:#555">' + esc(p.title) + '</div><div style="font-size:.68rem;color:#999">' + esc(p.contactName || '') + ' / ' + esc(p.time || '') + '</div></div>'
+      var forumVars = '--rd-forum-card:' + sanitizeCssColor(forumVisual.cardBg) + ';--rd-forum-radius:' + boundedReaderSetting(getAppSettings('forum').cardRadius, 0, 0, 16) + 'px;--rd-forum-title:' + sanitizeCssColor(forumVisual.titleColor) + ';--rd-forum-title-size:' + boundedReaderSetting(getAppSettings('forum').titleSize, 13, 10, 18) + 'px;--rd-forum-time:' + sanitizeCssColor(forumVisual.timeColor)
+      h += '<button type="button" class="rd-post-card" data-post-index="' + postIndex + '" aria-label="' + escapeHtmlAttribute('查看帖子 ' + (p.title || '')) + '" style="' + forumVars + '">'
+      h += '<span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(p.contactId)) + '">' + esc((p.contactName || '?').charAt(0)) + '</span>'
+      h += '<span class="rd-forum-copy"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-meta">' + esc(p.contactName || '') + ' / ' + esc(p.time || '') + '</span></span>'
       h += '</button>'
     })
     wrapPanel('论坛', h)
@@ -1276,11 +1648,19 @@ function openReaderApp(type, contactIndex) {
     })
   } else if (type === 'memo') {
     var memos = (pd.memos || []).filter(belongsToActiveContact)
-    var h = ''
-    if (memos.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无备忘</div>'
+    var memoSettings = getAppSettings('memo')
+    var memoVisual = appStyle('memo')
+    var memoStyleName = ['plain', 'sticky', 'vintage'].includes(memoVisual.cardStyle) ? memoVisual.cardStyle : 'plain'
+    var memoBg = memoStyleName === 'sticky' ? '#fef9e7' : (memoStyleName === 'vintage' ? '#f5e6c8' : memoVisual.cardBg)
+    var memoBorder = memoStyleName === 'sticky' ? '#e8d5a0' : (memoStyleName === 'vintage' ? '#d4c4a0' : memoVisual.cardBorder)
+    var memoRadius = memoStyleName === 'vintage' ? 2 : boundedReaderSetting(memoSettings.cardRadius, 4, 0, 16)
+    var memoVars = '--rd-memo-bg:' + sanitizeCssColor(memoBg) + ';--rd-memo-border:' + sanitizeCssColor(memoBorder) + ';--rd-memo-radius:' + memoRadius + 'px;--rd-memo-text:' + sanitizeCssColor(memoVisual.textColor) + ';--rd-memo-font-size:' + boundedReaderSetting(memoSettings.fontSize, 12, 10, 16) + 'px;--rd-memo-line-height:' + boundedReaderSetting(memoSettings.lineHeight, 1.6, 1.2, 2.4)
+    var h = '<div class="rd-memo-stack rd-memo-style-' + memoStyleName + '" style="' + memoVars + '">'
+    if (memos.length === 0) h += '<div class="rd-app-empty">暂无备忘</div>'
     memos.forEach(function(m) {
-      h += '<div style="padding:10px 12px;margin-bottom:8px;background:#fff;border:1px solid #eee;font-size:.8rem;line-height:1.6">' + (m.content || '') + '</div>'
+      h += '<article class="rd-memo-note">' + (m.content || '') + '</article>'
     })
+    h += '</div>'
     wrapContactPanel('备忘录', h)
   } else if (type === 'gallery') {
     var primaryContact = activeContact && typeof activeContact === 'object' ? activeContact : null
@@ -1294,8 +1674,8 @@ function openReaderApp(type, contactIndex) {
     var albumIds = new Set(albums.map(function(a) { return a.id }))
 
     function renderGalleryPhotoGrid(items) {
-      var grid = '<div class="rd-gallery-grid" style="' + galleryStyle + '">'
-      if (items.length === 0) grid += '<div class="rd-gallery-empty">暂无照片</div>'
+      var grid = '<div class="rd-gallery-film"><div class="rd-gallery-grid" style="' + galleryStyle + '">'
+      if (items.length === 0) grid += '<div class="rd-gallery-empty rd-app-empty">暂无照片</div>'
       items.forEach(function(p) {
         grid += '<div class="rd-gallery-photo">'
         if (p.imageUrl) {
@@ -1305,7 +1685,7 @@ function openReaderApp(type, contactIndex) {
         }
         grid += '</div>'
       })
-      grid += '</div>'
+      grid += '</div></div>'
       return grid
     }
 
@@ -1358,18 +1738,26 @@ function openReaderApp(type, contactIndex) {
     renderGalleryMain()
   } else if (type === 'browser') {
     var history = (pd.browserHistory || []).filter(belongsToActiveContact)
-    var h = '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:#fff;border:1px solid #ddd"><span style="color:#999">🔍</span><span style="font-size:.78rem;color:#999">搜索或输入网址</span></div>'
-    if (history.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无记录</div>'
+    var browserSettings = getAppSettings('browser')
+    var browserVisual = appStyle('browser')
+    var browserVars = '--rd-browser-entry:' + sanitizeCssColor(browserSettings.entryBg) + ';--rd-browser-radius:' + boundedReaderSetting(browserSettings.entryRadius, 0, 0, 12) + 'px;--rd-browser-title:' + sanitizeCssColor(browserVisual.titleColor) + ';--rd-browser-title-size:' + boundedReaderSetting(browserSettings.titleSize, 12, 10, 16) + 'px;--rd-browser-url:' + sanitizeCssColor(browserVisual.urlColor) + ';--rd-browser-time:' + sanitizeCssColor(browserVisual.timeColor)
+    var h = '<div class="rd-browser-history" style="' + browserVars + '">'
+    h += '<div class="rd-browser-address"><span class="rd-browser-search" aria-hidden="true">⌕</span><span>搜索或输入网址</span></div>'
+    if (history.length === 0) h += '<div class="rd-app-empty">暂无记录</div>'
     history.forEach(function(it) {
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #eee">'
-      h += '<div style="width:8px;height:8px;border-radius:50%;background:' + avatarColor(it.contactId) + '"></div>'
-      h += '<div style="flex:1"><div style="font-size:.78rem;font-weight:500">' + esc(it.title || '') + '</div><div style="font-size:.68rem;color:#999">' + esc(it.url || '') + '</div></div>'
-      h += '<span style="font-size:.65rem;color:#999">' + esc((it.time || '').replace(/\s.*$/, '')) + '</span>'
+      h += '<div class="rd-browser-entry">'
+      h += '<span class="rd-browser-marker" style="--rd-marker:' + sanitizeCssColor(avatarColor(it.contactId)) + '"></span>'
+      h += '<span class="rd-browser-copy"><span class="rd-browser-title">' + esc(it.title || '') + '</span><span class="rd-browser-url">' + esc(it.url || '') + '</span></span>'
+      h += '<time class="rd-browser-time">' + esc((it.time || '').replace(/\s.*$/, '')) + '</time>'
       h += '</div>'
     })
+    h += '</div>'
     wrapContactPanel('浏览记录', h)
   } else if (type === 'shopping') {
     var items = (pd.shoppingItems || []).filter(belongsToActiveContact)
+    var shopSettings = getAppSettings('shopping')
+    var shopVisual = appStyle('shopping')
+    var shopVars = '--rd-shop-card:' + sanitizeCssColor(shopVisual.cardBg) + ';--rd-shop-radius:' + boundedReaderSetting(shopSettings.cardRadius, 0, 0, 16) + 'px;--rd-shop-name:' + sanitizeCssColor(shopVisual.nameColor) + ';--rd-shop-name-size:' + boundedReaderSetting(shopSettings.nameSize, 12, 10, 16) + 'px;--rd-shop-price:' + sanitizeCssColor(shopVisual.priceColor)
     var cartItems = items.filter(function(s) { return s.status !== 'order' })
     var orderItems = items.filter(function(s) { return s.status === 'order' })
     var h = '<div class="rd-shop-tabs" role="tablist" aria-label="购物内容">'
@@ -1377,17 +1765,17 @@ function openReaderApp(type, contactIndex) {
     h += '<button type="button" class="rd-shop-tab" id="rdShopOrderTab" role="tab" aria-controls="rdShopOrder" aria-selected="false" tabindex="-1" data-tab="order">订单</button>'
     h += '</div>'
     function shopList(list) {
-      var r = ''
-      if (list.length === 0) r += '<div style="text-align:center;padding:20px;color:#999">暂无</div>'
+      var r = '<div class="rd-shop-receipt" style="' + shopVars + '">'
+      if (list.length === 0) r += '<div class="rd-app-empty">暂无</div>'
       list.forEach(function(s) {
-        r += '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #eee;align-items:flex-start">'
-        r += '<div style="width:50px;height:50px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid #eee">'
-        if (s.imageUrl) r += '<img src="' + esc(s.imageUrl) + '" style="width:100%;height:100%;object-fit:cover">'
+        r += '<div class="rd-shop-item">'
+        r += '<div class="rd-shop-thumb">'
+        if (s.imageUrl) r += '<img src="' + esc(s.imageUrl) + '" alt="" loading="lazy">'
         r += '</div>'
-        r += '<div style="flex:1"><div style="font-size:.78rem;font-weight:500">' + esc(s.name) + '</div><div style="font-size:.75rem;color:var(--c-primary-hover)">¥' + (s.price || 0).toFixed(2) + '</div></div>'
+        r += '<div class="rd-shop-copy"><div class="rd-shop-name">' + esc(s.name) + '</div><div class="rd-shop-price">¥' + (s.price || 0).toFixed(2) + '</div></div>'
         r += '</div>'
       })
-      return r
+      return r + '</div>'
     }
     h += '<div class="rd-shop-panel" id="rdShopCart" role="tabpanel" aria-labelledby="rdShopCartTab">' + shopList(cartItems) + '</div>'
     h += '<div class="rd-shop-panel" id="rdShopOrder" role="tabpanel" aria-labelledby="rdShopOrderTab" style="display:none" hidden>' + shopList(orderItems) + '</div>'
@@ -1422,20 +1810,29 @@ function openReaderApp(type, contactIndex) {
       }
     })
   } else if (type === 'profile') {
-    var h = '<div style="text-align:center;padding:30px">'
-    h += '<div style="width:70px;height:70px;border-radius:50%;background:#eee;display:inline-flex;align-items:center;justify-content:center;font-size:2rem;color:#999;margin-bottom:12px">' + esc((pd.skin?.readerId || '读者').charAt(0)) + '</div>'
-    h += '<div style="font-size:1rem;font-weight:600;color:#555">' + esc(pd.skin?.readerId || '读者') + '</div>'
+    var profileName = rc.readerId || pd.skin?.readerId || '读者'
+    var profileAvatar = rc.readerAvatar || pd.skin?.readerAvatar || ''
+    var h = '<div class="rd-profile-card-phone">'
+    h += '<div class="rd-profile-card-avatar">'
+    if (profileAvatar) h += '<img src="' + escapeHtmlAttribute(profileAvatar) + '" alt="">'
+    else h += '<span>' + esc(profileName.charAt(0)) + '</span>'
+    h += '</div>'
+    h += '<div class="rd-profile-card-copy"><div class="rd-profile-card-label">READER ID</div><div class="rd-profile-card-name">' + esc(profileName) + '</div></div>'
     h += '</div>'
     wrapPanel('个人主页', h)
   } else if (type === 'contacts') {
-    var h = ''
-    if (contacts.length === 0) h += '<div style="text-align:center;padding:20px;color:#999">暂无联系人</div>'
+    var contactSettings = getAppSettings('contacts')
+    var contactVisual = appStyle('contacts')
+    var contactVars = '--rd-contact-radius:' + contactVisual.avatarRadius + ';--rd-contact-name:' + sanitizeCssColor(contactVisual.nameColor) + ';--rd-contact-name-size:' + boundedReaderSetting(contactSettings.nameSize, 13, 10, 18) + 'px;--rd-contact-name-weight:' + (contactVisual.nameWeight === '600' || contactVisual.nameWeight === '700' ? contactVisual.nameWeight : '500')
+    var h = '<div class="rd-contact-book" style="' + contactVars + '">'
+    if (contacts.length === 0) h += '<div class="rd-app-empty">暂无联系人</div>'
     contacts.forEach(function(c) {
-      h += '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eee">'
-      h += '<div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600;flex-shrink:0;background:' + avatarColor(c.id) + '">' + esc(c.name.charAt(0)) + '</div>'
-      h += '<div style="font-size:.82rem;font-weight:500;color:#555">' + esc(c.name) + '</div>'
+      h += '<div class="rd-contact-entry">'
+      h += '<div class="rd-contact-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(c.id)) + '">' + esc((c.name || '?').charAt(0)) + '</div>'
+      h += '<div class="rd-contact-name">' + esc(c.name || '未命名') + '</div>'
       h += '</div>'
     })
+    h += '</div>'
     wrapPanel('联系人', h)
   }
 }
@@ -1444,8 +1841,55 @@ function openReaderApp(type, contactIndex) {
 function openReaderChat(frame, w, pd, ch, chatIndex) {
   var contacts = pd.contacts || []
 
-  // Deep clone chat data so we don't mutate the original work object
-  ch = JSON.parse(JSON.stringify(ch))
+  // Keep reader choices for this reading session without mutating the authored work.
+  var phoneChoiceSession = readerPhoneChoiceSession(w)
+  var chatSessionKey = String(chatIndex) + '::' + String(ch && ch.id || '')
+  var chatSession = phoneChoiceSession.chats.get(chatSessionKey)
+  if (!chatSession) {
+    chatSession = { chat: JSON.parse(JSON.stringify(ch)), choiceRuns: new Map() }
+    phoneChoiceSession.chats.set(chatSessionKey, chatSession)
+  }
+  ch = chatSession.chat
+  var openedCallScenes = Object.create(null)
+  var mayAutoOpenCall = true
+  var choiceRuns = chatSession.choiceRuns
+  var knownMessageIds = new Set()
+  var generatedMessageSequence = 0
+  var generatedMessagePrefix = 'reader-choice-' + Date.now().toString(36) + '-'
+
+  function nextReaderChoiceMessageId() {
+    var id = ''
+    do {
+      generatedMessageSequence += 1
+      id = generatedMessagePrefix + generatedMessageSequence.toString(36)
+    } while (knownMessageIds.has(id))
+    knownMessageIds.add(id)
+    return id
+  }
+
+  function ensureReaderChatMessageIds(rounds) {
+    var seen = new Set()
+    rounds.forEach(function(round) {
+      var messages = Array.isArray(round && round.messages) ? round.messages : []
+      messages.forEach(function(message) {
+        var id = message && typeof message.id === 'string' ? message.id : ''
+        if (!id || seen.has(id)) {
+          id = nextReaderChoiceMessageId()
+          message.id = id
+        }
+        seen.add(id)
+        knownMessageIds.add(id)
+      })
+    })
+  }
+
+  function choiceRunKey(roundIndex, ownerMessageId) {
+    return String(roundIndex) + ':' + String(ownerMessageId)
+  }
+
+  function messageLocationKey(roundIndex, messageId) {
+    return String(roundIndex) + ':' + String(messageId)
+  }
 
   function backToList() {
     openReaderApp('messages')
@@ -1458,33 +1902,143 @@ function openReaderChat(frame, w, pd, ch, chatIndex) {
     return c ? c.name : '未知'
   }
 
+  function openCallScene(msg, callKey) {
+    mayAutoOpenCall = false
+    openedCallScenes[callKey] = true
+    var caller = contacts.find(function(contact) { return contact.id === msg.senderId })
+    var callerName = caller ? caller.name : getChatName()
+    var modeLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
+    var playback = createCallPlaybackState(msg.callLines, msg.text)
+
+    function renderCallPlayback(advanced) {
+      var callBackgroundSettings = normalizedReaderCallBackgroundSettings(getAppSettings('messages'))
+      var background = readerCallBackgroundPresentation(callBackgroundSettings)
+      var currentLine = playback.currentIndex >= 0 ? playback.lines[playback.currentIndex] : ''
+      var h = '<section class="rd-call-scene' + background.className + '" data-call-background="' + background.attribute + '"' + (background.style ? ' style="' + escapeHtmlAttribute(background.style) + '"' : '') + ' aria-label="' + escapeHtmlAttribute('与' + callerName + '的' + modeLabel) + '">'
+      h += '<div class="rd-call-status"><span>' + (msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL') + '</span><span>' + (playback.isComplete ? '通话内容已结束' : '剧情进行中') + '</span></div>'
+      h += '<div class="rd-call-tag">' + esc(callerName) + '打来的' + modeLabel + '</div>'
+      h += '<div class="rd-call-portrait">'
+      if (caller && caller.avatarUrl) h += '<img src="' + escapeHtmlAttribute(caller.avatarUrl) + '" alt="">'
+      else h += '<span>' + esc((callerName || '?').charAt(0)) + '</span>'
+      h += '</div><h3>' + esc(callerName) + '</h3><div class="rd-call-duration">正在通话</div>'
+
+      if (playback.isEmpty) {
+        h += '<div class="rd-call-transcript is-complete"><p class="rd-call-empty" role="status">本次通话没有台词</p></div>'
+      } else {
+        var transcriptTag = playback.isComplete ? 'div' : 'button'
+        var transcriptAttributes = playback.isComplete
+          ? ' class="rd-call-transcript is-complete"'
+          : ' type="button" class="rd-call-transcript rd-call-advance" aria-label="显示下一句通话台词（' + (playback.currentIndex + 1) + ' / ' + playback.lines.length + '）"'
+        h += '<' + transcriptTag + transcriptAttributes + '>'
+        h += '<span class="rd-call-progress" aria-label="通话进度 ' + (playback.currentIndex + 1) + ' / ' + playback.lines.length + '">' + (playback.currentIndex + 1) + ' / ' + playback.lines.length + '</span>'
+        h += '<span class="rd-call-lines">'
+        for (var index = 0; index < playback.currentIndex; index++) {
+          h += '<span class="rd-call-line old">' + esc(playback.lines[index]) + '</span>'
+        }
+        h += '<span class="rd-call-line current' + (advanced && shouldUseMotion(true) ? ' is-entering' : '') + '" aria-live="polite" aria-atomic="true">' + esc(currentLine) + '</span>'
+        h += '</span>'
+        if (playback.isComplete) h += '<span class="rd-call-complete" role="status">通话内容已结束</span>'
+        else h += '<span class="rd-call-hint">点击、按 Enter 或空格显示下一句</span>'
+        h += '</' + transcriptTag + '>'
+      }
+
+      h += '<div class="rd-call-note">通话是剧情的一部分；挂断后回到当前聊天。</div>'
+      h += '<button type="button" class="rd-call-hangup" aria-label="挂断通话">挂断</button>'
+      h += '</section>'
+      frame.innerHTML = h
+
+      var renderedCallScene = frame.querySelector('.rd-call-scene')
+      if (callBackgroundSettings.callBackgroundType === 'image' &&
+          !verifiedReaderCallBackgroundImages.has(callBackgroundSettings.callBackgroundImage)) {
+        verifyReaderCallBackgroundDataUrl(callBackgroundSettings.callBackgroundImage).then(function(dataUrl) {
+          if (!renderedCallScene || !renderedCallScene.isConnected) return
+          renderedCallScene.classList.add('has-call-background-image')
+          renderedCallScene.dataset.callBackground = 'image'
+          renderedCallScene.style.setProperty('--rd-call-image', 'url("' + dataUrl + '")')
+        }).catch(function() {
+          // The already-rendered selected preset remains authoritative.
+        })
+      }
+
+      var advance = frame.querySelector('.rd-call-advance')
+      var hangup = frame.querySelector('.rd-call-hangup')
+      if (advance) {
+        advance.onclick = function() {
+          playback = advanceCallPlayback(playback)
+          renderCallPlayback(true)
+        }
+        advance.focus()
+      } else {
+        hangup.focus()
+      }
+      hangup.onclick = function() {
+        renderChat()
+        focusReaderControl(frame, '.rd-call-card[data-call-key="' + callKey + '"]')
+      }
+      var transcript = frame.querySelector('.rd-call-lines')
+      if (transcript) transcript.scrollTop = transcript.scrollHeight
+    }
+
+    renderCallPlayback(false)
+  }
+
   function renderChat() {
     var chatName = getChatName()
     var ast = appStyle('messages')
-    var rounds = ch.rounds || []
-    if (rounds.length === 0 && ch.messages && ch.messages.length) {
-      rounds = [{ id: 'd', label: '', messages: ch.messages }]
+    var rounds = Array.isArray(ch.rounds) ? ch.rounds : []
+    var legacyMessages = Array.isArray(ch.messages) ? ch.messages : []
+    if (rounds.length === 0 && legacyMessages.length) {
+      rounds = [{ id: 'd', label: '', messages: legacyMessages.slice() }]
       ch.rounds = rounds
+      ch.messages = []
+    } else if (rounds.length > 0 && legacyMessages.length) {
+      var migrationRound = rounds[rounds.length - 1]
+      migrationRound.messages = (Array.isArray(migrationRound.messages) ? migrationRound.messages : []).concat(legacyMessages)
+      ch.messages = []
     }
+    ensureReaderChatMessageIds(rounds)
 
-    // Collect all choices from all messages (used or not — reader can replay)
+    // The latest authored choice group stays active until it has produced a run.
+    // While that run exists, older groups do not resurface underneath it.
     var allChoices = []
+    choiceScan:
     for (var lri = rounds.length - 1; lri >= 0; lri--) {
       if (rounds[lri].messages) {
         for (var lmi = rounds[lri].messages.length - 1; lmi >= 0; lmi--) {
           var lm = rounds[lri].messages[lmi]
           if (lm.choices && lm.choices.length > 0) {
-            for (var lci = 0; lci < lm.choices.length; lci++) {
-              allChoices.push({ roundIdx: lri, msgIdx: lmi, choiceIdx: lci, text: lm.choices[lci].text })
+            var ownerRunKey = choiceRunKey(lri, lm.id)
+            if (!choiceRuns.has(ownerRunKey)) {
+              for (var lci = 0; lci < lm.choices.length; lci++) {
+                allChoices.push({
+                  roundIdx: lri,
+                  ownerMessageId: lm.id,
+                  choiceIdx: lci,
+                  text: lm.choices[lci].text || lm.choices[lci].replyText || '',
+                })
+              }
             }
-            if (allChoices.length > 0) break
+            break choiceScan
           }
         }
-        if (allChoices.length > 0) break
       }
     }
 
+    var reselectRunsByReply = new Map()
+    choiceRuns.forEach(function(entry, key) {
+      if (!entry || !entry.run) return
+      var generatedIds = Array.isArray(entry.run.generatedMessageIds) ? entry.run.generatedMessageIds : []
+      var anchorId = entry.run.replyMessageId != null
+        ? entry.run.replyMessageId
+        : (generatedIds.length > 0 ? generatedIds[0] : entry.run.ownerMessageId)
+      if (anchorId == null) return
+      reselectRunsByReply.set(messageLocationKey(entry.roundIndex, anchorId), key)
+    })
+
     var avSz = ast.avatarSize + 'px'
+
+    var callMessages = []
+    var autoCall = null
 
     // ---- BUILD HTML ----
     var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;background:#f0f0f0">'
@@ -1507,8 +2061,20 @@ function openReaderChat(frame, w, pd, ch, chatIndex) {
           h += '<div style="text-align:center;padding:6px 0;font-size:.62rem;color:#b0b8c4">' + esc(msg.time || '') + '</div>'
           continue
         }
+        if (msg.type === 'call') {
+          var callKey = ri + '-' + mi
+          var callContact = contacts.find(function(contact) { return contact.id === msg.senderId })
+          var callName = callContact ? callContact.name : chatName
+          var callLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
+          callMessages.push({ key: callKey, message: msg })
+          if (mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall) autoCall = { key: callKey, message: msg }
+          h += '<button type="button" class="rd-call-card" data-call-key="' + callKey + '" aria-label="' + escapeHtmlAttribute('打开与' + callName + '的' + callLabel) + '">'
+          h += '<span>' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span><strong>' + esc(callName) + '</strong><small>' + callLabel + '</small></span><b>›</b></button>'
+          continue
+        }
         var isSelf = msg.senderId === 'self'
-        h += '<div style="display:flex;gap:6px;margin-bottom:10px;align-items:flex-start;' + (isSelf ? 'flex-direction:row-reverse' : '') + '">'
+        var reselectRunKey = reselectRunsByReply.get(messageLocationKey(ri, msg.id)) || ''
+        h += '<div class="rd-chat-message ' + (isSelf ? 'is-self' : 'is-other') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '">'
         // Avatar for others
         if (!isSelf) {
           var sc = contacts.find(function(c) { return c.id === msg.senderId })
@@ -1518,7 +2084,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex) {
           h += '</div>'
         }
         // Bubble content
-        h += '<div style="min-width:0;max-width:75%">'
+        h += '<div class="rd-chat-message-body">'
         var bubbleStyle = isSelf
           ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
           : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
@@ -1552,6 +2118,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex) {
           }
           h += esc(msg.text || '') + '</div>'
         }
+        if (reselectRunKey) {
+          h += '<button type="button" class="rd-chat-choice-reselect" data-choice-run-key="' + escapeHtmlAttribute(reselectRunKey) + '" aria-label="重选这条回复">重选</button>'
+        }
         h += '</div>'
         h += '</div>'
       }
@@ -1560,66 +2129,103 @@ function openReaderChat(frame, w, pd, ch, chatIndex) {
 
     // Choice popup panel
     if (allChoices.length > 0) {
-      h += '<div id="rdChoiceList" style="display:none;position:absolute;bottom:42px;left:0;right:0;background:#fff;border:1px solid #CAD3E0;border-radius:4px;max-height:200px;overflow-y:auto;z-index:30;box-shadow:0 -4px 12px rgba(0,0,0,.15);margin:0 6px">'
+      h += '<div id="rdChoiceList" class="rd-chat-choice-list" role="listbox" aria-label="选择回复" hidden>'
       for (var ac = 0; ac < allChoices.length; ac++) {
         var acv = allChoices[ac]
-        h += '<div class="rd-reply-option" data-ri="' + acv.roundIdx + '" data-mi="' + acv.msgIdx + '" data-ci="' + acv.choiceIdx + '" style="padding:10px 14px;font-size:.78rem;color:#4a5568;cursor:pointer;border-bottom:1px solid #eee">' + esc(acv.text) + '</div>'
+        h += '<button type="button" class="rd-reply-option" role="option" data-ri="' + acv.roundIdx + '" data-owner-id="' + escapeHtmlAttribute(acv.ownerMessageId) + '" data-ci="' + acv.choiceIdx + '">' + esc(acv.text) + '</button>'
       }
       h += '</div>'
     }
 
     // Bottom input bar
-    h += '<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:#f5f6f8;border-top:1px solid #d8dce4;flex-shrink:0">'
-    h += '<input id="chatInput" readonly style="flex:1;padding:7px 12px;border:1px solid #d8dce4;border-radius:18px;font-size:.76rem;outline:none;background:' + (allChoices.length > 0 ? '#fff' : '#e8e8e8') + ';color:' + (allChoices.length > 0 ? '#4a5568' : '#aaa') + ';cursor:' + (allChoices.length > 0 ? 'pointer' : 'default') + '" placeholder="' + (allChoices.length > 0 ? '点击选择回复...' : '暂无可用选项') + '" value="">'
-    h += '<button id="chatSendBtn" style="width:30px;height:30px;border:none;background:#222;color:#fff;cursor:pointer;border-radius:50%;font-size:.7rem;display:flex;align-items:center;justify-content:center;flex-shrink:0">▶</button>'
+    h += '<div class="rd-chat-composer' + (allChoices.length > 0 ? ' has-choices' : '') + '">'
+    h += '<input id="chatInput" class="rd-chat-choice-trigger" readonly aria-label="' + (allChoices.length > 0 ? '选择一条完整回复' : '暂无可用回复') + '" aria-haspopup="listbox" aria-expanded="false"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList"' : ' disabled') + ' placeholder="' + (allChoices.length > 0 ? '点击选择回复...' : '暂无可用选项') + '" value="">'
+    h += '<button type="button" id="chatSendBtn" class="rd-chat-choice-toggle" aria-label="打开回复选项"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList" aria-expanded="false"' : ' disabled') + '>▶</button>'
     h += '</div>'
 
     h += '</div>'
     frame.innerHTML = h
 
+    if (autoCall) {
+      openCallScene(autoCall.message, autoCall.key)
+      return
+    }
+
     // ---- Bind events ----
     frame.querySelector('#chatBack').onclick = backToList
+
+    frame.querySelectorAll('.rd-call-card').forEach(function(card) {
+      card.onclick = function() {
+        var call = callMessages.find(function(entry) { return entry.key === card.dataset.callKey })
+        if (call) openCallScene(call.message, call.key)
+      }
+    })
 
     var chatInput = frame.querySelector('#chatInput')
     var sendBtn = frame.querySelector('#chatSendBtn')
     var choiceList = frame.querySelector('#rdChoiceList')
 
-    function pickChoice(ri, mi, ci) {
-      if (!rounds[ri] || !rounds[ri].messages[mi]) return
-      var m = rounds[ri].messages[mi]
-      if (!m.choices || !m.choices[ci]) return
-      var choice = m.choices[ci]
-      if (choice.replyText) {
-        rounds[ri].messages.push({ id: 'r' + Date.now(), senderId: 'self', text: choice.replyText, type: 'text', time: new Date().toLocaleString() })
-      }
-      if (choice.followUpMessages) {
-        choice.followUpMessages.forEach(function(fm) {
-          rounds[ri].messages.push(Object.assign({}, fm, { id: 'r' + Date.now() + Math.random() }))
-        })
-      }
-      if (choiceList) choiceList.style.display = 'none'
+    function setChoiceListOpen(open) {
+      if (!choiceList) return
+      choiceList.hidden = !open
+      if (chatInput) chatInput.setAttribute('aria-expanded', open ? 'true' : 'false')
+      if (sendBtn) sendBtn.setAttribute('aria-expanded', open ? 'true' : 'false')
+    }
+
+    function pickChoice(ri, ownerMessageId, ci) {
+      if (!rounds[ri]) return
+      var runKey = choiceRunKey(ri, ownerMessageId)
+      if (choiceRuns.has(runKey)) return
+      var result = applyChatChoice(rounds[ri], ownerMessageId, ci, {
+        idFactory: nextReaderChoiceMessageId,
+      })
+      if (!result.ok) return
+      rounds[ri] = result.round
+      choiceRuns.set(runKey, { roundIndex: ri, run: result.run })
+      setChoiceListOpen(false)
       renderChat()
     }
 
     // Input bar toggle
-    if (chatInput) chatInput.onclick = function(e) { e.stopPropagation(); if (choiceList) choiceList.style.display = (choiceList.style.display === 'block' ? 'none' : 'block') }
-    if (sendBtn) sendBtn.onclick = function(e) { e.stopPropagation(); if (choiceList) choiceList.style.display = (choiceList.style.display === 'block' ? 'none' : 'block') }
+    if (chatInput) chatInput.onclick = function(e) { e.stopPropagation(); setChoiceListOpen(choiceList && choiceList.hidden) }
+    if (sendBtn) sendBtn.onclick = function(e) { e.stopPropagation(); setChoiceListOpen(choiceList && choiceList.hidden) }
 
     // Option clicks
     if (choiceList) {
       choiceList.querySelectorAll('.rd-reply-option').forEach(function(opt) {
         opt.onclick = function(e) {
           e.stopPropagation()
-          pickChoice(parseInt(opt.dataset.ri), parseInt(opt.dataset.mi), parseInt(opt.dataset.ci))
-        }
-        opt.onmouseenter = function() { opt.style.background = '#f5f5f5' }
-        opt.onmouseleave = function() { opt.style.background = '' }
-      })
-      frame.addEventListener('click', function(e) {
-        if (choiceList.style.display === 'block' && !choiceList.contains(e.target) && e.target !== chatInput && e.target !== sendBtn) {
-          choiceList.style.display = 'none'
+          pickChoice(parseInt(opt.dataset.ri), opt.dataset.ownerId, parseInt(opt.dataset.ci))
         }
       })
+    }
+
+    frame.querySelectorAll('.rd-chat-choice-reselect').forEach(function(button) {
+      button.onclick = function(e) {
+        e.stopPropagation()
+        var key = button.dataset.choiceRunKey
+        var entry = choiceRuns.get(key)
+        if (!entry || !rounds[entry.roundIndex]) return
+        rounds[entry.roundIndex] = rollbackChatChoice(rounds[entry.roundIndex], entry.run)
+        choiceRuns.delete(key)
+        renderChat()
+        var reopenedList = frame.querySelector('#rdChoiceList')
+        var reopenedInput = frame.querySelector('#chatInput')
+        var reopenedToggle = frame.querySelector('#chatSendBtn')
+        if (reopenedList) {
+          reopenedList.hidden = false
+          if (reopenedInput) reopenedInput.setAttribute('aria-expanded', 'true')
+          if (reopenedToggle) reopenedToggle.setAttribute('aria-expanded', 'true')
+          var firstOption = reopenedList.querySelector('.rd-reply-option')
+          if (firstOption) firstOption.focus()
+        }
+      }
+    })
+
+    frame.onclick = function(e) {
+      if (choiceList && !choiceList.hidden && !choiceList.contains(e.target) && e.target !== chatInput && e.target !== sendBtn) {
+        setChoiceListOpen(false)
+      }
     }
   }
 
@@ -1629,74 +2235,213 @@ function openReaderChat(frame, w, pd, ch, chatIndex) {
 // ---- Forum post viewer ----
 function openReaderForumPost(frame, w, pd, postId, postIndex) {
   var posts = pd.forumPosts || []
-  var post = posts.find(function(p) { return p.id === postId })
-  if (!post) return
+  var sourcePost = posts.find(function(p) { return p.id === postId })
+  if (!sourcePost) return
+  var phoneChoiceSession = readerPhoneChoiceSession(w)
+  var forumSessionKey = String(postIndex) + '::' + String(postId)
+  var forumSession = phoneChoiceSession.forumPosts.get(forumSessionKey)
+  if (!forumSession) {
+    forumSession = { post: cloneReaderThreadItems([sourcePost])[0], choiceRuns: new Map() }
+    phoneChoiceSession.forumPosts.set(forumSessionKey, forumSession)
+  }
+  var post = forumSession.post
+  var custom = getPhoneCustom()
+  var forumChoiceRuns = forumSession.choiceRuns
 
   function backToList() {
     openReaderApp('forum')
     focusReaderControl(frame, '.rd-post-card[data-post-index="' + postIndex + '"]')
   }
 
-  var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;background:#fff">'
-  h += '<div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid #ddd;flex-shrink:0">'
-  h += '<button type="button" class="rd-back-btn" aria-label="返回论坛列表" style="color:#888">←</button>'
-  h += '<span style="font-size:.85rem;font-weight:600;flex:1;text-align:center;color:#555">帖子详情</span>'
-  h += '<span class="rd-back-spacer" aria-hidden="true"></span>'
-  h += '</div>'
-  h += '<div style="flex:1;overflow-y:auto;padding:12px">'
-  h += '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:12px">'
-  h += '<div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.85rem;font-weight:600;flex-shrink:0;background:' + avatarColor(post.contactId) + '">' + (post.contactName || '?').charAt(0) + '</div>'
-  h += '<div style="flex:1"><div style="font-size:.82rem;font-weight:600;color:#555">' + esc(post.contactName || '匿名') + '</div><div style="font-size:.68rem;color:#999">' + esc(post.time || '') + '</div></div>'
-  h += '</div>'
-  h += '<div style="font-size:.9rem;font-weight:600;color:#555;margin-bottom:8px">' + esc(post.title || '') + '</div>'
-  h += '<div style="font-size:.8rem;color:#333;line-height:1.6">' + esc(post.content || '') + '</div>'
-  if (post.images && post.images.length > 0) {
-    h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">'
-    post.images.forEach(function(img) {
-      h += '<img src="' + esc(img) + '" style="width:100%;aspect-ratio:1;object-fit:cover;border:1px solid #eee" onerror="this.style.display=\'none\'">'
+  function findForumCommentsById(items, serializedId, matches) {
+    ;(Array.isArray(items) ? items : []).forEach(function(comment) {
+      if (!comment || typeof comment !== 'object') return
+      if (String(comment.id) === String(serializedId)) matches.push(comment)
+      findForumCommentsById(comment.replies, serializedId, matches)
     })
+  }
+
+  function getForumContainer(containerKey) {
+    if (containerKey === 'root') {
+      if (!Array.isArray(post.comments)) post.comments = []
+      return { items: post.comments, set: function(items) { post.comments = items } }
+    }
+    var prefix = 'replies::'
+    if (String(containerKey).indexOf(prefix) !== 0) return null
+    var matches = []
+    findForumCommentsById(post.comments, String(containerKey).slice(prefix.length), matches)
+    if (matches.length !== 1) return null
+    var parent = matches[0]
+    if (!Array.isArray(parent.replies)) parent.replies = []
+    return { items: parent.replies, set: function(items) { parent.replies = items } }
+  }
+
+  function renderForumComment(comment, floor, depth, containerKey) {
+    var generated = readerThreadGeneratedItem(forumChoiceRuns, containerKey, comment.id)
+    var isReader = comment.contactId === 'self' || comment.senderId === 'self'
+    var name = String(comment.contactName || (isReader ? readerThreadDisplayName(pd, custom) : '角色')).trim() || (isReader ? '我' : '角色')
+    var content = String(comment.content != null ? comment.content : (comment.text != null ? comment.text : ''))
+    var h = '<article class="rd-forum-comment' + (isReader ? ' is-reader' : '') + (generated ? ' is-generated' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '" style="--rd-thread-depth:' + depth + '">'
+    h += '<div class="rd-forum-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
+    if (!generated) h += '<span class="rd-forum-floor">' + (depth > 0 ? '回复' : '#' + floor) + '</span>'
+    if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
     h += '</div>'
+    h += '<div class="rd-thread-comment-content">' + esc(content) + '</div>'
+    if (comment.imageUrl) h += '<img class="rd-forum-comment-image" src="' + escapeHtmlAttribute(comment.imageUrl) + '" alt="" onerror="this.style.display=\'none\'">'
+    h += renderReaderThreadReselect(comment, 'forum', containerKey, forumChoiceRuns)
+    h += renderReaderThreadChoiceControls(comment, 'forum', containerKey, forumChoiceRuns)
+    if (Array.isArray(comment.replies) && comment.replies.length > 0) {
+      var childContainerKey = 'replies::' + String(comment.id)
+      h += '<div class="rd-forum-replies">'
+      comment.replies.forEach(function(reply, replyIndex) {
+        h += renderForumComment(reply, replyIndex + 1, depth + 1, childContainerKey)
+      })
+      h += '</div>'
+    }
+    h += '</article>'
+    return h
   }
-  h += '</div>'
-  h += '</div>'
-  frame.innerHTML = h
-  var backBtn = frame.querySelector('.rd-back-btn')
-  if (backBtn) {
-    backBtn.onclick = backToList
-    backBtn.focus()
+
+  function focusForumThreadControl(selector, datasetName, value) {
+    var controls = frame.querySelectorAll(selector)
+    for (var i = 0; i < controls.length; i++) {
+      if (String(controls[i].dataset[datasetName]) !== String(value)) continue
+      controls[i].focus()
+      return
+    }
   }
+
+  function renderForumPost() {
+    var h = '<div class="rd-forum-detail">'
+    h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><span class="rd-back-spacer" aria-hidden="true"></span></header>'
+    h += '<div class="rd-forum-detail-scroll">'
+    h += '<article class="rd-forum-post-body">'
+    h += '<header class="rd-forum-post-author"><span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">' + esc((post.contactName || '?').charAt(0)) + '</span>'
+    h += '<span><strong>' + esc(post.contactName || '匿名') + '</strong><time>' + esc(post.time || '') + '</time></span></header>'
+    h += '<h3>' + esc(post.title || '') + '</h3><div class="rd-forum-post-content">' + esc(post.content || '') + '</div>'
+    var postImages = Array.isArray(post.images) ? post.images.slice() : []
+    if (post.imageUrl) postImages.unshift(post.imageUrl)
+    if (postImages.length > 0) {
+      h += '<div class="rd-forum-post-images">'
+      postImages.forEach(function(image) {
+        var src = typeof image === 'string' ? image : (image && (image.url || image.src) || '')
+        if (src) h += '<img src="' + escapeHtmlAttribute(src) + '" alt="" onerror="this.style.display=\'none\'">'
+      })
+      h += '</div>'
+    }
+    h += '</article>'
+    h += '<section class="rd-forum-thread" aria-label="帖子评论"><h4>评论 <span>' + (Array.isArray(post.comments) ? post.comments.length : 0) + '</span></h4>'
+    var comments = Array.isArray(post.comments) ? post.comments : []
+    if (comments.length === 0) h += '<div class="rd-app-empty">暂无评论</div>'
+    comments.forEach(function(comment, commentIndex) {
+      h += renderForumComment(comment, commentIndex + 1, 0, 'root')
+    })
+    h += '</section></div></div>'
+    frame.innerHTML = h
+
+    var backBtn = frame.querySelector('.rd-back-btn')
+    if (backBtn) backBtn.onclick = backToList
+
+    frame.querySelectorAll('.rd-thread-choice-option[data-thread-scope="forum"]').forEach(function(button) {
+      button.onclick = function() {
+        var containerKey = button.dataset.threadContainer
+        var container = getForumContainer(containerKey)
+        if (!container) return
+        var ownerId = resolveReaderThreadOwnerId(container.items, button.dataset.threadOwnerId)
+        if (ownerId === null) return
+        var runKey = readerThreadRunKey(containerKey, ownerId)
+        if (forumChoiceRuns.has(runKey)) return
+        var choiceIndex = Number(button.dataset.threadChoiceIndex)
+        var result = applyThreadChoice(container.items, ownerId, choiceIndex, readerThreadRuntimeOptions(pd, custom, 'forum'))
+        if (!result.ok) return
+        container.set(result.items)
+        forumChoiceRuns.set(runKey, { containerKey: containerKey, run: result.run })
+        renderForumPost()
+        focusForumThreadControl('.rd-thread-choice-reselect', 'threadRunKey', runKey)
+      }
+    })
+
+    frame.querySelectorAll('.rd-thread-choice-reselect[data-thread-scope="forum"]').forEach(function(button) {
+      button.onclick = function() {
+        var runKey = button.dataset.threadRunKey
+        var entry = forumChoiceRuns.get(runKey)
+        if (!entry) return
+        var container = getForumContainer(entry.containerKey)
+        if (!container) return
+        container.set(rollbackThreadChoice(container.items, entry.run))
+        forumChoiceRuns.delete(runKey)
+        renderForumPost()
+        focusForumThreadControl('.rd-thread-choice-option', 'threadOwnerId', entry.run.ownerItemId)
+      }
+    })
+  }
+
+  renderForumPost()
+  var initialBack = frame.querySelector('.rd-back-btn')
+  if (initialBack) initialBack.focus()
 }
 
 // ====== Reader Phone Custom (Beautification Panel) ======
+function readerPlainRecord(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function readerSetOwnData(target, key, value) {
+  Object.defineProperty(target, key, {
+    value: value,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  })
+  return target
+}
+
+function readerOwnDataRecord() {
+  var record = {}
+  for (var sourceIndex = 0; sourceIndex < arguments.length; sourceIndex++) {
+    var source = readerPlainRecord(arguments[sourceIndex])
+    Object.keys(source).forEach(function(key) {
+      readerSetOwnData(record, key, source[key])
+    })
+  }
+  return record
+}
+
 function getPhoneCustom() {
-  return lsGet('phoneCustom') || {
-    wallpaper: '#d0e8f5', wallpaperType: 'color', wallpaperImage: null,
-    frameColor: '#ccc', borderRadius: 28, fontFamily: "'Noto Sans SC', sans-serif",
+  var defaults = {
+    wallpaper: '#eee6e7', wallpaperType: 'color', wallpaperImage: null,
+    frameColor: '#8f7b81', borderRadius: 18, fontFamily: "'Noto Sans SC', sans-serif",
     fontSize: 12, readerId: '', readerAvatar: null, topBgImage: null,
     showDynamicIsland: true, showHomeIndicator: true, showAppLabels: true,
-    showIconShadow: true, iconBorderRadius: 14, iconColumns: 4, materialType: 'glass',
+    showIconShadow: true, iconBorderRadius: 6, iconColumns: 4, materialType: 'glass',
     materialOpacity: 65, timeColor: '#ffffff',
-    appBgs: {},
-    appSettings: {},
-    customFonts: [],
-    customIcons: {}
+    appBgs: {}, appSettings: {}, customFonts: [], customIcons: {}
   }
+  var stored = readerOwnDataRecord(lsGet('phoneCustom'))
+  var custom = readerOwnDataRecord(defaults, stored)
+  custom.appBgs = readerOwnDataRecord(stored.appBgs)
+  custom.appSettings = readerOwnDataRecord(stored.appSettings)
+  custom.customIcons = readerOwnDataRecord(stored.customIcons)
+  if (!Array.isArray(custom.customFonts)) custom.customFonts = []
+  return custom
 }
 
 function savePhoneCustom(data) {
   var cur = getPhoneCustom()
-  for (var k in data) { if (data.hasOwnProperty(k)) cur[k] = data[k] }
+  for (var k in data) {
+    if (Object.prototype.hasOwnProperty.call(data, k)) readerSetOwnData(cur, k, data[k])
+  }
   lsSet('phoneCustom', cur)
 }
 
 // ====== Phone Preview ======
 function renderPhonePreview(ct) {
   var h = '<div class="rd-phone-preview" style="display:flex;justify-content:center;align-items:flex-start">'
-  var frameBgStyle = 'width:360px;--phone-bg:' + esc(ct.wallpaper || '#d0e8f5') + ';--phone-radius:' + (ct.borderRadius || 28) + 'px;--phone-font:\'' + (ct.fontFamily || 'Noto Sans SC').replace(/'/g,'') + '\', sans-serif;--phone-fontsize:' + (ct.fontSize || 12) + 'px;--phone-frame:' + esc(ct.frameColor || '#ccc')
+  var frameBgStyle = 'width:360px;--phone-bg:' + esc(ct.wallpaper || '#eee6e7') + ';--phone-radius:' + (ct.borderRadius ?? 18) + 'px;--phone-font:\'' + (ct.fontFamily || 'Noto Sans SC').replace(/'/g,'') + '\', sans-serif;--phone-fontsize:' + (ct.fontSize || 12) + 'px;--phone-frame:' + esc(ct.frameColor || '#8f7b81')
   if (ct.wallpaperType === 'image' && ct.wallpaperImage) {
     frameBgStyle += ';background-image:url(' + esc(ct.wallpaperImage) + ');background-size:cover;background-position:center'
   }
-  h += '<div class="phone-frame" style="' + frameBgStyle + '">'
+  h += '<div class="phone-frame' + ((ct.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && ct.wallpaperType !== 'image' ? ' phone-default-wallpaper' : '') + '" style="' + frameBgStyle + '">'
   if (ct.showDynamicIsland !== false) {
     h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
   }
@@ -1705,27 +2450,27 @@ function renderPhonePreview(ct) {
   if (coverBg) h += ' style="background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center"'
   h += '>'
   h += '<div class="phone-profile-overlay"></div>'
+  h += '<div class="phone-widget-copy">'
+  h += '<div class="phone-widget-kicker">MY POCKET / READER</div>'
+  h += '<div class="phone-profile-id">' + esc(ct.readerId || '访客') + '</div>'
+  h += '<div class="phone-widget-status"><span></span> LOCAL PROFILE</div>'
+  h += '</div>'
   h += '<div class="phone-avatar">'
   if (ct.readerAvatar) h += '<img src="' + esc(ct.readerAvatar) + '" alt="">'
   h += '</div>'
-  h += '<div class="phone-profile-id">' + esc(ct.readerId || '访客') + '</div>'
   h += '</div>'
 
   h += '<div class="phone-desktop" style="position:relative;min-height:260px;' + phoneGridContainerStyle() + '">'
-  for (var i = 0; i < 8; i++) {
-    // Use simple text-based icons — no SVG
-    var apps = [
-      { type: 'messages', name: '消息',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' },
-      { type: 'forum',    name: '论坛',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="12" y2="13"/></svg>' },
-      { type: 'memo',     name: '备忘',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' },
-      { type: 'gallery',  name: '相册',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>' },
-      { type: 'browser',  name: '浏览',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>' },
-      { type: 'shopping', name: '购物',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>' },
-      { type: 'customize',name: '美化',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' },
-      { type: 'profile',  name: '个人',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' }
-    ]
+  var apps = [
+    { type: 'messages', name: '消息',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' },
+    { type: 'forum',    name: '论坛',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="12" y2="13"/></svg>' },
+    { type: 'memo',     name: '备忘',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' },
+    { type: 'gallery',  name: '相册',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>' },
+    { type: 'browser',  name: '浏览',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>' },
+    { type: 'shopping', name: '购物',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>' }
+  ]
+  for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
-    if (!app) continue
     var customIcon = readerCustomIconUrl(ct.customIcons && ct.customIcons[app.type])
     var appName = readerAppName(app)
     h += '<button type="button" class="phone-app-icon rd-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
@@ -1947,15 +2692,236 @@ function openReaderProfilePanel() {
 }
 
 // ---- App Settings defaults ----
+var READER_CALL_BACKGROUND_DEFAULT = Object.freeze({
+  callBackgroundType: 'preset',
+  callBackgroundPreset: 'plain',
+  callBackgroundImage: null
+})
+var READER_CALL_BACKGROUND_PRESETS = Object.freeze({
+  plain: '素灰粉',
+  rose: '暮玫瑰',
+  water: '雾水蓝',
+  cream: '奶咖'
+})
+var READER_CALL_BACKGROUND_MAX_BYTES = 2 * 1024 * 1024
+var READER_CALL_BACKGROUND_MIME_PREFIXES = Object.freeze({
+  'image/png': 'data:image/png;base64,',
+  'image/jpeg': 'data:image/jpeg;base64,',
+  'image/webp': 'data:image/webp;base64,'
+})
+var READER_CALL_BACKGROUND_DATA_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/
+var verifiedReaderCallBackgroundImages = new Set()
+
+function canonicalReaderCallBackgroundDataUrl(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function readerCallBackgroundMime(dataUrl) {
+  var mimeTypes = Object.keys(READER_CALL_BACKGROUND_MIME_PREFIXES)
+  for (var mimeIndex = 0; mimeIndex < mimeTypes.length; mimeIndex++) {
+    var mime = mimeTypes[mimeIndex]
+    if (dataUrl.startsWith(READER_CALL_BACKGROUND_MIME_PREFIXES[mime])) return mime
+  }
+  return ''
+}
+
+function readerCallBackgroundBinary(dataUrl) {
+  try {
+    return globalThis.atob(dataUrl.slice(dataUrl.indexOf(',') + 1))
+  } catch (error) {
+    return ''
+  }
+}
+
+function readerCallBackgroundDecodedByteLength(dataUrl) {
+  var base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  var padding = base64.endsWith('==') ? 2 : (base64.endsWith('=') ? 1 : 0)
+  return (base64.length / 4 * 3) - padding
+}
+
+function readerCallBackgroundUint32BigEndian(binary, offset) {
+  return (
+    (binary.charCodeAt(offset) * 0x1000000) +
+    (binary.charCodeAt(offset + 1) << 16) +
+    (binary.charCodeAt(offset + 2) << 8) +
+    binary.charCodeAt(offset + 3)
+  ) >>> 0
+}
+
+function readerCallBackgroundUint32LittleEndian(binary, offset) {
+  return (
+    binary.charCodeAt(offset) +
+    (binary.charCodeAt(offset + 1) << 8) +
+    (binary.charCodeAt(offset + 2) << 16) +
+    (binary.charCodeAt(offset + 3) * 0x1000000)
+  ) >>> 0
+}
+
+function readerCallBackgroundHasSupportedSignature(mime, binary) {
+  if (mime === 'image/png') return binary.slice(0, 8) === '\x89PNG\r\n\x1a\n'
+  if (mime === 'image/jpeg') {
+    return binary.length >= 3 &&
+      binary.charCodeAt(0) === 0xff &&
+      binary.charCodeAt(1) === 0xd8 &&
+      binary.charCodeAt(2) === 0xff
+  }
+  if (mime === 'image/webp') {
+    return binary.length >= 12 && binary.slice(0, 4) === 'RIFF' && binary.slice(8, 12) === 'WEBP'
+  }
+  return false
+}
+
+function readerCallBackgroundPngIsStaticAndWellFormed(binary) {
+  if (binary.length === 8) return true
+  for (var offset = 8; offset < binary.length;) {
+    if (binary.length - offset < 12) return false
+    var size = readerCallBackgroundUint32BigEndian(binary, offset)
+    if (size > binary.length - offset - 12) return false
+    if (binary.slice(offset + 4, offset + 8) === 'acTL') return false
+    offset += 12 + size
+  }
+  return true
+}
+
+function readerCallBackgroundWebpIsStaticAndWellFormed(binary) {
+  if (readerCallBackgroundUint32LittleEndian(binary, 4) !== binary.length - 8) return false
+  for (var offset = 12; offset < binary.length;) {
+    if (binary.length - offset < 8) return false
+    var chunk = binary.slice(offset, offset + 4)
+    var size = readerCallBackgroundUint32LittleEndian(binary, offset + 4)
+    if (chunk === 'ANIM' || chunk === 'ANMF') return false
+    if (size > binary.length - offset - 8) return false
+    if (chunk === 'VP8X' && size > 0 && (binary.charCodeAt(offset + 8) & 0x02)) return false
+    var nextOffset = offset + 8 + size
+    if (size % 2) {
+      if (nextOffset >= binary.length || binary.charCodeAt(nextOffset) !== 0) return false
+      nextOffset += 1
+    }
+    if (nextOffset > binary.length) return false
+    offset = nextOffset
+  }
+  return true
+}
+
+function validatedReaderCallBackgroundCandidate(input) {
+  var value = canonicalReaderCallBackgroundDataUrl(input)
+  if (!READER_CALL_BACKGROUND_DATA_PATTERN.test(value) || !isSafeImageUrl(value)) return null
+  var dataUrl = value
+  var decodedBytes = readerCallBackgroundDecodedByteLength(dataUrl)
+  if (!Number.isFinite(decodedBytes) || decodedBytes <= 0 || decodedBytes > READER_CALL_BACKGROUND_MAX_BYTES) return null
+  var binary = readerCallBackgroundBinary(dataUrl)
+  if (!binary || binary.length !== decodedBytes || binary.length > READER_CALL_BACKGROUND_MAX_BYTES) return null
+  try {
+    if (globalThis.btoa(binary) !== dataUrl.slice(dataUrl.indexOf(',') + 1)) return null
+  } catch (error) {
+    return null
+  }
+  var mime = readerCallBackgroundMime(dataUrl)
+  if (!readerCallBackgroundHasSupportedSignature(mime, binary)) return null
+  if (mime === 'image/png' && !readerCallBackgroundPngIsStaticAndWellFormed(binary)) return null
+  if (mime === 'image/webp' && !readerCallBackgroundWebpIsStaticAndWellFormed(binary)) return null
+  return { dataUrl: dataUrl, mime: mime, binary: binary }
+}
+
+function isSafeReaderCallBackgroundDataUrl(value) {
+  return Boolean(validatedReaderCallBackgroundCandidate(value))
+}
+
+function decodeReaderCallBackgroundImage(dataUrl) {
+  return new Promise(function(resolve, reject) {
+    var image = new Image()
+    image.onload = function() {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve(dataUrl)
+      else reject(new Error('图片没有可用尺寸'))
+    }
+    image.onerror = function() { reject(new Error('图片无法解码')) }
+    image.src = dataUrl
+  })
+}
+
+function verifyReaderCallBackgroundDataUrl(dataUrl) {
+  var candidate = validatedReaderCallBackgroundCandidate(dataUrl)
+  if (!candidate) return Promise.reject(new Error('图片格式无效、过大或包含动画'))
+  return decodeReaderCallBackgroundImage(candidate.dataUrl).then(function(verified) {
+    verifiedReaderCallBackgroundImages.add(verified)
+    return verified
+  })
+}
+
+function readReaderCallBackgroundFile(file) {
+  return new Promise(function(resolve, reject) {
+    var fileType = file && file.type
+    var expectedPrefix = Object.prototype.hasOwnProperty.call(READER_CALL_BACKGROUND_MIME_PREFIXES, fileType)
+      ? READER_CALL_BACKGROUND_MIME_PREFIXES[fileType]
+      : ''
+    if (!expectedPrefix) {
+      reject(new Error('请选择 PNG、JPEG 或 WebP 图片'))
+      return
+    }
+    if (!Number.isFinite(file.size) || file.size < 0 || file.size > READER_CALL_BACKGROUND_MAX_BYTES) {
+      reject(new Error('图片不能超过 2 MiB'))
+      return
+    }
+    var reader = new FileReader()
+    reader.onerror = function() { reject(new Error('图片读取失败')) }
+    reader.onload = function() {
+      var dataUrl = canonicalReaderCallBackgroundDataUrl(reader.result)
+      if (!dataUrl.startsWith(expectedPrefix)) {
+        reject(new Error('图片格式与文件类型不一致'))
+        return
+      }
+      verifyReaderCallBackgroundDataUrl(dataUrl).then(resolve, reject)
+    }
+    try {
+      reader.readAsDataURL(file)
+    } catch (error) {
+      reject(new Error('图片读取失败'))
+    }
+  })
+}
+
+function normalizedReaderCallBackgroundSettings(settings) {
+  var source = settings && typeof settings === 'object' ? settings : {}
+  var preset = typeof source.callBackgroundPreset === 'string' && Object.prototype.hasOwnProperty.call(READER_CALL_BACKGROUND_PRESETS, source.callBackgroundPreset)
+    ? source.callBackgroundPreset
+    : READER_CALL_BACKGROUND_DEFAULT.callBackgroundPreset
+  var imageCandidate = validatedReaderCallBackgroundCandidate(source.callBackgroundImage)
+  var image = imageCandidate ? imageCandidate.dataUrl : null
+  var useImage = source.callBackgroundType === 'image' && image
+  return {
+    callBackgroundType: useImage ? 'image' : 'preset',
+    callBackgroundPreset: preset,
+    callBackgroundImage: useImage ? image : null
+  }
+}
+
+function readerCallBackgroundPresentation(settings) {
+  var background = normalizedReaderCallBackgroundSettings(settings)
+  if (background.callBackgroundType === 'image' && verifiedReaderCallBackgroundImages.has(background.callBackgroundImage)) {
+    return {
+      className: ' has-call-background-image',
+      attribute: 'image',
+      style: '--rd-call-image:url("' + background.callBackgroundImage + '")'
+    }
+  }
+  return {
+    className: '',
+    attribute: background.callBackgroundPreset,
+    style: ''
+  }
+}
+
 function getAppSettings(type) {
   var ct = getPhoneCustom()
-  ct.appSettings = ct.appSettings || {}
   var defaults = {
     messages: {
       avatarShape: 'circle', avatarSize: 36,
       selfBubbleBg: '#555', selfBubbleText: '#fff', selfBubbleRadius: 8,
       otherBubbleBg: '#fff', otherBubbleText: '#333', otherBubbleRadius: 8,
-      bubbleFontSize: 13, timeColor: '#b0b8c4', chatBg: '#f0f0f0'
+      bubbleFontSize: 13, timeColor: '#b0b8c4', chatBg: '#f0f0f0',
+      callBackgroundType: 'preset',
+      callBackgroundPreset: 'plain',
+      callBackgroundImage: null
     },
     forum: {
       avatarShape: 'circle',
@@ -1984,8 +2950,11 @@ function getAppSettings(type) {
       nameColor: '#555', nameSize: 13, nameWeight: '500'
     }
   }
-  if (!ct.appSettings[type]) ct.appSettings[type] = JSON.parse(JSON.stringify(defaults[type] || {}))
-  return ct.appSettings[type]
+  var stored = ct.appSettings[type]
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {}
+  var settings = readerOwnDataRecord(defaults[type] || {}, stored)
+  if (type === 'messages') settings = readerOwnDataRecord(settings, normalizedReaderCallBackgroundSettings(settings))
+  return settings
 }
 
 // ---- Apply app settings to styles ----
@@ -2345,14 +3314,64 @@ function updateCuPreview(modal, type) {
   preview.innerHTML = renderCuPreview(type, s).replace(/^<div class="cu-preview"[^>]*>/, '').replace(/<\/div>$/, '')
 }
 
+function readerCallBackgroundPreviewMarkup(background) {
+  var presentation = readerCallBackgroundPresentation(background)
+  return '<div id="cuCallBackgroundPreview" class="cu-call-background-preview' + presentation.className + '" data-call-background="' + presentation.attribute + '"' + (presentation.style ? ' style="' + escapeHtmlAttribute(presentation.style) + '"' : '') + '><span>通话背景预览</span></div>'
+}
+
+function readerCallBackgroundControls(background) {
+  var buttons = Object.keys(READER_CALL_BACKGROUND_PRESETS).map(function(key) {
+    var pressed = background.callBackgroundType === 'preset' && background.callBackgroundPreset === key
+    return '<button type="button" class="cu-call-background-preset' + (pressed ? ' active' : '') + '" data-cu-call-background-preset="' + key + '" aria-label="选择' + READER_CALL_BACKGROUND_PRESETS[key] + '通话背景" aria-pressed="' + (pressed ? 'true' : 'false') + '">' + READER_CALL_BACKGROUND_PRESETS[key] + '</button>'
+  }).join('')
+  return '<div class="cu-call-background-presets" role="group" aria-label="通话背景预设">' + buttons + '</div>' +
+    readerCallBackgroundPreviewMarkup(background) +
+    '<div class="cu-call-background-actions"><button type="button" id="cuCallBackgroundUpload">选择本地图片</button><input type="file" id="cuCallBackgroundFile" accept="image/png,image/jpeg,image/webp" hidden><button type="button" id="cuCallBackgroundRestore">恢复默认</button></div>' +
+    '<p id="cuCallBackgroundError" class="cu-call-background-error" role="alert" hidden></p>'
+}
+
+function syncReaderCallBackgroundControls(modal, background) {
+  modal.querySelectorAll('.cu-call-background-preset').forEach(function(button) {
+    var pressed = background.callBackgroundType === 'preset' && button.dataset.cuCallBackgroundPreset === background.callBackgroundPreset
+    button.classList.toggle('active', pressed)
+    button.setAttribute('aria-pressed', pressed ? 'true' : 'false')
+  })
+  var preview = modal.querySelector('#cuCallBackgroundPreview')
+  if (preview) preview.outerHTML = readerCallBackgroundPreviewMarkup(background)
+}
+
 // ====== Per-App Settings Panel ======
 function openReaderAppSettings(type, trigger) {
   var ct = getPhoneCustom()
-  ct.appSettings = ct.appSettings || {}
   var labels = { messages:'消息', forum:'论坛', memo:'备忘录', gallery:'相册', browser:'浏览记录', shopping:'购物', contacts:'联系人' }
   var title = '美化 - ' + (labels[type] || 'App')
 
-  var s = getAppSettings(type)
+  var persistedSettings = getAppSettings(type)
+  var s = JSON.parse(JSON.stringify(persistedSettings))
+  var callBackgroundDraft = type === 'messages'
+    ? normalizedReaderCallBackgroundSettings(s)
+    : null
+  var pendingPersistedCallBackground = null
+  var pendingPersistedFallbackDraft = null
+  if (type === 'messages') {
+    var storedMessageSettings = readerPlainRecord(readerPlainRecord(ct.appSettings).messages)
+    if (storedMessageSettings.callBackgroundType === 'image' && typeof storedMessageSettings.callBackgroundImage === 'string') {
+      var storedImageUrl = canonicalReaderCallBackgroundDataUrl(storedMessageSettings.callBackgroundImage)
+      if (!verifiedReaderCallBackgroundImages.has(storedImageUrl)) {
+        pendingPersistedCallBackground = {
+          callBackgroundType: 'image',
+          callBackgroundPreset: callBackgroundDraft.callBackgroundPreset,
+          callBackgroundImage: storedMessageSettings.callBackgroundImage
+        }
+        callBackgroundDraft = {
+          callBackgroundType: 'preset',
+          callBackgroundPreset: pendingPersistedCallBackground.callBackgroundPreset,
+          callBackgroundImage: null
+        }
+        pendingPersistedFallbackDraft = callBackgroundDraft
+      }
+    }
+  }
   if (type === 'gallery') {
     var normalizedGallery = normalizedReaderGallerySettings(s)
     s.columns = normalizedGallery.columns
@@ -2386,6 +3405,7 @@ function openReaderAppSettings(type, trigger) {
     body += cuCard('时间标签',
       cuColorRow('颜色', ['#b0b8c4', '#999', '#666', '#333'], s.timeColor, 'cu-time-color')
     )
+    body += '<div id="cuCallBackgroundCard">' + cuCard('通话背景', readerCallBackgroundControls(callBackgroundDraft)) + '</div>'
   } else if (type === 'forum') {
     var shapes = ['circle', 'rounded', 'square']
     body += cuCard('头像',
@@ -2529,11 +3549,116 @@ function openReaderAppSettings(type, trigger) {
     if (galleryColBtn) s.columns = parseInt(galleryColBtn.dataset.cuGalleryCols) || 3
     // Read icon URL
     var iconUrlEl = modal.querySelector('#cuIconUrl'); if (iconUrlEl && iconUrlEl.value.trim()) ct.customIcons[type] = iconUrlEl.value.trim()
+    if (type === 'messages') Object.assign(s, normalizedReaderCallBackgroundSettings(callBackgroundDraft))
     ct.appSettings[type] = s
-    savePhoneCustom(ct)
+    try {
+      savePhoneCustom(ct)
+    } catch (error) {
+      var callBackgroundStorageError = modal.querySelector('#cuCallBackgroundError')
+      if (callBackgroundStorageError) {
+        callBackgroundStorageError.textContent = '通话背景保存失败，请检查浏览器存储空间后重试。'
+        callBackgroundStorageError.hidden = false
+      }
+      throw error
+    }
     renderCustomPage()
     showReaderToast((labels[type] || 'App') + '美化已保存')
   }, trigger)
+
+  var callBackgroundSaveButton = ov.querySelector('#cuModalSave')
+  var callBackgroundError = ov.querySelector('#cuCallBackgroundError')
+  var callBackgroundOperationVersion = 0
+
+  function clearReaderCallBackgroundError() {
+    if (!callBackgroundError) return
+    callBackgroundError.hidden = true
+    callBackgroundError.textContent = ''
+  }
+
+  function showReaderCallBackgroundError(message) {
+    if (!callBackgroundError) return
+    callBackgroundError.textContent = message
+    callBackgroundError.hidden = false
+  }
+
+  function invalidateReaderCallBackgroundOperation() {
+    callBackgroundOperationVersion += 1
+    if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = false
+  }
+
+  ov.querySelectorAll('.cu-call-background-preset').forEach(function(button) {
+    button.onclick = function() {
+      invalidateReaderCallBackgroundOperation()
+      clearReaderCallBackgroundError()
+      callBackgroundDraft = {
+        callBackgroundType: 'preset',
+        callBackgroundPreset: button.dataset.cuCallBackgroundPreset,
+        callBackgroundImage: null
+      }
+      syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+    }
+  })
+  var callBackgroundRestore = ov.querySelector('#cuCallBackgroundRestore')
+  if (callBackgroundRestore) callBackgroundRestore.onclick = function() {
+    invalidateReaderCallBackgroundOperation()
+    clearReaderCallBackgroundError()
+    callBackgroundDraft = Object.assign({}, READER_CALL_BACKGROUND_DEFAULT)
+    syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+  }
+
+  if (pendingPersistedCallBackground) {
+    var persistedOperationVersion = ++callBackgroundOperationVersion
+    if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = true
+    clearReaderCallBackgroundError()
+    verifyReaderCallBackgroundDataUrl(pendingPersistedCallBackground.callBackgroundImage).then(function(dataUrl) {
+      if (!ov.isConnected || persistedOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== pendingPersistedFallbackDraft) return
+      callBackgroundDraft = {
+        callBackgroundType: 'image',
+        callBackgroundPreset: pendingPersistedCallBackground.callBackgroundPreset,
+        callBackgroundImage: dataUrl
+      }
+      syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+    }).catch(function() {
+      if (!ov.isConnected || persistedOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== pendingPersistedFallbackDraft) return
+      showReaderCallBackgroundError('之前保存的通话背景无法使用，已改用安全预设。')
+    }).finally(function() {
+      if (ov.isConnected && persistedOperationVersion === callBackgroundOperationVersion && callBackgroundSaveButton) {
+        callBackgroundSaveButton.disabled = false
+      }
+    })
+  }
+
+  var callBackgroundUpload = ov.querySelector('#cuCallBackgroundUpload')
+  var callBackgroundFile = ov.querySelector('#cuCallBackgroundFile')
+  if (callBackgroundUpload && callBackgroundFile) {
+    callBackgroundUpload.onclick = function() { callBackgroundFile.click() }
+    callBackgroundFile.onchange = function() {
+      var file = callBackgroundFile.files && callBackgroundFile.files[0]
+      if (!file) return
+      callBackgroundFile.value = ''
+      var draftBeforeUpload = callBackgroundDraft
+      var uploadOperationVersion = ++callBackgroundOperationVersion
+      clearReaderCallBackgroundError()
+      if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = true
+      readReaderCallBackgroundFile(file).then(function(dataUrl) {
+        if (!ov.isConnected || uploadOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== draftBeforeUpload) return
+        callBackgroundDraft = {
+          callBackgroundType: 'image',
+          callBackgroundPreset: draftBeforeUpload.callBackgroundPreset,
+          callBackgroundImage: dataUrl
+        }
+        syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+      }).catch(function(error) {
+        if (!ov.isConnected || uploadOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== draftBeforeUpload) return
+        showReaderCallBackgroundError(error && error.message ? error.message : '图片无法使用')
+      }).finally(function() {
+        if (ov.isConnected && uploadOperationVersion === callBackgroundOperationVersion) {
+          if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = false
+          callBackgroundFile.value = ''
+        }
+      })
+    }
+  }
 
   // Bind slider displays
   bindCuSliders(ov)
@@ -2644,6 +3769,16 @@ function renderCustomPage() {
   var panel = document.getElementById('tabCustom')
   if (!panel) return
   var h = '<div class="rd-custom">'
+  h += '<div class="rd-phone-owner-controls" aria-label="阅读器手机设置">'
+  h += '<button type="button" class="rd-phone-owner-control" data-reader-phone-control="appearance">'
+  h += '<span class="rd-phone-owner-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h16"/><path d="M6 16.5 16.5 6a2.1 2.1 0 0 1 3 3L9 19.5 4 20l.5-5Z"/><path d="m14.5 8 3 3"/></svg></span>'
+  h += '<span><strong>手机外观</strong><small>壁纸、边框与字体</small></span>'
+  h += '</button>'
+  h += '<button type="button" class="rd-phone-owner-control" data-reader-phone-control="profile">'
+  h += '<span class="rd-phone-owner-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 20c.7-4 2.8-6 6.5-6s5.8 2 6.5 6"/></svg></span>'
+  h += '<span><strong>个人信息</strong><small>昵称、头像与封面</small></span>'
+  h += '</button>'
+  h += '</div>'
   h += '<div style="display:flex;justify-content:center;padding:10px 0">'
   h += renderPhonePreview(ct)
   h += '</div>'
@@ -2655,6 +3790,13 @@ function renderCustomPage() {
 // ---- Global click handler for beautification app icons (document-level delegation) ----
 document.addEventListener('click', function(e) {
   var el = e.target
+  var ownerControl = el && el.closest ? el.closest('[data-reader-phone-control]') : null
+  if (ownerControl && ownerControl.closest('#tabCustom')) {
+    e.preventDefault()
+    if (ownerControl.dataset.readerPhoneControl === 'appearance') openReaderCustomizePanel()
+    if (ownerControl.dataset.readerPhoneControl === 'profile') openReaderProfilePanel()
+    return
+  }
   // Walk up the DOM tree to find .rd-app-icon inside #tabCustom
   while (el && el !== document.body) {
     if (el.classList && el.classList.contains('rd-app-icon')) {
@@ -2664,8 +3806,6 @@ document.addEventListener('click', function(e) {
       if (!type) return
       e.preventDefault()
       e.stopPropagation()
-      if (type === 'customize') { openReaderCustomizePanel(); return }
-      if (type === 'profile') { openReaderProfilePanel(); return }
       openReaderAppSettings(type, el)
       return
     }
@@ -2674,4 +3814,18 @@ document.addEventListener('click', function(e) {
 })
 
 // ---- Init ----
-renderHome()
+function startReader() {
+  var preview = prepareEditorPreview()
+  _editorPreviewMode = preview.preview
+  if (!preview.preview) {
+    renderHome()
+    return
+  }
+  if (!preview.ok) {
+    renderEditorPreviewError(preview.message)
+    return
+  }
+  loadWork(preview.work, { remember: false })
+}
+
+startReader()

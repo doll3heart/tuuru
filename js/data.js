@@ -45,6 +45,11 @@ export const PH_MODES = [
 ]
 
 // Phone app definitions
+export const DEFAULT_PHONE_APP_COLORS = {
+  settings: '#d7cfd1', customize: '#e3bdc7', messages: '#c9a2ac',
+  forum: '#b7a8b9', memo: '#efe5d4', gallery: '#d5b8c7',
+  browser: '#c2c8cf', shopping: '#d7aaaf', profile: '#d7bec5', contacts: '#c6b3b7'
+}
 export const PHONE_APP_DEFS = {
   settings:  { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', label: '设置',     color: '#f0f0f0', visible: 'author' },
   customize: { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>', label: '美化',     color: '#f0f0f0', visible: 'both' },
@@ -58,12 +63,15 @@ export const PHONE_APP_DEFS = {
   contacts:  { icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>', label: '联系人', color: '#f0f0f0', visible: 'both' },
 }
 
+// Reader-owned controls live in the reader shell, never on the in-world phone desktop.
+export const PHONE_READER_OWNED_CONTROL_TYPES = Object.freeze(['customize', 'profile'])
+
 export const DEFAULT_PHONE_SKIN = {
-  wallpaper: '#d0e8f5',
+  wallpaper: '#eee6e7',
   wallpaperType: 'color',
   wallpaperImage: null,
-  frameColor: '#ccc',
-  borderRadius: 28,
+  frameColor: '#8f7b81',
+  borderRadius: 18,
   fontFamily: "'Noto Sans SC', sans-serif",
   fontSize: 12,
   readerId: '读者',
@@ -71,7 +79,7 @@ export const DEFAULT_PHONE_SKIN = {
   showDynamicIsland: true,
   iconStyle: 'mixed',
   showIconShadow: true,
-  iconBorderRadius: 14,
+  iconBorderRadius: 6,
   showGlassEffect: true,
   iconColumns: 4,
   showAppLabels: true,
@@ -88,11 +96,13 @@ function makePhoneApps() {
     [0,1],[1,1],[2,1],[3,1],
     [0,2]
   ]
-  var keys = Object.keys(PHONE_APP_DEFS)
+  var keys = Object.keys(PHONE_APP_DEFS).filter(function(k) {
+    return !PHONE_READER_OWNED_CONTROL_TYPES.includes(k)
+  })
   return keys.map(function(k, i) {
     var def = PHONE_APP_DEFS[k]
     var pos = grid[i] || [i % 4, Math.floor(i / 4)]
-    return { id: uid(), type: k, name: def.label, icon: def.icon, color: def.color, desktopX: pos[0], desktopY: pos[1], enabled: true }
+    return { id: uid(), type: k, name: def.label, icon: def.icon, color: DEFAULT_PHONE_APP_COLORS[k] || def.color, desktopX: pos[0], desktopY: pos[1], enabled: true }
   })
 }
 const AC=["#6366f1","#8b5cf6","#a855f7","#d946ef","#ec4899","#f43f5e","#ef4444","#f97316","#f59e0b","#84cc16","#22c55e","#10b981","#14b8a6","#06b6d4","#0ea5e9","#3b82f6","#64748b","#78716c"]
@@ -190,10 +200,11 @@ export function addNode(workId,afterId){
   const db=rd();const w=db.works.find(x=>x.id===workId);if(!w||w.type!==WORK_TYPE.ARTICLE)return null
   const n={id:uid(),title:"新节点",content:"",choices:[],scene:"",chapterId:w.chapters&&w.chapters[0]?w.chapters[0].id:""}
   if(afterId){const i=w.nodes.findIndex(x=>x.id===afterId);w.nodes.splice(i+1,0,n)}else w.nodes.push(n)
+  if(!w.startNode||!w.nodes.some(x=>x.id===w.startNode))w.startNode=w.nodes[0]?.id||""
   w.updatedAt=Date.now();wr(db);return n
 }
 export function updateNode(wid,nid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;Object.assign(n,data);w.updatedAt=Date.now();wr(db);return n}
-export function deleteNode(wid,nid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;w.nodes=w.nodes.filter(x=>x.id!==nid);w.nodes.forEach(x=>{x.choices=x.choices.filter(c=>c.targetId!==nid)});if(w.startNode===nid&&w.nodes.length>0)w.startNode=w.nodes[0].id;w.updatedAt=Date.now();wr(db)}
+export function deleteNode(wid,nid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;w.nodes=w.nodes.filter(x=>x.id!==nid);w.nodes.forEach(x=>{x.choices=x.choices.filter(c=>c.targetId!==nid)});if(!w.nodes.some(x=>x.id===w.startNode))w.startNode=w.nodes[0]?.id||"";w.updatedAt=Date.now();wr(db)}
 export function addChoice(wid,nid,tid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;const c={id:uid(),text:"",targetId:tid||""};n.choices.push(c);w.updatedAt=Date.now();wr(db);return c}
 export function updateChoice(wid,nid,cid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;const c=n.choices.find(x=>x.id===cid);if(!c)return null;Object.assign(c,data);w.updatedAt=Date.now();wr(db);return c}
 export function deleteChoice(wid,nid,cid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;const n=w.nodes.find(x=>x.id===nid);if(!n)return;n.choices=n.choices.filter(x=>x.id!==cid);w.updatedAt=Date.now();wr(db)}
@@ -208,7 +219,7 @@ export function addContact(wid,data){const db=rd();const w=db.works.find(x=>x.id
 export function updateContact(wid,cid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c=w.phoneData.contacts.find(x=>x.id===cid);if(!c)return null;Object.assign(c,data);w.updatedAt=Date.now();wr(db);return c}
 export function deleteContact(wid,cid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return;w.phoneData.contacts=w.phoneData.contacts.filter(x=>x.id!==cid);w.updatedAt=Date.now();wr(db)}
 export function addChat(wid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c={id:uid(),type:data.group?"group":"single",contactIds:data.contactIds||[],groupName:data.groupName||"",messages:data.messages||[]};w.phoneData.chats.push(c);w.updatedAt=Date.now();wr(db);return c}
-export function addChatMessage(wid,cid,msg){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c=w.phoneData.chats.find(x=>x.id===cid);if(!c)return null;c.messages.push({id:uid(),senderId:msg.senderId||"",text:msg.text||"",time:msg.time||"",image:msg.image||""});w.updatedAt=Date.now();wr(db);return c}
+export function addChatMessage(wid,cid,msg){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c=w.phoneData.chats.find(x=>x.id===cid);if(!c)return null;const next={id:uid(),senderId:msg.senderId||"",text:msg.text||"",time:msg.time||"",image:msg.image||""};if(Array.isArray(c.rounds)&&c.rounds.length){const round=c.rounds[c.rounds.length-1];round.messages=Array.isArray(round.messages)?round.messages:[];round.messages.push(next)}else{c.messages=Array.isArray(c.messages)?c.messages:[];c.messages.push(next)}w.updatedAt=Date.now();wr(db);return c}
 export function deleteChat(wid,cid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return;w.phoneData.chats=w.phoneData.chats.filter(x=>x.id!==cid);w.updatedAt=Date.now();wr(db)}
 export function addMoment(wid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const m={id:uid(),contactId:data.contactId||"",content:data.content||"",images:data.images||[],time:data.time||"刚刚",likes:[],comments:[]};w.phoneData.moments.push(m);w.updatedAt=Date.now();wr(db);return m}
 export function deleteMoment(wid,mid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return;w.phoneData.moments=w.phoneData.moments.filter(x=>x.id!==mid);w.updatedAt=Date.now();wr(db)}
@@ -289,7 +300,7 @@ export function exportWorkAsJSON(wid) {
     // Remove author-only apps
     if (copy.phoneData.apps) {
       copy.phoneData.apps = copy.phoneData.apps.filter(function(a) {
-        return a.type !== 'settings' && a.type !== 'customize'
+        return a.type !== 'settings' && !PHONE_READER_OWNED_CONTROL_TYPES.includes(a.type)
       })
     }
   }

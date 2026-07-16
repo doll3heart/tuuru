@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
+import { colorContrastRatio } from "../js/color-contrast.js"
 
 const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 
@@ -145,6 +146,127 @@ test("contact-scoped reader Apps can switch away from the first contact", async 
   }
 })
 
+test("configured locked Apps require reader confirmation and keep the authored source visible", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-authored-character-access"
+  work.phoneData.appConnections = Object.fromEntries(
+    ["memo", "gallery", "browser", "shopping"].map(type => [type, {
+      contactId: work.phoneData.contacts[1].id,
+      prompt: `${type} 的剧情接入提示`,
+    }]),
+  )
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-authored-character-access=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+
+  for (const [type, firstText, secondText] of [
+    ["memo", "Alice memo", "Bob memo"],
+    ["gallery", "Alice photo", "Bob photo"],
+    ["browser", "Alice history", "Bob history"],
+    ["shopping", "Alice item", "Bob item"],
+  ]) {
+    document.querySelector(`[data-app-type="${type}"]`).click()
+    let frame = document.querySelector(".phone-frame")
+    const gate = frame.querySelector(".rd-connection-gate")
+    assert.ok(gate, `${type} should pause at the authored connection gate`)
+    assert.match(gate.textContent, /Bob <script>的手机/)
+    assert.match(gate.textContent, new RegExp(`${type} 的剧情接入提示`))
+    assert.doesNotMatch(gate.textContent, new RegExp(secondText))
+    assert.equal(frame.querySelector(".rd-contact-select"), null)
+    assert.equal(frame.querySelector("script"), null)
+    assert.equal(document.querySelector("[data-forged]"), null)
+
+    const confirm = gate.querySelector('[data-connection-action="confirm"]')
+    assert.ok(confirm)
+    confirm.click()
+
+    frame = document.querySelector(".phone-frame")
+    assert.equal(frame.querySelector(".rd-connection-gate"), null)
+    const source = frame.querySelector(".rd-contact-source")
+    assert.ok(source, `${type} should keep the connected source visible`)
+    assert.match(source.textContent, /Bob <script>的手机/)
+    assert.doesNotMatch(frame.textContent, new RegExp(firstText))
+    assert.match(frame.textContent, new RegExp(secondText))
+    assert.equal(frame.querySelector(".rd-contact-select"), null)
+
+    frame.querySelector(".rd-back-btn").click()
+    assert.ok(document.getElementById("phoneDesktopReader"))
+  }
+})
+
+test("reader can decline a configured character connection without seeing its content", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-declines-character-access"
+  work.phoneData.appConnections = {
+    memo: { contactId: "contact-a", prompt: "先确认再查看。" },
+  }
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-declines-character-access=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="memo"]').click()
+
+  const gate = document.querySelector(".rd-connection-gate")
+  assert.ok(gate)
+  assert.doesNotMatch(gate.textContent, /Alice memo/)
+  gate.querySelector('[data-connection-action="cancel"]').click()
+
+  assert.ok(document.getElementById("phoneDesktopReader"))
+  assert.equal(document.querySelector(".rd-connection-gate"), null)
+  assert.doesNotMatch(document.querySelector(".phone-frame").textContent, /Alice memo/)
+})
+
+test("a configured connection to a deleted character fails closed", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-missing-character-access"
+  work.phoneData.appConnections = {
+    memo: { contactId: "deleted-contact", prompt: "This source no longer exists." },
+  }
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-missing-character-access=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="memo"]').click()
+
+  const frame = document.querySelector(".phone-frame")
+  const unavailable = frame.querySelector('.rd-connection-gate[data-connection-state="unavailable"]')
+  assert.ok(unavailable)
+  assert.equal(unavailable.querySelector('[data-connection-action="confirm"]'), null)
+  assert.equal(frame.querySelector(".rd-contact-select"), null)
+  assert.doesNotMatch(frame.textContent, /Alice memo|Bob memo/)
+
+  unavailable.querySelector('[data-connection-action="cancel"]').click()
+  assert.ok(document.getElementById("phoneDesktopReader"))
+})
+
+test("a configured connection with an ambiguous character id fails closed", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-ambiguous-character-access"
+  work.phoneData.contacts[1].id = "contact-a"
+  work.phoneData.appConnections = {
+    memo: { contactId: "contact-a", prompt: "This source is ambiguous." },
+  }
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-ambiguous-character-access=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="memo"]').click()
+
+  const frame = document.querySelector(".phone-frame")
+  assert.ok(frame.querySelector('.rd-connection-gate[data-connection-state="unavailable"]'))
+  assert.equal(frame.querySelector(".rd-contact-select"), null)
+  assert.doesNotMatch(frame.textContent, /Alice memo|Bob memo/)
+})
+
 test("contact-scoped reader Apps keep legacy content without contacts", async t => {
   installDom(t)
   const work = phoneWork()
@@ -211,4 +333,29 @@ test("the reader contact picker remains usable on touch and keyboard", () => {
   assert.match(select, /min-height\s*:\s*44px/)
   assert.match(select, /font\s*:\s*inherit/)
   assert.match(focus, /outline\s*:\s*2px\s+solid/)
+})
+
+test("the reader connection gate has touch-safe actions, visible focus, and reduced-motion support", () => {
+  const gate = ruleBodiesFor(".rd-connection-gate")
+  const action = ruleBodiesFor(".rd-connection-action")
+  const focus = ruleBodiesFor(".rd-connection-action:focus-visible")
+  const source = ruleBodiesFor(".rd-contact-source")
+  const primaryHover = ruleBodiesFor(".rd-connection-action.primary:hover")
+  const primary = readerCss.match(/--phone-system-primary\s*:\s*(#[0-9a-f]{6})\s*;/i)?.[1]
+  const primaryHoverColor = readerCss.match(/--phone-system-primary-hover\s*:\s*(#[0-9a-f]{6})\s*;/i)?.[1]
+  const primaryInk = readerCss.match(/--phone-system-primary-ink\s*:\s*(#[0-9a-f]{6})\s*;/i)?.[1]
+
+  assert.match(gate, /overflow-y\s*:\s*auto/)
+  assert.match(action, /min-height\s*:\s*44px/)
+  assert.match(action, /font\s*:\s*inherit/)
+  assert.match(focus, /outline\s*:\s*2px\s+solid/)
+  assert.match(source, /position\s*:\s*sticky/)
+  assert.match(source, /top\s*:\s*0/)
+  assert.ok(primary, "the default primary color should be an auditable hex value")
+  assert.ok(primaryHoverColor, "the primary hover color should be explicit")
+  assert.ok(primaryInk, "the primary ink color should be an auditable hex value")
+  assert.ok(colorContrastRatio(primaryInk, primary) >= 4.5)
+  assert.ok(colorContrastRatio(primaryInk, primaryHoverColor) >= 4.5)
+  assert.match(primaryHover, /background\s*:\s*var\(--phone-system-primary-hover\)/)
+  assert.match(readerCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.rd-connection-gate/)
 })

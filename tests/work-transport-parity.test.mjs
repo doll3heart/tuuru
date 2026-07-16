@@ -53,6 +53,8 @@ test("current article and phone exports have identical JSON and PNG reader seman
         chats: [], moments: [], forumPosts: [], forumNpcs: [],
         apps: [
           { id: "settings", type: "settings" },
+          { id: "customize", type: "customize" },
+          { id: "profile", type: "profile" },
           { id: "messages", type: "messages", icon: "<svg></svg>" },
         ],
         memos: [], photos: [], albums: [], browserHistory: [], shoppingItems: [],
@@ -77,6 +79,8 @@ test("current article and phone exports have identical JSON and PNG reader seman
     if (fixture.type === "article") assert.deepEqual(jsonWork.futureField, { preserved: true })
     if (fixture.type === "phone") {
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "settings"), false)
+      assert.equal(jsonWork.phoneData.apps.some(app => app.type === "customize"), false)
+      assert.equal(jsonWork.phoneData.apps.some(app => app.type === "profile"), false)
       assert.deepEqual(jsonWork.phoneData.futurePhoneField, { preserved: true })
     }
   }

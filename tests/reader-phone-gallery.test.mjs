@@ -179,7 +179,7 @@ test("reader gallery CSS consumes runtime style variables", () => {
   assert.match(photo, /border-radius\s*:\s*var\(--rd-gallery-radius,\s*4px\)/)
 })
 
-test("article gallery modules preserve album-only data in the reader overlay", async t => {
+test("article gallery modules preserve their authored character connection in the reader overlay", async t => {
   installDom(t)
   const work = {
     schemaVersion: 1,
@@ -201,8 +201,18 @@ test("article gallery modules preserve album-only data in the reader overlay", a
       type: "gallery",
       nodeId: "node-a",
       data: {
+        contacts: [
+          { id: "contact-a", name: "Alice" },
+          { id: "contact-b", name: "Bob" },
+        ],
         photos: [],
-        albums: [{ id: "album-a", name: "Summer album" }],
+        albums: [
+          { id: "album-a", contactId: "contact-a", name: "Alice album" },
+          { id: "album-b", contactId: "contact-b", name: "Bob summer album" },
+        ],
+        appConnections: {
+          gallery: { contactId: "contact-b", prompt: "Bob wants to show you this album." },
+        },
       },
     }],
     startNode: "node-a",
@@ -219,9 +229,18 @@ test("article gallery modules preserve album-only data in the reader overlay", a
   assert.ok(galleryIcon.querySelector('[style*="#ef4444"]'))
 
   galleryIcon.click()
+  const gate = document.querySelector(".rd-connection-gate")
+  assert.ok(gate)
+  assert.match(gate.textContent, /Bob/)
+  assert.match(gate.textContent, /Bob wants to show you this album\./)
+  assert.doesNotMatch(gate.textContent, /Bob summer album/)
+  gate.querySelector('[data-connection-action="confirm"]').click()
+
   const album = document.querySelector(".rd-album")
   assert.ok(album)
-  assert.match(album.textContent, /Summer album/)
+  assert.match(album.textContent, /Bob summer album/)
+  assert.doesNotMatch(document.querySelector(".phone-frame").textContent, /Alice album/)
+  assert.match(document.querySelector(".rd-contact-source").textContent, /Bob/)
 })
 
 test("standalone gallery albums support drill-down, recovery, and focus continuity", async t => {

@@ -1,0 +1,34 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  .pixel-board{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:22px;margin-top:24px}
+  .pixel-option{cursor:pointer;border:1px solid #c9c1b8;border-radius:22px;background:#e8e3dd;padding:16px;box-shadow:inset 1px 1px 0 #fff,8px 10px 22px rgba(68,59,52,.12);transition:.18s ease}
+  .pixel-option:hover{transform:translateY(-3px)}
+  .pixel-option.selected{outline:3px solid #8e865b;outline-offset:4px}
+  .device{height:500px;border:1px solid #aaa198;border-radius:27px;padding:14px;background:linear-gradient(145deg,#f5f1ec,#d8d1ca);box-shadow:inset 2px 2px 2px #fff,inset -3px -3px 5px #b9b1aa,0 12px 22px rgba(48,40,35,.16);font-family:'IBM Plex Mono',monospace;color:#242321}
+  .device-top{display:flex;align-items:center;justify-content:space-between;height:34px;font-size:11px;letter-spacing:.1em}.screw{width:10px;height:10px;border:1px solid #a79f97;border-radius:50%;box-shadow:inset 1px 1px 2px #bbb}
+  .screen{border:1px solid #8f8a83;padding:7px;background:#dfe1d7;box-shadow:inset 2px 2px 5px rgba(43,41,38,.28),1px 1px 0 #fff}.status{display:flex;justify-content:space-between;font-size:9px;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:7px}
+  .profile{display:flex;gap:9px;align-items:center;margin:9px 0}.avatar{width:42px;height:42px;border:1px solid #3c3a37;background:repeating-linear-gradient(45deg,#282724 0 3px,#d9dcd2 3px 6px);box-shadow:2px 2px 0 #777}.profile b{font-size:12px}.profile small{display:block;font-size:8px;margin-top:4px}
+  .appgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:12px}.app{display:grid;place-items:center;height:65px;border:1px solid #999087;background:#ece8e1;box-shadow:inset 1px 1px 0 #fff,2px 3px 0 #aaa29a;font-size:9px;text-align:center}.app i{display:grid;place-items:center;width:26px;height:26px;border:1px solid #333;background:#2d2c29;color:#ece8e1;font-style:normal;margin-bottom:4px}
+  .nav{display:grid;grid-template-columns:repeat(3,1fr);margin-top:16px;border:1px solid #999087}.nav span{padding:10px 3px;text-align:center;font-size:8px;border-right:1px solid #aaa29a;background:#ded8d1}.nav span:last-child{border:0}
+  .label2{margin-top:14px;font:600 12px 'IBM Plex Mono',monospace;letter-spacing:.08em}.desc{font-size:12px;color:#716b64;line-height:1.6;margin-top:5px}
+  .soft .screen{background:#e4e0d5}.soft .app{border-radius:8px}.soft .app i{border-radius:6px;background:#5d6158}.soft .avatar{border-radius:8px}
+  .pocket .device{background:linear-gradient(145deg,#f4efe9,#d9d2ca)}.pocket .screen{border:3px double #77726c;background:#d7d9ce}.pocket .app{border-radius:3px}.pocket .app i{box-shadow:0 0 0 2px #d7d9ce,0 0 0 3px #333}.pocket .nav span:first-child{background:#c9c48e}
+  .industrial .device{border-radius:14px;background:linear-gradient(135deg,#dedbd5,#c4c0ba)}.industrial .screen{background:#ccd2c5;border:2px solid #494846}.industrial .app{border-radius:0;background:#d4d2cc;box-shadow:3px 3px 0 #585754}.industrial .app i{background:#111}.industrial .nav{border:2px solid #333}.industrial .status{background:#222;color:#ddd;padding:4px}
+  @media(max-width:900px){.pixel-board{grid-template-columns:1fr}.device{max-width:310px;margin:auto}}
+</style>
+<h2>默认手机视觉：哪种“中度拟物像素”最像你？</h2>
+<p class="subtitle">三种都保留清晰的现代手机结构，区别是萌感来自哪里。点击一张即可选择。</p>
+<div class="pixel-board">
+  <div class="pixel-option soft" data-choice="soft-terminal" onclick="toggleSelect(this)">
+    <div class="device"><div class="device-top"><span class="screw"></span><b>TUURU / HOME</b><span>09:41</span></div><div class="screen"><div class="status"><span>USER_01</span><span>ONLINE ●</span></div><div class="profile"><div class="avatar"></div><div><b>Good morning!</b><small>Today feels soft and quiet.</small></div></div></div><div class="appgrid"><div class="app"><i>✉</i>消息</div><div class="app"><i>▤</i>论坛</div><div class="app"><i>▧</i>相册</div><div class="app"><i>♪</i>收藏</div><div class="app"><i>⌁</i>备忘</div><div class="app"><i>+</i>更多</div></div><div class="nav"><span>HOME</span><span>PROFILE</span><span>SETTINGS</span></div></div>
+    <div class="label2">A · 柔软终端</div><div class="desc">奶油塑料与少量像素元素，最温和、最容易长期阅读，但个性相对含蓄。</div>
+  </div>
+  <div class="pixel-option pocket" data-choice="pocket-device" onclick="toggleSelect(this)">
+    <div class="device"><div class="device-top"><span class="screw"></span><b>POCKET LINK</b><span>BAT 88</span></div><div class="screen"><div class="status"><span>CHARACTER FILE</span><span>#001</span></div><div class="profile"><div class="avatar"></div><div><b>HELLO, YOU!</b><small>3 new messages / 1 memory</small></div></div></div><div class="appgrid"><div class="app"><i>01</i>MESSAGE</div><div class="app"><i>02</i>FORUM</div><div class="app"><i>03</i>ALBUM</div><div class="app"><i>04</i>MEMO</div><div class="app"><i>05</i>SHOP</div><div class="app"><i>06</i>WEB</div></div><div class="nav"><span>◉ VIEW</span><span>◎ CUSTOM</span><span>▣ SAVE</span></div></div>
+    <div class="label2">B · 口袋角色机（推荐）</div><div class="desc">最接近参考图：双线屏框、实体按键、编号图标和角色档案感，萌但不幼稚。</div>
+  </div>
+  <div class="pixel-option industrial" data-choice="industrial-console" onclick="toggleSelect(this)">
+    <div class="device"><div class="device-top"><span>SYS://TUURU</span><b>TERMINAL</b><span>v.02</span></div><div class="screen"><div class="status"><span>ACCESS GRANTED</span><span>[●]</span></div><div class="profile"><div class="avatar"></div><div><b>SUBJECT_001</b><small>LOG UPDATED 09:41</small></div></div></div><div class="appgrid"><div class="app"><i>M</i>MSG</div><div class="app"><i>F</i>BOARD</div><div class="app"><i>G</i>IMAGE</div><div class="app"><i>N</i>NOTE</div><div class="app"><i>S</i>STORE</div><div class="app"><i>W</i>LINK</div></div><div class="nav"><span>OPEN</span><span>EDIT</span><span>LOCK</span></div></div>
+    <div class="label2">C · 工业终端</div><div class="desc">黑白对比更强、像素更硬、更像科幻游戏菜单；设计感强，但日常亲和力最低。</div>
+  </div>
+</div>

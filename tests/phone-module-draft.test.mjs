@@ -45,6 +45,13 @@ test("module payload projection follows the existing schema for every app", () =
     albums: [{ id: "album-1" }],
     browserHistory: [{ id: "history-1" }],
     shoppingItems: [{ id: "item-1" }],
+    appConnections: {
+      messages: { contactId: "contact-1", prompt: "Ignored legacy metadata" },
+      memo: { contactId: "contact-1", prompt: "Memo prompt" },
+      gallery: { contactId: "contact-1", prompt: "Gallery prompt" },
+      browser: { contactId: "contact-1", prompt: "Browser prompt" },
+      shopping: { contactId: "contact-1", prompt: "Shopping prompt" },
+    },
   }
 
   assert.deepEqual(pickPhoneModuleData("messages", phoneData), {
@@ -56,16 +63,24 @@ test("module payload projection follows the existing schema for every app", () =
   })
   assert.deepEqual(pickPhoneModuleData("memo", phoneData), {
     memos: phoneData.memos,
+    contacts: phoneData.contacts,
+    appConnections: { memo: phoneData.appConnections.memo },
   })
   assert.deepEqual(pickPhoneModuleData("gallery", phoneData), {
     photos: phoneData.photos,
     albums: phoneData.albums,
+    contacts: phoneData.contacts,
+    appConnections: { gallery: phoneData.appConnections.gallery },
   })
   assert.deepEqual(pickPhoneModuleData("browser", phoneData), {
     browserHistory: phoneData.browserHistory,
+    contacts: phoneData.contacts,
+    appConnections: { browser: phoneData.appConnections.browser },
   })
   assert.deepEqual(pickPhoneModuleData("shopping", phoneData), {
     shoppingItems: phoneData.shoppingItems,
+    contacts: phoneData.contacts,
+    appConnections: { shopping: phoneData.appConnections.shopping },
   })
   assert.deepEqual(pickPhoneModuleData("contacts", phoneData), {
     contacts: phoneData.contacts,

@@ -166,6 +166,20 @@ function validateAppsForRendering(value, path) {
   return { ok: true }
 }
 
+function normalizeForumComments(comments, path) {
+  for (let index = 0; index < comments.length; index += 1) {
+    const comment = comments[index]
+    const commentPath = `${path}[${index}]`
+    const choicesResult = normalizeChoices(comment, commentPath)
+    if (!choicesResult.ok) return choicesResult
+    const repliesResult = normalizeCollection(comment, "replies", commentPath)
+    if (!repliesResult.ok) return repliesResult
+    const nestedResult = normalizeForumComments(comment.replies, `${commentPath}.replies`)
+    if (!nestedResult.ok) return nestedResult
+  }
+  return { ok: true }
+}
+
 function validateWorkRenderValues(work, path, { strictPresentation }) {
   if (!strictPresentation) return { ok: true }
   const idResult = validateOptionalIdentifier(work.id, `${path}.id`)
@@ -216,7 +230,10 @@ function normalizeArticle(input, path) {
       work.phoneModules[index].data = result.value
     }
   }
-  if (!work.startNode && work.nodes.length > 0) work.startNode = work.nodes[0].id
+  const firstValidNode = work.nodes.find(node => typeof node.id === "string" && node.id.length > 0)
+  const hasValidStart = typeof work.startNode === "string"
+    && work.nodes.some(node => node.id === work.startNode)
+  if (!hasValidStart) work.startNode = firstValidNode?.id || ""
   return { ok: true, work }
 }
 
@@ -271,14 +288,8 @@ function normalizePhoneData(phoneData, path) {
     if (!imagesResult.ok) return imagesResult
     const commentsResult = normalizeCollection(post, "comments", postPath)
     if (!commentsResult.ok) return commentsResult
-    for (let commentIndex = 0; commentIndex < post.comments.length; commentIndex += 1) {
-      const result = normalizeCollection(
-        post.comments[commentIndex],
-        "replies",
-        `${postPath}.comments[${commentIndex}]`,
-      )
-      if (!result.ok) return result
-    }
+    const nestedCommentsResult = normalizeForumComments(post.comments, `${postPath}.comments`)
+    if (!nestedCommentsResult.ok) return nestedCommentsResult
   }
   return { ok: true, value: normalized }
 }

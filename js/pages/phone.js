@@ -1,5 +1,5 @@
 // Tuuru Works - Phone Editor
-import { uid, PHONE_APP_DEFS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
+import { uid, PHONE_APP_DEFS, PHONE_READER_OWNED_CONTROL_TYPES, DEFAULT_PHONE_APP_COLORS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
 import { escapeHtmlAttribute, sanitizeCssColor, sanitizeIconHtml } from "../sanitize.js"
 import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
@@ -10,7 +10,6 @@ import {
   phoneGridContainerStyle,
   phoneGridItemStyle,
 } from "../phone-grid.js"
-import { runTarotTransition } from "../tarot-transition.js"
 import { showToast, renderHeader, modal } from "../app.js"
 
 var _workId = null
@@ -25,7 +24,6 @@ var _flowWid = null
 var _flowPd = null
 
 var PHONE_APP_TYPES_WITH_OWN_HEADER = new Set(['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping'])
-
 function esc(s) {
   if (!s) return ""
   var d = document.createElement("div")
@@ -40,6 +38,106 @@ function escAttr(s) {
     .replace(/'/g, '&#39;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+}
+
+function openThreadReplyChoiceEditor(owner, options) {
+  if (!owner || typeof owner !== 'object') return null
+  options = options || {}
+  var originalChoices = Array.isArray(owner.choices) ? owner.choices : []
+  var groups = originalChoices.map(function(choice) {
+    return {
+      id: choice.id || '',
+      text: choice.text || '',
+      replyText: choice.replyText || '',
+      followUpLines: Array.isArray(choice.followUpMessages)
+        ? choice.followUpMessages.map(function(message) { return message.text || message.content || '' }).join('\n')
+        : ''
+    }
+  })
+  if (!groups.length) groups.push({id: '', text: '', replyText: '', followUpLines: ''})
+
+  var body = '<div id="threadChoiceGroups"></div>'
+  body += '<button type="button" id="threadChoiceAdd" class="btn btn-sm btn-outline" style="width:100%">+ 添加完整句子</button>'
+  var overlay = modal(options.title || '编辑回复选项', body,
+    '<button type="button" id="threadChoiceSave" class="btn btn-primary btn-sm">保存</button><button type="button" id="threadChoiceDeleteAll" class="btn btn-ghost btn-sm">删除选项组</button><button type="button" id="threadChoiceCancel" class="btn btn-ghost btn-sm">取消</button>')
+  var list = overlay.querySelector('#threadChoiceGroups')
+
+  function collect() {
+    var rows = list.querySelectorAll('.thread-choice-row')
+    rows.forEach(function(row, index) {
+      if (!groups[index]) return
+      groups[index].text = row.querySelector('.thread-choice-text')?.value || ''
+      groups[index].replyText = row.querySelector('.thread-choice-reply')?.value || ''
+      groups[index].followUpLines = row.querySelector('.thread-choice-followups')?.value || ''
+    })
+  }
+
+  function render() {
+    collect()
+    list.innerHTML = groups.map(function(group, index) {
+      var html = '<div class="thread-choice-row" data-thread-choice-index="' + index + '" style="position:relative;margin-bottom:8px;padding:9px;border:1px solid var(--c-border)">'
+      html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input" value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
+      html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input" value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
+      html += '<label class="form-label" style="margin-top:6px">角色后续消息（每行一个气泡）</label><textarea class="thread-choice-followups form-textarea" style="min-height:54px">' + esc(group.followUpLines) + '</textarea>'
+      html += '<button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除这条回复" style="position:absolute;right:5px;top:5px;border:0;background:transparent;color:var(--c-text2);cursor:pointer">×</button></div>'
+      return html
+    }).join('')
+    list.querySelectorAll('[data-thread-choice-remove]').forEach(function(button) {
+      button.onclick = function() {
+        collect()
+        groups.splice(Number(button.dataset.threadChoiceRemove), 1)
+        if (!groups.length) groups.push({id: '', text: '', replyText: '', followUpLines: ''})
+        render()
+      }
+    })
+  }
+
+  overlay.querySelector('#threadChoiceAdd').onclick = function() {
+    collect()
+    groups.push({id: '', text: '', replyText: '', followUpLines: ''})
+    render()
+  }
+  overlay.querySelector('#threadChoiceCancel').onclick = function() { overlay.remove() }
+  overlay.querySelector('#threadChoiceDeleteAll').onclick = function() {
+    if (!confirm('确定删除这组回复选项？')) return
+    owner.choices = undefined
+    options.onSave?.(undefined)
+    overlay.remove()
+  }
+  overlay.querySelector('#threadChoiceSave').onclick = function() {
+    collect()
+    var nextChoices = []
+    groups.forEach(function(group) {
+      var text = group.text.trim()
+      if (!text) return
+      var previous = originalChoices.find(function(choice) { return group.id && choice.id === group.id })
+      var previousFollowUps = Array.isArray(previous?.followUpMessages) ? previous.followUpMessages : []
+      var followUpLines = group.followUpLines.split('\n').map(function(line) { return line.trim() }).filter(Boolean)
+      var followUpMessages = followUpLines.map(function(line, index) {
+        var oldMessage = previousFollowUps[index]
+        return Object.assign({}, oldMessage || {}, {
+          id: oldMessage?.id || uid(),
+          senderId: oldMessage?.senderId || options.defaultFollowUpSenderId || owner.contactId || 'self',
+          text: line,
+          content: line,
+          type: oldMessage?.type || 'text'
+        })
+      })
+      var next = Object.assign({}, previous || {}, {
+        id: previous?.id || uid(),
+        text: text,
+        replyText: group.replyText.trim() || text,
+        followUpMessages: followUpMessages
+      })
+      delete next.used
+      nextChoices.push(next)
+    })
+    owner.choices = nextChoices.length ? nextChoices : undefined
+    options.onSave?.(owner.choices)
+    overlay.remove()
+  }
+  render()
+  return overlay
 }
 
 function applyPhoneGridItemPosition(icon, desktopX, desktopY) {
@@ -60,6 +158,7 @@ function requestPhoneAppModalClose(frame, reason) {
 }
 
 function exitPhoneAppEditor(frame, wid, beforeExit) {
+  var returnAppType = frame && frame.dataset ? frame.dataset._returnAppType || '' : ''
   var active = document.activeElement
   if (active && frame.contains(active) && typeof active.blur === 'function') {
     active.blur()
@@ -70,12 +169,22 @@ function exitPhoneAppEditor(frame, wid, beforeExit) {
   frame.style.pointerEvents = 'none'
   frame.innerHTML = frame.dataset._origHTML || ''
   delete frame.dataset._origHTML
+  delete frame.dataset._returnAppType
   frame.style.transform = 'translateZ(0)'
   void frame.offsetHeight
   requestAnimationFrame(function() {
     frame.style.transform = ''
     frame.style.pointerEvents = ''
     attachDrag(wid)
+    if (returnAppType) {
+      var icons = frame.querySelectorAll('.phone-app-icon')
+      for (var i = 0; i < icons.length; i++) {
+        if (icons[i].dataset.appType === returnAppType) {
+          icons[i].focus()
+          break
+        }
+      }
+    }
   })
 }
 
@@ -163,9 +272,6 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   var labels = { messages: '消息', forum: '论坛', memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单', profile: '个人主页', contacts: '联系人' }
   var title = labels[appType] || 'App'
 
-  // Find first contact for apps that need one
-  var firstContact = contacts.length > 0 ? contacts[0] : { id: uid(), name: '示例联系人', avatarUrl: '' }
-
   // Build overlay
   var ov = document.createElement('div')
   ov.className = 'modal-overlay phone-app-modal-overlay'
@@ -246,20 +352,16 @@ export function openPhoneAppModal(wid, appType, options = {}) {
         openForumEditor(frame, wid, { id: uid(), name: '论坛', avatarUrl: '' }, pd)
         break
       case 'memo':
-        var memos = pd.memos || []
-        var contactMemos = memos.filter(function(it) { return it.contactId === firstContact.id })
-        openMemoEditor(frame, wid, firstContact, contactMemos, pd)
+        openCharacterAccessEditor(frame, wid, 'memo', pd)
         break
       case 'gallery':
-        openGalleryEditor(frame, wid, firstContact, pd)
+        openCharacterAccessEditor(frame, wid, 'gallery', pd)
         break
       case 'browser':
-        var history = pd.browserHistory || []
-        var contactHistory = history.filter(function(it) { return it.contactId === firstContact.id })
-        openBrowserEditor(frame, wid, firstContact, contactHistory, pd)
+        openCharacterAccessEditor(frame, wid, 'browser', pd)
         break
       case 'shopping':
-        openShoppingEditor(frame, wid, firstContact, pd)
+        openCharacterAccessEditor(frame, wid, 'shopping', pd)
         break
       case 'profile':
         var h = '<div class="cu-panel pf-panel" style="height:100%;position:relative">'
@@ -384,14 +486,15 @@ export function renderPhoneEditor(wid) {
     updateWork(wid, { phoneData: pd })
   }
 
-  ensureApps(pd)
+  var ensured = ensureApps(pd)
   var apps = pd.apps || []
   var patched = patchApps(apps, pd, wid)
-  if (patched) updateWork(wid, { phoneData: pd })
+  if (ensured || patched) updateWork(wid, { phoneData: pd })
 
+  var usesDefaultWallpaper = skin.wallpaper === DEFAULT_PHONE_SKIN.wallpaper && skin.wallpaperType !== 'image' && !skin.wallpaperImage
   var h = '<div class="phone-editor-wrap" data-phone-arrange-mode="false">'
-  h += '<div class="phone-frame" id="phoneFrame"'
-  h += ' style="--phone-bg:' + (skin.wallpaper !== '#d0e8f5' ? skin.wallpaper : '') + ';'
+  h += '<div class="phone-frame' + (usesDefaultWallpaper ? ' phone-default-wallpaper' : '') + '" id="phoneFrame"'
+  h += ' style="--phone-bg:' + sanitizeCssColor(skin.wallpaper, { fallback: DEFAULT_PHONE_SKIN.wallpaper }) + ';'
   h += '--phone-radius:' + skin.borderRadius + 'px;'
   h += '--phone-font:\'' + (skin.fontFamily || '').replace(/'/g,"") + '\', sans-serif;'
   h += '--phone-fontsize:' + skin.fontSize + 'px;'
@@ -420,10 +523,14 @@ export function renderPhoneEditor(wid) {
   if (coverBg) h += ' style="background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center"'
   h += '>'
   h += '<div class="phone-profile-overlay"></div>'
+  h += '<div class="phone-widget-copy">'
+  h += '<div class="phone-widget-kicker">MY POCKET / READER</div>'
+  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
+  h += '<div class="phone-widget-status"><span></span> LOCAL PROFILE</div>'
+  h += '</div>'
   h += '<div class="phone-avatar">'
   if (skin.readerAvatar) h += '<img src="' + esc(skin.readerAvatar) + '" alt="">'
   h += '</div>'
-  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
   h += '</div>'
 
   h += '<div class="phone-desktop" id="phoneDesktop" style="' + phoneGridContainerStyle() + '">'
@@ -458,10 +565,17 @@ export function renderPhoneEditor(wid) {
 }
 
 function ensureApps(pd) {
-  var apps = pd.apps || []
+  var sourceApps = pd.apps || []
+  var apps = sourceApps.filter(function(app) {
+    return !PHONE_READER_OWNED_CONTROL_TYPES.includes(app.type)
+  })
+  var changed = apps.length !== sourceApps.length
+  if (changed) pd.apps = apps
   var existingTypes = {}
   for (var i = 0; i < apps.length; i++) existingTypes[apps[i].type] = true
-  var keys = Object.keys(PHONE_APP_DEFS)
+  var keys = Object.keys(PHONE_APP_DEFS).filter(function(t) {
+    return !PHONE_READER_OWNED_CONTROL_TYPES.includes(t)
+  })
   var added = false
   for (var k = 0; k < keys.length; k++) {
     var t = keys[k]
@@ -469,24 +583,39 @@ function ensureApps(pd) {
       var def = PHONE_APP_DEFS[t]
       var slot = apps.length
       apps.push({
-        id: uid(), type: t, name: def.label, icon: def.icon, color: def.color,
+        id: uid(), type: t, name: def.label, icon: def.icon, color: DEFAULT_PHONE_APP_COLORS[t] || def.color,
         desktopX: slot % PHONE_GRID_METRICS.columns, desktopY: Math.floor(slot / PHONE_GRID_METRICS.columns), enabled: true
       })
       added = true
     }
   }
   if (added) pd.apps = apps
+  return changed || added
 }
 
 function patchApps(apps, pd, wid) {
   var dirty = false
+  var keptApps = apps.filter(function(app) {
+    return !PHONE_READER_OWNED_CONTROL_TYPES.includes(app.type)
+  })
+  if (keptApps.length !== apps.length) {
+    apps.length = 0
+    for (var keptIndex = 0; keptIndex < keptApps.length; keptIndex++) {
+      apps.push(keptApps[keptIndex])
+    }
+    pd.apps = apps
+    dirty = true
+  }
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
     if (app.type === 'chat') { app.type = 'messages'; dirty = true }
     var def = PHONE_APP_DEFS[app.type]
     if (def) {
       if (!app.icon || app.icon.indexOf('<svg') < 0) { app.icon = def.icon; dirty = true }
-      if (app.color !== def.color) { app.color = def.color; dirty = true }
+      if (!app.color || app.color === '#f0f0f0') {
+        app.color = DEFAULT_PHONE_APP_COLORS[app.type] || def.color
+        dirty = true
+      }
       if (!app.name) { app.name = def.label; dirty = true }
     }
     if (app.desktopX === undefined || app.desktopY === undefined) {
@@ -992,12 +1121,12 @@ document.addEventListener('click', function(e) {
   switch (type) {
     case 'settings': openSettingsEditor(_workId); break
     case 'customize': openCustomizePanel(_workId); break
-    case 'messages': openTarotPanel(_workId, 'messages'); break
-    case 'forum': openTarotPanel(_workId, 'forum'); break
-    case 'memo': openTarotPanel(_workId, 'memo'); break
-    case 'gallery': openTarotPanel(_workId, 'gallery'); break
-    case 'browser': openTarotPanel(_workId, 'browser'); break
-    case 'shopping': openTarotPanel(_workId, 'shopping'); break
+    case 'messages': openCharacterAccessPanel(_workId, 'messages'); break
+    case 'forum': openCharacterAccessPanel(_workId, 'forum'); break
+    case 'memo': openCharacterAccessPanel(_workId, 'memo'); break
+    case 'gallery': openCharacterAccessPanel(_workId, 'gallery'); break
+    case 'browser': openCharacterAccessPanel(_workId, 'browser'); break
+    case 'shopping': openCharacterAccessPanel(_workId, 'shopping'); break
     case 'profile': openProfilePanel(_workId); break
     case 'contacts': openContactsPanel(_workId); break
     default: showToast('待开发')
@@ -1698,340 +1827,142 @@ function refreshPhone(wid) {
   if (a) a.innerHTML = renderHeader() + renderPhoneEditor(wid)
 }
 
-/// GENERIC TAROT-STYLE CARD PANEL (memo/gallery/browser/shopping)
-function openTarotPanel(wid, type) {
+var CHARACTER_LOCKED_APP_TYPES = new Set(['memo', 'gallery', 'browser', 'shopping'])
+var CHARACTER_APP_LABELS = {
+  memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单'
+}
+
+function characterAppItemCount(pd, type, contactId) {
+  var collection = []
+  if (type === 'memo') collection = pd.memos || []
+  else if (type === 'gallery') collection = (pd.photos || []).concat(pd.albums || [])
+  else if (type === 'browser') collection = pd.browserHistory || []
+  else if (type === 'shopping') collection = pd.shoppingItems || []
+  return collection.filter(function(item) { return item.contactId === contactId }).length
+}
+
+function openCharacterAccessPanel(wid, type) {
   var w = getWork(wid)
   if (!w || !w.phoneData) return
   var pd = w.phoneData
-  var contacts = pd.contacts || []
-
   var frame = document.getElementById('phoneFrame')
   if (!frame) return
-  var origHTML = frame.innerHTML
-  frame.dataset._origHTML = origHTML
-  frame.dataset._wid = wid
-  frame.dataset._tarotType = type
-  var total = contacts.length
 
-  var labels = {
-    memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单'
-  }
-  var title = labels[type] || '记录'
-
-  // Messages doesn't need contact selection
+  frame.dataset._origHTML = frame.innerHTML
+  frame.dataset._returnAppType = type
   if (type === 'messages') {
     openMessagesEditor(frame, wid, pd)
     return
   }
-
-  // Forum doesn't need contact selection
   if (type === 'forum') {
     openForumEditor(frame, wid, { id: uid(), name: '论坛', avatarUrl: '' }, pd)
     return
   }
-
-  // No contacts - show friendly message
-  if (contacts.length === 0) {
-    var h = '<div class="cu-panel cu-panel-embedded" id="tarotPanel">'
-    h += '<div class="cu-header"><span class="cu-title">' + title + '</span><button class="cu-close-btn" id="tarotClose">&times;</button></div>'
-    h += '<div class="cu-body" style="display:flex;align-items:center;justify-content:center"><p style="color:var(--c-text2);font-size:.85rem">\u8fd8\u6ca1\u6709\u8054\u7cfb\u4eba\uff0c\u8bf7\u5148\u6dfb\u52a0\u8054\u7cfb\u4eba\u3002</p></div>'
-    h += '</div>'
-    frame.innerHTML = h
-    bindTarotClose(frame, wid)
-    return
-  }
-
-  // Initial activeIdx
-  var activeIdx = 0
-  if (typeof frame.dataset._tarotActiveIdx !== 'undefined') {
-    activeIdx = parseInt(frame.dataset._tarotActiveIdx)
-  }
-  frame.dataset._tarotActiveIdx = activeIdx
-
-  // Wrap helper
-  function wrap(i) { return ((i % total) + total) % total }
-  var prev = contacts[wrap(activeIdx - 1)]
-  var curr = contacts[activeIdx]
-  var next = contacts[wrap(activeIdx + 1)]
-
-  function renderTarotHTML() {
-    var h = '<div class="cu-panel cu-panel-embedded" id="tarotPanel">'
-    h += '<div class="cu-header"><span class="cu-title">' + title + '</span><button class="cu-close-btn" id="tarotClose">&times;</button></div>'
-    h += '<div class="cu-body" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0">'
-    h += '<div class="tarot-deck">'
-
-    h += buildTarotCard(0, prev)
-    h += buildTarotCard(1, curr)
-    h += buildTarotCard(2, next)
-
-    h += '</div>'
-    h += '</div>'
-    h += '</div>'
-    return h
-  }
-
-  function buildTarotCard(pos, contact) {
-    var faceUrl = contact.faceUrl || contact.avatarUrl || ''
-    var realIdx = contacts.indexOf(contact)
-    var h = '<label class="tarot-card tarot-card-' + pos + '" data-tarot-idx="' + realIdx + '">'
-    if (faceUrl) {
-      h += '<div class="tarot-front" style="background-image:url(' + esc(faceUrl) + ');background-size:cover;background-position:center">'
-    } else {
-      h += '<div class="tarot-front" style="background: var(--c-surface)">'
-    }
-    h += '<div class="tarot-front-label">' + esc(contact.name || '?') + '</div>'
-    h += '</div>'
-    h += '<div class="tarot-back">'
-    h += '<div class="tarot-back-title">' + esc(contact.name || '?') + '</div>'
-    h += '</div>'
-    h += '</label>'
-    return h
-  }
-
-  frame.innerHTML = renderTarotHTML()
-  bindTarotEvents(frame, wid, type, contacts, activeIdx, origHTML, title)
+  openCharacterAccessEditor(frame, wid, type, pd)
 }
 
-function bindTarotEvents(frame, wid, type, contacts, activeIdx, origHTML, title) {
-  var total = contacts.length
-  var animating = false
+function openCharacterAccessEditor(frame, wid, type, pd) {
+  var contacts = pd.contacts || []
+  var title = CHARACTER_APP_LABELS[type] || '角色内容'
+  var savedConnection = pd.appConnections && pd.appConnections[type]
+  var savedTarget = savedConnection && savedConnection.contactId
+  var selectedContact = contacts.find(function(contact) { return contact.id === savedTarget }) || contacts[0] || null
 
-  function wrap(i) { return ((i % total) + total) % total }
+  var h = '<div class="cu-panel cu-panel-embedded character-access-panel">'
+  h += '<div class="cu-header character-access-header">'
+  h += '<button type="button" class="cu-close-btn" id="characterAccessBack" aria-label="返回手机桌面">&larr;</button>'
+  h += '<span class="cu-title">' + esc(title) + ' · 接入设置</span><span class="character-access-header-spacer" aria-hidden="true"></span></div>'
+  h += '<div class="cu-body character-access-body">'
+  h += '<div class="character-access-intro"><span>ROLE SOURCE / AUTHOR</span><strong>这次接入谁的手机？</strong><p>读者不会在这里选择角色。你指定后，打开 App 会先确认，再进入对应内容。</p></div>'
 
-  function updateCardContent(pos) {
-    var card = frame.querySelector('.tarot-card-' + pos)
-    if (!card) return
-    var contact = contacts[wrap(activeIdx + pos - 1)]
-    var faceUrl = contact.faceUrl || contact.avatarUrl || ''
-    var front = card.querySelector('.tarot-front')
-    var backTitle = card.querySelector('.tarot-back-title')
-    var frontLabel = card.querySelector('.tarot-front-label')
-    if (front) {
-      if (faceUrl) {
-        front.style.backgroundImage = 'url(' + esc(faceUrl) + ')'
-        front.style.backgroundSize = 'cover'
-        front.style.backgroundPosition = 'center'
-        front.style.backgroundColor = ''
-      } else {
-        front.style.backgroundImage = ''
-        front.style.backgroundColor = '#fff'
-      }
-    }
-    if (frontLabel) frontLabel.textContent = contact.name || '?'
-    if (backTitle) backTitle.textContent = contact.name || '?'
-    card.dataset.tarotIdx = contacts.indexOf(contact)
-  }
-
-  function switchTo(dir) {
-    if (animating) return
-    animating = true
-
-    var c0 = frame.querySelector('.tarot-card-0')
-    var c1 = frame.querySelector('.tarot-card-1')
-    var c2 = frame.querySelector('.tarot-card-2')
-
-    // Full 180° page-flip animation (like turning a real tarot card)
-    //
-    // dir =  1 (click RIGHT card → content flows LEFT):
-    //   card-0 & card-1 flip to show their BACK (rotateY → +180°) while sliding left;
-    //   card-2 flips back to FRONT (rotateY → 0°) and slides into center.
-    //
-    // dir = -1 (click LEFT card → content flows RIGHT): mirrored.
-    //
-    // The CSS transition on .tarot-card handles the 0.55s elastic motion.
-    // System reduced-motion requests skip the transforms and both timers, but
-    // still commit the card swap and release the interaction lock in order.
-    runTarotTransition({
-      start() {
-        if (dir === 1) {
-          // Flow LEFT: cards slide left; left+middle flip to back, right flips to front
-          if (c0) c0.style.transform = 'translateX(-32%) rotateY(180deg) scale(.78)'
-          if (c1) c1.style.transform = 'translateX(-32%) rotateY(180deg) scale(.78)'
-          if (c2) c2.style.transform = 'translateX(-32%) rotateY(0deg) scale(1.05)'
-        } else {
-          // Flow RIGHT: cards slide right; right+middle flip to back, left flips to front
-          if (c0) c0.style.transform = 'translateX(32%) rotateY(0deg) scale(1.05)'
-          if (c1) c1.style.transform = 'translateX(32%) rotateY(-180deg) scale(.78)'
-          if (c2) c2.style.transform = 'translateX(32%) rotateY(-180deg) scale(.78)'
-        }
-      },
-      midpoint() {
-        activeIdx = wrap(activeIdx + dir)
-        frame.dataset._tarotActiveIdx = activeIdx
-
-        updateCardContent(0)
-        updateCardContent(1)
-        updateCardContent(2)
-
-        // Clear inline transform so cards return to their stationary classes.
-        if (c0) c0.style.transform = ''
-        if (c1) c1.style.transform = ''
-        if (c2) c2.style.transform = ''
-      },
-      complete() {
-        animating = false
-        if (c0) { c0.style.transition = ''; c0.style.transform = '' }
-        if (c1) { c1.style.transition = ''; c1.style.transform = '' }
-        if (c2) { c2.style.transition = ''; c2.style.transform = '' }
-      },
+  if (!contacts.length) {
+    h += '<div class="character-access-empty"><strong>还没有角色联系人</strong><p>先去联系人 App 添加角色，再回来设置剧情接入。</p></div>'
+  } else {
+    h += '<div class="character-access-list" role="group" aria-label="选择接入角色">'
+    contacts.forEach(function(contact) {
+      var selected = selectedContact && selectedContact.id === contact.id
+      var count = characterAppItemCount(pd, type, contact.id)
+      h += '<button type="button" class="character-access-option' + (selected ? ' selected' : '') + '" data-contact-id="' + escapeHtmlAttribute(contact.id) + '" aria-pressed="' + (selected ? 'true' : 'false') + '">'
+      h += '<span class="character-access-avatar">'
+      if (contact.avatarUrl) h += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
+      else h += '<span>' + esc((contact.name || '?').charAt(0)) + '</span>'
+      h += '</span><span class="character-access-copy"><strong>' + esc(contact.name || '未命名') + '</strong><small>' + count + ' 条内容 · ' + (selected ? '当前接入对象' : '可设为接入对象') + '</small></span><span class="character-access-check" aria-hidden="true">' + (selected ? '✓' : '→') + '</span></button>'
     })
+    h += '</div>'
+    h += '<label class="character-access-prompt" for="characterAccessPrompt"><span>接入前剧情提示</span><textarea id="characterAccessPrompt" maxlength="160" placeholder="例如：这段信号似乎来自刚才在车站遇见的人。">' + esc(savedConnection && savedConnection.prompt || '') + '</textarea><small>读者确认前会先看到这句话。</small></label>'
+    h += '<div class="character-access-actions"><button type="button" id="characterAccessCancel">暂时不设置</button><button type="button" id="characterAccessContinue">保存并编辑内容</button></div>'
   }
+  h += '</div></div>'
+  frame.innerHTML = h
 
-  function bindTarotCloseInternal() {
-    var panel = frame.querySelector('#tarotPanel')
-    if (!panel) return
-    var closeBtn = panel.querySelector('#tarotClose')
-    if (!closeBtn) return
-    closeBtn.onclick = function() {
-      if (document.activeElement) document.activeElement.blur()
-      frame.style.pointerEvents = 'none'
-      frame.innerHTML = origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        frame.style.pointerEvents = ''
-        if (document.activeElement) document.activeElement.blur()
-        attachDrag(wid)
+  function closePanel() { exitPhoneAppEditor(frame, wid) }
+  var back = frame.querySelector('#characterAccessBack')
+  if (back) back.onclick = closePanel
+  var cancel = frame.querySelector('#characterAccessCancel')
+  if (cancel) cancel.onclick = closePanel
+
+  var options = frame.querySelectorAll('.character-access-option')
+  options.forEach(function(option) {
+    option.onclick = function() {
+      var id = option.dataset.contactId
+      var contact = contacts.find(function(candidate) { return candidate.id === id })
+      if (!contact) return
+      selectedContact = contact
+      options.forEach(function(item) {
+        var isSelected = item === option
+        item.classList.toggle('selected', isSelected)
+        item.setAttribute('aria-pressed', isSelected ? 'true' : 'false')
+        var status = item.querySelector('.character-access-copy small')
+        var check = item.querySelector('.character-access-check')
+        var count = characterAppItemCount(pd, type, item.dataset.contactId)
+        if (status) status.textContent = count + ' 条内容 · ' + (isSelected ? '当前接入对象' : '可设为接入对象')
+        if (check) check.textContent = isSelected ? '✓' : '→'
       })
     }
-  }
-
-  var cards = frame.querySelectorAll('.tarot-card')
-  cards.forEach(function(card) {
-    card.addEventListener('click', function(e) {
-      if (animating) return
-      if (e.detail === 1) {
-        var pos = this.classList.contains('tarot-card-0') ? 0 : (this.classList.contains('tarot-card-1') ? 1 : 2)
-        if (pos === 0) switchTo(-1)
-        else if (pos === 2) switchTo(1)
-      }
-    })
-    card.addEventListener('dblclick', function(e) {
-      if (animating) return
-      e.preventDefault()
-      var realIdx = parseInt(this.dataset.tarotIdx)
-      if (realIdx >= 0 && realIdx < contacts.length) {
-        openTarotDetail(frame, wid, type, contacts[realIdx])
-      }
-    })
   })
 
-  bindTarotCloseInternal()
-}
+  var continueButton = frame.querySelector('#characterAccessContinue')
+  if (continueButton) continueButton.onclick = function() {
+    if (!selectedContact) return
+    var prompt = frame.querySelector('#characterAccessPrompt')
+    pd.appConnections = pd.appConnections && typeof pd.appConnections === 'object' ? pd.appConnections : {}
+    pd.appConnections[type] = {
+      contactId: selectedContact.id,
+      prompt: prompt ? prompt.value.trim() : ''
+    }
+    updateWork(wid, { phoneData: pd })
+    openCharacterAppEditor(frame, wid, type, selectedContact)
+  }
 
-function bindTarotClose(desktop, wid) {
-  var panel = desktop.querySelector('#tarotPanel')
-  if (!panel) return
-  var closeBtn = panel.querySelector('#tarotClose')
-  if (!closeBtn) return
-  closeBtn.onclick = function() {
-    if (document.activeElement) document.activeElement.blur()
-    desktop.style.pointerEvents = 'none'
-    desktop.innerHTML = desktop.dataset._origHTML || ''
-    delete desktop.dataset._origHTML
-    desktop.style.transform = 'translateZ(0)'
-    void desktop.offsetHeight
-    requestAnimationFrame(function() {
-      desktop.style.transform = ''
-      desktop.style.pointerEvents = ''
-      attachDrag(wid)
-    })
+  if (typeof frame._requestPhoneAppModalClose !== 'function') {
+    var initialFocus = frame.querySelector('.character-access-option[aria-pressed="true"]') || back
+    if (initialFocus && typeof initialFocus.focus === 'function') initialFocus.focus()
   }
 }
 
-function openTarotDetail(frame, wid, type, contact) {
+function openCharacterAppEditor(frame, wid, type, contact) {
   var w = getWork(wid)
-  if (!w || !w.phoneData) return
+  if (!w || !w.phoneData || !contact || !CHARACTER_LOCKED_APP_TYPES.has(type)) return
   var pd = w.phoneData
-  var items = []
-  var itemLabel = ''
-  var emptyLabel = ''
-  var showAdd = true
 
-  if (type === 'memo') { items = pd.memos || []; itemLabel = '备忘录'; emptyLabel = '\u6682\u65e0\u5907\u5fd8\u5f55' }
-  else if (type === 'gallery') { items = pd.photos || []; itemLabel = '相册'; emptyLabel = '\u6682\u65e0\u7167\u7247'; showAdd = false }
-  else if (type === 'browser') { items = pd.browserHistory || []; itemLabel = '\u6d4f\u89c8\u8bb0\u5f55'; emptyLabel = '\u6682\u65e0\u8bb0\u5f55'; showAdd = false }
-  else if (type === 'shopping') { items = pd.shoppingItems || []; itemLabel = '\u8d2d\u7269\u6e05\u5355'; emptyLabel = '\u6682\u65e0\u5546\u54c1' }
-
-  // Filter items for this contact
-  var contactItems = items.filter(function(it) { return it.contactId === contact.id })
-
-  // Memo has its own rich editor
   if (type === 'memo') {
-    openMemoEditor(frame, wid, contact, contactItems, pd)
+    var memos = (pd.memos || []).filter(function(item) { return item.contactId === contact.id })
+    openMemoEditor(frame, wid, contact, memos, pd)
     return
   }
-
-  // Gallery has its own editor
   if (type === 'gallery') {
     openGalleryEditor(frame, wid, contact, pd)
     return
   }
-
-  // Forum has its own editor
-  if (type === 'forum') {
-    openForumEditor(frame, wid, contact, pd)
+  if (type === 'browser') {
+    var history = (pd.browserHistory || []).filter(function(item) { return item.contactId === contact.id })
+    openBrowserEditor(frame, wid, contact, history, pd)
     return
   }
-
-  // Shopping has its own editor
   if (type === 'shopping') {
     openShoppingEditor(frame, wid, contact, pd)
-    return
-  }
-
-  // Browser has its own editor
-  if (type === 'browser') {
-    openBrowserEditor(frame, wid, contact, contactItems, pd)
-    return
-  }
-
-  var h = '<div class="cu-panel cu-panel-embedded" id="tarotDetail">'
-  h += '<div class="cu-header"><span class="cu-title">' + esc(contact.name || '?') + ' \u00b7 ' + itemLabel + '</span><button class="cu-close-btn" id="detailBack">&larr;</button></div>'
-  h += '<div class="cu-body">'
-
-  if (contactItems.length === 0) {
-    h += '<div class="pf-empty">' + emptyLabel + '</div>'
-  }
-  for (var i = 0; i < contactItems.length; i++) {
-    var it = contactItems[i]
-    h += '<div style="padding:8px 0;border-bottom:1px solid var(--c-border);font-size:.8rem">'
-    if (type === 'browser') {
-      h += '<div><a href="#" style="color:var(--c-primary-hover);font-size:.78rem">' + esc(it.title || it.url || '') + '</a></div>'
-      h += '<div style="font-size:.7rem;color:var(--c-text2);margin-top:2px">' + esc(it.time || '') + '</div>'
-    } else if (type === 'gallery') {
-      h += '<div style="display:flex;gap:8px;align-items:center">'
-      if (it.imageUrl) h += '<img src="' + esc(it.imageUrl) + '" style="width:60px;height:60px;object-fit:cover;border-radius:4px">'
-      h += '<div style="font-size:.75rem;color:var(--c-text2)">' + esc(it.caption || '') + '</div>'
-      h += '</div>'
-    } else if (type === 'shopping') {
-      h += '<div style="font-weight:500">' + esc(it.name || '') + '</div>'
-      if (it.price) h += '<div style="font-size:.75rem;color:var(--c-primary-hover)">' + esc(it.price) + '</div>'
-      if (it.note) h += '<div style="font-size:.7rem;color:var(--c-text2);margin-top:2px">' + esc(it.note) + '</div>'
-    }
-    h += '</div>'
-  }
-  h += '</div>'
-  h += '</div>'
-
-  frame.innerHTML = h
-  var backBtn = frame.querySelector('#detailBack')
-  if (backBtn) {
-    backBtn.onclick = function() {
-      if (document.activeElement) document.activeElement.blur()
-      frame.innerHTML = frame.dataset._origHTML || ''
-      delete frame.dataset._origHTML
-      frame.style.transform = 'translateZ(0)'
-      void frame.offsetHeight
-      requestAnimationFrame(function() {
-        frame.style.transform = ''
-        attachDrag(wid)
-      })
-    }
   }
 }
-
 /// ===== BROWSER EDITOR (search history style) =====
 function openBrowserEditor(frame, wid, contact, items, pd) {
   var accent = avatarColor(contact.id || uid())
@@ -3109,8 +3040,43 @@ function openForumEditor(frame, wid, contact, pd) {
     bindForumEvents()
   }
 
+  function findForumCommentById(items, commentId) {
+    var matches = []
+    function visit(list) {
+      ;(Array.isArray(list) ? list : []).forEach(function(item) {
+        if (!item || typeof item !== 'object') return
+        if (String(item.id) === String(commentId)) matches.push(item)
+        visit(item.replies)
+      })
+    }
+    visit(items)
+    return matches.length === 1 ? matches[0] : null
+  }
+
+  function renderForumReply(reply, postId, depth) {
+    var h = '<div class="forum-reply-item" data-forum-comment-id="' + escAttr(reply.id) + '" style="margin-left:' + Math.min(depth * 10, 30) + 'px">'
+    h += '<span class="forum-reply-name">' + esc(reply.contactName || '用户') + '</span>：'
+    h += '<span>' + esc(reply.content) + '</span>'
+    h += ' <span class="forum-comment-time">' + fmtTime(reply.time) + '</span>'
+    h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(reply.id) + '" aria-label="编辑这条楼中楼回复的读者回复选项">＋ 回复选项</button>'
+    if (Array.isArray(reply.choices) && reply.choices.length) {
+      h += '<div class="chat-choices forum-comment-choices">'
+      reply.choices.forEach(function(choice, choiceIndex) {
+        h += '<button type="button" class="chat-choice-btn" data-forum-comment-id="' + escAttr(reply.id) + '" data-forum-choice-index="' + choiceIndex + '" aria-label="编辑论坛回复选项：' + escAttr(choice.text || '选项') + '">' + esc(choice.text || '选项') + '</button>'
+      })
+      h += '</div>'
+    }
+    if (Array.isArray(reply.replies) && reply.replies.length) {
+      h += '<div class="forum-replies">'
+      reply.replies.forEach(function(child) { h += renderForumReply(child, postId, depth + 1) })
+      h += '</div>'
+    }
+    h += '</div>'
+    return h
+  }
+
   function renderComment(comment, floor, postId) {
-    var h = '<div class="forum-comment">'
+    var h = '<div class="forum-comment" data-forum-comment-id="' + escAttr(comment.id) + '">'
     h += '<div class="forum-comment-head">'
     h += '<div class="forum-comment-avatar" style="' + (comment.contactAvatar ? 'background-image:url(' + esc(comment.contactAvatar) + ');background-size:cover' : 'background:' + avatarColor(comment.contactId)) + '">'
     if (!comment.contactAvatar) h += '<span>' + esc((comment.contactName || '?').charAt(0)) + '</span>'
@@ -3123,19 +3089,23 @@ function openForumEditor(frame, wid, contact, pd) {
     h += '<div class="forum-comment-content">' + esc(comment.content) + '</div>'
     h += '<div class="forum-comment-actions">'
     h += '<span class="forum-action-sm" data-reply="' + comment.id + '_' + postId + '">回复</span>'
+    h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(comment.id) + '" aria-label="编辑这条评论的读者回复选项">＋ 回复选项</button>'
     h += '<span class="forum-comment-time">' + fmtTime(comment.time) + '</span>'
     h += '</div>'
+
+    if (Array.isArray(comment.choices) && comment.choices.length) {
+      h += '<div class="chat-choices forum-comment-choices">'
+      comment.choices.forEach(function(choice, choiceIndex) {
+        h += '<button type="button" class="chat-choice-btn" data-forum-comment-id="' + escAttr(comment.id) + '" data-forum-choice-index="' + choiceIndex + '" aria-label="编辑论坛回复选项：' + escAttr(choice.text || '选项') + '">' + esc(choice.text || '选项') + '</button>'
+      })
+      h += '</div>'
+    }
 
     // Replies (楼中楼)
     if (comment.replies && comment.replies.length > 0) {
       h += '<div class="forum-replies">'
       for (var ri = 0; ri < comment.replies.length; ri++) {
-        var reply = comment.replies[ri]
-        h += '<div class="forum-reply-item">'
-        h += '<span class="forum-reply-name">' + esc(reply.contactName || '用户') + '</span>：'
-        h += '<span>' + esc(reply.content) + '</span>'
-        h += ' <span class="forum-comment-time">' + fmtTime(reply.time) + '</span>'
-        h += '</div>'
+        h += renderForumReply(comment.replies[ri], postId, 1)
       }
       h += '</div>'
     }
@@ -3144,6 +3114,27 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function bindForumEvents() {
+    function editForumCommentChoices(commentId) {
+      var post = posts.find(function(item) { return item.id === currentPostId })
+      var comment = findForumCommentById(post?.comments, commentId)
+      if (!comment) return
+      openThreadReplyChoiceEditor(comment, {
+        title: '编辑论坛回复选项',
+        defaultFollowUpSenderId: comment.contactId,
+        onSave: function() {
+          saveData()
+          renderForum()
+        }
+      })
+    }
+
+    frame.querySelectorAll('[data-forum-choice-edit]').forEach(function(button) {
+      button.onclick = function() { editForumCommentChoices(button.dataset.forumChoiceEdit) }
+    })
+    frame.querySelectorAll('.chat-choice-btn[data-forum-comment-id]').forEach(function(button) {
+      button.onclick = function() { editForumCommentChoices(button.dataset.forumCommentId) }
+    })
+
     // Back button
     var backBtn = frame.querySelector('#fbBack')
     if (backBtn) backBtn.onclick = function() {
@@ -3506,13 +3497,13 @@ function openMessagesEditor(frame, wid, pd) {
       if (chats.length === 0) h += '<div class="pf-empty">暂无对话</div>'
       chats.forEach(function(ch) {
         var name = getChatName(ch)
-        h += '<div class="forum-list-card" data-chat-id="' + ch.id + '" style="position:relative">'
+        h += '<div class="forum-list-card" data-chat-id="' + escapeHtmlAttribute(ch.id) + '" style="position:relative">'
         h += '<div class="forum-list-avatar" style="background:' + (ch.type === 'group' ? '#10b981' : '#6366f1') + '"><span>' + esc(name.charAt(0)) + '</span></div>'
         h += '<div class="forum-list-info">'
         h += '<div class="forum-list-title">' + esc(name) + '</div>'
         h += '<div style="font-size:.68rem;color:var(--c-text2)">' + (ch.type === 'group' ? '群聊 ' + (ch.contactIds.length + 1) + '人' : '') + '</div>'
         h += '</div>'
-        h += '<button class="browser-del" style="position:absolute;top:8px;right:4px" data-chat-del="' + ch.id + '">x</button>'
+        h += '<button class="browser-del" style="position:absolute;top:8px;right:4px" data-chat-del="' + escapeHtmlAttribute(ch.id) + '">x</button>'
         h += '</div>'
       })
     } else if (activeTab === 'contacts') {
@@ -3520,7 +3511,8 @@ function openMessagesEditor(frame, wid, pd) {
       if (contacts.length === 0) h += '<div class="pf-empty">暂无联系人，请先在联系人面板中添加</div>'
       contacts.forEach(function(c) {
         h += '<div class="forum-npc-row">'
-        h += '<div class="forum-npc-avatar" style="' + (c.avatarUrl ? 'background-image:url(' + esc(c.avatarUrl) + ');background-size:cover' : 'background:' + avatarColor(c.id)) + '">'
+        var contactAvatarStyle = c.avatarUrl ? 'background-image:url(' + c.avatarUrl + ');background-size:cover' : 'background:' + avatarColor(c.id)
+        h += '<div class="forum-npc-avatar" style="' + escapeHtmlAttribute(contactAvatarStyle) + '">'
         if (!c.avatarUrl) h += '<span>' + esc(c.name.charAt(0)) + '</span>'
         h += '</div><div class="forum-npc-name">' + esc(c.name) + '</div>'
         h += '</div>'
@@ -3556,7 +3548,7 @@ function openMessagesEditor(frame, wid, pd) {
             if (mc.choices && mc.choices.length > 0) {
               h += '<div class="chat-choices" style="margin-left:8px;margin-top:2px">'
               mc.choices.forEach(function(c, cidx) {
-                h += '<button class="chat-choice-btn' + (c.used ? ' used' : '') + '" data-moment-cid="' + m.id + '" data-moment-ci="' + mci + '" data-moment-coi="' + cidx + '">' + esc(c.text || '选项') + '</button>'
+                h += '<button type="button" class="chat-choice-btn" data-moment-cid="' + escAttr(m.id) + '" data-moment-ci="' + mci + '" data-moment-coi="' + cidx + '" aria-label="编辑动态回复选项：' + escAttr(c.text || '选项') + '">' + esc(c.text || '选项') + '</button>'
               })
               h += '</div>'
             }
@@ -3634,41 +3626,18 @@ function bindMsgEvents() {
     // Moment choice button clicks
     var body = frame.querySelector('#msgBody')
     if (body) {
-      body.addEventListener('click', function(e) {
+      body.onclick = function(e) {
         // Moment choice click
         var choiceBtn = e.target.closest('.chat-choice-btn[data-moment-cid]')
-        if (choiceBtn && !choiceBtn.classList.contains('used')) {
+        if (choiceBtn) {
           e.preventDefault()
           var mid = choiceBtn.dataset.momentCid
           var mci = parseInt(choiceBtn.dataset.momentCi)
-          var coi = parseInt(choiceBtn.dataset.momentCoi)
-          var m = moments.find(function(x) { return x.id === mid })
-          if (!m || !m.comments || !m.comments[mci]) return
-          var mc = m.comments[mci]
-          if (!mc.choices || !mc.choices[coi]) return
-          var choice = mc.choices[coi]
-          if (choice.used) return
-          choice.used = true
-          m.comments = m.comments || []
-          if (choice.replyText) {
-            // Get the commenter's contactId as the sender for reply
-            var replySenderId = mc.contactId
-            var sc = contacts.find(function(x) { return x.id === replySenderId })
-            m.comments.push({ id: uid(), contactId: replySenderId, contactName: sc ? sc.name : (mc.contactName || ''), content: choice.replyText, time: new Date().toLocaleString() })
-          }
-          if (choice.followUpMessages) {
-            choice.followUpMessages.forEach(function(fm) {
-              var copy = JSON.parse(JSON.stringify(fm))
-              copy.id = uid()
-              if (!copy.contactName) {
-                var sc2 = contacts.find(function(x) { return x.id === copy.contactId })
-                copy.contactName = sc2 ? sc2.name : ''
-              }
-              m.comments.push(copy)
-            })
-          }
-          saveData()
-          renderMessages()
+          var localEditor = Array.from(frame.querySelectorAll('.moment-choice-edit-btn')).find(function(button) {
+            return button.dataset.momentId === mid && Number(button.dataset.momentCi) === mci
+          })
+          localEditor?.click()
+          return
         }
 
         // Moment "+" button click to add choices
@@ -3683,10 +3652,10 @@ function bindMsgEvents() {
           var choiceGroups = []
           if (mc.choices && mc.choices.length) {
             mc.choices.forEach(function(c) {
-              choiceGroups.push({ text: c.text || '', replyText: c.replyText || '', followUpLines: c.followUpMessages ? c.followUpMessages.map(function(fm) { return fm.text || '' }).join('\n') : '' })
+              choiceGroups.push({ id: c.id || '', text: c.text || '', replyText: c.replyText || '', followUpLines: c.followUpMessages ? c.followUpMessages.map(function(fm) { return fm.text || fm.content || '' }).join('\n') : '' })
             })
           }
-          if (choiceGroups.length === 0) choiceGroups.push({ text: '', replyText: '', followUpLines: '' })
+          if (choiceGroups.length === 0) choiceGroups.push({ id: '', text: '', replyText: '', followUpLines: '' })
 
           function renderGroups() {
             var listEl = document.getElementById('mcGroupsList')
@@ -3731,31 +3700,49 @@ function bindMsgEvents() {
           var ov = modal('添加分支选项', h2,
             '<button id="mcSave" class="btn btn-primary btn-sm">保存</button><button id="mcCancel" class="btn btn-ghost btn-sm">取消</button>')
           renderGroups()
-          ov.querySelector('#mcAddGroup').onclick = function() { choiceGroups.push({ text: '', replyText: '', followUpLines: '' }); renderGroups() }
+          ov.querySelector('#mcAddGroup').onclick = function() { choiceGroups.push({ id: '', text: '', replyText: '', followUpLines: '' }); renderGroups() }
           ov.querySelector('#mcSave').onclick = function() {
             var listEl = ov.querySelector('#mcGroupsList')
             if (!listEl) return
             var texts = listEl.querySelectorAll('.ch-grp-text')
             var replies = listEl.querySelectorAll('.ch-grp-reply')
             var follows = listEl.querySelectorAll('.ch-grp-follow')
-            mc.choices = []
+            var previousChoices = Array.isArray(mc.choices) ? mc.choices : []
+            var nextChoices = []
             for (var i = 0; i < texts.length; i++) {
               var grpText = (texts[i].value || '').trim()
               if (!grpText) continue
               var replyText = (replies[i] ? replies[i].value : '').trim()
               var followLines = (follows[i] ? follows[i].value : '').split('\n').filter(function(l) { return l.trim() })
-              var fms = []
-              followLines.forEach(function(line) {
-                fms.push({ id: uid(), senderId: mc.contactId || 'self', text: line, type: 'text', time: new Date().toLocaleString() })
+              var groupId = choiceGroups[i]?.id || ''
+              var previousChoice = previousChoices.find(function(choice) { return groupId && choice.id === groupId })
+              var previousFollowUps = Array.isArray(previousChoice?.followUpMessages) ? previousChoice.followUpMessages : []
+              var fms = followLines.map(function(line, lineIndex) {
+                var previousFollowUp = previousFollowUps[lineIndex]
+                return Object.assign({}, previousFollowUp || {}, {
+                  id: previousFollowUp?.id || uid(),
+                  senderId: previousFollowUp?.senderId || mc.contactId || 'self',
+                  text: line.trim(),
+                  content: line.trim(),
+                  type: previousFollowUp?.type || 'text',
+                  time: previousFollowUp?.time || new Date().toLocaleString()
+                })
               })
-              mc.choices.push({ id: uid(), text: grpText, replyText: replyText, followUpMessages: fms })
+              var nextChoice = Object.assign({}, previousChoice || {}, {
+                id: previousChoice?.id || uid(),
+                text: grpText,
+                replyText: replyText || grpText,
+                followUpMessages: fms
+              })
+              delete nextChoice.used
+              nextChoices.push(nextChoice)
             }
-            if (mc.choices.length === 0) mc.choices = undefined
+            mc.choices = nextChoices.length ? nextChoices : undefined
             saveData(); ov.remove(); renderMessages()
           }
           ov.querySelector('#mcCancel').onclick = function() { ov.remove() }
         }
-      })
+      }
     }
 
     var chatCards = frame.querySelectorAll('[data-chat-id]')
@@ -3807,10 +3794,20 @@ function openChatEditor(frame, wid, chatId, pd) {
   var contacts = pd.contacts || []
   var ch = chats.find(function(c) { return c.id === chatId })
   if (!ch) return
-  if (!ch.rounds || !ch.rounds.length) {
-    ch.rounds = [{ id: uid(), label: '第1轮', messages: (ch.messages || []).slice() }]
+  var legacyMessages = Array.isArray(ch.messages) ? ch.messages : []
+  var migratedChatShape = false
+  if (!Array.isArray(ch.rounds) || !ch.rounds.length) {
+    ch.rounds = [{ id: uid(), label: '第1轮', messages: legacyMessages.slice() }]
     ch.messages = []
+    migratedChatShape = true
+  } else if (legacyMessages.length) {
+    var migrationRound = ch.rounds[ch.rounds.length - 1]
+    migrationRound.messages = (Array.isArray(migrationRound.messages) ? migrationRound.messages : []).concat(legacyMessages)
+    ch.messages = []
+    migratedChatShape = true
   }
+  if (migratedChatShape) updateWork(wid, { phoneData: pd })
+  var activeSpeakerId = (ch.contactIds && ch.contactIds[0]) || 'self'
 
   function save() {
     pd.chats = chats
@@ -3828,7 +3825,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     var optionsHtml = senderIds.map(function(id) {
       if (id === 'self') return '<option value="self">读者</option>'
       var c = contacts.find(function(x) { return x.id === id })
-      return '<option value="' + id + '">' + esc(c ? c.name : '未知') + '</option>'
+      return '<option value="' + escapeHtmlAttribute(id) + '">' + esc(c ? c.name : '未知') + '</option>'
     }).join('')
 
     var typeLabel = type === 'text' ? '文字' : (type === 'image' ? '图片' : (type === 'link' ? '链接' : (type === 'redpacket' ? '红包' : (type === 'transfer' ? '转账' : '亲属卡'))))
@@ -3871,7 +3868,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     var optionsHtml = senderIds.map(function(id) {
       if (id === 'self') return '<option value="self">读者</option>'
       var c = contacts.find(function(x) { return x.id === id })
-      return '<option value="' + id + '">' + esc(c ? c.name : '未知') + '</option>'
+      return '<option value="' + escapeHtmlAttribute(id) + '">' + esc(c ? c.name : '未知') + '</option>'
     }).join('')
 
     var ov = modal('语音消息',
@@ -3898,30 +3895,135 @@ function openChatEditor(frame, wid, chatId, pd) {
     ov.querySelector('#vmCancel').onclick = function() { ov.remove() }
   }
 
-  function showPlusMenu() {
-    var ov = modal('添加类型',
-      '<div style="padding:4px 0">' +
-      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmImage">图片</button>' +
-      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmLink">链接</button>' +
-      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmRp">红包</button>' +
-      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmTr">转账</button>' +
-      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmFc">亲属卡</button>' +
-      '<button class="btn btn-sm btn-outline w-full" style="display:block;width:100%;margin-bottom:4px" id="pmVoice">语音</button>' +
-      '<button class="btn btn-sm btn-ghost w-full" style="display:block;width:100%;color:var(--c-accent3)" id="pmEnd">结束此轮</button>' +
-      '</div>', '')
-    ov.querySelector('#pmImage').onclick = function() { ov.remove(); addMsg('image') }
-    ov.querySelector('#pmLink').onclick = function() { ov.remove(); addMsg('link') }
-    ov.querySelector('#pmRp').onclick = function() { ov.remove(); addMsg('redpacket') }
-    ov.querySelector('#pmTr').onclick = function() { ov.remove(); addMsg('transfer') }
-    ov.querySelector('#pmFc').onclick = function() { ov.remove(); addMsg('familycard') }
-    ov.querySelector('#pmVoice').onclick = function() { ov.remove(); addVoiceMessage() }
-    ov.querySelector('#pmEnd').onclick = function() {
-      ov.remove()
+  function showCallEditor(mode) {
+    var shell = frame.querySelector('.chat-author-shell')
+    if (!shell) return
+    var existing = shell.querySelector('.chat-tool-sheet')
+    if (existing) existing.remove()
+    var defaultSender = activeSpeakerId !== 'self' && activeSpeakerId !== 'system'
+      ? activeSpeakerId
+      : ((ch.contactIds && ch.contactIds[0]) || 'self')
+    var senderIds = (ch.contactIds || []).concat(['self'])
+    var senderOptions = senderIds.map(function(senderId) {
+      return '<option value="' + escapeHtmlAttribute(senderId) + '"' + (senderId === defaultSender ? ' selected' : '') + '>' + esc(getSpeakerName(senderId)) + '</option>'
+    }).join('')
+    var callLabel = mode === 'video' ? '视频通话' : '语音通话'
+    var h = '<section class="chat-tool-sheet chat-call-editor" aria-label="编辑' + callLabel + '">'
+    h += '<div class="chat-tool-head"><div><strong>' + callLabel + '</strong><small>每行是一句台词</small></div><button type="button" id="chatCallClose" aria-label="关闭通话编辑">×</button></div>'
+    h += '<label class="chat-call-field"><span>通话角色</span><select id="chatCallSender">' + senderOptions + '</select></label>'
+    h += '<label class="chat-call-field grow"><span>通话台词</span><textarea id="chatCallLines" placeholder="你先别说话，听我讲。&#10;那家花店今天开门了。"></textarea></label>'
+    h += '<div class="chat-call-actions"><button type="button" id="chatCallCancel">取消</button><button type="button" id="chatCallSave">添加通话</button></div>'
+    h += '</section>'
+    shell.insertAdjacentHTML('beforeend', h)
+    var panel = shell.querySelector('.chat-call-editor')
+    panel.querySelector('#chatCallClose').onclick = function() { panel.remove() }
+    panel.querySelector('#chatCallCancel').onclick = function() { panel.remove() }
+    panel.querySelector('#chatCallSave').onclick = function() {
+      var lines = panel.querySelector('#chatCallLines').value.split('\n').map(function(line) { return line.trim() }).filter(Boolean)
+      if (!lines.length) {
+        panel.querySelector('#chatCallLines').focus()
+        return
+      }
+      var senderId = panel.querySelector('#chatCallSender').value || defaultSender
+      currentRound().messages.push({
+        id: uid(), type: 'call', callMode: mode, senderId: senderId,
+        text: callLabel, callLines: lines, allowHangup: true,
+        time: new Date().toLocaleString()
+      })
+      save()
+      renderChat()
+    }
+    panel.querySelector('#chatCallLines').focus()
+  }
+
+  function showInlineStoryEditor(type, title, placeholder) {
+    var shell = frame.querySelector('.chat-author-shell')
+    if (!shell) return
+    var existing = shell.querySelector('.chat-tool-sheet')
+    if (existing) existing.remove()
+    var h = '<section class="chat-tool-sheet chat-story-editor" aria-label="' + escapeHtmlAttribute(title) + '">'
+    h += '<div class="chat-tool-head"><div><strong>' + esc(title) + '</strong><small>作者专用</small></div><button type="button" id="chatStoryClose" aria-label="关闭">×</button></div>'
+    h += '<label class="chat-call-field grow"><span>内容</span><textarea id="chatStoryText" placeholder="' + escapeHtmlAttribute(placeholder) + '"></textarea></label>'
+    h += '<div class="chat-call-actions"><button type="button" id="chatStoryCancel">取消</button><button type="button" id="chatStorySave">添加</button></div>'
+    h += '</section>'
+    shell.insertAdjacentHTML('beforeend', h)
+    var panel = shell.querySelector('.chat-story-editor')
+    panel.querySelector('#chatStoryClose').onclick = function() { panel.remove() }
+    panel.querySelector('#chatStoryCancel').onclick = function() { panel.remove() }
+    panel.querySelector('#chatStorySave').onclick = function() {
+      var value = panel.querySelector('#chatStoryText').value.trim()
+      if (!value) return
+      var msg = type === 'time'
+        ? { id: uid(), type: 'time', time: value }
+        : { id: uid(), type: type, senderId: activeSpeakerId === 'system' ? 'self' : activeSpeakerId, text: value, time: new Date().toLocaleString() }
+      if (type === 'location') msg.locationName = value
+      currentRound().messages.push(msg)
+      save()
+      renderChat()
+    }
+    panel.querySelector('#chatStoryText').focus()
+  }
+
+  function showPlusMenu(page) {
+    var shell = frame.querySelector('.chat-author-shell')
+    if (!shell) return
+    var existing = shell.querySelector('.chat-tool-sheet')
+    if (existing) existing.remove()
+    page = page === 1 ? 1 : 0
+    var firstPage = [
+      ['image', '▧', '图片'], ['voice-call', '☎', '语音通话'], ['video-call', '▣', '视频通话'], ['voice', '♪', '语音消息'],
+      ['transfer', '¥', '转账'], ['location', '⌖', '位置'], ['time', '◷', '日期时间'], ['system', '!', '系统消息']
+    ]
+    var secondPage = [
+      ['link', '↗', '链接'], ['redpacket', '封', '红包'], ['familycard', '卡', '亲属卡'], ['round', 'Ⅱ', '结束此轮']
+    ]
+    var tools = page === 0 ? firstPage : secondPage
+    var h = '<section class="chat-tool-sheet" aria-label="添加剧情内容">'
+    h += '<div class="chat-tool-head"><div><strong>＋ 添加剧情内容</strong><small>作者专用</small></div><button type="button" id="chatToolClose" aria-label="关闭剧情工具">×</button></div>'
+    h += '<div class="chat-tool-grid">'
+    tools.forEach(function(tool) {
+      h += '<button type="button" class="chat-tool" data-chat-tool="' + tool[0] + '"><span class="chat-tool-icon">' + tool[1] + '</span><span>' + tool[2] + '</span></button>'
+    })
+
+    h += '</div>'
+    h += '<div class="chat-tool-pager"><button type="button" id="chatToolPrev"' + (page === 0 ? ' disabled' : '') + ' aria-label="上一页">‹</button><span><b>' + (page === 0 ? '●' : '○') + '</b> ' + (page === 1 ? '●' : '○') + '</span><button type="button" id="chatToolNext"' + (page === 1 ? ' disabled' : '') + ' aria-label="下一页">›</button></div>'
+    h += '</section>'
+    shell.insertAdjacentHTML('beforeend', h)
+    var sheet = shell.querySelector('.chat-tool-sheet')
+    sheet.querySelector('#chatToolClose').onclick = function() { sheet.remove() }
+    sheet.querySelector('#chatToolPrev').onclick = function() { showPlusMenu(0) }
+    sheet.querySelector('#chatToolNext').onclick = function() { showPlusMenu(1) }
+
+    function closeAnd(run) {
+      sheet.remove()
+      run()
+    }
+    function bindTool(name, handler) {
+      var button = sheet.querySelector('[data-chat-tool="' + name + '"]')
+      if (button) button.onclick = handler
+    }
+    bindTool('image', function() { closeAnd(function() { addMsg('image') }) })
+    bindTool('voice-call', function() { showCallEditor('voice') })
+    bindTool('video-call', function() { showCallEditor('video') })
+    bindTool('voice', function() { closeAnd(addVoiceMessage) })
+    bindTool('transfer', function() { closeAnd(function() { addMsg('transfer') }) })
+    bindTool('location', function() { showInlineStoryEditor('location', '添加位置', '例如：旧城区 · 白石街 17 号') })
+    bindTool('time', function() { showInlineStoryEditor('time', '添加日期时间', '例如：今天 09:38') })
+    bindTool('system', function() {
+      activeSpeakerId = 'system'
+      renderChat()
+      var input = frame.querySelector('#chatInput')
+      if (input) input.focus()
+    })
+    bindTool('link', function() { closeAnd(function() { addMsg('link') }) })
+    bindTool('redpacket', function() { closeAnd(function() { addMsg('redpacket') }) })
+    bindTool('familycard', function() { closeAnd(function() { addMsg('familycard') }) })
+    bindTool('round', function() {
       var num = ch.rounds.length + 1
       ch.rounds.push({ id: uid(), label: '第' + num + '轮', messages: [] })
       save()
       renderChat()
-    }
+    })
   }
 
   function deleteRound(roundIdx) {
@@ -3939,10 +4041,20 @@ function openChatEditor(frame, wid, chatId, pd) {
     renderChat()
   }
 
-  function swappedLabel() {
-    var contactName = getChatName()
-    if (ch.swapped) return contactName + ' ↺'
-    return contactName
+  function getSpeakerName(senderId) {
+    if (senderId === 'self') return '读者'
+    if (senderId === 'system') return '系统'
+    var contact = contacts.find(function(c) { return c.id === senderId })
+    return contact ? contact.name : '未知'
+  }
+
+  function currentRound() {
+    var round = ch.rounds[ch.rounds.length - 1]
+    if (!round) {
+      round = { id: uid(), label: '第1轮', messages: [] }
+      ch.rounds.push(round)
+    }
+    return round
   }
 
   function renderChat() {
@@ -3953,26 +4065,29 @@ function openChatEditor(frame, wid, chatId, pd) {
       var curBg = frame.querySelector('#chatContent').style.backgroundImage
       if (curBg && curBg !== 'none') ch.bgImage = curBg.replace(/url\(['"]?([^'"\)]*)['"]?\)/, '$1')
     }
-    body.className = 'cu-body chat-panel-flex'
+    body.className = 'cu-body chat-panel-flex chat-author-shell'
+    body.style.padding = ''
+    body.style.background = ''
     if (ch.bgImage) body.style.backgroundImage = 'url(' + esc(ch.bgImage) + ')'
     else body.style.backgroundImage = ''
     body.style.backgroundSize = 'cover'
     body.style.backgroundPosition = 'center'
 
-    var h = '<div class="chat-top-bar">'
-    h += '<button id="chatBack" class="chat-btn-icon" title="返回"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>'
-    h += '<button class="chat-top-title" id="chatSwapBtn" title="点击切换双方位置" style="cursor:pointer;border:none;background:transparent;font-size:.8rem;font-weight:500;color:var(--c-text)">' + esc(swappedLabel()) + '</button>'
-    h += '<button id="chatBgBtn" class="chat-btn-icon" title="气泡样式">'
-    h += '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">'
-    h += '<circle cx="12" cy="12" r="3"/><path d="M12 1v2"/><path d="M12 21v2"/><path d="M4.22 4.22l1.42 1.42"/><path d="M18.36 18.36l1.42 1.42"/><path d="M1 12h2"/><path d="M21 12h2"/><path d="M4.22 19.78l1.42-1.42"/><path d="M18.36 5.64l1.42-1.42"/>'
-    h += '</svg>'
-    h += '</button>'
+    var activeRound = currentRound()
+    var roundLabel = activeRound.label || ('第' + ch.rounds.length + '轮')
+    var h = '<div class="chat-author-status"><span>AUTHOR EDIT</span><span class="chat-save-state" id="chatSaveState">已保存</span></div>'
+    h += '<div class="chat-round-header">'
+    h += '<button id="chatBack" class="chat-round-control" type="button" aria-label="返回消息列表">‹</button>'
+    h += '<div class="chat-round-title"><strong>' + esc(getChatName()) + '</strong><span>· ' + esc(roundLabel) + '</span></div>'
+    h += '<button id="chatBgBtn" class="chat-round-control" type="button" aria-label="聊天外观与气泡样式">···</button>'
     h += '</div>'
 
     h += '<div class="chat-msg-area" id="chatMsgArea">'
+    var messageCount = 0
     for (var ri = 0; ri < ch.rounds.length; ri++) {
       var round = ch.rounds[ri]
       if (round.messages.length === 0) continue
+      messageCount += round.messages.length
       h += '<div class="chat-round-card" data-round-idx="' + ri + '"><div class="chat-round-body">'
       round.messages.forEach(function(msg, mi) {
         h += renderMessageBubble(msg, mi, ri)
@@ -3985,16 +4100,29 @@ function openChatEditor(frame, wid, chatId, pd) {
         h += '</div>'
       }
     }
+    if (messageCount === 0) h += '<div class="chat-empty-cue"><span>01</span><p>选择发言人，写下这一轮的第一句。</p></div>'
     h += '</div>'
 
-    h += '<div class="chat-input-bar">'
-    h += '<button class="chat-btn-icon" id="chatPlusBtn" title="添加消息类型">'
-    h += '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-    h += '</button>'
-    h += '<input id="chatInput" placeholder="输入消息...">'
-    h += '<button class="chat-send-btn" id="chatSendBtn" title="发送">'
-    h += '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><rect x="5" y="4" width="5" height="5" rx="1"/><rect x="14" y="4" width="5" height="5" rx="1"/><rect x="5" y="11" width="5" height="5" rx="1"/><rect x="14" y="11" width="5" height="5" rx="1"/><rect x="9" y="17" width="6" height="4" rx="1"/></svg>'
-    h += '</button>'
+    h += '<div class="chat-author-controls">'
+    h += '<div class="chat-speaker-strip" role="toolbar" aria-label="选择发言人">'
+    h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === 'self' ? ' active' : '') + '" data-speaker="reader" data-sender-id="self">读者</button>'
+    ;(ch.contactIds || []).forEach(function(contactId) {
+      h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === contactId ? ' active' : '') + '" data-speaker="contact" data-sender-id="' + escapeHtmlAttribute(contactId) + '">' + esc(getSpeakerName(contactId)) + '</button>'
+    })
+    h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === 'system' ? ' active' : '') + '" data-speaker="system" data-sender-id="system">系统</button>'
+    h += '<button type="button" class="chat-speaker-btn add" data-speaker="add" aria-label="更多发言人">＋</button>'
+    h += '</div>'
+    h += '<div class="chat-input-bar chat-composer">'
+    h += '<button class="chat-btn-icon" id="chatPlusBtn" type="button" aria-label="添加剧情内容">＋</button>'
+    h += '<input id="chatInput" aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
+    h += '<button class="chat-send-btn" id="chatSendBtn" type="button">添加</button>'
+    h += '</div>'
+    h += '</div>'
+
+    h += '<div class="chat-editor-modebar">'
+    h += '<button type="button" id="chatModeBack" aria-label="返回消息列表">↶</button>'
+    h += '<span>WYSIWYG EDITOR</span>'
+    h += '<button type="button" id="chatModeSave" aria-label="确认保存">✓</button>'
     h += '</div>'
 
     body.innerHTML = h
@@ -4007,23 +4135,18 @@ function openChatEditor(frame, wid, chatId, pd) {
     }
     var isSelf = msg.senderId === 'self'
     var showAsSelf = isSelf
-    if (ch.swapped) showAsSelf = !isSelf
     var senderName = isSelf ? '读者' : (contacts.find(function(c) { return c.id === msg.senderId }) || {}).name || '未知'
-    var extraStyle = ''
-    if (ch.swapped) {
-      extraStyle = isSelf ? 'padding-left:44px;padding-right:0' : 'padding-left:0;padding-right:0'
-    }
-    var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative' + (extraStyle ? ';' + extraStyle : '') + '">'
+    var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative">'
     if (msg.senderId !== 'self') {
       var sc = contacts.find(function(c) { return c.id === msg.senderId })
-      var avatarBg = sc ? (sc.avatarUrl ? 'background-image:url(' + esc(sc.avatarUrl) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:var(--c-border)'
-      h += '<div class="chat-avatar" style="' + avatarBg + '">'
+      var avatarBg = sc ? (sc.avatarUrl ? 'background-image:url(' + sc.avatarUrl + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:var(--c-border)'
+      h += '<div class="chat-avatar" style="' + escapeHtmlAttribute(avatarBg) + '">'
       if (!sc || !sc.avatarUrl) h += '<span>' + esc(senderName.charAt(0)) + '</span>'
       h += '</div>'
     }
     h += '<div style="min-width:0;max-width:100%">'
     if (msg.type === 'image') {
-      h += '<div class="chat-bubble"><img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'"></div>'
+      h += '<div class="chat-bubble"><img src="' + escapeHtmlAttribute(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'"></div>'
     } else if (msg.type === 'link') {
       h += '<div class="chat-bubble" style="background:#e8f4e8;border:1px solid #b8d8b8"><div style="font-size:.72rem;font-weight:500">' + esc(msg.linkTitle || '链接') + '</div><div style="font-size:.62rem;color:var(--c-text2)">' + esc(msg.linkUrl || '') + '</div></div>'
     } else if (msg.type === 'redpacket') {
@@ -4042,6 +4165,13 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '<div class="chat-bubble fc-card">'
       h += '<div class="fc-head"><div class="fc-badge">亲属卡</div></div>'
       h += '<div class="fc-body"><div class="fc-rel">' + esc(msg.fcRelation || '亲人') + '</div><div class="fc-amount">&yen;' + ((msg.fcAmount || 0)).toFixed(2) + '</div></div>'
+      h += '</div>'
+    } else if (msg.type === 'call') {
+      var callModeLabel = msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL'
+      h += '<div class="chat-bubble chat-call-card">'
+      h += '<span class="chat-call-card-tag">' + callModeLabel + '</span>'
+      h += '<strong>' + esc(senderName) + '</strong>'
+      h += '<small>' + esc((msg.callLines && msg.callLines[0]) || '通话剧情') + '</small>'
       h += '</div>'
     } else if (msg.type === 'voice') {
       var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
@@ -4067,7 +4197,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (msg.choices && msg.choices.length > 0) {
       h += '<div class="chat-choices">'
       msg.choices.forEach(function(c, cidx) {
-        h += '<button class="chat-choice-btn' + (c.used ? ' used' : '') + '" data-choice-ri="' + ri + '" data-choice-mi="' + mi + '" data-choice-ci="' + cidx + '">' + esc(c.text || '选项') + '</button>'
+        h += '<button type="button" class="chat-choice-btn" data-choice-ri="' + ri + '" data-choice-mi="' + mi + '" data-choice-ci="' + cidx + '" aria-label="编辑回复选项：' + escapeHtmlAttribute(c.text || '选项') + '">' + esc(c.text || '选项') + '</button>'
       })
       h += '</div>'
     }
@@ -4079,41 +4209,73 @@ function openChatEditor(frame, wid, chatId, pd) {
   }
 
   function bindChatEvents() {
-    var swapBtn = frame.querySelector('#chatSwapBtn')
-    if (swapBtn) swapBtn.onclick = function() {
-      ch.swapped = !ch.swapped
-      save()
-      renderChat()
-    }
-
     var backBtn = frame.querySelector('#chatBack')
     if (backBtn) backBtn.onclick = function() { openMessagesEditor(frame, wid, pd) }
+    var modeBackBtn = frame.querySelector('#chatModeBack')
+    if (modeBackBtn) modeBackBtn.onclick = function() { openMessagesEditor(frame, wid, pd) }
+    var modeSaveBtn = frame.querySelector('#chatModeSave')
+    if (modeSaveBtn) modeSaveBtn.onclick = function() {
+      save()
+      var state = frame.querySelector('#chatSaveState')
+      if (state) state.textContent = '已保存'
+    }
+
+    var speakerButtons = frame.querySelectorAll('.chat-speaker-btn[data-sender-id]')
+    speakerButtons.forEach(function(button) {
+      button.onclick = function() {
+        activeSpeakerId = button.dataset.senderId || 'self'
+        speakerButtons.forEach(function(item) { item.classList.toggle('active', item === button) })
+        var input = frame.querySelector('#chatInput')
+        if (input) {
+          input.placeholder = '以「' + getSpeakerName(activeSpeakerId) + '」添加消息…'
+          input.focus()
+        }
+      }
+    })
+
+    var addSpeakerBtn = frame.querySelector('.chat-speaker-btn[data-speaker="add"]')
+    if (addSpeakerBtn) addSpeakerBtn.onclick = function() {
+      var available = ['self'].concat(ch.contactIds || [])
+      var choices = available.map(function(senderId) {
+        return '<button type="button" class="btn btn-sm btn-outline w-full chat-speaker-pick" data-sender-id="' + escapeHtmlAttribute(senderId) + '" style="display:block;width:100%;margin-bottom:6px">' + esc(getSpeakerName(senderId)) + '</button>'
+      }).join('')
+      choices += '<button type="button" class="btn btn-sm btn-outline w-full chat-speaker-pick" data-sender-id="system" style="display:block;width:100%">系统</button>'
+      var ov = modal('选择发言人', choices, '<button type="button" id="speakerPickCancel" class="btn btn-ghost btn-sm">取消</button>')
+      ov.querySelectorAll('.chat-speaker-pick').forEach(function(choice) {
+        choice.onclick = function() {
+          activeSpeakerId = choice.dataset.senderId || 'self'
+          ov.remove()
+          renderChat()
+        }
+      })
+      ov.querySelector('#speakerPickCancel').onclick = function() { ov.remove() }
+    }
 
     // Left plus button — opens the add-message-type menu
     var plusBtn = frame.querySelector('#chatPlusBtn')
     if (plusBtn) plusBtn.onclick = function() { showPlusMenu() }
 
-    // Right send button — sends text from input as self
+    // Right add button — adds one complete authored message for the selected speaker.
     var sendBtn = frame.querySelector('#chatSendBtn')
     var chatInput = frame.querySelector('#chatInput')
     function sendTextMessage() {
       if (!chatInput) return
       var text = chatInput.value.trim()
       if (!text) return
-      var msg = {
-        id: uid(), senderId: ch.swapped ? (ch.contactIds[0] || 'self') : 'self',
-        text: text,
-        time: new Date().toLocaleString(), type: 'text'
-      }
-      var currentRound = ch.rounds[ch.rounds.length - 1]
-      if (!currentRound) { currentRound = { id: uid(), label: '第1轮', messages: [] }; ch.rounds.push(currentRound) }
-      currentRound.messages.push(msg)
+      var msg = activeSpeakerId === 'system'
+        ? { id: uid(), type: 'time', time: text }
+        : { id: uid(), senderId: activeSpeakerId, text: text, time: new Date().toLocaleString(), type: 'text' }
+      currentRound().messages.push(msg)
       save()
       chatInput.value = ''
       renderChat()
     }
     if (sendBtn) sendBtn.onclick = function() { sendTextMessage() }
     if (chatInput) {
+      chatInput.addEventListener('input', function() {
+        var state = frame.querySelector('#chatSaveState')
+        if (state) state.textContent = chatInput.value.trim() ? '编辑中' : '已保存'
+      })
       chatInput.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') { e.preventDefault(); sendTextMessage() }
       })
@@ -4182,6 +4344,7 @@ function openChatEditor(frame, wid, chatId, pd) {
         function addItem(label, cb) {
           var el = document.createElement('div')
           el.textContent = label
+          if (label.indexOf('选项') >= 0) el.dataset.chatAction = 'choices'
           el.style.cssText = 'padding:5px 14px;cursor:pointer;color:var(--c-text)'
           el.onmouseenter = function() { el.style.background = 'var(--c-surface2)' }
           el.onmouseleave = function() { el.style.background = '' }
@@ -4244,13 +4407,14 @@ function openChatEditor(frame, wid, chatId, pd) {
           if (msg.choices && msg.choices.length) {
             msg.choices.forEach(function(c) {
               choiceGroups.push({
+                id: c.id || '',
                 text: c.text || '',
                 replyText: c.replyText || '',
-                followUpLines: c.followUpMessages ? c.followUpMessages.map(function(fm) { return fm.text || '' }).join('\n') : ''
+                followUpLines: c.followUpMessages ? c.followUpMessages.map(function(fm) { return fm.text || fm.content || '' }).join('\n') : ''
               })
             })
           }
-          if (choiceGroups.length === 0) choiceGroups.push({ text: '', replyText: '', followUpLines: '' })
+          if (choiceGroups.length === 0) choiceGroups.push({ id: '', text: '', replyText: '', followUpLines: '' })
 
           function renderGroups() {
             var listEl = document.getElementById('chGroupsList')
@@ -4299,7 +4463,7 @@ function openChatEditor(frame, wid, chatId, pd) {
           renderGroups()
 
           ov.querySelector('#chAddGroup').onclick = function() {
-            choiceGroups.push({ text: '', replyText: '', followUpLines: '' })
+            choiceGroups.push({ id: '', text: '', replyText: '', followUpLines: '' })
             renderGroups()
           }
 
@@ -4310,19 +4474,37 @@ function openChatEditor(frame, wid, chatId, pd) {
             var texts = listEl.querySelectorAll('.ch-grp-text')
             var replies = listEl.querySelectorAll('.ch-grp-reply')
             var follows = listEl.querySelectorAll('.ch-grp-follow')
-            msg.choices = []
+            var previousChoices = Array.isArray(msg.choices) ? msg.choices : []
+            var nextChoices = []
             for (var i = 0; i < texts.length; i++) {
               var grpText = (texts[i].value || '').trim()
               if (!grpText) continue
               var replyText = (replies[i] ? replies[i].value : '').trim()
               var followLines = (follows[i] ? follows[i].value : '').split('\n').filter(function(l) { return l.trim() })
-              var fms = []
-              followLines.forEach(function(line) {
-                fms.push({ id: uid(), senderId: ch.contactIds[0] || 'self', text: line, type: 'text', time: new Date().toLocaleString() })
+              var groupId = choiceGroups[i]?.id || ''
+              var previousChoice = previousChoices.find(function(choice) { return groupId && choice.id === groupId })
+              var previousFollowUps = Array.isArray(previousChoice?.followUpMessages) ? previousChoice.followUpMessages : []
+              var fms = followLines.map(function(line, lineIndex) {
+                var previousFollowUp = previousFollowUps[lineIndex]
+                return Object.assign({}, previousFollowUp || {}, {
+                  id: previousFollowUp?.id || uid(),
+                  senderId: previousFollowUp?.senderId || ch.contactIds[0] || 'self',
+                  text: line.trim(),
+                  content: line.trim(),
+                  type: previousFollowUp?.type || 'text',
+                  time: previousFollowUp?.time || new Date().toLocaleString()
+                })
               })
-              msg.choices.push({ id: uid(), text: grpText, replyText: replyText, followUpMessages: fms })
+              var nextChoice = Object.assign({}, previousChoice || {}, {
+                id: previousChoice?.id || uid(),
+                text: grpText,
+                replyText: replyText,
+                followUpMessages: fms
+              })
+              delete nextChoice.used
+              nextChoices.push(nextChoice)
             }
-            if (msg.choices.length === 0) msg.choices = undefined
+            msg.choices = nextChoices.length ? nextChoices : undefined
             save(); ov.remove(); renderChat()
           }
           ov.querySelector('#chCancel').onclick = function() { ov.remove() }
@@ -4349,31 +4531,17 @@ function openChatEditor(frame, wid, chatId, pd) {
     // Choice button clicks (delegate from msgArea)
     msgArea.addEventListener('click', function(e) {
       var btn = e.target.closest('.chat-choice-btn')
-      if (!btn || btn.classList.contains('used')) return
+      if (!btn) return
       e.preventDefault()
-      var ri = parseInt(btn.dataset.choiceRi)
-      var mi = parseInt(btn.dataset.choiceMi)
-      var ci = parseInt(btn.dataset.choiceCi)
-      if (isNaN(ri) || isNaN(mi) || isNaN(ci)) return
-      var round = ch.rounds[ri]
-      if (!round) return
-      var msg = round.messages[mi]
-      if (!msg || !msg.choices) return
-      var choice = msg.choices[ci]
-      if (!choice || choice.used) return
-      choice.used = true
-      if (choice.replyText) {
-        round.messages.push({ id: uid(), senderId: 'self', text: choice.replyText, type: 'text', time: new Date().toLocaleString() })
-      }
-      if (choice.followUpMessages) {
-        choice.followUpMessages.forEach(function(fm) {
-          var copy = JSON.parse(JSON.stringify(fm))
-          copy.id = uid()
-          round.messages.push(copy)
-        })
-      }
-      save()
-      renderChat()
+      var messageElement = btn.closest('.chat-msg')
+      if (!messageElement) return
+      messageElement.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX || 0,
+        clientY: e.clientY || 0
+      }))
+      document.querySelector('.chat-ctx-menu [data-chat-action="choices"]')?.click()
     })
 
     var dividers = frame.querySelectorAll('.chat-round-divider')
@@ -4408,7 +4576,7 @@ function openChatEditor(frame, wid, chatId, pd) {
   }
 
   var chatHtml = '<div class="cu-panel cu-panel-embedded" id="chatPanel">'
-  chatHtml += '<div class="cu-body" id="chatContent" style="padding:6px 10px;background:var(--c-surface)"></div>'
+  chatHtml += '<div class="cu-body" id="chatContent"></div>'
   chatHtml += '</div>'
   frame.innerHTML = chatHtml
   renderChat()
@@ -4523,7 +4691,7 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
     }
     for (var i = 0; i < memos.length; i++) {
       var m = memos[i]
-      h += '<div class="memo-card" data-memo-id="' + m.id + '" style="border-left:3px solid ' + accent + '">'
+      h += '<div class="memo-card" data-memo-id="' + m.id + '" style="--memo-accent:' + accent + '">'
       h += '<div class="memo-editor" contenteditable="true" data-memo-id="' + m.id + '">'
       h += (m.content || '')
       h += '</div>'

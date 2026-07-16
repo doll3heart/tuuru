@@ -38,7 +38,7 @@ test("phone App icons expose a bounded visible keyboard focus contract", () => {
   assert.match(icon, /font\s*:\s*inherit/)
   assert.match(focusBody, /outline\s*:\s*2px\s+solid\s+var\(--c-text\)/)
   assert.match(focusBody, /outline-offset\s*:\s*2px/)
-  assert.match(focusBody, /box-shadow\s*:\s*0\s+0\s+0\s+4px\s+rgba\(164,198,235/)
+  assert.match(focusBody, /box-shadow\s*:\s*0\s+0\s+0\s+4px\s+color-mix\([^)]*var\(--c-primary\)/)
   assert.doesNotMatch(desktopDescendants, /outline|focus-ring-color/)
   assert.doesNotMatch(dragSection[1], /\.blur\(\)/)
   assert.doesNotMatch(clickSection[1], /\.blur\(\)/)
@@ -92,8 +92,8 @@ test("rendered phone App icons are native named controls with native activation"
           enabled: true,
         },
         {
-          id: "customize-blank-name",
-          type: "customize",
+          id: "messages-blank-name",
+          type: "messages",
           name: "   ",
           icon: "C",
           color: "#f0f0f0",
@@ -130,24 +130,22 @@ test("rendered phone App icons are native named controls with native activation"
   }
 
   let settings = document.querySelector('[data-app-type="settings"]')
-  let customize = document.querySelector('[data-app-type="customize"]')
+  let messages = document.querySelector('[data-app-type="messages"]')
   assert.equal(settings.getAttribute("aria-label"), specialName)
-  assert.equal(customize.getAttribute("aria-label"), PHONE_APP_DEFS.customize.label)
+  assert.equal(messages.getAttribute("aria-label"), PHONE_APP_DEFS.messages.label)
   assert.equal(settings.querySelector(".phone-icon-label"), null)
   const hostile = document.querySelector('[data-app-type="memo"]')
   assert.ok(hostile)
   assert.equal(document.getElementById("phone-pwn"), null)
   assert.doesNotMatch(hostile.innerHTML, /onload|onerror|phonePwned/i)
-  assert.equal(hostile.querySelector(".phone-icon-body").style.background, "rgb(240, 240, 240)")
-  customize.click()
-  document.querySelector('[data-cu-tab="appIcons"]').click()
-  assert.equal(document.getElementById("phone-pwn"), null)
-  assert.doesNotMatch(document.getElementById("cuPanel").innerHTML, /onload|onerror|phonePwned/i)
-  document.getElementById("cuCancel").click()
+  assert.equal(hostile.querySelector(".phone-icon-body").style.background, "var(--c-surface2)")
+  messages.click()
+  assert.ok(document.getElementById("msgPanel"))
+  document.getElementById("msgBack").click()
   settings = document.querySelector('[data-app-type="settings"]')
-  customize = document.querySelector('[data-app-type="customize"]')
+  messages = document.querySelector('[data-app-type="messages"]')
   assert.ok(settings)
-  assert.ok(customize)
+  assert.ok(messages)
   settings.focus()
   assert.equal(document.activeElement, settings)
 

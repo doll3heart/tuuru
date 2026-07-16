@@ -1,5 +1,5 @@
 // Tuuru Works - Article Editor (clean rewrite)
-import { getWork, updateWork, addNode, updateNode, deleteNode, addChoice, updateChoice, deleteChoice, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, addPhoneModule, updatePhoneModule, deletePhoneModule, getPhoneModulesByNode, getPhoneModule } from "../data.js"
+import { getWork, updateWork, addNode, updateNode, deleteNode, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, addPhoneModule, updatePhoneModule, deletePhoneModule, getPhoneModulesByNode, getPhoneModule } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast, renderHeader, modal } from "../app.js"
 import { createPhoneWorkDraft } from "../phone-work-access.js"
@@ -7,6 +7,9 @@ import { createPhoneModuleCloseHandlers, createPhoneModuleDraftData } from "../p
 import { applyEditorMobilePane, isBoundedEditorViewport } from "../editor-mobile-pane.js"
 import { createEditorOutlineMenuController } from "../editor-outline-menu.js"
 import { createEditorPhoneModuleDragController } from "../editor-phone-module-drag.js"
+import { createEditorNodeDragController } from "../editor-node-drag.js"
+import { reorderArticleNode } from "../article-node-reorder.js"
+import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
 import { openPhoneAppModal } from "./phone.js"
 
 // State
@@ -16,6 +19,9 @@ var _mobilePane = "editor"
 var _pendingMobileFocus = null
 var _outlineActionMenu = createEditorOutlineMenuController(document)
 var _phoneModuleDragController = null
+var _nodeDragController = null
+var _articleTargetPick = null
+var _articleTargetInspect = null
 
 function esc(s) {
   if (!s) return ""
@@ -62,10 +68,13 @@ function showConfirm(title, msg, cb, onCancel) {
 
 export function renderEditor(wid) {
   _phoneModuleDragController?.reset("refresh")
+  _nodeDragController?.reset("refresh")
   _outlineActionMenu.reset()
   if (_workId !== wid) {
     _mobilePane = "editor"
     _pendingMobileFocus = null
+    _articleTargetPick = null
+    _articleTargetInspect = null
   }
   _workId = wid
   var w = getWork(wid)
@@ -131,6 +140,10 @@ function buildEditor(w, nid) {
   var n = (w.nodes || []).find(function(x){ return x.id === nid })
   if (!n) return '<div class="editor-area" id="articleEditorPane"><div class="editor-empty">选择一个节点开始编辑</div></div>'
   var h = '<div class="editor-area" id="articleEditorPane">'
+  if (_articleTargetInspect && _articleTargetInspect.workId === w.id) {
+    var inspected = describeArticleTarget(w, n.id)
+    h += '<div class="article-target-return"><span><b>正在查看目标</b>' + esc(inspected.ok ? inspected.pathLabel : (n.title || '节点')) + '</span><button type="button" data-a="target-return" data-w="' + w.id + '">返回选项设置</button></div>'
+  }
   h += buildHeader(w, n)
   h += buildToolbar(nid)
   h += buildContent(n)
@@ -292,10 +305,18 @@ function buildContent(n) {
 function buildWorldTree(w) {
   var ns = w.nodes || []
   var ch = w.chapters || []
-  var h = '<div class="world-tree" id="articleOutlinePane">'
-  h += '<div class="wt-header"><span>节点列表</span><div>'
-  h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节">+章</button>'
-  h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点">+</button></div></div>'
+  var targetPick = _articleTargetPick && _articleTargetPick.workId === w.id ? _articleTargetPick : null
+  var h = '<div class="world-tree' + (targetPick ? ' target-pick-mode' : '') + '" id="articleOutlinePane"' + (targetPick ? ' data-target-purpose="' + esc(targetPick.purpose) + '"' : '') + '>'
+  if (targetPick) {
+    h += '<div class="target-picker-head"><div><strong>选择目标节点</strong><small>' + (targetPick.purpose === 'start' ? '设置故事起点' : '给当前选项指定去向') + '</small></div>'
+    h += '<button type="button" data-a="target-cancel" data-w="' + w.id + '" aria-label="取消选择目标">取消</button></div>'
+    h += '<div class="target-picker-search-wrap"><input type="search" class="target-picker-search" aria-label="搜索目标节点" placeholder="搜索章节或节点"></div>'
+  } else {
+    h += '<div class="wt-header"><span>节点列表</span><div>'
+    h += '<button type="button" data-a="pick-start" data-w="' + w.id + '" aria-label="选择故事起点" title="选择故事起点">起点</button>'
+    h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节">+章</button>'
+    h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点">+</button></div></div>'
+  }
   h += '<div class="wt-body">'
   if (ns.length === 0) {
     h += '<div class="wt-empty">暂无节点</div>'
@@ -317,17 +338,17 @@ function buildWorldTree(w) {
       var chapterContentId = 'wtChapterContent_' + ci
       var chapterActionPanelId = 'wtChapterActions_' + ci
       var chapterActionLabel = '章节操作：' + (chs.name || '未命名章节')
-      h += '<div class="wt-chapter">'
+      h += '<div class="wt-chapter" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
       h += '<div class="wt-chapter-title" data-outline-action-host>'
       h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="true" aria-controls="' + chapterContentId + '">'
       h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span></button>'
       h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + chapterActionPanelId + '" aria-label="' + esc(chapterActionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
       h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
-      h += '<div class="wt-chapter-content" id="' + chapterContentId + '">'
+      h += '<div class="wt-chapter-content" id="' + chapterContentId + '" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
       for (var ni = 0; ni < cNodes.length; ni++) {
-        h += nodeHTML(w, cNodes[ni], nodeActionIndex++)
+        h += nodeHTML(w, cNodes[ni], nodeActionIndex++, targetPick)
         var cnode = cNodes[ni]
-        if (cnode.choices && cnode.choices.length) {
+        if (!targetPick && cnode.choices && cnode.choices.length) {
           for (var cci = 0; cci < cnode.choices.length; cci++) {
             var cc = cnode.choices[cci]
             h += '<button type="button" class="wt-choice" data-a="sl" data-w="' + w.id + '" data-n="' + (cc.targetId || '') + '">'
@@ -340,15 +361,17 @@ function buildWorldTree(w) {
       h += '</div></div>'
     }
     var uncid = grouped[""] || []
+    if (uncid.length) h += '<div class="wt-ungrouped" data-node-drop-chapter data-chapter-id="">'
     for (var ui = 0; ui < uncid.length; ui++) {
-      h += nodeHTML(w, uncid[ui], nodeActionIndex++)
+      h += nodeHTML(w, uncid[ui], nodeActionIndex++, targetPick)
     }
+    if (uncid.length) h += '</div>'
   }
   h += '</div></div>'
   return h
 }
 
-function nodeHTML(w, n, actionIndex) {
+function nodeHTML(w, n, actionIndex, targetPick) {
   var ac = n.id === _nodeId ? ' active' : ''
   var current = n.id === _nodeId ? ' aria-current="true"' : ''
   var ch = w.chapters || []
@@ -360,10 +383,21 @@ function nodeHTML(w, n, actionIndex) {
   var canMoveDown = siblingIndex >= 0 && siblingIndex < siblings.length - 1
   var actionPanelId = 'wtNodeActions_' + actionIndex
   var actionLabel = '节点操作：' + (n.title || '未命名节点')
-  var h = '<div class="wt-node' + ac + '" data-outline-action-host>'
+  var targetDescription = describeArticleTarget(w, n.id)
+  var targetPath = targetDescription.ok ? targetDescription.pathLabel : (n.title || '未命名节点')
+  var h = '<div class="wt-node' + ac + '" data-outline-action-host data-node-id="' + esc(n.id) + '" data-chapter-id="' + esc(curCid) + '">'
+  if (targetPick) {
+    h += '<button type="button" class="wt-node-target-select" data-a="target-select" data-w="' + w.id + '" data-n="' + esc(n.id) + '" data-target-path="' + esc(targetPath.toLowerCase()) + '">'
+    h += '<span class="dot" aria-hidden="true"></span><span class="node-label">' + esc(targetPath) + '</span>'
+    if (w.startNode === n.id) h += '<span class="wt-start-badge">起点</span>'
+    h += '</button></div>'
+    return h
+  }
+  h += '<button type="button" class="wt-node-drag-handle" aria-label="拖动节点「' + esc(n.title || '节点') + '」排序" title="拖动排序"><span aria-hidden="true">⠿</span></button>'
   h += '<button type="button" class="wt-node-select" data-a="sl" data-w="' + w.id + '" data-n="' + n.id + '"' + current + '>'
   h += '<span class="dot" aria-hidden="true"></span>'
   h += '<span class="node-label">' + esc(n.title || '节点') + '</span>'
+  if (w.startNode === n.id) h += '<span class="wt-start-badge">起点</span>'
   h += '</button>'
   h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + actionPanelId + '" aria-label="' + esc(actionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
   h += '<span class="node-actions wt-action-panel" id="' + actionPanelId + '" role="group" aria-label="' + esc(actionLabel) + '">'
@@ -422,6 +456,57 @@ function handleClick(e) {
     return
   }
   if (a === "outline-actions") return
+  if (a === "target-return") {
+    var inspectState = _articleTargetInspect
+    if (!inspectState || inspectState.workId !== w) return
+    _articleTargetInspect = null
+    _nodeId = inspectState.sourceNodeId
+    refreshEditor(w)
+    openChoicePanel(w, inspectState.sourceNodeId, {
+      draftChoices: inspectState.drafts,
+      focusIndex: inspectState.focusIndex
+    })
+    return
+  }
+  if (a === "pick-start") {
+    _articleTargetInspect = null
+    _articleTargetPick = {purpose: "start", workId: w, sourceNodeId: _nodeId}
+    prepareMobilePaneRefresh("outline", true)
+    refreshEditor(w)
+    return
+  }
+  if (a === "target-cancel") {
+    var cancelledTargetPick = _articleTargetPick
+    _articleTargetPick = null
+    if (cancelledTargetPick?.sourceNodeId) _nodeId = cancelledTargetPick.sourceNodeId
+    refreshEditor(w)
+    if (cancelledTargetPick?.purpose === "choice") {
+      openChoicePanel(w, cancelledTargetPick.sourceNodeId, {draftChoices: cancelledTargetPick.drafts})
+    }
+    return
+  }
+  if (a === "target-select") {
+    var targetPickState = _articleTargetPick
+    if (!targetPickState || targetPickState.workId !== w || !getNode(w, n)) return
+    _articleTargetPick = null
+    if (targetPickState.purpose === "start") {
+      updateWork(w, {startNode: n})
+      _nodeId = n
+      prepareMobilePaneRefresh("editor", true)
+      refreshEditor(w)
+      return
+    }
+    if (targetPickState.purpose === "choice" && targetPickState.drafts?.[targetPickState.draftIndex]) {
+      targetPickState.drafts[targetPickState.draftIndex].targetId = n
+      _nodeId = targetPickState.sourceNodeId
+      refreshEditor(w)
+      openChoicePanel(w, targetPickState.sourceNodeId, {
+        draftChoices: targetPickState.drafts,
+        focusIndex: targetPickState.draftIndex
+      })
+    }
+    return
+  }
   if (a === "an") {
     var nd = addNode(w)
     if (nd) {
@@ -906,12 +991,14 @@ function refreshPhList(wid, overlay) {
   listEl.innerHTML = h
 }
 
-function openChoicePanel(wid, nid) {
+function openChoicePanel(wid, nid, options) {
   var w = getWork(wid)
   if (!w) return
   var node = getNode(wid, nid)
   if (!node) return
-  var choices = node.choices || []
+  var choices = Array.isArray(options?.draftChoices)
+    ? JSON.parse(JSON.stringify(options.draftChoices))
+    : JSON.parse(JSON.stringify(node.choices || []))
   var allNodes = w.nodes || []
 
   var body = '<div class="ch-panel" id="chPanel">'
@@ -919,21 +1006,7 @@ function openChoicePanel(wid, nid) {
   body += '<div class="ch-list" id="chList">'
 
   for (var i = 0; i < choices.length; i++) {
-    var c = choices[i]
-    body += '<div class="ch-item" data-ch-idx="' + i + '">'
-    body += '<span class="ch-num">#' + (i + 1) + '</span>'
-    body += '<input class="ch-text" id="ch_text_' + i + '" value="' + esc(c.text || '') + '" placeholder="选项文字">'
-    body += '<select class="ch-target" id="ch_target_' + i + '">'
-    body += '<option value="">选择目标节点</option>'
-    for (var ni = 0; ni < allNodes.length; ni++) {
-      var tn = allNodes[ni]
-      if (tn.id !== nid) {
-        body += '<option value="' + tn.id + '"' + (c.targetId === tn.id ? ' selected' : '') + '>' + esc(tn.title || '节点') + '</option>'
-      }
-    }
-    body += '</select>'
-    body += '<button class="ch-del-btn" data-ch-a="del-choice" data-ch-idx="' + i + '" title="删除选项">\u2715</button>'
-    body += '</div>'
+    body += chRowHTML(wid, nid, choices[i], i, allNodes)
   }
 
   body += '</div>'
@@ -957,9 +1030,46 @@ function openChoicePanel(wid, nid) {
       if (!btn) return
       var act = btn.dataset.chA
 
+      if (act === 'pick-target') {
+        var targetItem = btn.closest('.ch-item')
+        var targetIndex = Array.from(listEl.querySelectorAll('.ch-item')).indexOf(targetItem)
+        if (targetIndex < 0) return
+        var targetDrafts = collectChoiceDrafts(listEl)
+        _articleTargetInspect = null
+        _articleTargetPick = {
+          purpose: 'choice',
+          workId: wid,
+          sourceNodeId: nid,
+          draftIndex: targetIndex,
+          drafts: targetDrafts
+        }
+        ov.remove()
+        prepareMobilePaneRefresh('outline', true)
+        refreshEditor(wid)
+        return
+      }
+      if (act === 'inspect-target') {
+        var inspectItem = btn.closest('.ch-item')
+        var inspectIndex = Array.from(listEl.querySelectorAll('.ch-item')).indexOf(inspectItem)
+        var inspectTargetId = btn.dataset.targetId || ''
+        if (inspectIndex < 0 || !getNode(wid, inspectTargetId)) return
+        _articleTargetPick = null
+        _articleTargetInspect = {
+          workId: wid,
+          sourceNodeId: nid,
+          targetNodeId: inspectTargetId,
+          focusIndex: inspectIndex,
+          drafts: collectChoiceDrafts(listEl)
+        }
+        ov.remove()
+        _nodeId = inspectTargetId
+        prepareMobilePaneRefresh('editor', true)
+        refreshEditor(wid)
+        return
+      }
       if (act === 'add-choice') {
         // DOM only: append empty row, no localStorage write
-        var dummy = { id: uid(), text: '', targetId: '' }
+        var dummy = { id: '', text: '', targetId: '' }
         appendChRow(listEl, wid, nid, dummy, listEl.children.length)
         return
       }
@@ -976,15 +1086,17 @@ function openChoicePanel(wid, nid) {
         return
       }
       if (act === 'save') {
-        saveChoicesFromDOM(wid, nid, listEl)
-        refreshEditor(wid)
+        if (saveChoicesFromDOM(wid, nid, listEl)) {
+          ov.remove()
+          refreshEditor(wid)
+        }
         return
       }
       if (act === 'delete-all') {
         if (confirm('确定删除此节点的选项组？')) {
-          // DOM only: clear list, save will handle rest
-          listEl.innerHTML = ''
+          updateNode(wid, nid, {choices: []})
           ov.remove()
+          refreshEditor(wid)
         }
         return
       }
@@ -994,60 +1106,53 @@ function openChoicePanel(wid, nid) {
   ov.addEventListener('click', function(ev) {
     if (ev.target === ov) ov.remove()
   })
+  if (Number.isInteger(options?.focusIndex)) {
+    listEl.querySelectorAll('.ch-target-pick')[options.focusIndex]?.focus()
+  }
+}
+
+function collectChoiceDrafts(listEl) {
+  return Array.from(listEl.querySelectorAll('.ch-item')).map(function(row) {
+    return {
+      id: row.dataset.choiceId || '',
+      text: row.querySelector('.ch-text')?.value || '',
+      targetId: row.querySelector('.ch-target-pick')?.dataset.targetId || ''
+    }
+  })
 }
 
 function saveChoicesFromDOM(wid, nid, listEl) {
-  var rows = listEl.querySelectorAll('.ch-item')
-  if (rows.length < 2) {
+  var drafts = collectChoiceDrafts(listEl)
+  if (drafts.length < 2) {
     showToast('至少需要 2 个选项', 'error')
-    return
+    return false
   }
-  var texts = []
-  var targets = []
-  for (var i = 0; i < rows.length; i++) {
-    var textEl = rows[i].querySelector('.ch-text')
-    var targetEl = rows[i].querySelector('.ch-target')
-    var txt = (textEl?.value || '').trim()
-    var tgt = targetEl?.value || ''
-    if (!txt) {
-      showToast('选项 #' + (i + 1) + ' 未填写文字', 'error')
-      return
-    }
-    if (!tgt) {
-      showToast('选项 #' + (i + 1) + ' 未选择目标节点', 'error')
-      return
-    }
-    texts.push(txt)
-    targets.push(tgt)
-  }
-
-  // Sync: clear all existing choices, then add back from DOM
+  var work = getWork(wid)
   var curNode = getNode(wid, nid)
-  if (!curNode) return
-  while (curNode.choices && curNode.choices.length) {
-    deleteChoice(wid, nid, curNode.choices[0].id)
-    curNode = getNode(wid, nid)
-  }
-  // Now add fresh choices from DOM
-  for (var i2 = 0; i2 < texts.length; i2++) {
-    var tgtId = targets[i2]
-    if (tgtId) {
-      addChoice(wid, nid, tgtId)
-      var newNode = getNode(wid, nid)
-      if (newNode && newNode.choices && newNode.choices.length) {
-        var last = newNode.choices[newNode.choices.length - 1]
-        updateChoice(wid, nid, last.id, { text: texts[i2] })
-      }
-    } else {
-      addChoice(wid, nid, '')
-      var newNode2 = getNode(wid, nid)
-      if (newNode2 && newNode2.choices && newNode2.choices.length) {
-        var last2 = newNode2.choices[newNode2.choices.length - 1]
-        updateChoice(wid, nid, last2.id, { text: texts[i2] })
-      }
+  if (!work || !curNode) return false
+  for (var i = 0; i < drafts.length; i++) {
+    drafts[i].text = drafts[i].text.trim()
+    if (!drafts[i].text) {
+      showToast('选项 #' + (i + 1) + ' 未填写文字', 'error')
+      return false
+    }
+    if (!drafts[i].targetId) {
+      showToast('选项 #' + (i + 1) + ' 未选择目标节点', 'error')
+      return false
+    }
+    if (!describeArticleTarget(work, drafts[i].targetId).ok) {
+      showToast('选项 #' + (i + 1) + ' 的目标节点已不存在，请重新选择', 'error')
+      return false
     }
   }
+  var reconciled = reconcileArticleChoices(curNode.choices || [], drafts, uid)
+  if (!reconciled.ok) {
+    showToast('选项保存失败，请重新打开后再试', 'error')
+    return false
+  }
+  updateNode(wid, nid, {choices: reconciled.choices})
   showToast('已保存')
+  return true
 }
 
 function refreshChPanel(overlay, wid, nid) {
@@ -1067,19 +1172,15 @@ function refreshChPanel(overlay, wid, nid) {
 }
 
 function chRowHTML(wid, nid, choice, idx, allNodes) {
-  var h = '<div class="ch-item" data-ch-idx="' + idx + '">'
+  var work = getWork(wid)
+  var target = choice.targetId ? describeArticleTarget(work, choice.targetId) : {ok: false}
+  var targetLabel = target.ok ? target.pathLabel : (choice.targetId ? '目标已删除 · 请重新选择' : '选择目标节点')
+  var h = '<div class="ch-item" data-ch-idx="' + idx + '" data-choice-id="' + esc(choice.id || '') + '">'
   h += '<span class="ch-num">#' + (idx + 1) + '</span>'
   h += '<input class="ch-text" id="ch_text_' + idx + '" value="' + esc(choice.text || '') + '" placeholder="选项文字">'
-  h += '<select class="ch-target" id="ch_target_' + idx + '">'
-  h += '<option value="">选择目标节点</option>'
-  for (var ni2 = 0; ni2 < (allNodes || []).length; ni2++) {
-    var tn = allNodes[ni2]
-    if (tn.id !== nid) {
-      h += '<option value="' + tn.id + '"' + (choice.targetId === tn.id ? ' selected' : '') + '>' + esc(tn.title || '节点') + '</option>'
-    }
-  }
-  h += '</select>'
-  h += '<button class="ch-del-btn" data-ch-a="del-choice" data-ch-idx="' + idx + '" title="删除选项">\u2715</button>'
+  h += '<button type="button" class="ch-target-pick' + (choice.targetId && !target.ok ? ' invalid' : '') + '" data-ch-a="pick-target" data-target-id="' + esc(choice.targetId || '') + '"><span>' + esc(targetLabel) + '</span><b aria-hidden="true">›</b></button>'
+  if (target.ok) h += '<button type="button" class="ch-target-inspect" data-ch-a="inspect-target" data-target-id="' + esc(choice.targetId) + '" title="查看目标节点" aria-label="查看目标节点">查看</button>'
+  h += '<button type="button" class="ch-del-btn" data-ch-a="del-choice" data-ch-idx="' + idx + '" title="删除选项" aria-label="删除选项">\u2715</button>'
   h += '</div>'
   return h
 }
@@ -1100,8 +1201,6 @@ function reindexChRows(listEl) {
     if (num) num.textContent = '#' + (i + 1)
     var text = row.querySelector('.ch-text')
     if (text) text.id = 'ch_text_' + i
-    var target = row.querySelector('.ch-target')
-    if (target) target.id = 'ch_target_' + i
     var delBtn = row.querySelector('.ch-del-btn')
     if (delBtn) delBtn.dataset.chIdx = i
   }
@@ -1514,6 +1613,18 @@ function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
 }
 
 // ====== Phone Module Card Pointer Events ======
+_nodeDragController = createEditorNodeDragController({
+  root: document,
+  onCommit: function(payload) {
+    var work = getWork(_workId)
+    if (!work) return
+    var result = reorderArticleNode(work.nodes || [], payload)
+    if (!result.ok || !result.changed) return
+    updateWork(_workId, {nodes: result.nodes})
+    refreshEditor(_workId)
+  }
+})
+
 _phoneModuleDragController = createEditorPhoneModuleDragController({
   documentObject: document,
   windowObject: window,
@@ -1525,6 +1636,27 @@ _phoneModuleDragController = createEditorPhoneModuleDragController({
 
 // Auto-save content on input
 document.addEventListener("input", function(e) {
+  var targetSearch = e.target.closest?.(".target-picker-search")
+  if (targetSearch) {
+    var tree = targetSearch.closest(".world-tree.target-pick-mode")
+    var query = targetSearch.value.trim().toLowerCase()
+    tree?.querySelectorAll('.wt-node').forEach(function(row) {
+      var targetButton = row.querySelector('[data-a="target-select"]')
+      var path = targetButton?.dataset.targetPath || targetButton?.textContent?.toLowerCase() || ""
+      row.hidden = Boolean(query) && !path.includes(query)
+    })
+    tree?.querySelectorAll('.wt-chapter').forEach(function(chapter) {
+      var rows = Array.from(chapter.querySelectorAll('.wt-node'))
+      chapter.hidden = rows.length > 0 && rows.every(function(row) { return row.hidden })
+      if (query && !chapter.hidden) {
+        var content = chapter.querySelector('.wt-chapter-content')
+        var toggle = chapter.querySelector('.wt-chapter-toggle')
+        if (content) content.hidden = false
+        if (toggle) toggle.setAttribute('aria-expanded', 'true')
+      }
+    })
+    return
+  }
   var ce = e.target.closest(".content-editable")
   if (!ce) return
   var nid = ce.dataset.n

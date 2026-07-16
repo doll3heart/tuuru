@@ -30,6 +30,20 @@ test("legacy article works remain importable and receive defaults", () => {
   assert.deepEqual(result.work.placeholders, [])
 })
 
+test("article normalization repairs a dangling start node to the first valid node", () => {
+  const result = validateWorkForImport({
+    type: "article",
+    startNode: "deleted-node",
+    nodes: [
+      { id: "node-a", content: "A" },
+      { id: "node-b", content: "B" },
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.startNode, "node-a")
+})
+
 test("legacy phone works receive safe collection defaults", () => {
   const result = validateWorkForImport({
     type: "phone",
@@ -40,6 +54,23 @@ test("legacy phone works receive safe collection defaults", () => {
   assert.deepEqual(result.work.phoneData.contacts, [{ id: "contact-1" }])
   assert.deepEqual(result.work.phoneData.chats, [])
   assert.deepEqual(result.work.phoneData.forumPosts, [])
+})
+
+test("phone imports preserve authored character connection metadata", () => {
+  const appConnections = {
+    memo: { contactId: "contact-1", prompt: "A signal from the train station." },
+  }
+  const result = validateWorkForImport({
+    type: "phone",
+    phoneData: {
+      contacts: [{ id: "contact-1" }],
+      appConnections,
+    },
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.work.phoneData.appConnections, appConnections)
+  assert.notEqual(result.work.phoneData.appConnections, appConnections)
 })
 
 test("current work versions remain unchanged", () => {
@@ -223,6 +254,26 @@ for (const { name, input, path } of [
     path: "$.phoneData.moments[0].comments[0].choices[0].followUpMessages[0]",
   },
   {
+    name: "forum comment choices must be an array",
+    input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ choices: {} }] }] } },
+    path: "$.phoneData.forumPosts[0].comments[0].choices",
+  },
+  {
+    name: "forum comment choices must contain records",
+    input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ choices: [null] }] }] } },
+    path: "$.phoneData.forumPosts[0].comments[0].choices[0]",
+  },
+  {
+    name: "forum choice follow-ups must be an array",
+    input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ choices: [{ followUpMessages: false }] }] }] } },
+    path: "$.phoneData.forumPosts[0].comments[0].choices[0].followUpMessages",
+  },
+  {
+    name: "forum choice follow-ups must contain records",
+    input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ choices: [{ followUpMessages: [7] }] }] }] } },
+    path: "$.phoneData.forumPosts[0].comments[0].choices[0].followUpMessages[0]",
+  },
+  {
     name: "forum comment replies must be an array",
     input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ replies: {} }] }] } },
     path: "$.phoneData.forumPosts[0].comments[0].replies",
@@ -231,6 +282,16 @@ for (const { name, input, path } of [
     name: "forum comment replies must contain records",
     input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ replies: [null] }] }] } },
     path: "$.phoneData.forumPosts[0].comments[0].replies[0]",
+  },
+  {
+    name: "nested forum reply choices must be arrays",
+    input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ replies: [{ choices: {} }] }] }] } },
+    path: "$.phoneData.forumPosts[0].comments[0].replies[0].choices",
+  },
+  {
+    name: "nested forum replies must contain records",
+    input: { type: "phone", phoneData: { forumPosts: [{ comments: [{ replies: [{ replies: [null] }] }] }] } },
+    path: "$.phoneData.forumPosts[0].comments[0].replies[0].replies[0]",
   },
   {
     name: "article phone-module data uses phone collection validation",
@@ -260,7 +321,22 @@ test("valid renderer collections and nested defaults normalize in every context"
         images: ["moment.png"],
         comments: [{ choices: [{ followUpMessages: [{ text: "reply" }] }] }],
       }],
-      forumPosts: [{ images: ["post.png"], comments: [{ replies: [{ content: "nested" }] }] }],
+      forumPosts: [{
+        images: ["post.png"],
+        comments: [{
+          choices: [{
+            id: "forum-choice-1",
+            text: "Answer plainly",
+            futureChoiceMetadata: { preserved: true },
+            followUpMessages: [{
+              id: "forum-follow-up-1",
+              content: "nested follow-up",
+              futureFollowUpMetadata: true,
+            }],
+          }],
+          replies: [{ content: "nested" }],
+        }],
+      }],
     },
   }
   const original = structuredClone(input)
@@ -272,7 +348,12 @@ test("valid renderer collections and nested defaults normalize in every context"
     assert.equal(result.work.phoneData.chats[0].messages[0].choices[0].followUpMessages[0].future, true)
     assert.deepEqual(result.work.phoneData.moments[0].images, ["moment.png"])
     assert.deepEqual(result.work.phoneData.forumPosts[0].images, ["post.png"])
-    assert.equal(result.work.phoneData.forumPosts[0].comments[0].replies[0].content, "nested")
+    const forumComment = result.work.phoneData.forumPosts[0].comments[0]
+    assert.equal(forumComment.choices[0].id, "forum-choice-1")
+    assert.deepEqual(forumComment.choices[0].futureChoiceMetadata, { preserved: true })
+    assert.equal(forumComment.choices[0].followUpMessages[0].id, "forum-follow-up-1")
+    assert.equal(forumComment.choices[0].followUpMessages[0].futureFollowUpMetadata, true)
+    assert.equal(forumComment.replies[0].content, "nested")
   }
   assert.deepEqual(input, original)
 })
@@ -294,6 +375,7 @@ test("missing renderer collections retain nested empty-array defaults", () => {
   assert.deepEqual(result.work.phoneData.moments[0].images, [])
   assert.deepEqual(result.work.phoneData.moments[0].comments[0].choices[0].followUpMessages, [])
   assert.deepEqual(result.work.phoneData.forumPosts[0].images, [])
+  assert.deepEqual(result.work.phoneData.forumPosts[0].comments[0].choices, [])
   assert.deepEqual(result.work.phoneData.forumPosts[0].comments[0].replies, [])
 })
 

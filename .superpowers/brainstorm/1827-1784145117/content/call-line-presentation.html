@@ -1,0 +1,244 @@
+<style>
+  :root {
+    --tuuru-ink: #40383b;
+    --tuuru-muted: #75656a;
+    --tuuru-pink: #b88794;
+    --tuuru-pink-soft: #eadcdf;
+    --tuuru-paper: #fff9f7;
+    --tuuru-screen: #eee6e7;
+    --tuuru-line: #846f75;
+  }
+
+  .call-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(250px, 330px));
+    justify-content: center;
+    gap: 24px;
+    margin-top: 24px;
+  }
+
+  .call-choice {
+    cursor: pointer;
+    border: 1px solid #d4c5c9;
+    border-radius: 14px;
+    padding: 18px;
+    background: rgba(255, 255, 255, .78);
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+
+  .call-choice:hover {
+    transform: translateY(-2px);
+    border-color: var(--tuuru-pink);
+    box-shadow: 0 12px 30px rgba(83, 61, 67, .12);
+  }
+
+  .call-choice.selected {
+    border-color: var(--tuuru-ink);
+    box-shadow: 0 0 0 3px var(--tuuru-pink-soft), 0 12px 30px rgba(83, 61, 67, .14);
+  }
+
+  .phone-call {
+    width: min(100%, 274px);
+    margin: 0 auto 17px;
+    padding: 9px;
+    border: 2px solid #8f7b81;
+    border-radius: 24px;
+    background: linear-gradient(145deg, #fff9f7, #d9cdd0);
+    box-shadow: inset 1px 1px #fff, inset -2px -2px 5px #b9aaae, 0 12px 22px rgba(72, 51, 58, .15);
+    color: var(--tuuru-ink);
+  }
+
+  .call-top {
+    height: 25px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 5px;
+    font: 700 8px/1 ui-monospace, monospace;
+    letter-spacing: .1em;
+  }
+
+  .call-well {
+    padding: 6px;
+    border: 1px solid #9a888d;
+    background: #c7b9bd;
+    box-shadow: inset 2px 2px 3px #a7989c;
+  }
+
+  .call-screen {
+    min-height: 385px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px 15px 14px;
+    border: 1px solid #756268;
+    background:
+      radial-gradient(rgba(184, 135, 148, .22) 1px, transparent 1.2px),
+      var(--tuuru-screen);
+    background-size: 12px 12px;
+  }
+
+  .call-state {
+    align-self: stretch;
+    display: flex;
+    justify-content: space-between;
+    color: var(--tuuru-muted);
+    font: 700 8px/1.2 ui-monospace, monospace;
+    letter-spacing: .08em;
+  }
+
+  .call-avatar {
+    width: 70px;
+    height: 70px;
+    display: grid;
+    place-items: center;
+    margin: 22px auto 9px;
+    border: 1px solid var(--tuuru-line);
+    border-radius: 20px;
+    background: #d7bdc3;
+    box-shadow: 4px 4px #a98c93;
+    font: 700 25px/1 ui-monospace, monospace;
+  }
+
+  .call-name {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .call-time {
+    margin: 3px 0 17px;
+    color: var(--tuuru-muted);
+    font: 700 9px/1 ui-monospace, monospace;
+  }
+
+  .line-stage {
+    width: 100%;
+    min-height: 112px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 7px;
+  }
+
+  .spoken-line {
+    margin: 0;
+    padding: 9px 10px;
+    border: 1px solid var(--tuuru-line);
+    background: var(--tuuru-paper);
+    box-shadow: 2px 2px #bdaeb2;
+    font-size: 11px;
+    line-height: 1.55;
+    text-align: left;
+  }
+
+  .spoken-line.past {
+    padding-block: 6px;
+    color: #776b6e;
+    background: rgba(255, 249, 247, .48);
+    border-style: dashed;
+    box-shadow: none;
+    font-size: 9px;
+    opacity: .72;
+  }
+
+  .single-current {
+    min-height: 82px;
+    display: grid;
+    align-items: center;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .advance-hint {
+    margin: 10px 0 8px;
+    color: var(--tuuru-muted);
+    font: 700 8px/1.4 ui-monospace, monospace;
+    letter-spacing: .04em;
+  }
+
+  .hangup {
+    width: 88px;
+    min-height: 38px;
+    margin-top: auto;
+    border: 1px solid #704c55;
+    border-radius: 19px;
+    background: #a86672;
+    color: #fff;
+    font: 700 10px/1 ui-monospace, monospace;
+    box-shadow: 2px 2px #7f5660;
+  }
+
+  .call-choice h3 {
+    margin: 0 0 7px;
+    color: var(--tuuru-ink);
+  }
+
+  .call-choice p {
+    margin: 0;
+    color: #6e6265;
+    line-height: 1.65;
+  }
+
+  .recommend-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: var(--tuuru-pink-soft);
+    color: #6d4f57;
+    font-size: 11px;
+    vertical-align: middle;
+  }
+
+  @media (max-width: 760px) {
+    .call-choice-grid { grid-template-columns: minmax(250px, 330px); }
+  }
+</style>
+
+<h2>通话逐句播放：前文要不要留在画面里？</h2>
+<p class="subtitle">两种方案都由读者点击画面或按 Enter / 空格推进。请只比较台词区域的阅读感受。</p>
+
+<div class="call-choice-grid">
+  <div class="call-choice" data-choice="rolling-transcript" onclick="toggleSelect(this)">
+    <div class="phone-call" aria-hidden="true">
+      <div class="call-top"><span>VOICE CALL</span><span>LIVE ●</span></div>
+      <div class="call-well">
+        <div class="call-screen">
+          <div class="call-state"><span>林澈来电</span><span>2 / 3</span></div>
+          <div class="call-avatar">林</div>
+          <h3 class="call-name">林澈</h3>
+          <div class="call-time">00:18</div>
+          <div class="line-stage">
+            <p class="spoken-line past">“你先别说话，听我讲。”</p>
+            <p class="spoken-line">“那家花店今天开门了。”</p>
+          </div>
+          <div class="advance-hint">轻触继续 · Enter / Space</div>
+          <button class="hangup" type="button" tabindex="-1">挂断</button>
+        </div>
+      </div>
+    </div>
+    <h3>A · 留下淡化前文 <span class="recommend-badge">推荐</span></h3>
+    <p>当前一句最清楚，已经听过的台词缩小、淡化。读者仍能回看上下文，但不会提前看到后文。</p>
+  </div>
+
+  <div class="call-choice" data-choice="single-line" onclick="toggleSelect(this)">
+    <div class="phone-call" aria-hidden="true">
+      <div class="call-top"><span>VOICE CALL</span><span>LIVE ●</span></div>
+      <div class="call-well">
+        <div class="call-screen">
+          <div class="call-state"><span>林澈来电</span><span>2 / 3</span></div>
+          <div class="call-avatar">林</div>
+          <h3 class="call-name">林澈</h3>
+          <div class="call-time">00:18</div>
+          <div class="line-stage">
+            <p class="spoken-line single-current">“那家花店今天开门了。”</p>
+          </div>
+          <div class="advance-hint">轻触继续 · Enter / Space</div>
+          <button class="hangup" type="button" tabindex="-1">挂断</button>
+        </div>
+      </div>
+    </div>
+    <h3>B · 只保留当前一句</h3>
+    <p>画面更像即时语音字幕，注意力最集中；代价是读者错过后无法回看刚才的台词。</p>
+  </div>
+</div>

@@ -12,6 +12,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
+        reader: path.resolve(__dirname, 'reader/index.html'),
       },
     },
   },

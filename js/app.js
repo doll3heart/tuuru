@@ -66,8 +66,10 @@ function mix(a,b,t){var ca=hexToRgb(a),cb=hexToRgb(b);return rgbToHex(Math.round
 function rgba(h,a){var c=hexToRgb(h);return'rgba('+c.r+','+c.g+','+c.b+','+a+')'}
 
 // ---- Preset definitions ----
+export const DEFAULT_EDITOR_THEME = 'tuuru'
 export var THEME_PRESETS = [
-  {id:'sky',name:'水色',dot:'#A4C6EB'},
+  {id:'tuuru',name:'灰粉波点',dot:'#C7A1AA',bg:'#EEE6E7',surface:'#FFFAF9',surface2:'#E2D2D6',text:'#40383B',text2:'#66585D',primary:'#C7A1AA',border:'#C8B6BA',accent3:'#8F4D60'},
+  {id:'sky',name:'水色',dot:'#A4C6EB',bg:'#ECF4FE',surface:'#FFFFFF',surface2:'#D3E5F8',text:'#4A5568',text2:'#526582',primary:'#A4C6EB',border:'#CAD3E0',accent3:'#D9A0B3'},
   {id:'sakura',name:'樱花',dot:'#F0D9E4',bg:'#F0D9E4',text:'#16131F',primary:'#C1A0AC',accent3:'#4A3F4B'},
   {id:'deep',name:'苍闇',dot:'#07080C',bg:'#07080C',surface:'#333C50',text:'#CAD9F5',primary:'#546282',text2:'#9CB2E8'},
   {id:'coastal',name:'海岸',dot:'#E3D6BF',bg:'#E3D6BF',text:'#933B5B',primary:'#B5728A',surface2:'#AABAAE',text2:'#9F9679'},
@@ -98,14 +100,15 @@ export function generateVars(p) {
     '--shadow':isLight?'0 1px 3px rgba(0,0,0,.08)':'0 1px 4px rgba(0,0,0,.5)',
     '--shadow-md':isLight?'0 4px 12px rgba(0,0,0,.1)':'0 4px 16px rgba(0,0,0,.45)',
     '--c-btn-text':pickReadableColor(p.primary,[p.text]),
-    '--c-btn-hover-text':pickReadableColor(ph,[p.text])
+    '--c-btn-hover-text':pickReadableColor(ph,[p.text]),
+    '--c-dot':rgba(p.dot || p.primary,0.18)
   }
 }
 
 // ---- Apply a preset by key ----
 function getTheme() {
-  try { return localStorage.getItem('tuuru_theme') || 'sky' }
-  catch { return 'sky' }
+  try { return localStorage.getItem('tuuru_theme') || DEFAULT_EDITOR_THEME }
+  catch { return DEFAULT_EDITOR_THEME }
 }
 function applyTheme(key) {
   var p = THEME_PRESETS.find(function(x){return x.id===key})
@@ -150,13 +153,15 @@ document.addEventListener('click', function(e) {
 // ==================== Header ====================
 export function renderHeader(){
   const path = location.hash.slice(1).split("?")[0]||"/"
+  const activeTheme = getTheme()
   return `<header class="app-header">
     <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>
     <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
       <div class="theme-wrap">
         <button class="btn btn-sm btn-ghost" onclick="toggleThemePopover(event)" title="外观">外观</button>
         <div class="theme-popover" id="themePopover">
-          <button class="theme-option active" data-theme="sky" onclick="event.preventDefault();setTheme('sky')"><span class="dot" style="background:#A4C6EB"></span>水色</button>
+          <button class="theme-option ${activeTheme==='tuuru'?'active':''}" data-theme="tuuru" onclick="event.preventDefault();setTheme('tuuru')"><span class="dot" style="background:#C7A1AA"></span>灰粉波点</button>
+          <button class="theme-option ${activeTheme==='sky'?'active':''}" data-theme="sky" onclick="event.preventDefault();setTheme('sky')"><span class="dot" style="background:#A4C6EB"></span>水色</button>
           <button class="theme-option" data-theme="sakura" onclick="event.preventDefault();setTheme('sakura')"><span class="dot" style="background:#F0D9E4"></span>樱花</button>
           <button class="theme-option" data-theme="deep" onclick="event.preventDefault();setTheme('deep')"><span class="dot" style="background:#07080C"></span>苍闇</button>
           <button class="theme-option" data-theme="coastal" onclick="event.preventDefault();setTheme('coastal')"><span class="dot" style="background:#E3D6BF"></span>海岸</button>
@@ -176,7 +181,7 @@ export function renderHeader(){
 import { renderHome } from "./pages/home.js"
 import { renderNew } from "./pages/new.js"
 import { renderEditor } from "./pages/editor.js"
-import { renderReader } from "./pages/reader.js"
+import { openReaderPreview } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 
 // ==================== Init ====================
@@ -294,7 +299,7 @@ export function init(){
   })
   
   router("/read/:id", (container, p) => {
-    app.innerHTML = renderHeader() + '<main class="app-main narrow">'+renderReader(p.id)+'</main>'
+    openReaderPreview(p.id)
   })
 
   router("/phone/:id", (container, p) => {

@@ -1,0 +1,42 @@
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  :root{--ink:#30302d;--muted:#78776f;--shell:#ebe6df;--shell2:#d7d0c7;--screen:#e4e5da;--lime:#d6dc9c;--rose:#d9ada5}
+  .concept{display:grid;grid-template-columns:minmax(300px,430px) minmax(270px,1fr);gap:42px;align-items:center;max-width:960px;margin:24px auto 0}
+  .phone{position:relative;border-radius:36px;padding:18px 17px 20px;background:linear-gradient(145deg,#faf6f0 0%,var(--shell) 45%,#d4ccc3 100%);border:1px solid #bab1a8;box-shadow:inset 2px 2px 2px #fff,inset -4px -4px 8px #bdb5ad,0 24px 50px rgba(64,52,43,.17);font:500 11px 'IBM Plex Mono',monospace;color:var(--ink)}
+  .phone:before,.phone:after{content:"";position:absolute;top:92px;width:5px;height:66px;background:#bbb2a9;border:1px solid #9f978f}.phone:before{left:-6px;border-radius:5px 0 0 5px}.phone:after{right:-6px;border-radius:0 5px 5px 0}
+  .top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:35px;letter-spacing:.11em}.brand{font-size:10px}.signal{justify-self:end;display:flex;align-items:center;gap:5px}.led{width:8px;height:8px;border-radius:50%;background:#9da65a;box-shadow:0 0 0 2px #d8d1c8,0 0 9px #b8c059}
+  .speaker{display:flex;gap:4px}.speaker i{display:block;width:4px;height:13px;border-radius:4px;background:#a9a198;box-shadow:inset 1px 0 1px #7e7771}
+  .viewport{border-radius:22px;padding:10px;background:#c8c1b9;box-shadow:inset 3px 3px 5px #a79f98,1px 1px 0 #fff}.screen{min-height:470px;border-radius:15px;padding:12px;background:linear-gradient(rgba(255,255,255,.18),rgba(255,255,255,0)),var(--screen);border:1px solid #88867e;box-shadow:inset 0 0 14px rgba(69,72,63,.13)}
+  .screenbar{display:flex;align-items:center;justify-content:space-between;padding:2px 1px 8px;border-bottom:1px dashed #77776f;font-size:9px}.screenbar b{letter-spacing:.12em}.live{display:flex;align-items:center;gap:5px}.live:before{content:"";width:6px;height:6px;background:#849050;border-radius:50%}
+  .character{display:grid;grid-template-columns:72px 1fr;gap:11px;margin:13px 0 12px}.portrait{position:relative;height:72px;border-radius:19px;background:#cbcdbf;border:1px solid #5d5d57;box-shadow:inset 2px 2px 4px #aeb0a4,2px 2px 0 #f7f7ec;overflow:hidden}.portrait:before{content:"✦";display:grid;place-items:center;height:100%;font:26px sans-serif;color:#5c6154}.portrait:after{content:"";position:absolute;right:7px;bottom:7px;width:8px;height:8px;border-radius:50%;background:#8ea052;border:2px solid #e4e5da}
+  .character h3{font-size:14px;margin:5px 0 2px;letter-spacing:.04em}.character p{font-size:9px;line-height:1.55;color:#66675f;margin:0}.bond{margin-top:9px;height:7px;padding:2px;border:1px solid #7c7c73;border-radius:7px}.bond i{display:block;width:68%;height:100%;border-radius:4px;background:repeating-linear-gradient(90deg,#858c57 0 6px,#aeb578 6px 9px)}
+  .notice{display:flex;align-items:center;gap:9px;border:1px solid #858279;border-radius:11px;padding:8px;background:#d8d9cc;box-shadow:inset 1px 1px 0 #f8f8ef}.notice .pulse{display:grid;place-items:center;width:30px;height:30px;border-radius:10px;background:#343431;color:#e5e6d9;font-size:14px}.notice b{display:block;font-size:10px}.notice small{font-size:8px;color:#6b6b64}
+  .apps{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.app{position:relative;min-height:72px;padding:8px 5px 6px;border:1px solid #86837b;border-radius:13px;background:#e7e3dc;box-shadow:inset 1px 1px 0 white,2px 3px 0 #aba69e;text-align:center}.app:active{transform:translate(2px,2px);box-shadow:inset 1px 1px 3px #aaa}.icon{display:grid;place-items:center;width:32px;height:32px;margin:0 auto 6px;border-radius:11px;border:1px solid #575751;background:#d2d4c7;font:600 12px 'IBM Plex Mono',monospace}.app:nth-child(2) .icon{background:#d8d2b0}.app:nth-child(3) .icon{background:#d7c1bc}.app em{position:absolute;top:5px;right:6px;width:7px;height:7px;border-radius:50%;background:#a96259;box-shadow:0 0 0 2px #e7e3dc}.app span{font-size:8px;letter-spacing:.05em}
+  .dock{display:grid;grid-template-columns:44px 1fr 44px;gap:9px;margin-top:15px;align-items:center}.round{height:42px;border-radius:50%;border:1px solid #948b84;background:linear-gradient(145deg,#f5f0e9,#ccc4bc);box-shadow:inset 1px 1px 0 #fff,2px 3px 3px #b1a8a0;display:grid;place-items:center;font-size:15px}.track{height:35px;border:1px solid #9c938b;border-radius:17px;padding:4px;background:#d3ccc4;box-shadow:inset 2px 2px 3px #aca49c}.track div{height:100%;border-radius:12px;background:#eee9e2;display:flex;align-items:center;justify-content:center;gap:18px;font-size:9px}.track i{width:5px;height:5px;border-radius:50%;background:#938d86}.track i.active{background:#899552;box-shadow:0 0 6px #aeb96a}
+  .notes h3{font:600 18px 'IBM Plex Mono',monospace;letter-spacing:.06em}.notes p{line-height:1.75;color:#66615b}.token{display:flex;gap:10px;align-items:center;margin:12px 0;padding:12px;border:1px solid #d2cbc3;border-radius:14px}.swatch{width:30px;height:30px;border-radius:9px;border:1px solid #999}.swatch.one{background:var(--shell)}.swatch.two{background:var(--screen)}.swatch.three{background:var(--lime)}.original{margin-top:22px;padding:15px;border-left:3px solid #9aa369;background:#f2f0eb;color:#55514b;line-height:1.65}
+  .choice{margin-top:20px;padding:14px 18px;border-radius:13px;background:#343431;color:#f2eee8;cursor:pointer;text-align:center;font:600 12px 'IBM Plex Mono',monospace;letter-spacing:.08em}.choice.selected{outline:3px solid #aeb578;outline-offset:4px}
+  @media(max-width:780px){.concept{grid-template-columns:1fr}.phone{max-width:390px;margin:auto}}
+</style>
+<h2>B2 · Tuuru 角色通讯器</h2>
+<p class="subtitle">不是“钥匙管理器换皮”，而是一台用于连接角色、接收生活信号、收藏关系痕迹的私人设备。</p>
+<div class="concept">
+  <div class="phone">
+    <div class="top"><span class="brand">TUURU_LINK</span><span class="speaker"><i></i><i></i><i></i><i></i><i></i></span><span class="signal"><i class="led"></i>LINKED</span></div>
+    <div class="viewport"><div class="screen">
+      <div class="screenbar"><b>CHARACTER CHANNEL</b><span class="live">LIVE 07</span></div>
+      <div class="character"><div class="portrait"></div><div><h3>林澈 / CH.07</h3><p>信号稳定 · 正在与你共享今日片段</p><div class="bond"><i></i></div></div></div>
+      <div class="notice"><span class="pulse">⌁</span><div><b>收到一段新的生活信号</b><small>“刚刚路过了你喜欢的那家店。”</small></div></div>
+      <div class="apps"><div class="app"><em></em><span class="icon">↗</span><span>消息频道</span></div><div class="app"><span class="icon">⌗</span><span>共鸣广场</span></div><div class="app"><span class="icon">▧</span><span>记忆胶片</span></div><div class="app"><span class="icon">✎</span><span>私密便笺</span></div><div class="app"><span class="icon">♡</span><span>心愿清单</span></div><div class="app"><span class="icon">◎</span><span>浏览轨迹</span></div></div>
+    </div></div>
+    <div class="dock"><button class="round">‹</button><div class="track"><div><span>ME</span><i></i><i class="active"></i><i></i><span>07</span></div></div><button class="round">＋</button></div>
+  </div>
+  <div class="notes">
+    <h3>原创差异</h3>
+    <p>机身不再套用参考图的长方卡片，而是“软方屏＋连接轨道”。主页不展示工具档案，而是展示当前角色、连接状态和一条生活信号。</p>
+    <div class="token"><span class="swatch one"></span><div><b>暖灰树脂机身</b><br><small>温柔、可收藏，但不复制原图的白色塑料感</small></div></div>
+    <div class="token"><span class="swatch two"></span><div><b>雾绿电子屏</b><br><small>保留复古数码气息，降低纯黑白界面的冷硬</small></div></div>
+    <div class="token"><span class="swatch three"></span><div><b>信号荧光色</b><br><small>只用于在线、关系进度和新消息，形成 Tuuru 识别点</small></div></div>
+    <div class="original">核心识别元素：角色频道编号、关系信号条、生活信号卡和底部连接轨道。以后消息、论坛、相册都围绕“连接与记录”发展，而不是继续模仿参考图。</div>
+    <div class="choice" data-choice="character-communicator-b2" onclick="toggleSelect(this)">选择 B2 作为继续细化方向</div>
+  </div>
+</div>

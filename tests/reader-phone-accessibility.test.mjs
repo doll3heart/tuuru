@@ -43,7 +43,8 @@ test("reader phone desktops render native named App controls", () => {
 
   assert.match(desktop, /<img[^>]+alt=""/)
   assert.match(preview, /<img[^>]+alt=""/)
-  assert.doesNotMatch(readerSource, /isSafeImageUrl/)
+  assert.match(readerSource, /function isSafeReaderCallBackgroundDataUrl/)
+  assert.match(readerSource, /isSafeImageUrl\(value\)/)
 })
 
 test("reader App Back controls are named 44px targets with focus continuity", () => {
@@ -75,4 +76,30 @@ test("reader App controls keep a visible bounded focus treatment", () => {
   assert.match(focusBody, /outline\s*:\s*2px\s+solid\s+var\(--c-text\)/)
   assert.match(focusBody, /outline-offset\s*:\s*2px/)
   assert.match(label, /display\s*:\s*block/)
+})
+
+test("reader calls expose native focusable controls without a dotted call surface", () => {
+  const scene = ruleBodiesFor(cssWithoutComments, ".rd-call-scene")
+  const advance = ruleBodiesFor(cssWithoutComments, ".rd-call-advance")
+  const hangup = ruleBodiesFor(cssWithoutComments, ".rd-call-hangup")
+  const advanceFocus = ruleBodiesFor(cssWithoutComments, ".rd-call-advance:focus-visible")
+  const hangupFocus = ruleBodiesFor(cssWithoutComments, ".rd-call-hangup:focus-visible")
+
+  assert.match(readerSource, /var transcriptTag = playback\.isComplete \? 'div' : 'button'/)
+  assert.match(readerSource, /type="button" class="rd-call-transcript rd-call-advance/)
+  assert.doesNotMatch(readerSource, /rd-call-advance[^\n]+onkeydown/)
+  assert.doesNotMatch(scene, /radial-gradient\s*\(/)
+  assert.match(advance, /min-height\s*:\s*44px/)
+  assert.match(hangup, /min-height\s*:\s*44px/)
+  assert.match(advanceFocus, /outline\s*:\s*2px\s+solid/)
+  assert.match(advanceFocus, /outline-offset\s*:\s*2px/)
+  assert.match(hangupFocus, /outline\s*:\s*2px\s+solid/)
+})
+
+test("reader call line motion has an explicit reduced-motion override", () => {
+  const reducedStart = css.lastIndexOf("@media (prefers-reduced-motion: reduce)")
+  assert.notEqual(reducedStart, -1)
+  const reduced = css.slice(reducedStart)
+  assert.match(reduced, /\.rd-call-line\.current\.is-entering[\s\S]*animation\s*:\s*none\s*!important/)
+  assert.match(reduced, /\.rd-call-line\.current\.is-entering[\s\S]*transform\s*:\s*none/)
 })

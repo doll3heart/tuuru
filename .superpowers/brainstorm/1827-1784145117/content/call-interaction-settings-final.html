@@ -1,0 +1,73 @@
+<style>
+  :root{--ink:#40383b;--muted:#75656a;--pink:#b88794;--pink2:#eadcdf;--paper:#fff9f7;--line:#846f75;--screen:#eee6e7}
+  .final-grid{display:grid;grid-template-columns:minmax(250px,310px) minmax(280px,370px);gap:28px;justify-content:center;align-items:start;margin-top:24px}
+  .phone{padding:9px;border:2px solid #8f7b81;border-radius:24px;background:linear-gradient(145deg,#fff9f7,#d9cdd0);box-shadow:inset 1px 1px #fff,inset -2px -2px 5px #b9aaae,0 14px 26px rgba(72,51,58,.15);color:var(--ink)}
+  .top{height:25px;display:flex;align-items:center;justify-content:space-between;padding:0 5px;font:700 8px/1 ui-monospace,monospace;letter-spacing:.1em}
+  .well{padding:6px;border:1px solid #9a888d;background:#c7b9bd;box-shadow:inset 2px 2px 3px #a7989c}
+  .screen{min-height:430px;display:flex;flex-direction:column;align-items:center;padding:16px 14px 13px;border:1px solid #756268;background:linear-gradient(150deg,#f2e7e9 0%,#e4d4d8 56%,#c9adb5 100%)}
+  .state{align-self:stretch;display:flex;justify-content:space-between;font:700 8px/1 ui-monospace,monospace;letter-spacing:.08em;color:var(--muted)}
+  .portrait{width:67px;height:67px;display:grid;place-items:center;margin:19px auto 8px;border:1px solid var(--line);border-radius:19px;background:#d7bdc3;box-shadow:4px 4px #a98c93;font:700 24px/1 ui-monospace,monospace}
+  .name{margin:0;font-size:15px}.duration{margin:3px 0 15px;color:var(--muted);font:700 9px/1 ui-monospace,monospace}
+  .advance{width:100%;min-height:127px;margin:0;padding:9px;border:1px solid rgba(112,78,88,.42);border-radius:6px;background:rgba(255,249,247,.72);color:var(--ink);font:inherit;cursor:pointer;text-align:left;box-shadow:2px 2px rgba(93,66,74,.18)}
+  .advance:focus-visible{outline:3px solid #704c55;outline-offset:3px}
+  .past{display:block;margin-bottom:8px;padding-bottom:7px;border-bottom:1px dashed rgba(112,78,88,.35);color:#776b6e;font-size:9px;line-height:1.5;opacity:.72}
+  .current{display:block;font-size:11px;line-height:1.6}.hint{margin:8px 0;color:var(--muted);font:700 8px/1.4 ui-monospace,monospace;letter-spacing:.04em}
+  .hang{width:88px;min-height:40px;margin-top:auto;border:1px solid #704c55;border-radius:20px;background:#a86672;color:#fff;font:700 10px/1 ui-monospace,monospace;box-shadow:2px 2px #7f5660}
+  .panel{overflow:hidden;border:1px solid #cfbec3;border-radius:12px;background:#fffaf9;box-shadow:0 14px 32px rgba(72,51,58,.12);color:var(--ink)}
+  .panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #dfd1d4;background:#f4ebed}.panel-head b{font-size:15px}.panel-head span{color:var(--muted);font-size:12px}
+  .panel-body{padding:15px}.setting{padding:13px 0;border-bottom:1px dashed #d5c5c9}.setting:first-child{padding-top:0}.setting:last-child{border-bottom:0}
+  .setting h3{margin:0 0 5px;font-size:13px}.setting p{margin:0 0 11px;color:var(--muted);font-size:12px;line-height:1.55}
+  .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.swatch{height:46px;border:1px solid #8c7a7f;border-radius:7px;background:#eee6e7}.swatch:nth-child(2){background:linear-gradient(145deg,#f2e7e9,#c9adb5)}.swatch:nth-child(3){background:linear-gradient(145deg,#e8eff0,#bacfd1)}.swatch:nth-child(4){background:linear-gradient(145deg,#f2ecdf,#d8c5a7)}.swatch.active{outline:3px solid var(--pink);outline-offset:2px}
+  .upload-row{display:flex;gap:8px}.upload{flex:1;min-height:42px;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink);font:700 12px/1 ui-monospace,monospace}.reset{min-height:42px;padding:0 12px;border:1px solid #cbbbc0;border-radius:5px;background:transparent;color:var(--muted)}
+  .readability{display:flex;align-items:center;gap:9px;padding:10px;border-radius:6px;background:var(--pink2);font-size:12px;line-height:1.55}.readability i{width:18px;height:18px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:50%;font-style:normal}
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:26px auto 0;max-width:760px}.flow div{padding:9px 7px;border:1px solid #d4c5c9;border-radius:7px;background:rgba(255,255,255,.7);text-align:center;font-size:11px;line-height:1.45;color:var(--muted)}.flow b{display:block;color:var(--ink);margin-bottom:3px}
+  .confirm{display:block;width:min(100%,560px);margin:22px auto 0;padding:13px;border:1px solid var(--ink);border-radius:6px;background:var(--ink);color:#fff;text-align:center;font:700 12px/1.3 ui-monospace,monospace;cursor:pointer}.confirm.selected{outline:3px solid var(--pink);outline-offset:4px}
+  @media(max-width:760px){.final-grid{grid-template-columns:minmax(250px,330px)}.flow{grid-template-columns:1fr 1fr}}
+</style>
+
+<h2>通话逐句播放 · 最终交互稿</h2>
+<p class="subtitle">左侧是阅读中的通话；右侧是“消息美化”里的通话背景设置。背景没有波点。</p>
+
+<div class="final-grid">
+  <div class="phone">
+    <div class="top"><span>VOICE CALL</span><span>LIVE ●</span></div>
+    <div class="well"><div class="screen">
+      <div class="state"><span>林澈来电</span><span>2 / 3</span></div>
+      <div class="portrait">林</div><h3 class="name">林澈</h3><div class="duration">00:18</div>
+      <button class="advance" type="button" aria-label="显示下一句通话台词">
+        <span class="past">“你先别说话，听我讲。”</span>
+        <span class="current">“那家花店今天开门了。”</span>
+      </button>
+      <div class="hint">轻触台词区继续 · Enter / Space</div>
+      <button class="hang" type="button">挂断</button>
+    </div></div>
+  </div>
+
+  <section class="panel">
+    <header class="panel-head"><b>消息美化</b><span>读者本地</span></header>
+    <div class="panel-body">
+      <div class="setting">
+        <h3>通话背景</h3>
+        <p>语音与视频通话共用；不会写入作者作品。</p>
+        <div class="swatches"><button class="swatch active" aria-label="灰粉纯色"></button><button class="swatch" aria-label="灰粉渐变"></button><button class="swatch" aria-label="水色渐变"></button><button class="swatch" aria-label="奶油渐变"></button></div>
+      </div>
+      <div class="setting">
+        <h3>本地图片</h3>
+        <p>从设备选择图片，只保存在当前浏览器。</p>
+        <div class="upload-row"><button class="upload" type="button">选择本地图片</button><button class="reset" type="button">恢复默认</button></div>
+      </div>
+      <div class="setting">
+        <div class="readability"><i>✓</i><span>图片会居中裁切，并自动叠加柔和遮罩，保证头像、台词和按钮清楚可读。</span></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="flow">
+  <div><b>打开</b>只显示第一句</div>
+  <div><b>推进</b>一次只出现一句</div>
+  <div><b>结束</b>保留全部台词</div>
+  <div><b>挂断</b>返回并可重播</div>
+</div>
+
+<div class="confirm" data-choice="call-interaction-approved" onclick="toggleSelect(this)">这个通话交互与美化入口符合预期</div>

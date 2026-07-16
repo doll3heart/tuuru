@@ -80,18 +80,19 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     const positions = [
       [0, 0], [1, 0], [2, 0], [3, 0],
       [0, 1], [1, 1], [2, 1], [3, 1],
-      [0, 2], [1, 2],
     ]
-    const apps = Object.entries(PHONE_APP_DEFS).map(([type, definition], index) => ({
-      id: `${id}-${type}`,
-      type,
-      name: definition.label,
-      icon: definition.icon,
-      color: definition.color,
-      desktopX: positions[index][0],
-      desktopY: positions[index][1],
-      enabled: true,
-    }))
+    const apps = Object.entries(PHONE_APP_DEFS)
+      .filter(([type]) => !["customize", "profile"].includes(type))
+      .map(([type, definition], index) => ({
+        id: `${id}-${type}`,
+        type,
+        name: definition.label,
+        icon: definition.icon,
+        color: definition.color,
+        desktopX: positions[index][0],
+        desktopY: positions[index][1],
+        enabled: true,
+      }))
 
     return {
       id,
@@ -217,7 +218,7 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
   await t.test("a drag swaps a collision once and suppresses only its own click", async () => {
     const { draft, desktop } = await mount("pointer-drag")
     const dragged = desktop.querySelector('[data-app-type="settings"]')
-    const other = desktop.querySelector('[data-app-type="customize"]')
+    const other = desktop.querySelector('[data-app-type="messages"]')
     const updatesBefore = phoneWorkUpdateCalls
 
     dispatchGesture(dragged, [
@@ -228,9 +229,9 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
 
     const snapshot = draft.snapshot()
     const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
-    const customize = snapshot.phoneData.apps.find(app => app.type === "customize")
+    const messages = snapshot.phoneData.apps.find(app => app.type === "messages")
     assert.deepEqual([settings.desktopX, settings.desktopY], [1, 0])
-    assert.deepEqual([customize.desktopX, customize.desktopY], [0, 0])
+    assert.deepEqual([messages.desktopX, messages.desktopY], [0, 0])
     assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
     assert.equal(dragged.style.left, "")
     assert.equal(dragged.style.top, "")
@@ -245,13 +246,13 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     assert.equal(document.getElementById("settingsPanel"), null)
 
     other.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }))
-    assert.ok(document.getElementById("cuPanel"))
+    assert.ok(document.getElementById("msgPanel"))
     draft.dispose()
   })
 
   await t.test("dragging inside a scrolled desktop preserves content coordinates", async () => {
     const { draft, desktop } = await mount("pointer-scroll-drag")
-    const dragged = desktop.querySelector('[data-app-type="memo"]')
+    const dragged = desktop.querySelector('[data-app-type="gallery"]')
     desktop.scrollTop = 95
 
     dragged.getBoundingClientRect = () => {
@@ -280,16 +281,17 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     ])
 
     const snapshot = draft.snapshot()
-    const memo = snapshot.phoneData.apps.find(app => app.type === "memo")
-    const profile = snapshot.phoneData.apps.find(app => app.type === "profile")
-    assert.deepEqual([memo.desktopX, memo.desktopY], [0, 2])
-    assert.deepEqual([profile.desktopX, profile.desktopY], [0, 1])
+    const gallery = snapshot.phoneData.apps.find(app => app.type === "gallery")
+    const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
+    assert.deepEqual([gallery.desktopX, gallery.desktopY], [0, 2])
+    assert.deepEqual([settings.desktopX, settings.desktopY], [0, 0])
+    assert.equal(snapshot.phoneData.apps.some(app => app.desktopX === 0 && app.desktopY === 1), false)
     draft.dispose()
   })
 
   await t.test("dragging follows scroll changes that happen after pointerdown", async () => {
     const { draft, desktop } = await mount("pointer-live-scroll-drag")
-    const dragged = desktop.querySelector('[data-app-type="memo"]')
+    const dragged = desktop.querySelector('[data-app-type="gallery"]')
 
     dispatchGesture(dragged, [
       ["pointerdown", { pointerId: 18, clientX: 11, clientY: 141 }],
@@ -302,10 +304,11 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     ])
 
     const snapshot = draft.snapshot()
-    const memo = snapshot.phoneData.apps.find(app => app.type === "memo")
-    const profile = snapshot.phoneData.apps.find(app => app.type === "profile")
-    assert.deepEqual([memo.desktopX, memo.desktopY], [0, 2])
-    assert.deepEqual([profile.desktopX, profile.desktopY], [0, 1])
+    const gallery = snapshot.phoneData.apps.find(app => app.type === "gallery")
+    const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
+    assert.deepEqual([gallery.desktopX, gallery.desktopY], [0, 2])
+    assert.deepEqual([settings.desktopX, settings.desktopY], [0, 0])
+    assert.equal(snapshot.phoneData.apps.some(app => app.desktopX === 0 && app.desktopY === 1), false)
     draft.dispose()
   })
 
@@ -387,7 +390,7 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     const instructions = document.querySelector(".phone-arrange-instructions")
     const status = document.querySelector(".phone-arrange-status")
     const icon = desktop.querySelector('[data-app-type="settings"]')
-    const other = desktop.querySelector('[data-app-type="customize"]')
+    const other = desktop.querySelector('[data-app-type="messages"]')
     const updatesBefore = phoneWorkUpdateCalls
 
     toggle.click()
@@ -415,10 +418,10 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
 
     const snapshot = draft.snapshot()
     const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
-    const customize = snapshot.phoneData.apps.find(app => app.type === "customize")
+    const messages = snapshot.phoneData.apps.find(app => app.type === "messages")
     assert.equal(move.defaultPrevented, true)
     assert.deepEqual([settings.desktopX, settings.desktopY], [1, 0])
-    assert.deepEqual([customize.desktopX, customize.desktopY], [0, 0])
+    assert.deepEqual([messages.desktopX, messages.desktopY], [0, 0])
     assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
     assert.match(status.textContent, /第1行第2列/)
     assert.match(status.textContent, /交换位置/)
@@ -453,7 +456,7 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     const toggle = document.querySelector(".phone-arrange-toggle")
     const status = document.querySelector(".phone-arrange-status")
     const icon = desktop.querySelector('[data-app-type="settings"]')
-    const other = desktop.querySelector('[data-app-type="customize"]')
+    const other = desktop.querySelector('[data-app-type="messages"]')
     const left = document.querySelector('[data-phone-move="left"]')
     const right = document.querySelector('[data-phone-move="right"]')
     const up = document.querySelector('[data-phone-move="up"]')
@@ -475,9 +478,9 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     right.click()
     const snapshot = draft.snapshot()
     const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
-    const customize = snapshot.phoneData.apps.find(app => app.type === "customize")
+    const messages = snapshot.phoneData.apps.find(app => app.type === "messages")
     assert.deepEqual([settings.desktopX, settings.desktopY], [1, 0])
-    assert.deepEqual([customize.desktopX, customize.desktopY], [0, 0])
+    assert.deepEqual([messages.desktopX, messages.desktopY], [0, 0])
     assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
     assert.match(status.textContent, /第1行第2列/)
     assert.equal(icon.getAttribute("aria-pressed"), "true")
@@ -509,7 +512,7 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     const { draft, desktop } = await mount("arrange-controls-after-drag")
     const toggle = document.querySelector(".phone-arrange-toggle")
     const selected = desktop.querySelector('[data-app-type="settings"]')
-    const dragged = desktop.querySelector('[data-app-type="memo"]')
+    const dragged = desktop.querySelector('[data-app-type="gallery"]')
     const left = document.querySelector('[data-phone-move="left"]')
     const right = document.querySelector('[data-phone-move="right"]')
     const up = document.querySelector('[data-phone-move="up"]')
@@ -558,9 +561,9 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
 
     const snapshot = draft.snapshot()
     const settings = snapshot.phoneData.apps.find(app => app.type === "settings")
-    const customize = snapshot.phoneData.apps.find(app => app.type === "customize")
+    const messages = snapshot.phoneData.apps.find(app => app.type === "messages")
     assert.deepEqual([settings.desktopX, settings.desktopY], [1, 0])
-    assert.deepEqual([customize.desktopX, customize.desktopY], [0, 0])
+    assert.deepEqual([messages.desktopX, messages.desktopY], [0, 0])
     assert.equal(phoneWorkUpdateCalls, updatesBefore + 1)
 
     await delay(10)
@@ -691,7 +694,7 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
     for (const captureFailure of ["throw", "no-op"]) {
       const { draft, desktop, captures } = await mount(`pointer-capture-${captureFailure}`)
       const icon = desktop.querySelector('[data-app-type="settings"]')
-      const other = desktop.querySelector('[data-app-type="customize"]')
+      const other = desktop.querySelector('[data-app-type="messages"]')
       const before = draft.snapshot()
       const updatesBefore = phoneWorkUpdateCalls
 
@@ -724,7 +727,7 @@ test("phone icon pointer gestures preserve tap, drag, cancel, and cleanup semant
   await t.test("non-primary input is ignored and re-render cleanup cancels an active drag", async () => {
     const { draft, root, desktop, captures } = await mount("pointer-cleanup")
     const icon = desktop.querySelector('[data-app-type="settings"]')
-    const other = desktop.querySelector('[data-app-type="customize"]')
+    const other = desktop.querySelector('[data-app-type="messages"]')
     const before = draft.snapshot()
     const updatesBefore = phoneWorkUpdateCalls
 

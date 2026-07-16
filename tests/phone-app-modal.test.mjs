@@ -189,10 +189,10 @@ test("every embedded app Back control settles the hosting modal", async () => {
   const appCases = [
     ["messages", "#msgBack"],
     ["forum", "#forumBack"],
-    ["memo", "#memoBack"],
-    ["gallery", "#galleryBack"],
-    ["browser", "#browserBack"],
-    ["shopping", "#shopBack"],
+    ["memo", "#characterAccessBack"],
+    ["gallery", "#characterAccessBack"],
+    ["browser", "#characterAccessBack"],
+    ["shopping", "#characterAccessBack"],
   ]
 
   for (const [appType, backSelector] of appCases) {
@@ -287,6 +287,10 @@ test("an app Back veto keeps saved memo edits available for retry", async () => 
       afterReasons.push(reason)
     },
   })
+  const continueButton = overlay.querySelector("#characterAccessContinue")
+  assert.ok(continueButton)
+  continueButton.click()
+
   const editor = overlay.querySelector(".memo-editor")
   assert.ok(editor)
   editor.focus()
@@ -399,7 +403,7 @@ test("Escape closes only the topmost phone modal", async () => {
     afterClose(_result, reason) { closeReasons.push(["first", reason]) },
   })
   const firstClose = first.querySelector(".phone-app-modal-close")
-  const second = openPhoneAppModal(draft.id, "profile", {
+  const second = openPhoneAppModal(draft.id, "contacts", {
     beforeClose() { return allowSecondClose },
     afterClose(_result, reason) { closeReasons.push(["second", reason]) },
   })
@@ -595,7 +599,7 @@ test("focus restoration falls back to the underlying modal", async () => {
   launcher.focus()
   const underlying = openPhoneAppModal(draft.id, "contacts")
   const replacedLauncher = underlying.querySelector(".phone-app-modal-close")
-  const top = openPhoneAppModal(draft.id, "profile")
+  const top = openPhoneAppModal(draft.id, "contacts")
 
   replacedLauncher.remove()
   top.querySelector(".phone-app-modal-close").click()

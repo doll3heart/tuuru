@@ -14,10 +14,10 @@ const DRAFT_COLLECTIONS = [
 const MODULE_FIELDS = {
   messages: ["chats", "contacts"],
   forum: ["forumPosts"],
-  memo: ["memos"],
-  gallery: ["photos", "albums"],
-  browser: ["browserHistory"],
-  shopping: ["shoppingItems"],
+  memo: ["memos", "contacts"],
+  gallery: ["photos", "albums", "contacts"],
+  browser: ["browserHistory", "contacts"],
+  shopping: ["shoppingItems", "contacts"],
   contacts: ["contacts"],
 }
 
@@ -30,6 +30,8 @@ const CONTENT_FIELDS = {
   shopping: ["shoppingItems"],
   contacts: ["contacts"],
 }
+
+const CONNECTION_TYPES = new Set(["memo", "gallery", "browser", "shopping"])
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value))
@@ -60,6 +62,11 @@ export function pickPhoneModuleData(type, phoneData) {
 
   for (const field of fields) {
     payload[field] = clone(Array.isArray(source[field]) ? source[field] : [])
+  }
+
+  const connection = CONNECTION_TYPES.has(type) ? source.appConnections?.[type] : null
+  if (connection && typeof connection === "object") {
+    payload.appConnections = { [type]: clone(connection) }
   }
 
   return payload

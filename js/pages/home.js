@@ -49,7 +49,7 @@ export function renderHome(){
 
 function renderWorkList(works){
   if(!works.length){
-    return `<div class="empty-state"><div class="icon"></div><h3>还没有作品</h3><p>点击右上角「新建作品」开始创作</p></div>`
+    return `<div class="empty-state"><div class="empty-icon" aria-hidden="true"></div><h3>还没有作品</h3><p>点击右上角「新建作品」开始创作</p></div>`
   }
   
   return `<div class="work-grid">${works.map(w=>`
