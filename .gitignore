@@ -6,3 +6,6 @@ dist/
 *.pyc
 .DS_Store
 temp_git/
+.superpowers/brainstorm/.last-token
+.superpowers/brainstorm/.last-port
+.superpowers/brainstorm/**/state/
