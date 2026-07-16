@@ -38,8 +38,12 @@ function loadStorageWithReliableWrites() {
 
   const workSchemaSpecifier = '"./work-schema.js"'
   const featureFlagsSpecifier = '"./feature-flags.js"'
+  const localLocksSpecifier = '"./local-locks.js"'
+  const localWriteMetadataSpecifier = '"./local-write-metadata.js"'
   assert.equal(storageSource.split(workSchemaSpecifier).length - 1, 1)
   assert.equal(storageSource.split(featureFlagsSpecifier).length - 1, 1)
+  assert.equal(storageSource.split(localLocksSpecifier).length - 1, 1)
+  assert.equal(storageSource.split(localWriteMetadataSpecifier).length - 1, 1)
 
   const enabledFeatureFlagsUrl = javascriptDataUrl(`
     export const FEATURE_FLAGS = Object.freeze({ reliableLocalWrites: true })
@@ -54,6 +58,14 @@ function loadStorageWithReliableWrites() {
       JSON.stringify(new URL("../js/work-schema.js", import.meta.url).href),
     )
     .replace(featureFlagsSpecifier, JSON.stringify(enabledFeatureFlagsUrl))
+    .replace(
+      localLocksSpecifier,
+      JSON.stringify(new URL("../js/local-locks.js", import.meta.url).href),
+    )
+    .replace(
+      localWriteMetadataSpecifier,
+      JSON.stringify(new URL("../js/local-write-metadata.js", import.meta.url).href),
+    )
 
   reliableWriteStorageModule = import(javascriptDataUrl(isolatedStorageSource))
   return reliableWriteStorageModule
@@ -597,6 +609,23 @@ test("enabled reliable writes block the actual restore writer before storage acc
       && error.code === "legacy-write-disabled",
   )
   assert.deepEqual(storage.calls, [])
+  assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
+})
+
+test("enabled reliable writes block the legacy corrupt reset before storage access", async () => {
+  const enabledStorageModule = await loadStorageWithReliableWrites()
+  const storage = createKeyedStorage([
+    [LOCAL_DATABASE_KEY, "{broken"],
+    [UNRELATED_KEY, UNRELATED_VALUE],
+  ])
+
+  assert.throws(
+    () => enabledStorageModule.discardCorruptLocalDatabase(storage),
+    error => error instanceof enabledStorageModule.LocalDatabaseError
+      && error.code === "legacy-write-disabled",
+  )
+  assert.deepEqual(storage.calls, [])
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), "{broken")
   assert.equal(storage.peek(UNRELATED_KEY), UNRELATED_VALUE)
 })
 

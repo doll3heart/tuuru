@@ -1,7 +1,15 @@
 import { validateAndNormalizeWork } from "./work-schema.js"
 import { FEATURE_FLAGS, featureEnabled } from "./feature-flags.js"
+import {
+  DATABASE_WRITE_LOCK_NAME,
+  LIBRARY_SESSION_LOCK_NAME,
+  LocalLockUnavailableError,
+  createWebLocksAdapter,
+} from "./local-locks.js"
+import { writeAndVerifyRestoreGeneration } from "./local-write-metadata.js"
 
 export const LOCAL_DATABASE_KEY = "tuuru_works"
+export const LOCAL_DATABASE_REPLACED_EVENT = "tuuru:local-database-replaced"
 const DATABASE_KEY = LOCAL_DATABASE_KEY
 
 export const LOCAL_DATABASE_BACKUP_FORMAT = "tuuru-local-library-backup"
@@ -390,6 +398,103 @@ function restoreError(message, code, phase, commitState, cause) {
   return new LocalDatabaseError(message, code, cause, { phase, commitState })
 }
 
+function lockedDatabaseError(
+  message,
+  code,
+  phase,
+  commitState,
+  generationState,
+  cause,
+  details = {},
+) {
+  return new LocalDatabaseError(message, code, cause, {
+    phase,
+    commitState,
+    generationState,
+    ...details,
+  })
+}
+
+function defaultGenerationId() {
+  const randomId = globalThis.crypto?.randomUUID?.()
+  if (typeof randomId === "string" && randomId.length > 0) return randomId
+  return `restore-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function resolveLockedMutationDependencies(options) {
+  const lockManager = options?.lockManager ?? createWebLocksAdapter()
+  if (lockManager?.available !== true || typeof lockManager.request !== "function") {
+    throw new LocalLockUnavailableError("Web Locks are unavailable in this context")
+  }
+  return {
+    lockManager,
+    storage: options?.storage ?? globalThis.localStorage,
+    createGenerationId: options?.createGenerationId ?? defaultGenerationId,
+    now: options?.now ?? Date.now,
+  }
+}
+
+function assertPreparedRestorePlan(plan) {
+  if (!preparedRestorePlans.has(plan)) {
+    throw restoreError(
+      "Restore plan is invalid. Inspect the backup again before restoring.",
+      "restore-serialize-failed",
+      "replace",
+      "unchanged",
+    )
+  }
+
+  const candidateStatus = inspectLocalDatabaseRaw(plan.candidateRaw)
+  if (!candidateStatus.ok) {
+    throw restoreError(
+      "The restore candidate failed validation.",
+      "restore-serialize-failed",
+      "replace",
+      "unchanged",
+    )
+  }
+}
+
+function activeEditorsError() {
+  return lockedDatabaseError(
+    "Close every open editor before replacing the local library.",
+    "restore-editors-active",
+    "lock-library",
+    "unchanged",
+    "unchanged",
+  )
+}
+
+function writeRestoreGeneration(storage, createGenerationId, now) {
+  let generationId
+  try {
+    generationId = createGenerationId()
+    const changedAt = now()
+    const record = writeAndVerifyRestoreGeneration({ generationId, changedAt }, storage)
+    return record.generationId
+  } catch (error) {
+    if (error?.code === "metadata-readback-failed"
+      || error?.code === "metadata-verification-failed") {
+      throw lockedDatabaseError(
+        "The restore generation was written but could not be verified.",
+        "restore-generation-unknown",
+        "generation",
+        "unchanged",
+        "unknown",
+        error,
+      )
+    }
+    throw lockedDatabaseError(
+      "The restore generation could not be written.",
+      "restore-generation-write-failed",
+      "generation",
+      "unchanged",
+      "unchanged",
+      error,
+    )
+  }
+}
+
 function readExactRaw(storage, phase) {
   try {
     return storage.getItem(DATABASE_KEY)
@@ -652,6 +757,212 @@ export function restoreLocalDatabaseBackup(plan, storage = localStorage) {
   }
 }
 
+export async function restoreLocalDatabaseBackupLocked(plan, options = {}) {
+  const {
+    lockManager,
+    storage,
+    createGenerationId,
+    now,
+  } = resolveLockedMutationDependencies(options)
+  assertPreparedRestorePlan(plan)
+
+  return lockManager.request(
+    LIBRARY_SESSION_LOCK_NAME,
+    { mode: "exclusive", ifAvailable: true },
+    libraryLock => {
+      if (libraryLock === null) throw activeEditorsError()
+
+      return lockManager.request(
+        DATABASE_WRITE_LOCK_NAME,
+        { mode: "exclusive" },
+        databaseLock => {
+          if (databaseLock === null) {
+            throw new LocalLockUnavailableError("The local database lock is unavailable")
+          }
+          let currentRaw
+          try {
+            currentRaw = storage.getItem(DATABASE_KEY)
+          } catch (error) {
+            throw lockedDatabaseError(
+              "Unable to read the current local library before restore.",
+              "restore-readback-failed",
+              "replace",
+              "unchanged",
+              "unchanged",
+              error,
+            )
+          }
+          if (currentRaw !== plan.expectedCurrentRaw) {
+            throw lockedDatabaseError(
+              "The local library changed after the restore was prepared.",
+              "restore-conflict",
+              "replace",
+              "unchanged",
+              "unchanged",
+            )
+          }
+
+          const generationId = writeRestoreGeneration(storage, createGenerationId, now)
+
+          try {
+            storage.setItem(DATABASE_KEY, plan.candidateRaw)
+          } catch (error) {
+            throw lockedDatabaseError(
+              "The restore write failed; the previous library remains in place.",
+              "restore-write-failed",
+              "replace",
+              "unchanged",
+              "advanced",
+              error,
+              { generationId },
+            )
+          }
+
+          let readback
+          try {
+            readback = storage.getItem(DATABASE_KEY)
+          } catch (error) {
+            throw lockedDatabaseError(
+              "The restored library could not be read back.",
+              "restore-readback-failed",
+              "verify",
+              "unknown",
+              "advanced",
+              error,
+              { generationId },
+            )
+          }
+          if (readback !== plan.candidateRaw || !inspectLocalDatabaseRaw(readback).ok) {
+            throw lockedDatabaseError(
+              "The restored library could not be verified.",
+              "restore-verification-failed",
+              "verify",
+              "unknown",
+              "advanced",
+              undefined,
+              { generationId },
+            )
+          }
+
+          return {
+            ok: true,
+            code: "restored",
+            summary: plan.summary,
+            previousState: plan.previousState,
+            restoredBytes: plan.restoredBytes,
+            generationId,
+          }
+        },
+      )
+    },
+  )
+}
+
+export async function discardCorruptLocalDatabaseLocked(options = {}) {
+  const {
+    lockManager,
+    storage,
+    createGenerationId,
+    now,
+  } = resolveLockedMutationDependencies(options)
+  const expectedCurrentRaw = options.expectedCurrentRaw
+
+  return lockManager.request(
+    LIBRARY_SESSION_LOCK_NAME,
+    { mode: "exclusive", ifAvailable: true },
+    libraryLock => {
+      if (libraryLock === null) throw activeEditorsError()
+
+      return lockManager.request(
+        DATABASE_WRITE_LOCK_NAME,
+        { mode: "exclusive" },
+        databaseLock => {
+          if (databaseLock === null) {
+            throw new LocalLockUnavailableError("The local database lock is unavailable")
+          }
+          let currentRaw
+          try {
+            currentRaw = storage.getItem(DATABASE_KEY)
+          } catch (error) {
+            throw lockedDatabaseError(
+              "Unable to read the current local library before reset.",
+              "reset-readback-failed",
+              "reset",
+              "unchanged",
+              "unchanged",
+              error,
+            )
+          }
+          if (currentRaw !== expectedCurrentRaw) {
+            throw lockedDatabaseError(
+              "The local library changed after reset was requested.",
+              "reset-conflict",
+              "reset",
+              "unchanged",
+              "unchanged",
+            )
+          }
+
+          const status = inspectLocalDatabaseRaw(currentRaw)
+          if (status.ok) {
+            throw lockedDatabaseError(
+              "The current local library is valid and cannot be discarded.",
+              "database-valid",
+              "reset",
+              "unchanged",
+              "unchanged",
+            )
+          }
+
+          const generationId = writeRestoreGeneration(storage, createGenerationId, now)
+
+          try {
+            storage.removeItem(DATABASE_KEY)
+          } catch (error) {
+            throw lockedDatabaseError(
+              "Unable to reset the corrupt local library.",
+              "reset-failed",
+              "reset",
+              "unchanged",
+              "advanced",
+              error,
+              { generationId },
+            )
+          }
+
+          let readback
+          try {
+            readback = storage.getItem(DATABASE_KEY)
+          } catch (error) {
+            throw lockedDatabaseError(
+              "The reset result could not be read back.",
+              "reset-readback-failed",
+              "verify-reset",
+              "unknown",
+              "advanced",
+              error,
+              { generationId },
+            )
+          }
+          if (readback !== null) {
+            throw lockedDatabaseError(
+              "The reset result could not be verified.",
+              "reset-verification-failed",
+              "verify-reset",
+              "unknown",
+              "advanced",
+              undefined,
+              { generationId },
+            )
+          }
+
+          return { ok: true, code: "discarded", generationId }
+        },
+      )
+    },
+  )
+}
+
 export async function readLocalDatabaseBackupFile(file) {
   const validFile = file !== null
     && typeof file === "object"
@@ -682,6 +993,8 @@ export async function readLocalDatabaseBackupFile(file) {
 }
 
 export function discardCorruptLocalDatabase(storage = localStorage) {
+  assertLegacyWritesAllowed()
+
   const status = inspectLocalDatabase(storage)
   if (status.ok) {
     throw new LocalDatabaseError("当前作品数据库有效，拒绝执行损坏数据重置。", "database-valid")

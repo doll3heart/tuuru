@@ -1,6 +1,12 @@
 import { navigate, initRouter, router } from "./router.js"
 import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork } from "./data.js"
-import { discardCorruptLocalDatabase, inspectLocalDatabase } from "./storage.js"
+import {
+  discardCorruptLocalDatabase,
+  discardCorruptLocalDatabaseLocked,
+  inspectLocalDatabase,
+} from "./storage.js"
+import { FEATURE_FLAGS, featureEnabled } from "./feature-flags.js"
+import { createWebLocksAdapter } from "./local-locks.js"
 import { pickReadableColor } from "./color-contrast.js"
 import { startLocalLibraryRestore } from "./library-restore-ui.js"
 import { downloadBlob } from "./download.js"
@@ -185,11 +191,148 @@ import { openReaderPreview } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 
 // ==================== Init ====================
+export function startCorruptLocalDatabaseReset({
+  expectedCurrentRaw,
+  flags = FEATURE_FLAGS,
+  storage = globalThis.localStorage,
+  lockManager = createWebLocksAdapter(),
+  createGenerationId,
+  now = Date.now,
+  resetLegacy = discardCorruptLocalDatabase,
+  resetLocked = discardCorruptLocalDatabaseLocked,
+  reload = () => globalThis.location.reload(),
+  notify = showToast,
+  onState = () => {},
+} = {}) {
+  let committing = false
+  let settled = false
+  let pending = null
+
+  function notifySafely(message, type) {
+    try {
+      notify(message, type)
+    } catch {
+      // Notifications do not determine whether a destructive mutation committed.
+    }
+  }
+
+  function publish(phase, message, disabled) {
+    try {
+      onState({ phase, message, disabled, committing, settled })
+    } catch {
+      // The controller state remains authoritative if rendering fails.
+    }
+  }
+
+  function finishSuccess() {
+    committing = false
+    settled = true
+    pending = null
+    publish("success", "重置成功，正在重新加载。", true)
+    notifySafely("本地数据库已重置", "success")
+    try {
+      reload()
+    } catch {
+      publish("success", "重置成功；请手动重新加载页面。", true)
+    }
+    return true
+  }
+
+  function finishFailure(error, { legacy = false } = {}) {
+    committing = false
+    pending = null
+    const activeEditors = error?.code === "restore-editors-active"
+    const resultUnknown = error?.details?.commitState === "unknown"
+      || error?.details?.generationState === "unknown"
+      || error?.code === "restore-generation-unknown"
+    const conflict = error?.code === "reset-conflict" || error?.code === "database-valid"
+    const unchanged = error?.details?.commitState === "unchanged"
+    const retryable = legacy || activeEditors || (unchanged && !conflict && !resultUnknown)
+
+    if (activeEditors) {
+      publish("retryable-error", "仍有编辑器打开，请关闭编辑器后重试。", false)
+    } else if (resultUnknown) {
+      settled = true
+      publish("unknown", "重置结果无法确认，请重新加载页面检查。", true)
+    } else if (error?.code === "mutation-lock-unavailable") {
+      settled = true
+      publish("unavailable", "当前环境无法安全重置本地数据库。", true)
+    } else if (conflict) {
+      settled = true
+      publish("conflict", "本地数据库已经变化，请重新加载页面检查。", true)
+    } else if (retryable) {
+      publish("retryable-error", "重置未发生，原数据保持不变，可以重试。", false)
+    } else {
+      settled = true
+      publish("error", "当前页面不能安全重试重置，请重新加载检查。", true)
+    }
+    notifySafely(error instanceof Error ? error.message : "重置失败", "error")
+    return false
+  }
+
+  function confirm(answer) {
+    if (answer !== "RESET") return false
+    if (settled) return false
+    if (committing) return pending ?? false
+
+    committing = true
+    publish("pending", "正在安全重置本地数据库…", true)
+
+    if (!featureEnabled("reliableLocalWrites", flags)) {
+      try {
+        resetLegacy(storage)
+      } catch (error) {
+        return finishFailure(error, { legacy: true })
+      }
+      return finishSuccess()
+    }
+
+    let operation
+    try {
+      operation = resetLocked({
+        storage,
+        lockManager,
+        expectedCurrentRaw,
+        createGenerationId,
+        now,
+      })
+    } catch (error) {
+      return Promise.resolve(finishFailure(error))
+    }
+
+    pending = Promise.resolve(operation).then(
+      result => {
+        if (typeof result?.generationId !== "string" || result.generationId.length === 0) {
+          const error = Object.assign(new Error("Reset succeeded without a verified generation."), {
+            code: "restore-generation-unknown",
+            details: { commitState: "unknown", generationState: "unknown" },
+          })
+          return finishFailure(error)
+        }
+        return finishSuccess()
+      },
+      finishFailure,
+    )
+    return pending
+  }
+
+  return Object.freeze({ confirm })
+}
+
 export function renderStorageRecovery(container, status, {
   startRestore = startLocalLibraryRestore,
+  startReset = startCorruptLocalDatabaseReset,
+  flags = FEATURE_FLAGS,
+  storage = globalThis.localStorage,
+  lockManager = createWebLocksAdapter(),
+  createGenerationId,
+  resetLegacy = discardCorruptLocalDatabase,
+  resetLocked = discardCorruptLocalDatabaseLocked,
   download = downloadBlob,
   notify = showToast,
   now = () => new Date(),
+  prompt: requestConfirmation = message => globalThis.prompt(message),
+  reload = () => globalThis.location.reload(),
 } = {}) {
   empty(container)
 
@@ -235,9 +378,14 @@ export function renderStorageRecovery(container, status, {
       className: "btn btn-outline",
       onClick: event => {
         const controller = startRestore({
+          flags,
+          storage,
+          lockManager,
+          createGenerationId,
           modal,
           notify,
-          reload: () => location.reload(),
+          reload,
+          now,
         })
         controller.pickFile(event.currentTarget)
       },
@@ -246,24 +394,56 @@ export function renderStorageRecovery(container, status, {
 
   actions.append(h("button", {
     className: "btn btn-ghost",
-    onClick: () => location.reload(),
+    onClick: reload,
   }, "重新检测"))
 
+  let resetStatus = null
   if (status.raw !== null && (status.code === "invalid-json" || status.code === "invalid-structure")) {
-    actions.append(h("button", {
+    resetStatus = h("p", {
+      id: "storageResetStatus",
+      className: "text-muted",
+      role: "status",
+      "aria-live": "polite",
+      style: { marginTop: "12px", fontSize: ".8rem" },
+    })
+    const resetButton = h("button", {
       className: "btn btn-danger",
-      onClick: () => {
-        const answer = prompt("重置会永久删除当前损坏的数据。请先下载原始数据，然后输入 RESET 继续：")
-        if (answer !== "RESET") return
-
-        try {
-          discardCorruptLocalDatabase()
-          location.reload()
-        } catch (error) {
-          notify(error instanceof Error ? error.message : "重置失败", "error")
-        }
+    }, "重置本地数据库")
+    const numericNow = () => {
+      const value = now()
+      return value instanceof Date ? value.getTime() : value
+    }
+    const controller = startReset({
+      expectedCurrentRaw: status.raw,
+      flags,
+      storage,
+      lockManager,
+      createGenerationId,
+      now: numericNow,
+      resetLegacy,
+      resetLocked,
+      reload,
+      notify,
+      onState(state) {
+        resetButton.disabled = state.disabled
+        resetStatus.textContent = state.message
       },
-    }, "重置本地数据库"))
+    })
+    resetButton.addEventListener("click", () => {
+      const answer = requestConfirmation(
+        "重置会永久删除当前损坏的数据。请先下载原始数据，然后输入 RESET 继续：",
+      )
+      Promise.resolve(controller.confirm(answer)).catch(error => {
+        resetButton.disabled = true
+        resetStatus.textContent = "当前页面不能安全重试重置，请重新加载检查。"
+        try {
+          notify(error instanceof Error ? error.message : "重置失败", "error")
+        } catch {
+          // Persistent status remains visible if notification rendering fails.
+        }
+      })
+    })
+    actions.append(resetButton)
   }
 
   const card = h("section", { className: "card", style: { padding: "24px", marginTop: "24px" } },
@@ -274,6 +454,7 @@ export function renderStorageRecovery(container, status, {
       "所有恢复操作都在当前浏览器内完成，数据不会上传。",
     ),
     actions,
+    resetStatus,
   )
   container.append(h("main", { className: "app-main narrow" }, card))
 }

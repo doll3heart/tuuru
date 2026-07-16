@@ -1,9 +1,13 @@
 import { downloadBlob } from "./download.js"
+import { FEATURE_FLAGS, featureEnabled } from "./feature-flags.js"
+import { createWebLocksAdapter } from "./local-locks.js"
 import {
   LOCAL_DATABASE_KEY,
+  LOCAL_DATABASE_REPLACED_EVENT,
   prepareLocalDatabaseRestore,
   readLocalDatabaseBackupFile,
   restoreLocalDatabaseBackup,
+  restoreLocalDatabaseBackupLocked,
 } from "./storage.js"
 
 function escapeHtml(value) {
@@ -24,6 +28,11 @@ export function startLocalLibraryRestore({
   notify = message => windowObject.alert(message),
   reload = () => windowObject.location.reload(),
   now = () => new Date(),
+  flags = FEATURE_FLAGS,
+  lockManager = createWebLocksAdapter(),
+  createGenerationId,
+  restoreLegacy = restoreLocalDatabaseBackup,
+  restoreLocked = restoreLocalDatabaseBackupLocked,
 } = {}) {
   let activeSession = null
   let pendingRequest = null
@@ -257,29 +266,43 @@ export function startLocalLibraryRestore({
       })
     }
 
-    commit.addEventListener("click", () => {
-      if (activeSession !== session || commit.disabled || session.committing || session.settled) return
-      session.committing = true
+    function finishRestoreFailure(error) {
+      session.committing = false
+      const activeEditors = error?.code === "restore-editors-active"
+      const unavailable = error?.code === "mutation-lock-unavailable"
+      const unchanged = error?.details?.commitState === "unchanged"
+      const unknown = error?.details?.commitState === "unknown"
+        || error?.details?.generationState === "unknown"
+        || error?.code === "restore-generation-unknown"
+      const retryBlocked = !activeEditors
+        && (error?.code === "restore-conflict" || unknown || !unchanged)
+      if (retryBlocked) {
+        session.invalidated = true
+        session.settled = true
+      }
+      status.textContent = activeEditors
+        ? "仍有编辑器打开，请关闭编辑器后重试。"
+        : unavailable
+          ? "当前环境无法安全恢复完整创作库。"
+          : error?.code === "restore-conflict"
+            ? "当前创作库已变化，请关闭窗口后重新检查备份。"
+            : unknown || !unchanged
+              ? "恢复结果无法确认，请重新加载检查；当前窗口不能再次提交。"
+              : "恢复未发生，原数据保持不变。"
+      notifySafely(error instanceof Error ? error.message : "恢复失败", "error")
       updateGate()
+      if (session.closeRequested) closeSession(session)
+    }
 
-      try {
-        restoreLocalDatabaseBackup(plan, storage)
-      } catch (error) {
-        session.committing = false
-        const unchanged = error?.details?.commitState === "unchanged"
-        const retryBlocked = error?.code === "restore-conflict" || !unchanged
-        if (retryBlocked) {
-          session.invalidated = true
-          session.settled = true
-        }
-        status.textContent = error?.code === "restore-conflict"
-          ? "当前创作库已变化，请关闭窗口后重新检查备份。"
-          : unchanged
-            ? "恢复未发生，原数据保持不变。"
-            : "恢复结果无法确认，请重新加载检查；当前窗口不能再次提交。"
-        notifySafely(error instanceof Error ? error.message : "恢复失败", "error")
-        updateGate()
-        if (session.closeRequested) closeSession(session)
+    function finishRestoreSuccess(result, reliable) {
+      if (reliable && (typeof result?.generationId !== "string" || result.generationId.length === 0)) {
+        finishRestoreFailure(Object.assign(
+          new Error("Restore succeeded without a verified generation."),
+          {
+            code: "restore-generation-unknown",
+            details: { commitState: "unknown", generationState: "unknown" },
+          },
+        ))
         return
       }
 
@@ -289,12 +312,61 @@ export function startLocalLibraryRestore({
       updateGate()
       status.textContent = "恢复成功，正在重新加载。"
       notifySafely("完整创作库已恢复", "success")
+      if (reliable) {
+        try {
+          windowObject.dispatchEvent(new windowObject.CustomEvent(
+            LOCAL_DATABASE_REPLACED_EVENT,
+            { detail: { generationId: result.generationId } },
+          ))
+        } catch {
+          // Reload remains the safe fallback if same-page event dispatch is unavailable.
+        }
+      }
       try {
         reload()
       } catch {
         status.textContent = "恢复成功；请手动重新加载页面。"
       }
       if (session.closeRequested) closeSession(session)
+    }
+
+    commit.addEventListener("click", () => {
+      if (activeSession !== session || commit.disabled || session.committing || session.settled) return
+      session.committing = true
+      updateGate()
+
+      const reliable = featureEnabled("reliableLocalWrites", flags)
+      if (!reliable) {
+        let result
+        try {
+          result = restoreLegacy(plan, storage)
+        } catch (error) {
+          finishRestoreFailure(error)
+          return
+        }
+        finishRestoreSuccess(result, false)
+        return
+      }
+
+      let operation
+      try {
+        operation = restoreLocked(plan, {
+          storage,
+          lockManager,
+          createGenerationId,
+          now: () => {
+            const value = now()
+            return value instanceof Date ? value.getTime() : value
+          },
+        })
+      } catch (error) {
+        finishRestoreFailure(error)
+        return
+      }
+      Promise.resolve(operation).then(
+        result => finishRestoreSuccess(result, true),
+        finishRestoreFailure,
+      )
     })
 
     try {
