@@ -197,6 +197,7 @@ test("starts with the exact frozen snapshot and core frozen API", () => {
   assert.equal(Object.isFrozen(coordinator.snapshot()), true)
   assert.equal(Object.isFrozen(coordinator.snapshot().otherActiveEditors), true)
   assert.equal(coordinator.snapshot(), coordinator.snapshot())
+  assert.equal(coordinator.recoveryMaterial(), null)
   assert.deepEqual(Object.keys(coordinator), [
     "stage",
     "commitNow",
@@ -204,11 +205,522 @@ test("starts with the exact frozen snapshot and core frozen API", () => {
     "drain",
     "retry",
     "recheck",
+    "markLeaseLost",
     "snapshot",
+    "recoveryMaterial",
     "subscribe",
     "dispose",
   ])
   assert.deepEqual(announcements, [coordinator.snapshot()])
+})
+
+test("markLeaseLost synchronously closes an active commit and rejects its public waiters", async () => {
+  const gate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return gate.promise
+    },
+  })
+  coordinator.stage({ key: "field:title", payload: "draft", apply() {} })
+  const commitOwner = coordinator.commitNow({
+    key: "structure:first",
+    payload: "first",
+    consumes: [],
+    apply() {},
+  })
+  const boundary = coordinator.flush()
+  await settleMicrotasks()
+  assert.equal(batches.length, 1)
+  const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+
+  const leaseFailure = mutationFailure("work-locked", {
+    operationId: batches[0].id,
+    commitState: "unchanged",
+  })
+  const leaseSnapshot = coordinator.markLeaseLost(leaseFailure)
+  assert.equal(leaseSnapshot, coordinator.snapshot())
+  assert.equal(leaseSnapshot.state, "lease-lost")
+  assert.equal(leaseSnapshot.error, leaseFailure)
+  assert.equal(coordinator.markLeaseLost(new Error("later")), leaseSnapshot)
+  await assert.rejects(commitOwner, reason => reason === leaseFailure)
+  await assert.rejects(boundary, reason => reason === leaseFailure)
+
+  gate.resolve(verifiedResult(batches[0], "-late"))
+  await settleMicrotasks()
+  assert.equal(coordinator.snapshot().state, "lease-lost")
+  assert.equal(coordinator.snapshot().error, leaseFailure)
+  assert.equal(coordinator.snapshot().lastSavedAt, 100)
+  assert.deepEqual(coordinator.recoveryMaterial().pendingOperations, [later])
+})
+
+test("markLeaseLost wraps a non-Error cause once with the stable coordinator code", () => {
+  const { coordinator } = createHarness()
+  const snapshot = coordinator.markLeaseLost(null)
+  assert.equal(snapshot.state, "lease-lost")
+  assert.equal(snapshot.error.code, "save-lease-lost")
+  assert.equal(snapshot.error.cause, null)
+  assert.equal(coordinator.markLeaseLost("later"), snapshot)
+  assert.throws(
+    () => coordinator.stage({ key: "field:closed", payload: null, apply() {} }),
+    reason => reason === snapshot.error,
+  )
+})
+
+test("ordinary recovery material is deeply frozen and generation ordered", async () => {
+  const gate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return gate.promise
+    },
+  })
+  const first = coordinator.stage({ key: "field:first", payload: "first", apply() {} })
+  const structuralPromise = coordinator.commitNow({
+    key: "structure:middle",
+    payload: "middle",
+    consumes: [],
+    apply() {},
+  })
+  structuralPromise.catch(() => {})
+  const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+  await settleMicrotasks()
+
+  const material = coordinator.recoveryMaterial()
+  assert.deepEqual(material, {
+    kind: "ordinary",
+    pendingOperations: [first, batches[0].operations.at(-1), later],
+    correctableOperationIds: [],
+  })
+  assert.equal(Object.isFrozen(material), true)
+  assert.equal(Object.isFrozen(material.pendingOperations), true)
+  assert.equal(Object.isFrozen(material.correctableOperationIds), true)
+  assert.deepEqual(material.pendingOperations.map(operation => operation.generation), [1, 2, 3])
+
+  const disposed = coordinator.dispose()
+  gate.resolve(verifiedResult(batches[0], "-late"))
+  await disposed
+})
+
+test("invalid recovery exposes only blocked operation IDs as correctable", async () => {
+  const firstGate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return firstGate.promise
+    },
+  })
+  const blockedField = coordinator.stage({
+    key: "field:blocked",
+    payload: "blocked",
+    apply() {},
+  })
+  const blockedCommit = coordinator.commitNow({
+    key: "structure:blocked",
+    payload: "blocked",
+    consumes: [],
+    apply() {},
+  })
+  const laterCommit = coordinator.commitNow({
+    key: "structure:later",
+    payload: "later",
+    consumes: [],
+    apply() {},
+  })
+  laterCommit.catch(() => {})
+  const pending = coordinator.stage({ key: "field:pending", payload: "pending", apply() {} })
+  await settleMicrotasks()
+  const blockedBatch = batches[0]
+  const failure = mutationFailure("mutation-invalid", {
+    operationId: blockedBatch.id,
+    phase: "apply",
+    commitState: "unchanged",
+  })
+  firstGate.reject(failure)
+  await assert.rejects(blockedCommit, reason => reason === failure)
+  await settleMicrotasks()
+
+  const material = coordinator.recoveryMaterial()
+  assert.equal(material.kind, "ordinary")
+  assert.deepEqual(material.correctableOperationIds, blockedBatch.operationIds)
+  assert.equal(material.correctableOperationIds.includes(pending.id), false)
+  assert.equal(material.pendingOperations[0], blockedField)
+  assert.equal(material.pendingOperations.at(-1), pending)
+  assert.deepEqual(
+    material.pendingOperations.map(operation => operation.generation),
+    [1, 2, 3, 4],
+  )
+  assert.equal(Object.isFrozen(material), true)
+  assert.equal(Object.isFrozen(material.pendingOperations), true)
+  assert.equal(Object.isFrozen(material.correctableOperationIds), true)
+
+  await coordinator.dispose()
+})
+
+test("unknown recovery retains callback-free provenance through not-written and terminal states", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => notWritten,
+  })
+  coordinator.stage({ key: "field:uncertain", payload: "uncertain", apply() {} })
+  const boundary = coordinator.flush()
+  await settleMicrotasks()
+  const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+  const batch = batches[0]
+  const failure = mutationFailure("mutation-readback-failed", {
+    operationId: batch.id,
+    phase: "readback",
+    commitState: "unknown",
+    expectedCurrentRaw: null,
+    candidateRaw: "{}",
+  })
+  attempt.reject(failure)
+  await assert.rejects(boundary, reason => reason === failure)
+  await settleMicrotasks()
+
+  const unknown = coordinator.recoveryMaterial()
+  assert.equal(unknown.kind, "unknown")
+  assert.equal(Object.isFrozen(unknown), true)
+  assert.equal(Object.isFrozen(unknown.laterPendingOperations), true)
+  assert.equal(Object.isFrozen(unknown.uncertainBatch), true)
+  assert.equal("operations" in unknown.uncertainBatch, false)
+  assert.equal("apply" in unknown.uncertainBatch, false)
+  assert.deepEqual(unknown.laterPendingOperations, [later])
+
+  assert.equal(await coordinator.recheck(), notWritten)
+  const afterNotWritten = coordinator.recoveryMaterial()
+  assert.equal(afterNotWritten.uncertainBatch, unknown.uncertainBatch)
+  assert.deepEqual(afterNotWritten.laterPendingOperations, [later])
+
+  const leaseFailure = mutationFailure("mutation-lease-lost", {})
+  coordinator.markLeaseLost(leaseFailure)
+  const terminal = coordinator.recoveryMaterial()
+  assert.equal(terminal.kind, "unknown")
+  assert.equal(terminal.uncertainBatch, unknown.uncertainBatch)
+  assert.deepEqual(terminal.laterPendingOperations, [later])
+  const disposed = await coordinator.dispose()
+  assert.equal(disposed.state, "disposed")
+  assert.equal(coordinator.recoveryMaterial().kind, "unknown")
+})
+
+test("markLeaseLost immediately rejects active ordinary and prepared retry owners", async t => {
+  await t.test("ordinary retry", async () => {
+    const retryGate = createDeferred()
+    const batches = []
+    let calls = 0
+    const { coordinator } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        calls += 1
+        if (calls === 1) {
+          return Promise.reject(mutationFailure("mutation-write-failed", {
+            operationId: batch.id,
+            phase: "write",
+            commitState: "unchanged",
+          }))
+        }
+        return retryGate.promise
+      },
+    })
+    coordinator.stage({ key: "field:blocked", payload: "blocked", apply() {} })
+    await assert.rejects(coordinator.flush())
+    const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+    const retryOwner = coordinator.retry()
+    await settleMicrotasks()
+    assert.equal(calls, 2)
+
+    const leaseFailure = mutationFailure("work-locked", {})
+    coordinator.markLeaseLost(leaseFailure)
+    await assert.rejects(retryOwner, reason => reason === leaseFailure)
+    retryGate.resolve(verifiedResult(batches[1], "-retry-late"))
+    await settleMicrotasks()
+    assert.equal(coordinator.snapshot().state, "lease-lost")
+    assert.equal(coordinator.snapshot().lastSavedAt, 100)
+    assert.deepEqual(coordinator.recoveryMaterial().pendingOperations, [later])
+  })
+
+  await t.test("prepared retry", async () => {
+    const attempt = createDeferred()
+    const preparedGate = createDeferred()
+    const batches = []
+    const prepared = []
+    const notWritten = Object.freeze({ outcome: "not-written" })
+    const { coordinator } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        return attempt.promise
+      },
+      recheckUnknown: async () => notWritten,
+      commitPreparedCandidate(envelope) {
+        prepared.push(envelope)
+        return preparedGate.promise
+      },
+    })
+    await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+    assert.equal(await coordinator.recheck(), notWritten)
+    const retryOwner = coordinator.retry()
+    await settleMicrotasks()
+    assert.equal(prepared.length, 1)
+
+    const leaseFailure = mutationFailure("mutation-lock-unavailable", {})
+    coordinator.markLeaseLost(leaseFailure)
+    await assert.rejects(retryOwner, reason => reason === leaseFailure)
+    preparedGate.resolve(verifiedResult(prepared[0], "-prepared-late"))
+    await settleMicrotasks()
+    assert.equal(coordinator.snapshot().state, "lease-lost")
+    assert.equal(coordinator.snapshot().lastSavedAt, 100)
+    assert.equal(coordinator.recoveryMaterial(), null)
+  })
+})
+
+test("external lease loss keeps a late recheck conflict owner rejected and preserves unknown material", async () => {
+  const attempt = createDeferred()
+  const recheckGate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: () => recheckGate.promise,
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  const recheckOwner = coordinator.recheck()
+  await settleMicrotasks()
+
+  const leaseFailure = mutationFailure("mutation-lease-lost", {})
+  coordinator.markLeaseLost(leaseFailure)
+  await assert.rejects(recheckOwner, reason => reason === leaseFailure)
+  const conflict = Object.freeze({
+    outcome: "conflict",
+    result: Object.freeze({ raw: "{}", database: Object.freeze({}), workToken: "other" }),
+  })
+  recheckGate.resolve(conflict)
+  await settleMicrotasks()
+
+  assert.equal(coordinator.snapshot().state, "lease-lost")
+  assert.equal(coordinator.snapshot().error, leaseFailure)
+  assert.equal(coordinator.recoveryMaterial().kind, "unknown")
+})
+
+test("a recognized recheck lease failure closes with exact identity and retains unknown provenance", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const leaseFailure = mutationFailure("work-locked", {})
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => { throw leaseFailure },
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+
+  await assert.rejects(coordinator.recheck(), reason => reason === leaseFailure)
+  assert.equal(coordinator.snapshot().state, "lease-lost")
+  assert.equal(coordinator.snapshot().error, leaseFailure)
+  assert.equal(coordinator.recoveryMaterial().kind, "unknown")
+})
+
+test("terminal late commit failures retain safe recovery without starting more work", async t => {
+  await t.test("unchanged retains ordinary callbacks", async () => {
+    const gate = createDeferred()
+    const batches = []
+    const { coordinator, fakeScheduler } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        return gate.promise
+      },
+    })
+    const active = coordinator.stage({ key: "field:active", payload: "active", apply() {} })
+    const boundary = coordinator.flush()
+    await settleMicrotasks()
+    const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+    const leaseFailure = mutationFailure("work-locked", {})
+    coordinator.markLeaseLost(leaseFailure)
+    await assert.rejects(boundary, reason => reason === leaseFailure)
+    assert.deepEqual(fakeScheduler.activeHandles(), [])
+
+    gate.reject(mutationFailure("mutation-write-failed", {
+      operationId: batches[0].id,
+      phase: "write",
+      commitState: "unchanged",
+    }))
+    await settleMicrotasks()
+    const material = coordinator.recoveryMaterial()
+    assert.equal(material.kind, "ordinary")
+    assert.deepEqual(material.pendingOperations, [active, later])
+    assert.equal(coordinator.snapshot().state, "lease-lost")
+    assert.equal(coordinator.snapshot().error, leaseFailure)
+    assert.equal(batches.length, 1)
+    assert.deepEqual(fakeScheduler.activeHandles(), [])
+  })
+
+  await t.test("trusted unknown becomes callback-free before dispose completes", async () => {
+    const gate = createDeferred()
+    const batches = []
+    const { coordinator, fakeScheduler } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        return gate.promise
+      },
+    })
+    coordinator.stage({ key: "field:active", payload: "active", apply() {} })
+    const boundary = coordinator.flush()
+    await settleMicrotasks()
+    const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+    const disposal = coordinator.dispose()
+    let disposed = false
+    disposal.then(() => { disposed = true })
+    await assert.rejects(boundary, reason => reason.code === "save-disposed")
+    await settleMicrotasks()
+    assert.equal(disposed, false)
+
+    gate.reject(mutationFailure("mutation-verification-failed", {
+      operationId: batches[0].id,
+      commitState: "unknown",
+      expectedCurrentRaw: null,
+      candidateRaw: "{}",
+    }))
+    await disposal
+    const material = coordinator.recoveryMaterial()
+    assert.equal(material.kind, "unknown")
+    assert.equal("operations" in material.uncertainBatch, false)
+    assert.equal("apply" in material.uncertainBatch, false)
+    assert.deepEqual(material.laterPendingOperations, [later])
+    assert.equal(coordinator.snapshot().state, "disposed")
+    assert.equal(batches.length, 1)
+    assert.deepEqual(fakeScheduler.activeHandles(), [])
+  })
+})
+
+test("dispose waits through late saved recheck bookkeeping without reviving the pump", async () => {
+  const attempt = createDeferred()
+  const recheckGate = createDeferred()
+  const laterCommitGate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return batches.length === 1 ? attempt.promise : laterCommitGate.promise
+    },
+    recheckUnknown: () => recheckGate.promise,
+  })
+  coordinator.stage({ key: "field:uncertain", payload: "uncertain", apply() {} })
+  const boundary = coordinator.flush()
+  await settleMicrotasks()
+  const later = coordinator.stage({ key: "field:later", payload: "later", apply() {} })
+  const unknownFailure = mutationFailure("mutation-readback-failed", {
+    operationId: batches[0].id,
+    commitState: "unknown",
+    expectedCurrentRaw: null,
+    candidateRaw: "{}",
+  })
+  attempt.reject(unknownFailure)
+  await assert.rejects(boundary, reason => reason === unknownFailure)
+  await settleMicrotasks()
+
+  const recheckOwner = coordinator.recheck()
+  await settleMicrotasks()
+  const disposal = coordinator.dispose()
+  let disposed = false
+  disposal.then(() => { disposed = true })
+  await assert.rejects(recheckOwner, reason => reason.code === "save-disposed")
+  await settleMicrotasks()
+  assert.equal(disposed, false)
+
+  const saved = Object.freeze({
+    outcome: "saved",
+    result: Object.freeze({ raw: "{}", database: Object.freeze({}), workToken: "saved" }),
+  })
+  recheckGate.resolve(saved)
+  await disposal
+  assert.equal(coordinator.snapshot().state, "disposed")
+  assert.equal(coordinator.snapshot().lastSavedAt, 100)
+  assert.deepEqual(coordinator.recoveryMaterial().pendingOperations, [later])
+  assert.equal(batches.length, 1)
+})
+
+test("dispose waits through late retry bookkeeping for ordinary and prepared actions", async t => {
+  await t.test("ordinary retry", async () => {
+    const retryGate = createDeferred()
+    const batches = []
+    let calls = 0
+    const { coordinator } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        calls += 1
+        if (calls === 1) {
+          return Promise.reject(mutationFailure("mutation-write-failed", {
+            operationId: batch.id,
+            phase: "write",
+            commitState: "unchanged",
+          }))
+        }
+        return retryGate.promise
+      },
+    })
+    coordinator.stage({ key: "field:retry", payload: "retry", apply() {} })
+    await assert.rejects(coordinator.flush())
+    const retryOwner = coordinator.retry()
+    await settleMicrotasks()
+    const disposal = coordinator.dispose()
+    let disposed = false
+    disposal.then(() => { disposed = true })
+    await assert.rejects(retryOwner, reason => reason.code === "save-disposed")
+    await settleMicrotasks()
+    assert.equal(disposed, false)
+
+    retryGate.resolve(verifiedResult(batches[1], "-ordinary-disposed"))
+    await disposal
+    assert.equal(coordinator.snapshot().state, "disposed")
+    assert.equal(coordinator.snapshot().lastSavedAt, 100)
+    assert.equal(coordinator.recoveryMaterial(), null)
+  })
+
+  await t.test("prepared retry", async () => {
+    const attempt = createDeferred()
+    const preparedGate = createDeferred()
+    const batches = []
+    const prepared = []
+    const notWritten = Object.freeze({ outcome: "not-written" })
+    const { coordinator } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        return attempt.promise
+      },
+      recheckUnknown: async () => notWritten,
+      commitPreparedCandidate(envelope) {
+        prepared.push(envelope)
+        return preparedGate.promise
+      },
+    })
+    await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+    assert.equal(await coordinator.recheck(), notWritten)
+    const retryOwner = coordinator.retry()
+    await settleMicrotasks()
+    const disposal = coordinator.dispose()
+    let disposed = false
+    disposal.then(() => { disposed = true })
+    await assert.rejects(retryOwner, reason => reason.code === "save-disposed")
+    await settleMicrotasks()
+    assert.equal(disposed, false)
+
+    preparedGate.resolve(verifiedResult(prepared[0], "-prepared-disposed"))
+    await disposal
+    assert.equal(coordinator.snapshot().state, "disposed")
+    assert.equal(coordinator.snapshot().lastSavedAt, 100)
+    assert.equal(coordinator.recoveryMaterial(), null)
+  })
 })
 
 test("stage clones and deeply freezes an ordinary JSON payload", () => {
@@ -1811,14 +2323,6 @@ test("untrusted or non-correctable failures still fail closed to conflict", asyn
         commitState: "unchanged",
       }),
     },
-    ...["mutation-lease-lost", "work-locked", "mutation-lock-unavailable"].map(code => ({
-      name: `${code} left for Task 4`,
-      failure: mutationFailure(code, {
-        operationId: "batch-2",
-        phase: "admission",
-        commitState: "unchanged",
-      }),
-    })),
     {
       name: "retryable metadata operation ID mismatch",
       failure: mutationFailure("mutation-write-failed", {
@@ -1868,6 +2372,28 @@ test("untrusted or non-correctable failures still fail closed to conflict", asyn
       assert.equal(coordinator.snapshot().state, "conflict")
       assert.equal(coordinator.snapshot().error, entry.failure)
       assert.equal(coordinator.snapshot().canRetry, false)
+    })
+  }
+})
+
+test("recognized lease failures close ordinary commits with exact error identity", async t => {
+  for (const code of ["mutation-lease-lost", "work-locked", "mutation-lock-unavailable"]) {
+    await t.test(code, async () => {
+      const failure = mutationFailure(code, {
+        operationId: "foreign-or-missing-is-irrelevant",
+        phase: "admission",
+        commitState: "unknown",
+      })
+      const { coordinator } = createHarness({
+        commitMutation: async () => { throw failure },
+      })
+      coordinator.stage({ key: "field:title", payload: code, apply() {} })
+
+      await assert.rejects(coordinator.flush(), reason => reason === failure)
+      assert.equal(coordinator.snapshot().state, "lease-lost")
+      assert.equal(coordinator.snapshot().error, failure)
+      assert.equal(coordinator.snapshot().canRetry, false)
+      assert.equal(coordinator.recoveryMaterial().kind, "ordinary")
     })
   }
 })
@@ -2839,6 +3365,36 @@ test("a conflict recheck resolves its owner but rejects every other waiter with 
   assert.equal(coordinator.snapshot().error, terminalFailure)
   assert.equal(coordinator.snapshot().pendingCount, 2)
   assert.equal(batches.length, 1)
+})
+
+test("a conflict recheck owner still resolves when its terminal observer disposes re-entrantly", async () => {
+  const attempt = createDeferred()
+  const recheckGate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: () => recheckGate.promise,
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  let disposal = null
+  coordinator.subscribe(snapshot => {
+    if (snapshot.state === "conflict" && disposal === null) disposal = coordinator.dispose()
+  })
+
+  const owner = coordinator.recheck()
+  await settleMicrotasks()
+  const conflict = Object.freeze({
+    outcome: "conflict",
+    result: Object.freeze({ raw: "{}", database: Object.freeze({}), workToken: "other" }),
+  })
+  recheckGate.resolve(conflict)
+
+  assert.equal(await owner, conflict)
+  assert.notEqual(disposal, null)
+  assert.equal((await disposal).state, "disposed")
 })
 
 test("malformed recheck outcomes fail closed without invoking accessors", async t => {

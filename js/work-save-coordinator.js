@@ -1,5 +1,11 @@
 const EMPTY_EDITORS = Object.freeze([])
+const EMPTY_OPERATIONS = Object.freeze([])
 const MAX_JSON_ARRAY_INDEX = (2 ** 32) - 2
+const LEASE_LOSS_CODES = new Set([
+  "mutation-lease-lost",
+  "work-locked",
+  "mutation-lock-unavailable",
+])
 
 function assertRecord(value, name) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -315,7 +321,7 @@ export function createWorkSaveCoordinator(options) {
   let maxTimerToken = 0
 
   function isTerminalState() {
-    return state === "conflict" || state === "disposed"
+    return state === "conflict" || state === "lease-lost" || state === "disposed"
   }
 
   function isRecoveryPaused() {
@@ -336,6 +342,7 @@ export function createWorkSaveCoordinator(options) {
     if (disposedFailure !== null && (state === "disposed" || error === disposedFailure)) {
       return disposedFailure
     }
+    if (state === "lease-lost" && error !== null) return error
     return createActionUnavailableError()
   }
 
@@ -373,6 +380,36 @@ export function createWorkSaveCoordinator(options) {
     if (uncertainBatch !== null) count += uncertainBatch.operationIds.length
     for (const batch of readyBatches) count += batch.operations.length
     return count
+  }
+
+  function ordinaryPendingOperations() {
+    const operations = []
+    if (activeBatch !== null) operations.push(...activeBatch.operations)
+    if (blockedBatch !== null) operations.push(...blockedBatch.operations)
+    for (const batch of readyBatches) operations.push(...batch.operations)
+    operations.push(...pendingFields.values())
+    operations.sort((left, right) => left.generation - right.generation)
+    return Object.freeze(operations)
+  }
+
+  function recoveryMaterial() {
+    const laterPendingOperations = ordinaryPendingOperations()
+    if (uncertainBatch !== null) {
+      return Object.freeze({
+        kind: "unknown",
+        uncertainBatch,
+        laterPendingOperations,
+      })
+    }
+    if (laterPendingOperations.length === 0) return null
+    const correctableOperationIds = state === "error-invalid" && blockedBatch !== null
+      ? blockedBatch.operationIds
+      : EMPTY_OPERATIONS
+    return Object.freeze({
+      kind: "ordinary",
+      pendingOperations: laterPendingOperations,
+      correctableOperationIds,
+    })
   }
 
   function createSnapshot() {
@@ -442,6 +479,7 @@ export function createWorkSaveCoordinator(options) {
       }
       throw disposedFailure
     }
+    if (state === "lease-lost") throw error ?? terminalAdmissionFailure()
     if (state === "conflict" || isRecoveryPaused()) {
       throw createActionUnavailableError()
     }
@@ -710,8 +748,21 @@ export function createWorkSaveCoordinator(options) {
     return failure
   }
 
+  function normalizeLeaseFailure(cause) {
+    if (cause instanceof Error) return cause
+    const failure = new Error("The local save lease was lost", { cause })
+    failure.code = "save-lease-lost"
+    return failure
+  }
+
   function classifyOrdinaryFailure(failure, batch) {
     const codeProperty = readOwnDataProperty(failure, "code")
+    if (codeProperty.found && LEASE_LOSS_CODES.has(codeProperty.value)) {
+      return { state: "lease-lost" }
+    }
+    if (codeProperty.found && codeProperty.value === "mutation-conflict") {
+      return { state: "conflict" }
+    }
     const detailsProperty = readOwnDataProperty(failure, "details")
     if (!codeProperty.found || !detailsProperty.found) return { state: "conflict" }
     const details = detailsProperty.value
@@ -806,13 +857,11 @@ export function createWorkSaveCoordinator(options) {
 
   function enterConflict(suppliedFailure, batch = null) {
     const supplied = normalizeCommitFailure(suppliedFailure)
-    if (state === "disposed") return disposedFailure ?? supplied
+    if (isTerminalState()) return error ?? supplied
     if (batch !== null && blockedBatch === null) blockedBatch = batch
-    if (state !== "conflict") {
-      terminalEpoch += 1
-      state = "conflict"
-      error = supplied
-    }
+    terminalEpoch += 1
+    state = "conflict"
+    error = supplied
     const failure = error
     cancelPendingTimers()
     rejectAllWaiters(failure)
@@ -820,10 +869,38 @@ export function createWorkSaveCoordinator(options) {
     return failure
   }
 
+  function enterLeaseLost(suppliedFailure, batch = null) {
+    const supplied = normalizeLeaseFailure(suppliedFailure)
+    if (isTerminalState()) return error ?? supplied
+    if (batch !== null && batch.kind === "mutation" && blockedBatch === null) {
+      blockedBatch = batch
+    }
+    terminalEpoch += 1
+    state = "lease-lost"
+    error = supplied
+    cancelPendingTimers()
+    rejectAllWaiters(supplied)
+    activeActionControl?.rejectOwner(supplied)
+    announceSnapshot()
+    return supplied
+  }
+
+  function markLeaseLost(suppliedFailure) {
+    if (isTerminalState()) return currentSnapshot
+    enterLeaseLost(suppliedFailure)
+    return currentSnapshot
+  }
+
   function enterOrdinaryFailure(suppliedFailure, batch) {
     const failure = normalizeCommitFailure(suppliedFailure)
     const classification = classifyOrdinaryFailure(failure, batch)
-    if (isTerminalState()) return error ?? failure
+    if (isTerminalState()) {
+      retainTerminalFailureMaterial(failure, batch, classification)
+      return error ?? failure
+    }
+    if (classification.state === "lease-lost") {
+      return enterLeaseLost(failure, batch.kind === "unknown" ? null : batch)
+    }
     if (classification.state === "conflict") {
       return enterConflict(failure, batch.kind === "unknown" ? null : batch)
     }
@@ -865,8 +942,33 @@ export function createWorkSaveCoordinator(options) {
     return failure
   }
 
+  function retainTerminalFailureMaterial(suppliedFailure, batch, knownClassification = null) {
+    const failure = normalizeCommitFailure(suppliedFailure)
+    if (batch.kind === "unknown") {
+      uncertainBatch = batch
+      announceSnapshot()
+      return
+    }
+
+    const classification = knownClassification ?? classifyOrdinaryFailure(failure, batch)
+    if (classification.state === "error-unknown") {
+      if (activeBatch === batch) activeBatch = null
+      if (blockedBatch === batch) blockedBatch = null
+      uncertainBatch = classification.uncertainBatch
+      unknownFailure = failure
+      recoveryResumeBatches.delete(batch)
+      announceSnapshot()
+      return
+    }
+
+    if (activeBatch === batch) activeBatch = null
+    if (blockedBatch === null) blockedBatch = batch
+    else if (blockedBatch !== batch && !readyBatches.includes(batch)) readyBatches.unshift(batch)
+    announceSnapshot()
+  }
+
   function capturePendingFromTimer() {
-    if (pendingFields.size === 0 || state === "conflict" || state === "disposed") return
+    if (pendingFields.size === 0 || isTerminalState()) return
     try {
       capturePendingWithAdmission()
     } catch (failure) {
@@ -1049,7 +1151,7 @@ export function createWorkSaveCoordinator(options) {
         },
         suppliedFailure => {
           if (isTerminalState() || terminalEpoch !== admissionEpoch) {
-            retainUnverifiedBatch()
+            retainTerminalFailureMaterial(suppliedFailure, batch)
             return
           }
           activeBatch = null
@@ -1058,7 +1160,7 @@ export function createWorkSaveCoordinator(options) {
       )
       .catch(suppliedFailure => {
         if (isTerminalState() || terminalEpoch !== admissionEpoch) {
-          retainUnverifiedBatch()
+          retainTerminalFailureMaterial(suppliedFailure, batch)
           return
         }
         if (activeBatch === batch) activeBatch = null
@@ -1292,6 +1394,7 @@ export function createWorkSaveCoordinator(options) {
 
     function handleFailure(suppliedFailure) {
       if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        retainTerminalFailureMaterial(suppliedFailure, batch)
         rejectForTerminalState()
         return
       }
@@ -1499,19 +1602,20 @@ export function createWorkSaveCoordinator(options) {
     }
 
     function handleOutcome(suppliedOutcome) {
-      if (isTerminalState() || terminalEpoch !== actionEpoch) {
-        rejectForTerminalState()
-        return
-      }
       let outcome
       try {
         outcome = validateRecheckOutcome(suppliedOutcome)
       } catch (failure) {
-        failClosed(failure)
+        if (isTerminalState() || terminalEpoch !== actionEpoch) rejectForTerminalState()
+        else failClosed(failure)
         return
       }
 
       if (outcome.kind === "not-written") {
+        if (isTerminalState() || terminalEpoch !== actionEpoch) {
+          rejectForTerminalState()
+          return
+        }
         state = "error-retryable"
         error = unknownFailure
         announceSnapshot()
@@ -1521,6 +1625,11 @@ export function createWorkSaveCoordinator(options) {
       }
 
       if (outcome.kind === "conflict") {
+        if (isTerminalState() || terminalEpoch !== actionEpoch) {
+          rejectForTerminalState()
+          return
+        }
+        activeActionControl = null
         enterConflict(outcome.suppliedOutcome)
         finishAction()
         resolveOwner(outcome.suppliedOutcome)
@@ -1531,11 +1640,8 @@ export function createWorkSaveCoordinator(options) {
       try {
         savedAt = readAttemptTime()
       } catch (failure) {
-        failClosed(failure)
-        return
-      }
-      if (isTerminalState() || terminalEpoch !== actionEpoch) {
-        rejectForTerminalState()
+        if (isTerminalState() || terminalEpoch !== actionEpoch) rejectForTerminalState()
+        else failClosed(failure)
         return
       }
       const commitResult = Object.freeze({
@@ -1549,6 +1655,11 @@ export function createWorkSaveCoordinator(options) {
       lastSavedAt = savedAt
       if (uncertainBatch === batch) uncertainBatch = null
       unknownFailure = null
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        announceSnapshot()
+        rejectForTerminalState()
+        return
+      }
       error = null
       state = readyBatches.length > 0 || pendingFields.size > 0 ? "dirty" : "clean"
       if (pendingFields.size > 0) {
@@ -1576,6 +1687,12 @@ export function createWorkSaveCoordinator(options) {
       }
       const failure = normalizeCommitFailure(suppliedFailure)
       const code = readOwnDataProperty(failure, "code")
+      if (code.found && LEASE_LOSS_CODES.has(code.value)) {
+        const terminalFailure = enterLeaseLost(failure)
+        finishAction()
+        rejectOwner(terminalFailure)
+        return
+      }
       if (code.found && code.value === "mutation-conflict") {
         const terminalFailure = enterConflict(failure)
         finishAction()
@@ -1674,7 +1791,9 @@ export function createWorkSaveCoordinator(options) {
     drain,
     retry,
     recheck,
+    markLeaseLost,
     snapshot,
+    recoveryMaterial,
     subscribe,
     dispose,
   })
