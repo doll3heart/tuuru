@@ -248,6 +248,8 @@ function snapshotsEqual(left, right) {
 export function createWorkSaveCoordinator(options) {
   assertRecord(options, "options")
   assertFunction(options.commitMutation, "commitMutation")
+  assertFunction(options.commitPreparedCandidate, "commitPreparedCandidate")
+  assertFunction(options.recheckUnknown, "recheckUnknown")
   const scheduler = options.scheduler ?? {
     setTimeout: globalThis.setTimeout.bind(globalThis),
     clearTimeout: globalThis.clearTimeout.bind(globalThis),
@@ -292,6 +294,8 @@ export function createWorkSaveCoordinator(options) {
   let currentSnapshot = null
   let activeBatch = null
   let blockedBatch = null
+  let uncertainBatch = null
+  let unknownFailure = null
   let activeAction = null
   let activeActionControl = null
   let disposePromise = null
@@ -315,7 +319,9 @@ export function createWorkSaveCoordinator(options) {
   }
 
   function isRecoveryPaused() {
-    return state === "error-retryable" || state === "error-invalid"
+    return state === "error-retryable"
+      || state === "error-invalid"
+      || state === "error-unknown"
   }
 
   function createActionUnavailableError() {
@@ -364,6 +370,7 @@ export function createWorkSaveCoordinator(options) {
     let count = pendingFields.size
     if (activeBatch !== null) count += activeBatch.operations.length
     if (blockedBatch !== null) count += blockedBatch.operations.length
+    if (uncertainBatch !== null) count += uncertainBatch.operationIds.length
     for (const batch of readyBatches) count += batch.operations.length
     return count
   }
@@ -373,11 +380,11 @@ export function createWorkSaveCoordinator(options) {
     return Object.freeze({
       state,
       pendingCount: count,
-      activeBatchId: activeBatch?.id ?? blockedBatch?.id ?? null,
+      activeBatchId: activeBatch?.id ?? blockedBatch?.id ?? uncertainBatch?.id ?? null,
       lastSavedAt,
       error,
       canRetry: state === "error-retryable",
-      canRecheck: false,
+      canRecheck: state === "error-unknown",
       hasRecoverableCandidate: count > 0,
       generation,
       otherActiveEditors: EMPTY_EDITORS,
@@ -706,30 +713,57 @@ export function createWorkSaveCoordinator(options) {
   function classifyOrdinaryFailure(failure, batch) {
     const codeProperty = readOwnDataProperty(failure, "code")
     const detailsProperty = readOwnDataProperty(failure, "details")
-    if (!codeProperty.found || !detailsProperty.found) return "conflict"
+    if (!codeProperty.found || !detailsProperty.found) return { state: "conflict" }
     const details = detailsProperty.value
     if (details === null || typeof details !== "object" || Array.isArray(details)) {
-      return "conflict"
+      return { state: "conflict" }
     }
     const operationId = readOwnDataProperty(details, "operationId")
     const commitState = readOwnDataProperty(details, "commitState")
     const phase = readOwnDataProperty(details, "phase")
     if (!operationId.found
       || operationId.value !== batch.id
-      || !commitState.found
-      || commitState.value !== "unchanged") {
-      return "conflict"
+      || !commitState.found) {
+      return { state: "conflict" }
+    }
+
+    const isUnknownCode = codeProperty.value === "mutation-readback-failed"
+      || codeProperty.value === "mutation-verification-failed"
+    if (isUnknownCode && commitState.value === "unknown") {
+      const expectedCurrentRaw = readOwnDataProperty(details, "expectedCurrentRaw")
+      const candidateRaw = readOwnDataProperty(details, "candidateRaw")
+      if (!expectedCurrentRaw.found
+        || (expectedCurrentRaw.value !== null && typeof expectedCurrentRaw.value !== "string")
+        || !candidateRaw.found
+        || typeof candidateRaw.value !== "string") {
+        return { state: "conflict" }
+      }
+      return {
+        state: "error-unknown",
+        uncertainBatch: Object.freeze({
+          kind: "unknown",
+          id: batch.id,
+          operationIds: Object.freeze([...batch.operationIds]),
+          generations: Object.freeze([...batch.generations]),
+          expectedCurrentRaw: expectedCurrentRaw.value,
+          candidateRaw: candidateRaw.value,
+        }),
+      }
+    }
+
+    if (commitState.value !== "unchanged") {
+      return { state: "conflict" }
     }
     if (codeProperty.value === "mutation-read-failed"
       || codeProperty.value === "mutation-write-failed") {
-      return "error-retryable"
+      return { state: "error-retryable" }
     }
     if (codeProperty.value === "mutation-invalid"
       && phase.found
       && (phase.value === "apply" || phase.value === "validate-candidate")) {
-      return "error-invalid"
+      return { state: "error-invalid" }
     }
-    return "conflict"
+    return { state: "conflict" }
   }
 
   function cancelQuietTimer() {
@@ -788,14 +822,40 @@ export function createWorkSaveCoordinator(options) {
 
   function enterOrdinaryFailure(suppliedFailure, batch) {
     const failure = normalizeCommitFailure(suppliedFailure)
-    const nextState = classifyOrdinaryFailure(failure, batch)
+    const classification = classifyOrdinaryFailure(failure, batch)
     if (isTerminalState()) return error ?? failure
-    if (nextState === "conflict") return enterConflict(failure, batch)
+    if (classification.state === "conflict") return enterConflict(failure, batch)
+    if (classification.state === "error-unknown") {
+      if (blockedBatch !== null && blockedBatch !== batch) {
+        return enterConflict(failure, batch)
+      }
+      blockedBatch = null
+      uncertainBatch = classification.uncertainBatch
+      unknownFailure = failure
+      state = "error-unknown"
+      error = failure
+      cancelPendingTimers()
+      rejectFailedBatchWaiters(batch, failure)
+      announceSnapshot()
+      return failure
+    }
+    if (batch.kind === "unknown") {
+      if (classification.state !== "error-retryable") {
+        return enterConflict(failure)
+      }
+      uncertainBatch = batch
+      state = "error-retryable"
+      error = failure
+      cancelPendingTimers()
+      rejectFailedBatchWaiters(batch, failure)
+      announceSnapshot()
+      return failure
+    }
     if (blockedBatch !== null && blockedBatch !== batch) {
       return enterConflict(failure, batch)
     }
     blockedBatch = batch
-    state = nextState
+    state = classification.state
     error = failure
     cancelPendingTimers()
     rejectFailedBatchWaiters(batch, failure)
@@ -1169,16 +1229,17 @@ export function createWorkSaveCoordinator(options) {
 
   function retry() {
     if (activeAction !== null) {
-      if (activeAction.kind === "retry") {
-        return activeAction.publicPromise
-      }
+      if (activeAction.kind === "retry") return activeAction.publicPromise
       return Promise.reject(createActionUnavailableError())
     }
-    if (state !== "error-retryable" || blockedBatch === null) {
+    if (state !== "error-retryable") {
       return Promise.reject(createActionUnavailableError())
     }
 
-    const batch = blockedBatch
+    const usesPreparedCandidate = blockedBatch === null && uncertainBatch !== null
+    const batch = usesPreparedCandidate ? uncertainBatch : blockedBatch
+    if (batch === null) return Promise.reject(createActionUnavailableError())
+
     const actionEpoch = terminalEpoch
     let resolveOwner
     let rejectOwner
@@ -1197,9 +1258,8 @@ export function createWorkSaveCoordinator(options) {
       completion,
       epoch: actionEpoch,
     })
-    const control = { rejectOwner }
     activeAction = action
-    activeActionControl = control
+    activeActionControl = { rejectOwner }
     state = "saving"
     error = null
     announceSnapshot()
@@ -1247,14 +1307,21 @@ export function createWorkSaveCoordinator(options) {
       }
       recordVerifiedBatch(batch, result)
       lastSavedAt = attemptedAt
-      if (blockedBatch === batch) blockedBatch = null
-      recoveryResumeBatches.delete(batch)
+      if (usesPreparedCandidate) {
+        if (uncertainBatch === batch) uncertainBatch = null
+        unknownFailure = null
+      } else {
+        if (blockedBatch === batch) blockedBatch = null
+        recoveryResumeBatches.delete(batch)
+      }
       if (isTerminalState() || terminalEpoch !== actionEpoch) {
         announceSnapshot()
         rejectForTerminalState()
         return
       }
 
+      state = readyBatches.length > 0 || pendingFields.size > 0 ? "dirty" : "clean"
+      error = null
       if (pendingFields.size > 0) {
         try {
           capturePendingWithAdmission()
@@ -1292,7 +1359,7 @@ export function createWorkSaveCoordinator(options) {
       if (isTerminalState() || terminalEpoch !== actionEpoch) {
         rejectForTerminalState()
       } else {
-        const finalFailure = enterConflict(failure, batch)
+        const finalFailure = enterConflict(failure, usesPreparedCandidate ? null : batch)
         finishAction()
         rejectOwner(finalFailure)
       }
@@ -1308,12 +1375,226 @@ export function createWorkSaveCoordinator(options) {
         if (isTerminalState() || terminalEpoch !== actionEpoch) {
           throw currentTerminalFailure()
         }
-        return options.commitMutation(batch)
+        return usesPreparedCandidate
+          ? options.commitPreparedCandidate(batch)
+          : options.commitMutation(batch)
       })
       .then(
         result => handleSuccess(result, attemptedAt),
         handleFailure,
       )
+      .catch(handleFailure)
+    return publicPromise
+  }
+
+  function validateRecheckResult(suppliedResult) {
+    if (suppliedResult === null
+      || typeof suppliedResult !== "object"
+      || Array.isArray(suppliedResult)) {
+      throw new TypeError("recheckUnknown result must be an object")
+    }
+    const raw = readOwnDataProperty(suppliedResult, "raw")
+    const database = readOwnDataProperty(suppliedResult, "database")
+    const workToken = readOwnDataProperty(suppliedResult, "workToken")
+    if (!raw.found || typeof raw.value !== "string"
+      || !database.found
+      || database.value === null
+      || typeof database.value !== "object"
+      || Array.isArray(database.value)
+      || !workToken.found
+      || typeof workToken.value !== "string") {
+      throw new TypeError("recheckUnknown returned a malformed result")
+    }
+    return {
+      raw: raw.value,
+      database: database.value,
+      workToken: workToken.value,
+    }
+  }
+
+  function validateRecheckOutcome(suppliedOutcome) {
+    if (suppliedOutcome === null
+      || typeof suppliedOutcome !== "object"
+      || Array.isArray(suppliedOutcome)) {
+      throw new TypeError("recheckUnknown must return an outcome object")
+    }
+    const outcome = readOwnDataProperty(suppliedOutcome, "outcome")
+    if (!outcome.found) throw new TypeError("recheckUnknown outcome must be own data")
+    if (outcome.value === "not-written") {
+      return { kind: "not-written", suppliedOutcome }
+    }
+    if (outcome.value !== "saved" && outcome.value !== "conflict") {
+      throw new TypeError("recheckUnknown returned an unknown outcome")
+    }
+    const result = readOwnDataProperty(suppliedOutcome, "result")
+    if (!result.found) throw new TypeError("recheckUnknown outcome must include a result")
+    return {
+      kind: outcome.value,
+      suppliedOutcome,
+      result: validateRecheckResult(result.value),
+    }
+  }
+
+  function recheck() {
+    if (activeAction !== null) {
+      if (activeAction.kind === "recheck") return activeAction.publicPromise
+      return Promise.reject(createActionUnavailableError())
+    }
+    if (state !== "error-unknown" || uncertainBatch === null) {
+      return Promise.reject(createActionUnavailableError())
+    }
+
+    const batch = uncertainBatch
+    const actionEpoch = terminalEpoch
+    let resolveOwner
+    let rejectOwner
+    const publicPromise = new Promise((resolve, reject) => {
+      resolveOwner = resolve
+      rejectOwner = reject
+    })
+    let settleCompletion
+    const completion = new Promise(resolve => {
+      settleCompletion = resolve
+    })
+    const action = Object.freeze({
+      kind: "recheck",
+      materialId: batch.id,
+      publicPromise,
+      completion,
+      epoch: actionEpoch,
+    })
+    activeAction = action
+    activeActionControl = { rejectOwner }
+
+    let finished = false
+    function finishAction() {
+      if (finished) return
+      finished = true
+      if (activeAction === action) {
+        activeAction = null
+        activeActionControl = null
+      }
+      settleCompletion()
+      if (!isTerminalState() && !isRecoveryPaused()) startNextBatch()
+    }
+
+    function currentTerminalFailure() {
+      if (state === "disposed" && disposedFailure !== null) return disposedFailure
+      return error ?? createActionUnavailableError()
+    }
+
+    function rejectForTerminalState() {
+      const failure = currentTerminalFailure()
+      finishAction()
+      rejectOwner(failure)
+    }
+
+    function failClosed(suppliedFailure) {
+      const failure = enterConflict(suppliedFailure)
+      finishAction()
+      rejectOwner(failure)
+    }
+
+    function handleOutcome(suppliedOutcome) {
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+        return
+      }
+      let outcome
+      try {
+        outcome = validateRecheckOutcome(suppliedOutcome)
+      } catch (failure) {
+        failClosed(failure)
+        return
+      }
+
+      if (outcome.kind === "not-written") {
+        state = "error-retryable"
+        error = unknownFailure
+        announceSnapshot()
+        finishAction()
+        resolveOwner(outcome.suppliedOutcome)
+        return
+      }
+
+      if (outcome.kind === "conflict") {
+        enterConflict(outcome.suppliedOutcome)
+        finishAction()
+        resolveOwner(outcome.suppliedOutcome)
+        return
+      }
+
+      let savedAt
+      try {
+        savedAt = readAttemptTime()
+      } catch (failure) {
+        failClosed(failure)
+        return
+      }
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+        return
+      }
+      const commitResult = Object.freeze({
+        ok: true,
+        operationId: batch.id,
+        raw: outcome.result.raw,
+        database: outcome.result.database,
+        workToken: outcome.result.workToken,
+      })
+      recordVerifiedBatch(batch, commitResult)
+      lastSavedAt = savedAt
+      if (uncertainBatch === batch) uncertainBatch = null
+      unknownFailure = null
+      error = null
+      state = readyBatches.length > 0 || pendingFields.size > 0 ? "dirty" : "clean"
+      if (pendingFields.size > 0) {
+        try {
+          capturePendingWithAdmission()
+        } catch (failure) {
+          failClosed(failure)
+          return
+        }
+      }
+      state = readyBatches.length > 0 || pendingFields.size > 0 ? "dirty" : "clean"
+      announceSnapshot()
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+        return
+      }
+      finishAction()
+      resolveOwner(outcome.suppliedOutcome)
+    }
+
+    function handleFailure(suppliedFailure) {
+      if (isTerminalState() || terminalEpoch !== actionEpoch) {
+        rejectForTerminalState()
+        return
+      }
+      const failure = normalizeCommitFailure(suppliedFailure)
+      const code = readOwnDataProperty(failure, "code")
+      if (code.found && code.value === "mutation-conflict") {
+        const terminalFailure = enterConflict(failure)
+        finishAction()
+        rejectOwner(terminalFailure)
+        return
+      }
+      state = "error-unknown"
+      error = failure
+      unknownFailure = failure
+      announceSnapshot()
+      finishAction()
+      rejectOwner(failure)
+    }
+
+    Promise.resolve()
+      .then(() => {
+        if (isTerminalState() || terminalEpoch !== actionEpoch) {
+          throw currentTerminalFailure()
+        }
+        return options.recheckUnknown(batch)
+      })
+      .then(handleOutcome, handleFailure)
       .catch(handleFailure)
     return publicPromise
   }
@@ -1389,6 +1670,7 @@ export function createWorkSaveCoordinator(options) {
     flush,
     drain,
     retry,
+    recheck,
     snapshot,
     subscribe,
     dispose,

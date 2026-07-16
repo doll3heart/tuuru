@@ -144,6 +144,31 @@ function mutationFailure(code, details, message = code) {
   return failure
 }
 
+async function pauseCoordinatorAsUnknown({
+  coordinator,
+  attempt,
+  batches,
+  code = "mutation-readback-failed",
+  expectedCurrentRaw = '{"works":[]}',
+  candidateRaw = '{"works":[{"id":"candidate"}]}',
+}) {
+  coordinator.stage({ key: "field:uncertain", payload: "uncertain", apply() {} })
+  const boundary = coordinator.flush()
+  await settleMicrotasks()
+  const batch = batches[0]
+  const failure = mutationFailure(code, {
+    operationId: batch.id,
+    phase: code === "mutation-readback-failed" ? "readback" : "verify",
+    commitState: "unknown",
+    expectedCurrentRaw,
+    candidateRaw,
+  })
+  attempt.reject(failure)
+  await assert.rejects(boundary, reason => reason === failure)
+  await settleMicrotasks()
+  return { batch, failure }
+}
+
 test("exports the work save coordinator factory", () => {
   assert.equal(typeof createWorkSaveCoordinator, "function")
 })
@@ -178,6 +203,7 @@ test("starts with the exact frozen snapshot and core frozen API", () => {
     "flush",
     "drain",
     "retry",
+    "recheck",
     "snapshot",
     "subscribe",
     "dispose",
@@ -1073,6 +1099,8 @@ test("cyclic prototype traps fail in a bounded child process", () => {
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     let cyclicPrototype
@@ -1335,6 +1363,8 @@ test("infinitely fresh forged prototypes fail in a bounded child process", () =>
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     const freshHandler = {
@@ -1376,6 +1406,8 @@ test("polluted Array prototype chains are rejected before inherited toJSON can r
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     const originalPrototype = Object.getPrototypeOf(Array.prototype)
@@ -1430,6 +1462,8 @@ test("an Array ownKeys trap cannot pollute inherited toJSON after validation", (
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     const originalPrototype = Object.getPrototypeOf(Array.prototype)
@@ -1502,6 +1536,8 @@ test("the final source prototype trap is followed by fixed-chain validation", ()
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     const originalPrototype = Object.getPrototypeOf(Array.prototype)
@@ -1576,6 +1612,8 @@ test("a null-prototype child ownKeys trap cannot pollute its ordinary parent clo
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     const originalToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON")
@@ -1645,6 +1683,8 @@ test("a null-prototype child descriptor trap cannot pollute its array parent clo
     const scheduler = { setTimeout() { return 1 }, clearTimeout() {} }
     const coordinator = createWorkSaveCoordinator({
       commitMutation: async batch => ({ ok: true, operationId: batch.id }),
+      commitPreparedCandidate: async batch => ({ ok: true, operationId: batch.id }),
+      recheckUnknown: async () => ({ outcome: "not-written" }),
       scheduler,
     })
     const originalToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON")
@@ -1771,16 +1811,6 @@ test("untrusted or non-correctable failures still fail closed to conflict", asyn
         commitState: "unchanged",
       }),
     },
-    ...["mutation-readback-failed", "mutation-verification-failed"].map(code => ({
-      name: `${code} left for Task 3`,
-      failure: mutationFailure(code, {
-        operationId: "batch-2",
-        phase: code === "mutation-readback-failed" ? "readback" : "verify",
-        commitState: "unknown",
-        expectedCurrentRaw: null,
-        candidateRaw: "{}",
-      }),
-    })),
     ...["mutation-lease-lost", "work-locked", "mutation-lock-unavailable"].map(code => ({
       name: `${code} left for Task 4`,
       failure: mutationFailure(code, {
@@ -2395,4 +2425,706 @@ test("correction ID callbacks cannot publish a replacement after re-entering dis
       await disposePromise
     })
   }
+})
+
+test("a trusted unknown failure becomes one frozen callback-free envelope and pauses admission", async () => {
+  const attempt = createDeferred()
+  const laterAttempt = createDeferred()
+  const recheckGate = createDeferred()
+  const preparedGate = createDeferred()
+  const committedBatches = []
+  const recheckedEnvelopes = []
+  const preparedEnvelopes = []
+  const { coordinator, idCalls } = createHarness({
+    commitMutation(batch) {
+      committedBatches.push(batch)
+      return committedBatches.length === 1 ? attempt.promise : laterAttempt.promise
+    },
+    commitPreparedCandidate(envelope) {
+      preparedEnvelopes.push(envelope)
+      return preparedGate.promise
+    },
+    recheckUnknown(envelope) {
+      recheckedEnvelopes.push(envelope)
+      return recheckGate.promise
+    },
+  })
+
+  const failedCommit = coordinator.commitNow({
+    key: "structure:first",
+    payload: "first",
+    consumes: [],
+    apply() {},
+  })
+  await settleMicrotasks()
+  const mutationBatch = committedBatches[0]
+  const laterOperation = coordinator.stage({
+    key: "field:later",
+    payload: "later",
+    apply() {},
+  })
+  const unknownFailure = mutationFailure("mutation-readback-failed", {
+    operationId: mutationBatch.id,
+    phase: "readback",
+    commitState: "unknown",
+    expectedCurrentRaw: null,
+    candidateRaw: '{"works":[{"id":"saved-or-not"}]}',
+  })
+  attempt.reject(unknownFailure)
+  await assert.rejects(failedCommit, reason => reason === unknownFailure)
+  await settleMicrotasks()
+
+  assert.equal(coordinator.snapshot().state, "error-unknown")
+  assert.equal(coordinator.snapshot().error, unknownFailure)
+  assert.equal(coordinator.snapshot().canRetry, false)
+  assert.equal(coordinator.snapshot().canRecheck, true)
+  assert.equal(coordinator.snapshot().activeBatchId, mutationBatch.id)
+  assert.equal(coordinator.snapshot().pendingCount, mutationBatch.operations.length + 1)
+
+  const beforeDeniedIds = idCalls.length
+  const beforeDeniedGeneration = coordinator.snapshot().generation
+  assert.throws(
+    () => coordinator.stage({ key: "field:denied", payload: null, apply() {} }),
+    reason => reason.code === "save-action-unavailable",
+  )
+  assert.equal(idCalls.length, beforeDeniedIds)
+  assert.equal(coordinator.snapshot().generation, beforeDeniedGeneration)
+
+  const recheckPromise = coordinator.recheck()
+  assert.equal(coordinator.recheck(), recheckPromise)
+  await assert.rejects(coordinator.retry(), reason => reason.code === "save-action-unavailable")
+  await settleMicrotasks()
+  assert.equal(recheckedEnvelopes.length, 1)
+  const envelope = recheckedEnvelopes[0]
+  assert.deepEqual(envelope, {
+    kind: "unknown",
+    id: mutationBatch.id,
+    operationIds: mutationBatch.operationIds,
+    generations: mutationBatch.generations,
+    expectedCurrentRaw: null,
+    candidateRaw: '{"works":[{"id":"saved-or-not"}]}',
+  })
+  assert.equal(Object.isFrozen(envelope), true)
+  assert.equal(Object.isFrozen(envelope.operationIds), true)
+  assert.equal(Object.isFrozen(envelope.generations), true)
+  assert.equal("operations" in envelope, false)
+  assert.equal("apply" in envelope, false)
+  assert.equal(envelope.operationIds.includes(laterOperation.id), false)
+
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  recheckGate.resolve(notWritten)
+  assert.equal(await recheckPromise, notWritten)
+  assert.equal(coordinator.snapshot().state, "error-retryable")
+  assert.equal(coordinator.snapshot().error, unknownFailure)
+  assert.equal(coordinator.snapshot().canRetry, true)
+  assert.equal(coordinator.snapshot().canRecheck, false)
+
+  const retryPromise = coordinator.retry()
+  assert.equal(coordinator.retry(), retryPromise)
+  await assert.rejects(coordinator.recheck(), reason => reason.code === "save-action-unavailable")
+  await settleMicrotasks()
+  assert.deepEqual(preparedEnvelopes, [envelope])
+  assert.equal(committedBatches.length, 1)
+
+  const preparedResult = verifiedResult(envelope, "-prepared")
+  preparedGate.resolve(preparedResult)
+  assert.equal(await retryPromise, preparedResult)
+  await settleMicrotasks()
+  assert.equal(committedBatches.length, 2)
+  assert.deepEqual(committedBatches[1].operations, [laterOperation])
+  const drainPromise = coordinator.drain()
+  laterAttempt.resolve(verifiedResult(committedBatches[1], "-later"))
+  assert.equal((await drainPromise).state, "clean")
+})
+
+test("only recognized own-data unknown metadata creates an uncertain envelope", async t => {
+  const trustedRaw = {
+    expectedCurrentRaw: '{"works":[]}',
+    candidateRaw: '{"works":[{"id":"candidate"}]}',
+  }
+
+  for (const code of ["mutation-readback-failed", "mutation-verification-failed"]) {
+    await t.test(`accepts ${code}`, async () => {
+      const attempt = createDeferred()
+      const recheckGate = createDeferred()
+      const batches = []
+      const envelopes = []
+      const { coordinator } = createHarness({
+        commitMutation(batch) {
+          batches.push(batch)
+          return attempt.promise
+        },
+        recheckUnknown(envelope) {
+          envelopes.push(envelope)
+          return recheckGate.promise
+        },
+      })
+      coordinator.stage({ key: "field:title", payload: code, apply() {} })
+      const boundary = coordinator.flush()
+      await settleMicrotasks()
+      const batch = batches[0]
+      const failure = mutationFailure(code, {
+        operationId: batch.id,
+        phase: code === "mutation-readback-failed" ? "readback" : "verify",
+        commitState: "unknown",
+        ...trustedRaw,
+      })
+      attempt.reject(failure)
+      await assert.rejects(boundary, reason => reason === failure)
+      assert.equal(coordinator.snapshot().state, "error-unknown")
+      const recheckPromise = coordinator.recheck()
+      await settleMicrotasks()
+      assert.equal(envelopes[0].expectedCurrentRaw, trustedRaw.expectedCurrentRaw)
+      assert.equal(envelopes[0].candidateRaw, trustedRaw.candidateRaw)
+      const notWritten = Object.freeze({ outcome: "not-written" })
+      recheckGate.resolve(notWritten)
+      assert.equal(await recheckPromise, notWritten)
+      await coordinator.dispose()
+    })
+  }
+
+  const cases = [
+    {
+      name: "wrong batch ID",
+      createFailure: batch => mutationFailure("mutation-readback-failed", {
+        operationId: `${batch.id}-wrong`,
+        phase: "readback",
+        commitState: "unknown",
+        ...trustedRaw,
+      }),
+    },
+    {
+      name: "missing expected raw",
+      createFailure: batch => mutationFailure("mutation-readback-failed", {
+        operationId: batch.id,
+        phase: "readback",
+        commitState: "unknown",
+        candidateRaw: trustedRaw.candidateRaw,
+      }),
+    },
+    {
+      name: "missing candidate raw",
+      createFailure: batch => mutationFailure("mutation-verification-failed", {
+        operationId: batch.id,
+        phase: "verify",
+        commitState: "unknown",
+        expectedCurrentRaw: trustedRaw.expectedCurrentRaw,
+      }),
+    },
+    {
+      name: "invalid raw types",
+      createFailure: batch => mutationFailure("mutation-readback-failed", {
+        operationId: batch.id,
+        phase: "readback",
+        commitState: "unknown",
+        expectedCurrentRaw: 0,
+        candidateRaw: null,
+      }),
+    },
+    {
+      name: "top-level lookalikes",
+      createFailure: batch => Object.assign(
+        mutationFailure("mutation-readback-failed", {
+          operationId: batch.id,
+          phase: "readback",
+          commitState: "unknown",
+        }),
+        trustedRaw,
+      ),
+    },
+    {
+      name: "unrecognized code",
+      createFailure: batch => mutationFailure("invented-unknown", {
+        operationId: batch.id,
+        phase: "readback",
+        commitState: "unknown",
+        ...trustedRaw,
+      }),
+    },
+  ]
+
+  for (const entry of cases) {
+    await t.test(entry.name, async () => {
+      const attempt = createDeferred()
+      const batches = []
+      const { coordinator } = createHarness({
+        commitMutation(batch) {
+          batches.push(batch)
+          return attempt.promise
+        },
+      })
+      coordinator.stage({ key: "field:title", payload: entry.name, apply() {} })
+      const boundary = coordinator.flush()
+      await settleMicrotasks()
+      const failure = entry.createFailure(batches[0])
+      attempt.reject(failure)
+      await assert.rejects(boundary, reason => reason === failure)
+      assert.equal(coordinator.snapshot().state, "conflict")
+      assert.equal(coordinator.snapshot().error, failure)
+    })
+  }
+})
+
+test("unknown metadata accessors are never invoked and fail closed", async () => {
+  let detailsReads = 0
+  let rawReads = 0
+  const outerFailure = Object.assign(new Error("outer accessor"), {
+    code: "mutation-readback-failed",
+  })
+  Object.defineProperty(outerFailure, "details", {
+    get() {
+      detailsReads += 1
+      return {}
+    },
+  })
+
+  for (const createFailure of [
+    () => outerFailure,
+    batch => {
+      const details = {
+        operationId: batch.id,
+        phase: "readback",
+        commitState: "unknown",
+        expectedCurrentRaw: null,
+      }
+      Object.defineProperty(details, "candidateRaw", {
+        get() {
+          rawReads += 1
+          return "{}"
+        },
+      })
+      return mutationFailure("mutation-readback-failed", details)
+    },
+  ]) {
+    const attempt = createDeferred()
+    const batches = []
+    const { coordinator } = createHarness({
+      commitMutation(batch) {
+        batches.push(batch)
+        return attempt.promise
+      },
+    })
+    coordinator.stage({ key: "field:title", payload: null, apply() {} })
+    const boundary = coordinator.flush()
+    await settleMicrotasks()
+    const failure = createFailure(batches[0])
+    attempt.reject(failure)
+    await assert.rejects(boundary, reason => reason === failure)
+    assert.equal(coordinator.snapshot().state, "conflict")
+  }
+  assert.equal(detailsReads, 0)
+  assert.equal(rawReads, 0)
+})
+
+test("a saved recheck resolves by identity and resumes only later generations", async () => {
+  const attempt = createDeferred()
+  const recheckGate = createDeferred()
+  const laterGate = createDeferred()
+  const batches = []
+  const envelopes = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return batches.length === 1 ? attempt.promise : laterGate.promise
+    },
+    recheckUnknown(envelope) {
+      envelopes.push(envelope)
+      return recheckGate.promise
+    },
+  })
+
+  coordinator.stage({ key: "field:uncertain", payload: "uncertain", apply() {} })
+  const uncertainBoundary = coordinator.flush()
+  await settleMicrotasks()
+  const uncertainBatch = batches[0]
+  const laterCommit = coordinator.commitNow({
+    key: "structure:later",
+    payload: "later",
+    consumes: [],
+    apply() {},
+  })
+  const failure = mutationFailure("mutation-verification-failed", {
+    operationId: uncertainBatch.id,
+    phase: "verify",
+    commitState: "unknown",
+    expectedCurrentRaw: '{"works":[]}',
+    candidateRaw: '{"works":[{"id":"candidate"}]}',
+  })
+  attempt.reject(failure)
+  await assert.rejects(uncertainBoundary, reason => reason === failure)
+  await settleMicrotasks()
+
+  const recheckPromise = coordinator.recheck()
+  assert.equal(coordinator.recheck(), recheckPromise)
+  await settleMicrotasks()
+  const saved = Object.freeze({
+    outcome: "saved",
+    result: Object.freeze({
+      raw: '{"works":[{"id":"candidate"}]}',
+      database: Object.freeze({ works: Object.freeze([{ id: "candidate" }]) }),
+      workToken: "saved-token",
+    }),
+  })
+  recheckGate.resolve(saved)
+  assert.equal(await recheckPromise, saved)
+  await settleMicrotasks()
+
+  assert.equal(envelopes.length, 1)
+  assert.equal(batches.length, 2)
+  assert.deepEqual(batches[1].operations.map(operation => operation.payload), ["later"])
+  let laterSettled = false
+  laterCommit.finally(() => { laterSettled = true })
+  await settleMicrotasks()
+  assert.equal(laterSettled, false)
+
+  const laterResult = verifiedResult(batches[1], "-later-after-saved")
+  laterGate.resolve(laterResult)
+  assert.equal(await laterCommit, laterResult)
+  assert.equal(coordinator.snapshot().state, "clean")
+  assert.equal(coordinator.snapshot().pendingCount, 0)
+})
+
+test("a conflict recheck resolves its owner but rejects every other waiter with one caused error", async () => {
+  const attempt = createDeferred()
+  const recheckGate = createDeferred()
+  const batches = []
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown() {
+      return recheckGate.promise
+    },
+  })
+
+  coordinator.stage({ key: "field:uncertain", payload: "uncertain", apply() {} })
+  const uncertainBoundary = coordinator.flush()
+  await settleMicrotasks()
+  const uncertainBatch = batches[0]
+  const laterCommit = coordinator.commitNow({
+    key: "structure:later",
+    payload: "later",
+    consumes: [],
+    apply() {},
+  })
+  const failure = mutationFailure("mutation-readback-failed", {
+    operationId: uncertainBatch.id,
+    phase: "readback",
+    commitState: "unknown",
+    expectedCurrentRaw: null,
+    candidateRaw: "{}",
+  })
+  attempt.reject(failure)
+  await assert.rejects(uncertainBoundary, reason => reason === failure)
+  await settleMicrotasks()
+
+  const recheckPromise = coordinator.recheck()
+  const conflict = Object.freeze({
+    outcome: "conflict",
+    result: Object.freeze({
+      raw: '{"works":[{"id":"other"}]}',
+      database: Object.freeze({ works: Object.freeze([{ id: "other" }]) }),
+      workToken: "other-token",
+    }),
+  })
+  recheckGate.resolve(conflict)
+  assert.equal(await recheckPromise, conflict)
+  let terminalFailure
+  await assert.rejects(laterCommit, reason => {
+    terminalFailure = reason
+    return reason.code === "save-action-unavailable" && reason.cause === conflict
+  })
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(coordinator.snapshot().error, terminalFailure)
+  assert.equal(coordinator.snapshot().pendingCount, 2)
+  assert.equal(batches.length, 1)
+})
+
+test("malformed recheck outcomes fail closed without invoking accessors", async t => {
+  let accessorReads = 0
+  const hostileOutcome = {}
+  Object.defineProperty(hostileOutcome, "outcome", {
+    get() {
+      accessorReads += 1
+      return "not-written"
+    },
+  })
+  const malformed = [
+    null,
+    Object.freeze({ outcome: "invented" }),
+    Object.freeze({ outcome: "saved" }),
+    Object.freeze({ outcome: "saved", result: Object.freeze({ raw: 1, database: {}, workToken: "x" }) }),
+    Object.freeze({ outcome: "saved", result: Object.create({ raw: "{}", database: {}, workToken: "x" }) }),
+    Object.freeze({ outcome: "conflict" }),
+    hostileOutcome,
+  ]
+
+  for (const [index, suppliedOutcome] of malformed.entries()) {
+    await t.test(String(index), async () => {
+      const attempt = createDeferred()
+      const batches = []
+      const { coordinator } = createHarness({
+        commitMutation(batch) {
+          batches.push(batch)
+          return attempt.promise
+        },
+        recheckUnknown: async () => suppliedOutcome,
+      })
+      await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+      let finalFailure
+      await assert.rejects(coordinator.recheck(), reason => {
+        finalFailure = reason
+        return reason instanceof TypeError
+      })
+      assert.equal(coordinator.snapshot().state, "conflict")
+      assert.equal(coordinator.snapshot().error, finalFailure)
+    })
+  }
+  assert.equal(accessorReads, 0)
+})
+
+test("failed rechecks stay unknown and retain exact or falsy causes for another recheck", async t => {
+  for (const suppliedFailure of [
+    mutationFailure("mutation-invalid", {
+      phase: "recheck-validate",
+      commitState: "unknown",
+    }),
+    null,
+  ]) {
+    await t.test(suppliedFailure === null ? "falsy" : "typed", async () => {
+      const attempt = createDeferred()
+      const batches = []
+      let calls = 0
+      const saved = Object.freeze({
+        outcome: "saved",
+        result: Object.freeze({ raw: "{}", database: Object.freeze({}), workToken: "token" }),
+      })
+      const { coordinator } = createHarness({
+        commitMutation(batch) {
+          batches.push(batch)
+          return attempt.promise
+        },
+        recheckUnknown() {
+          calls += 1
+          if (calls === 1) return Promise.reject(suppliedFailure)
+          return Promise.resolve(saved)
+        },
+      })
+      await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+
+      let receivedFailure
+      await assert.rejects(coordinator.recheck(), reason => {
+        receivedFailure = reason
+        return suppliedFailure === null
+          ? reason.code === "save-action-unavailable" && reason.cause === null
+          : reason === suppliedFailure
+      })
+      assert.equal(coordinator.snapshot().state, "error-unknown")
+      assert.equal(coordinator.snapshot().error, receivedFailure)
+      assert.equal(coordinator.snapshot().canRecheck, true)
+      assert.equal(await coordinator.recheck(), saved)
+      assert.equal(coordinator.snapshot().state, "clean")
+    })
+  }
+})
+
+test("an unknown prepared retry never restores mutation callbacks and can return to recheck", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const preparedEnvelopes = []
+  let recheckCalls = 0
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => {
+      recheckCalls += 1
+      return notWritten
+    },
+    commitPreparedCandidate: async envelope => {
+      preparedEnvelopes.push(envelope)
+      throw mutationFailure("mutation-verification-failed", {
+        operationId: envelope.id,
+        phase: "verify",
+        commitState: "unknown",
+        expectedCurrentRaw: envelope.expectedCurrentRaw,
+        candidateRaw: envelope.candidateRaw,
+      })
+    },
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  assert.equal(await coordinator.recheck(), notWritten)
+
+  let retryFailure
+  await assert.rejects(coordinator.retry(), reason => {
+    retryFailure = reason
+    return reason.code === "mutation-verification-failed"
+  })
+  assert.equal(coordinator.snapshot().state, "error-unknown")
+  assert.equal(coordinator.snapshot().error, retryFailure)
+  assert.equal(coordinator.snapshot().canRecheck, true)
+  assert.equal(batches.length, 1)
+  assert.equal(preparedEnvelopes.length, 1)
+  assert.equal("operations" in preparedEnvelopes[0], false)
+  assert.equal("apply" in preparedEnvelopes[0], false)
+  assert.equal(await coordinator.recheck(), notWritten)
+  assert.equal(recheckCalls, 2)
+})
+
+test("trusted unknown metadata needs no phase and later mutation cannot alter its copied raw envelope", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const envelopes = []
+  const details = {
+    operationId: null,
+    commitState: "unknown",
+    expectedCurrentRaw: '{"before":true}',
+    candidateRaw: '{"candidate":true}',
+  }
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown(envelope) {
+      envelopes.push(envelope)
+      return Promise.resolve(notWritten)
+    },
+  })
+  coordinator.stage({ key: "field:title", payload: "draft", apply() {} })
+  const boundary = coordinator.flush()
+  await settleMicrotasks()
+  details.operationId = batches[0].id
+  const failure = mutationFailure("mutation-readback-failed", details)
+  attempt.reject(failure)
+  await assert.rejects(boundary, reason => reason === failure)
+  await settleMicrotasks()
+
+  details.expectedCurrentRaw = '{"mutated":"before"}'
+  details.candidateRaw = '{"mutated":"candidate"}'
+  assert.equal(await coordinator.recheck(), notWritten)
+  assert.equal(envelopes[0].expectedCurrentRaw, '{"before":true}')
+  assert.equal(envelopes[0].candidateRaw, '{"candidate":true}')
+})
+
+test("an unchanged prepared failure retries only the same uncertain envelope", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const preparedEnvelopes = []
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  let preparedCalls = 0
+  let eventualPreparedResult = null
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => notWritten,
+    commitPreparedCandidate: async envelope => {
+      preparedCalls += 1
+      preparedEnvelopes.push(envelope)
+      if (preparedCalls === 1) {
+        throw mutationFailure("mutation-write-failed", {
+          operationId: envelope.id,
+          phase: "write",
+          commitState: "unchanged",
+          expectedCurrentRaw: envelope.expectedCurrentRaw,
+          candidateRaw: envelope.candidateRaw,
+        })
+      }
+      eventualPreparedResult = verifiedResult(envelope, "-prepared-retry")
+      return eventualPreparedResult
+    },
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  assert.equal(await coordinator.recheck(), notWritten)
+
+  let unchangedFailure
+  await assert.rejects(coordinator.retry(), reason => {
+    unchangedFailure = reason
+    return reason.code === "mutation-write-failed"
+  })
+  assert.equal(coordinator.snapshot().state, "error-retryable")
+  assert.equal(coordinator.snapshot().error, unchangedFailure)
+  const secondRetry = coordinator.retry()
+  assert.equal(coordinator.retry(), secondRetry)
+  assert.equal(await secondRetry, eventualPreparedResult)
+  assert.equal(preparedEnvelopes.length, 2)
+  assert.equal(preparedEnvelopes[1], preparedEnvelopes[0])
+  assert.equal("operations" in preparedEnvelopes[1], false)
+  assert.equal(batches.length, 1)
+})
+
+test("nested recheck result accessors fail closed without being invoked", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  let databaseReads = 0
+  let tokenReads = 0
+  const result = { raw: "{}" }
+  Object.defineProperty(result, "database", {
+    get() {
+      databaseReads += 1
+      return {}
+    },
+  })
+  Object.defineProperty(result, "workToken", {
+    get() {
+      tokenReads += 1
+      return "token"
+    },
+  })
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => ({ outcome: "saved", result }),
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  await assert.rejects(coordinator.recheck(), TypeError)
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(databaseReads, 0)
+  assert.equal(tokenReads, 0)
+})
+
+test("a failure after not-written and a repeated unknown prepared write retain recheck safety", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const recheckedEnvelopes = []
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  const laterRecheckFailure = new Error("later recheck failed")
+  let recheckCalls = 0
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    commitPreparedCandidate: async envelope => {
+      throw mutationFailure("mutation-readback-failed", {
+        operationId: envelope.id,
+        commitState: "unknown",
+        expectedCurrentRaw: envelope.expectedCurrentRaw,
+        candidateRaw: envelope.candidateRaw,
+      })
+    },
+    recheckUnknown(envelope) {
+      recheckedEnvelopes.push(envelope)
+      recheckCalls += 1
+      if (recheckCalls === 1) return Promise.resolve(notWritten)
+      return Promise.reject(laterRecheckFailure)
+    },
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  assert.equal(await coordinator.recheck(), notWritten)
+  await assert.rejects(coordinator.retry(), reason => reason.code === "mutation-readback-failed")
+  assert.equal(coordinator.snapshot().state, "error-unknown")
+  await assert.rejects(coordinator.recheck(), reason => reason === laterRecheckFailure)
+  assert.equal(coordinator.snapshot().state, "error-unknown")
+  assert.equal(coordinator.snapshot().error, laterRecheckFailure)
+  assert.equal(recheckedEnvelopes.length, 2)
+  assert.equal("operations" in recheckedEnvelopes[1], false)
 })
