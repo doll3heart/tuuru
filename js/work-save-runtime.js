@@ -4,6 +4,7 @@ import {
   createJsonToken,
   recheckUnknownLocalDatabaseCommit,
 } from "./local-database-mutation.js"
+import { prepareEmergencyLocalDatabaseBackup } from "./emergency-backup.js"
 import {
   LOCAL_RESTORE_GENERATION_KEY,
   getWorkOwnerKey,
@@ -11,7 +12,12 @@ import {
   readRestoreGeneration,
   readWorkOwner,
 } from "./local-write-metadata.js"
-import { LOCAL_DATABASE_KEY, LocalDatabaseError, inspectLocalDatabaseRaw } from "./storage.js"
+import {
+  LOCAL_DATABASE_KEY,
+  LocalDatabaseError,
+  inspectLocalDatabaseRaw,
+  serializeValidatedLocalDatabase,
+} from "./storage.js"
 import { openWorkEditSession } from "./work-edit-session.js"
 import { createWorkSaveCoordinator } from "./work-save-coordinator.js"
 
@@ -28,6 +34,12 @@ function runtimeError(message, code, cause, details) {
 
 function cloneJson(value) {
   return value === null ? null : JSON.parse(JSON.stringify(value))
+}
+
+function defaultRecoveryId(kind) {
+  const randomId = globalThis.crypto?.randomUUID?.()
+  if (typeof randomId === "string" && randomId.length > 0) return `${kind}-${randomId}`
+  return `${kind}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 function isRecord(value) {
@@ -151,6 +163,40 @@ function workFromRaw(raw, workId) {
   return uniqueWork(status.data, workId)
 }
 
+function replaceTargetWork(database, workId, replacement) {
+  let replacements = 0
+  const works = database.works.map(work => {
+    if (work.id !== workId) return work
+    replacements += 1
+    return replacement
+  })
+  if (replacements !== 1) {
+    throw runtimeError(
+      "The recovery database no longer contains one unambiguous target work.",
+      "mutation-invalid",
+      undefined,
+      { workId, replacements },
+    )
+  }
+  return { ...database, works }
+}
+
+function serializeRecoveryCandidate(database) {
+  try {
+    return serializeValidatedLocalDatabase(database)
+  } catch (error) {
+    const safelyInspectedSchemaFailure = error?.code === "invalid-write"
+      && Array.isArray(error?.details?.issues)
+    if (!safelyInspectedSchemaFailure) return null
+    try {
+      const raw = JSON.stringify(database)
+      return typeof raw === "string" ? raw : null
+    } catch {
+      return null
+    }
+  }
+}
+
 export async function openWorkSaveRuntime({
   workId,
   storage = globalThis.localStorage,
@@ -226,6 +272,7 @@ export async function openWorkSaveRuntime({
     let runtimeOverride = null
     let otherActiveEditors = EMPTY_EDITORS
     let currentRuntimeSnapshot = null
+    let emergencyBackupIdentity = null
     const runtimeListeners = new Set()
 
     function adoptVerifiedResult(result) {
@@ -268,6 +315,110 @@ export async function openWorkSaveRuntime({
         material.laterPendingOperations,
         workId,
       )
+    }
+
+    function applyRecoveryOperationsToDatabase(database, operations) {
+      const target = uniqueWork(database, workId)
+      if (target === null) {
+        throw runtimeError(
+          "The recovery database no longer contains the target work.",
+          "mutation-invalid",
+          undefined,
+          { workId },
+        )
+      }
+      const localWork = applyOrderedOperationsToWork(target, operations, workId)
+      return replaceTargetWork(database, workId, localWork)
+    }
+
+    function buildEmergencyLocalCandidateRaw() {
+      const material = coordinator.recoveryMaterial()
+      if (material?.kind === "unknown") {
+        const { uncertainBatch, laterPendingOperations } = material
+        let laterCandidateRaw = uncertainBatch.candidateRaw
+        if (laterPendingOperations.length > 0) {
+          try {
+            const status = inspectLocalDatabaseRaw(uncertainBatch.candidateRaw)
+            if (!status.ok) {
+              throw new LocalDatabaseError(
+                "A retained save candidate is invalid.",
+                "mutation-invalid",
+                undefined,
+                { issues: status.issues, raw: uncertainBatch.candidateRaw },
+              )
+            }
+            laterCandidateRaw = serializeRecoveryCandidate(
+              applyRecoveryOperationsToDatabase(status.data, laterPendingOperations),
+            )
+          } catch {
+            laterCandidateRaw = null
+          }
+        }
+        return Object.freeze({
+          kind: "unknown",
+          expectedCurrentRaw: uncertainBatch.expectedCurrentRaw,
+          candidateRaw: uncertainBatch.candidateRaw,
+          laterCandidateRaw,
+        })
+      }
+
+      const operations = material?.kind === "ordinary"
+        ? material.pendingOperations
+        : []
+      let candidateRaw = null
+      try {
+        candidateRaw = serializeRecoveryCandidate(
+          applyRecoveryOperationsToDatabase(verifiedDatabase, operations),
+        )
+      } catch {
+        candidateRaw = null
+      }
+      return Object.freeze({
+        kind: "ordinary",
+        candidateRaw,
+      })
+    }
+
+    function emergencyIdentityForGeneration(generation) {
+      if (emergencyBackupIdentity?.generation === generation) {
+        if (emergencyBackupIdentity.status === "failed") {
+          throw emergencyBackupIdentity.failure
+        }
+        return emergencyBackupIdentity
+      }
+      const recoveryIdFactory = createId ?? defaultRecoveryId
+      let recoveryWorkId
+      try {
+        recoveryWorkId = recoveryIdFactory("recovery-work")
+      } catch (failure) {
+        emergencyBackupIdentity = Object.freeze({
+          generation,
+          status: "failed",
+          failure,
+          recoveryWorkId: null,
+        })
+        throw failure
+      }
+      let timestamp
+      try {
+        timestamp = now()
+      } catch (failure) {
+        emergencyBackupIdentity = Object.freeze({
+          generation,
+          status: "failed",
+          failure,
+          recoveryWorkId,
+        })
+        throw failure
+      }
+      const identity = Object.freeze({
+        generation,
+        status: "ready",
+        recoveryWorkId,
+        now: timestamp,
+      })
+      emergencyBackupIdentity = identity
+      return identity
     }
 
     function wrappedSnapshot() {
@@ -645,12 +796,17 @@ export async function openWorkSaveRuntime({
     }
 
     function prepareEmergencyBackup() {
-      const recovery = Object.freeze({
-        kind: "recovery-only",
+      const saveSnapshot = wrappedSnapshot()
+      const identity = emergencyIdentityForGeneration(saveSnapshot.generation)
+      return prepareEmergencyLocalDatabaseBackup({
+        storage,
         workId,
-        candidate: cloneJson(buildOrdinaryPendingCandidate()),
+        saveSnapshot,
+        lastValidRaw: verifiedRaw,
+        localCandidateRaw: buildEmergencyLocalCandidateRaw(),
+        now: identity.now,
+        recoveryWorkId: identity.recoveryWorkId,
       })
-      return recovery
     }
 
     function suspend() {

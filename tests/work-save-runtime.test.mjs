@@ -12,7 +12,7 @@ import {
   LOCAL_RESTORE_GENERATION_KEY,
   getWorkOwnerKey,
 } from "../js/local-write-metadata.js"
-import { LOCAL_DATABASE_KEY } from "../js/storage.js"
+import { LOCAL_DATABASE_KEY, parseLocalDatabaseBackup } from "../js/storage.js"
 import { openWorkEditSession } from "../js/work-edit-session.js"
 import { createFakeLockManager } from "./helpers/fake-lock-manager.mjs"
 import { createKeyedStorage } from "./helpers/keyed-storage.mjs"
@@ -206,6 +206,12 @@ function titleOperation(title, key = "field:title") {
       return { ...work, title: payload.title }
     },
   }
+}
+
+function emergencyBackupDatabase(result) {
+  assert.equal(result.artifacts[0].kind, "library-backup")
+  assert.equal(result.artifacts[0].restorable, true)
+  return parseLocalDatabaseBackup(result.artifacts[0].contents).database
 }
 
 function ownerRecord({
@@ -517,6 +523,14 @@ test("active other owners populate warnings and owner events update only that ov
 
   assert.deepEqual(opened.runtime.snapshot().otherActiveEditors, [other])
   assert.equal(opened.runtime.snapshot().state, "clean")
+  const backup = opened.runtime.prepareEmergencyBackup()
+  assert.deepEqual(backup.otherActiveEditors, [{
+    workId: "work-b",
+    ownerId: "owner-b",
+    expiresAt: 61_000,
+  }])
+  assert.equal(backup.warning.omitsOtherEditorMemory, true)
+  assert.match(backup.warning.message, /未包含其他编辑器的内存中改动/)
   fixture.storage.removeItem(otherKey)
   events.dispatch("storage", {
     key: otherKey,
@@ -567,6 +581,19 @@ test("current owner loss stays first-wins across later current-database events",
     ), mode)
     assert.equal(opened.runtime.readWork().title, `recover-${mode}`, mode)
     assert.equal(opened.runtime.recoveryMaterial().kind, "ordinary", mode)
+    const databaseWritesBeforeBackup = fixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+    const backup = opened.runtime.prepareEmergencyBackup()
+    const recoveryWork = emergencyBackupDatabase(backup).works.find(
+      work => work.id.startsWith("recovery-work-"),
+    )
+    assert.equal(recoveryWork.title, `recover-${mode}（冲突恢复副本）`, mode)
+    assert.equal(recoveryWork.recoveryMetadata.sourceState, "lease-lost", mode)
+    assert.equal(opened.runtime.snapshot(), snapshot, mode)
+    assert.equal(
+      fixture.storage.count("setItem", LOCAL_DATABASE_KEY),
+      databaseWritesBeforeBackup,
+      mode,
+    )
 
     const database = JSON.parse(fixture.storage.peek(LOCAL_DATABASE_KEY))
     const changedRaw = JSON.stringify({
@@ -898,14 +925,28 @@ test("a not-written recheck cannot become retryable after native ownership loss"
 
 test("unknown not-written retry commits the prepared bytes without callback replay", async () => {
   const controlled = createControlledStorage({
-    works: [{ id: "work-a", title: "before", updatedAt: 10 }],
-    contacts: [],
+    works: [
+      { id: "work-a", title: "before", updatedAt: 10 },
+      { id: "work-b", title: "other-before", updatedAt: 10 },
+    ],
+    contacts: [{ id: "contact-a", privateNote: "before" }],
     groups: [],
+    futureLibraryField: "before",
   })
   const fixture = createFixture({ storage: controlled.storage })
   const opened = await openWorkSaveRuntime(fixture.options({ now: () => 100 }))
   assert.equal(opened.ok, true)
   let uncertainApplyCalls = 0
+  const externalBeforeCommit = JSON.parse(controlled.storage.peek(LOCAL_DATABASE_KEY))
+  controlled.base.setItem(LOCAL_DATABASE_KEY, JSON.stringify({
+    ...externalBeforeCommit,
+    works: [
+      externalBeforeCommit.works[0],
+      { ...externalBeforeCommit.works[1], title: "other-external", privateOther: true },
+    ],
+    contacts: [{ id: "contact-a", privateNote: "external" }],
+    futureLibraryField: "external",
+  }))
   controlled.armIgnoredWrite()
   opened.runtime.stage({
     key: "field:uncertain",
@@ -921,12 +962,27 @@ test("unknown not-written retry commits the prepared bytes without callback repl
 
   await assert.rejects(boundary, error => error.code === "mutation-verification-failed")
   assert.equal((await opened.runtime.recheck()).outcome, "not-written")
+  const retryableSnapshot = opened.runtime.snapshot()
+  const attemptsBeforeBackup = controlled.databaseWriteAttempts()
+  const backup = opened.runtime.prepareEmergencyBackup()
+  const backupDatabase = emergencyBackupDatabase(backup)
+  assert.equal(backupDatabase.works[0].title, "later")
+  assert.equal(backupDatabase.works[1].title, "other-external")
+  assert.equal(backupDatabase.works[1].privateOther, true)
+  assert.equal(backupDatabase.contacts[0].privateNote, "external")
+  assert.equal(backupDatabase.futureLibraryField, "external")
+  assert.equal(uncertainApplyCalls, 1)
+  assert.equal(opened.runtime.snapshot(), retryableSnapshot)
+  assert.equal(controlled.databaseWriteAttempts(), attemptsBeforeBackup)
   await opened.runtime.retry()
   await opened.runtime.drain()
 
   assert.equal(uncertainApplyCalls, 1)
   assert.equal(controlled.databaseWriteAttempts(), 3)
-  assert.equal(JSON.parse(controlled.storage.peek(LOCAL_DATABASE_KEY)).works[0].title, "later")
+  const stored = JSON.parse(controlled.storage.peek(LOCAL_DATABASE_KEY))
+  assert.equal(stored.works[0].title, "later")
+  assert.equal(stored.works[1].title, "other-external")
+  assert.equal(stored.futureLibraryField, "external")
   await opened.runtime.dispose()
 })
 
@@ -965,26 +1021,483 @@ test("unknown conflict freezes with candidate and later edits without replay", a
   assert.equal(opened.runtime.readWork().title, "later")
   assert.equal(opened.runtime.recoveryMaterial().kind, "unknown")
   assert.equal(uncertainApplyCalls, 1)
+  const conflictSnapshot = opened.runtime.snapshot()
+  const attemptsBeforeBackup = controlled.databaseWriteAttempts()
+  const backup = opened.runtime.prepareEmergencyBackup()
+  const recovered = emergencyBackupDatabase(backup)
+  assert.deepEqual(recovered.works.map(work => work.title), [
+    "third",
+    "later（冲突恢复副本）",
+  ])
+  assert.equal(recovered.works[1].recoveryMetadata.sourceState, "conflict")
+  assert.equal(uncertainApplyCalls, 1)
+  assert.equal(opened.runtime.snapshot(), conflictSnapshot)
+  assert.equal(controlled.databaseWriteAttempts(), attemptsBeforeBackup)
   assert.throws(() => opened.runtime.stage(titleOperation("denied")))
   await opened.runtime.dispose()
 })
 
-test("prepareEmergencyBackup includes a staged sub-debounce recovery-only candidate", async () => {
-  const fixture = createFixture()
+test("prepareEmergencyBackup includes a staged sub-debounce full-library candidate without effects", async () => {
+  const fixture = createFixture({ database: {
+    works: [
+      { id: "work-a", title: "before", updatedAt: 10 },
+      { id: "work-b", title: "other-before", updatedAt: 20, privateOther: true },
+    ],
+    contacts: [{ id: "contact-a", privateNote: "keep" }],
+    groups: [],
+    futureLibraryField: "keep-top-level",
+  } })
   const opened = await openWorkSaveRuntime(fixture.options())
   assert.equal(opened.ok, true)
   opened.runtime.stage(titleOperation("emergency"))
+  const snapshotBefore = opened.runtime.snapshot()
+  const timeoutsBefore = fixture.scheduler.activeTimeouts()
+  const databaseWritesBefore = fixture.storage.count("setItem", LOCAL_DATABASE_KEY)
 
   const backup = opened.runtime.prepareEmergencyBackup()
 
-  assert.deepEqual(backup, {
-    kind: "recovery-only",
-    workId: "work-a",
-    candidate: { id: "work-a", title: "emergency", updatedAt: 10 },
-  })
+  const backupDatabase = emergencyBackupDatabase(backup)
+  assert.deepEqual(backupDatabase.works, [
+    { id: "work-a", title: "emergency", updatedAt: 10 },
+    { id: "work-b", title: "other-before", updatedAt: 20, privateOther: true },
+  ])
+  assert.equal(backupDatabase.contacts[0].privateNote, "keep")
+  assert.equal(backupDatabase.futureLibraryField, "keep-top-level")
+  assert.deepEqual(backup.artifacts.map(artifact => artifact.kind), ["library-backup"])
   assert.equal(Object.isFrozen(backup), true)
   assert.equal(JSON.parse(fixture.storage.peek(LOCAL_DATABASE_KEY)).works[0].title, "before")
+  assert.equal(opened.runtime.snapshot(), snapshotBefore)
+  assert.equal(fixture.scheduler.activeTimeouts(), timeoutsBefore)
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), databaseWritesBefore)
   await opened.runtime.dispose()
+})
+
+test("runtime separates safe schema-invalid drafts from unsafe cyclic hook candidates", async () => {
+  const initial = {
+    works: [
+      { id: "work-a", title: "before", updatedAt: 10 },
+      { id: "work-b", title: "private-other", updatedAt: 20 },
+    ],
+    contacts: [{ id: "contact-a", privateNote: "private" }],
+    groups: [],
+    futureLibraryField: "future-private",
+  }
+
+  const safeFixture = createFixture({ database: initial })
+  const safeOpened = await openWorkSaveRuntime(safeFixture.options())
+  assert.equal(safeOpened.ok, true)
+  safeOpened.runtime.stage({
+    key: "field:schema-invalid",
+    payload: null,
+    apply(work) {
+      return { ...work, type: "article", nodes: "invalid" }
+    },
+  })
+  const safeSnapshot = safeOpened.runtime.snapshot()
+  const safeWrites = safeFixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+
+  const safeBackup = safeOpened.runtime.prepareEmergencyBackup()
+
+  assert.deepEqual(safeBackup.artifacts.map(artifact => artifact.kind), [
+    "library-backup",
+    "raw-draft",
+  ])
+  assert.deepEqual(emergencyBackupDatabase(safeBackup), initial)
+  const rawDraftDatabase = JSON.parse(safeBackup.artifacts[1].contents)
+  assert.equal(rawDraftDatabase.works[0].nodes, "invalid")
+  assert.equal(rawDraftDatabase.works[1].title, "private-other")
+  assert.equal(rawDraftDatabase.contacts[0].privateNote, "private")
+  assert.equal(rawDraftDatabase.futureLibraryField, "future-private")
+  assert.equal(safeOpened.runtime.snapshot(), safeSnapshot)
+  assert.equal(safeFixture.storage.count("setItem", LOCAL_DATABASE_KEY), safeWrites)
+  await safeOpened.runtime.dispose()
+
+  let serializationHookCalls = 0
+  const unsafeFixture = createFixture({ database: initial })
+  const unsafeOpened = await openWorkSaveRuntime(unsafeFixture.options())
+  assert.equal(unsafeOpened.ok, true)
+  unsafeOpened.runtime.stage({
+    key: "field:unsafe",
+    payload: null,
+    apply(work) {
+      const candidate = { ...work, title: "unsafe-memory" }
+      candidate.self = candidate
+      Object.defineProperty(candidate, "toJSON", {
+        enumerable: true,
+        value() {
+          serializationHookCalls += 1
+          return { stolen: true }
+        },
+      })
+      return candidate
+    },
+  })
+  const unsafeSnapshot = unsafeOpened.runtime.snapshot()
+  const unsafeWrites = unsafeFixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+
+  const unsafeBackup = unsafeOpened.runtime.prepareEmergencyBackup()
+
+  assert.deepEqual(unsafeBackup.artifacts.map(artifact => artifact.kind), ["library-backup"])
+  assert.deepEqual(emergencyBackupDatabase(unsafeBackup), initial)
+  assert.match(unsafeBackup.warning.message, /无法安全序列化/)
+  assert.match(unsafeBackup.warning.message, /未生成草稿文件/)
+  assert.equal(serializationHookCalls, 0)
+  assert.equal(unsafeOpened.runtime.snapshot(), unsafeSnapshot)
+  assert.equal(unsafeFixture.storage.count("setItem", LOCAL_DATABASE_KEY), unsafeWrites)
+  await unsafeOpened.runtime.dispose()
+})
+
+test("unknown unsafe later memory never falls back to uncertain candidate bytes", async () => {
+  const initial = {
+    works: [{ id: "work-a", title: "before", updatedAt: 10 }],
+    contacts: [],
+    groups: [],
+  }
+  const controlled = createControlledStorage(initial)
+  const fixture = createFixture({ storage: controlled.storage })
+  const opened = await openWorkSaveRuntime(fixture.options({ now: () => 100 }))
+  assert.equal(opened.ok, true)
+  let uncertainApplyCalls = 0
+  let unsafeHookCalls = 0
+  controlled.armIgnoredWrite()
+  opened.runtime.stage({
+    key: "field:uncertain",
+    payload: { title: "uncertain" },
+    apply(work, payload) {
+      uncertainApplyCalls += 1
+      if (uncertainApplyCalls > 1) throw new Error("uncertain callback replayed")
+      return { ...work, title: payload.title }
+    },
+  })
+  const boundary = opened.runtime.flush()
+  opened.runtime.stage({
+    key: "field:unsafe-later",
+    payload: null,
+    apply(work) {
+      const candidate = { ...work, title: "unsafe-later" }
+      candidate.self = candidate
+      Object.defineProperty(candidate, "toJSON", {
+        enumerable: true,
+        value() {
+          unsafeHookCalls += 1
+          return { stolen: true }
+        },
+      })
+      return candidate
+    },
+  })
+  await assert.rejects(boundary, error => error.code === "mutation-verification-failed")
+  assert.equal((await opened.runtime.recheck()).outcome, "not-written")
+  const retryableSnapshot = opened.runtime.snapshot()
+  const attemptsBeforeBackup = controlled.databaseWriteAttempts()
+
+  const backup = opened.runtime.prepareEmergencyBackup()
+
+  assert.deepEqual(emergencyBackupDatabase(backup), initial)
+  assert.deepEqual(backup.artifacts.map(artifact => artifact.kind), ["library-backup"])
+  assert.match(backup.warning.message, /无法安全序列化/)
+  assert.match(backup.warning.message, /未生成草稿文件/)
+  assert.equal(uncertainApplyCalls, 1)
+  assert.equal(unsafeHookCalls, 0)
+  assert.equal(opened.runtime.snapshot(), retryableSnapshot)
+  assert.equal(controlled.databaseWriteAttempts(), attemptsBeforeBackup)
+  await opened.runtime.dispose()
+})
+
+test("throwing ordinary and unknown-later operations degrade to honest main-only backups", async () => {
+  const ordinaryFixture = createFixture()
+  const ordinaryOpened = await openWorkSaveRuntime(ordinaryFixture.options())
+  assert.equal(ordinaryOpened.ok, true)
+  let ordinaryApplyCalls = 0
+  ordinaryOpened.runtime.stage({
+    key: "field:throwing",
+    payload: null,
+    apply() {
+      ordinaryApplyCalls += 1
+      throw new Error("cannot materialize ordinary memory")
+    },
+  })
+  const ordinarySnapshot = ordinaryOpened.runtime.snapshot()
+  const ordinaryWrites = ordinaryFixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+
+  const ordinaryBackup = ordinaryOpened.runtime.prepareEmergencyBackup()
+
+  assert.equal(emergencyBackupDatabase(ordinaryBackup).works[0].title, "before")
+  assert.deepEqual(ordinaryBackup.artifacts.map(artifact => artifact.kind), ["library-backup"])
+  assert.match(ordinaryBackup.warning.message, /无法安全序列化/)
+  assert.match(ordinaryBackup.warning.message, /未生成草稿文件/)
+  assert.equal(ordinaryApplyCalls, 1)
+  assert.equal(ordinaryOpened.runtime.snapshot(), ordinarySnapshot)
+  assert.equal(
+    ordinaryFixture.storage.count("setItem", LOCAL_DATABASE_KEY),
+    ordinaryWrites,
+  )
+  await ordinaryOpened.runtime.dispose()
+
+  const initial = {
+    works: [{ id: "work-a", title: "before", updatedAt: 10 }],
+    contacts: [],
+    groups: [],
+  }
+  const controlled = createControlledStorage(initial)
+  const unknownFixture = createFixture({ storage: controlled.storage })
+  const unknownOpened = await openWorkSaveRuntime(unknownFixture.options({ now: () => 100 }))
+  assert.equal(unknownOpened.ok, true)
+  let uncertainApplyCalls = 0
+  let laterApplyCalls = 0
+  controlled.armIgnoredWrite()
+  unknownOpened.runtime.stage({
+    key: "field:uncertain",
+    payload: null,
+    apply(work) {
+      uncertainApplyCalls += 1
+      if (uncertainApplyCalls > 1) throw new Error("uncertain callback replayed")
+      return { ...work, title: "uncertain" }
+    },
+  })
+  const boundary = unknownOpened.runtime.flush()
+  unknownOpened.runtime.stage({
+    key: "field:throwing-later",
+    payload: null,
+    apply() {
+      laterApplyCalls += 1
+      throw new Error("cannot materialize later memory")
+    },
+  })
+  await assert.rejects(boundary, error => error.code === "mutation-verification-failed")
+  assert.equal((await unknownOpened.runtime.recheck()).outcome, "not-written")
+  const unknownSnapshot = unknownOpened.runtime.snapshot()
+  const attemptsBeforeBackup = controlled.databaseWriteAttempts()
+
+  const unknownBackup = unknownOpened.runtime.prepareEmergencyBackup()
+
+  assert.deepEqual(emergencyBackupDatabase(unknownBackup), initial)
+  assert.deepEqual(unknownBackup.artifacts.map(artifact => artifact.kind), ["library-backup"])
+  assert.match(unknownBackup.warning.message, /无法安全序列化/)
+  assert.equal(uncertainApplyCalls, 1)
+  assert.equal(laterApplyCalls, 1)
+  assert.equal(unknownOpened.runtime.snapshot(), unknownSnapshot)
+  assert.equal(controlled.databaseWriteAttempts(), attemptsBeforeBackup)
+  await unknownOpened.runtime.dispose()
+})
+
+test("emergency identity is stable within a generation and fresh for the next generation", async () => {
+  const fixture = createFixture()
+  let nowCalls = 0
+  let nextNow = 10_000
+  const idCalls = []
+  let idSequence = 0
+  const opened = await openWorkSaveRuntime(fixture.options({
+    now() {
+      nowCalls += 1
+      nextNow += 1
+      return nextNow
+    },
+    createId(kind) {
+      idCalls.push(kind)
+      idSequence += 1
+      return `${kind}-${idSequence}`
+    },
+  }))
+  assert.equal(opened.ok, true)
+  opened.runtime.stage(titleOperation("local-one"))
+  const baseline = JSON.parse(fixture.storage.peek(LOCAL_DATABASE_KEY))
+  fixture.storage.setItem(LOCAL_DATABASE_KEY, JSON.stringify({
+    ...baseline,
+    works: [{ ...baseline.works[0], title: "external-one", updatedAt: 50 }],
+  }))
+  const nowBefore = nowCalls
+  const writesBeforeFirst = fixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+
+  const first = opened.runtime.prepareEmergencyBackup()
+  const firstDatabase = emergencyBackupDatabase(first)
+  const firstRecovery = firstDatabase.works.find(work => work.id.startsWith("recovery-work-"))
+  assert.ok(firstRecovery)
+  assert.equal(nowCalls, nowBefore + 1)
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), writesBeforeFirst)
+
+  const latest = JSON.parse(fixture.storage.peek(LOCAL_DATABASE_KEY))
+  fixture.storage.setItem(LOCAL_DATABASE_KEY, JSON.stringify({
+    ...latest,
+    works: [{ ...latest.works[0], title: "external-two", updatedAt: 60 }],
+  }))
+  const writesBeforeSecond = fixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+  const readsBeforeSecond = fixture.storage.count("getItem", LOCAL_DATABASE_KEY)
+  const second = opened.runtime.prepareEmergencyBackup()
+  const secondRecovery = emergencyBackupDatabase(second).works.find(
+    work => work.id.startsWith("recovery-work-"),
+  )
+
+  assert.equal(fixture.storage.count("getItem", LOCAL_DATABASE_KEY), readsBeforeSecond + 1)
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), writesBeforeSecond)
+  assert.equal(nowCalls, nowBefore + 1)
+  assert.equal(second.artifacts[0].filename, first.artifacts[0].filename)
+  assert.equal(secondRecovery.id, firstRecovery.id)
+  assert.equal(
+    secondRecovery.recoveryMetadata.recoveredAt,
+    firstRecovery.recoveryMetadata.recoveredAt,
+  )
+  assert.equal(idCalls.filter(kind => kind === "recovery-work").length, 1)
+
+  opened.runtime.stage(titleOperation("local-two", "field:title-two"))
+  const third = opened.runtime.prepareEmergencyBackup()
+  const thirdRecovery = emergencyBackupDatabase(third).works.find(
+    work => work.id.startsWith("recovery-work-"),
+  )
+  assert.notEqual(third.artifacts[0].filename, first.artifacts[0].filename)
+  assert.notEqual(thirdRecovery.id, firstRecovery.id)
+  assert.equal(nowCalls, nowBefore + 2)
+  assert.equal(idCalls.filter(kind => kind === "recovery-work").length, 2)
+  await opened.runtime.dispose()
+})
+
+test("failed preparation still caches the generation recovery identity", async () => {
+  const fixture = createFixture()
+  let invalidBackupTime = false
+  let invalidNowCalls = 0
+  const idKinds = []
+  let sequence = 0
+  const opened = await openWorkSaveRuntime(fixture.options({
+    now() {
+      if (invalidBackupTime) {
+        invalidNowCalls += 1
+        return -1
+      }
+      return 1_000
+    },
+    createId(kind) {
+      idKinds.push(kind)
+      sequence += 1
+      return `${kind}-${sequence}`
+    },
+  }))
+  assert.equal(opened.ok, true)
+  opened.runtime.stage(titleOperation("pending"))
+  invalidBackupTime = true
+
+  assert.throws(() => opened.runtime.prepareEmergencyBackup(), TypeError)
+  assert.throws(() => opened.runtime.prepareEmergencyBackup(), TypeError)
+  assert.equal(invalidNowCalls, 1)
+  assert.equal(idKinds.filter(kind => kind === "recovery-work").length, 1)
+
+  invalidBackupTime = false
+  await opened.runtime.dispose()
+})
+
+test("recovery ID provider failure is memoized until the coordinator generation changes", async () => {
+  const fixture = createFixture()
+  const providerFailure = new Error("recovery ID provider failed")
+  let failRecoveryId = true
+  let recoveryIdCalls = 0
+  let sequence = 0
+  const opened = await openWorkSaveRuntime(fixture.options({
+    createId(kind) {
+      sequence += 1
+      if (kind === "recovery-work") {
+        recoveryIdCalls += 1
+        if (failRecoveryId) throw providerFailure
+      }
+      return `${kind}-${sequence}`
+    },
+  }))
+  assert.equal(opened.ok, true)
+
+  assert.throws(
+    () => opened.runtime.prepareEmergencyBackup(),
+    error => error === providerFailure,
+  )
+  assert.throws(
+    () => opened.runtime.prepareEmergencyBackup(),
+    error => error === providerFailure,
+  )
+  assert.equal(recoveryIdCalls, 1)
+
+  failRecoveryId = false
+  opened.runtime.stage(titleOperation("next-generation"))
+  const backup = opened.runtime.prepareEmergencyBackup()
+  assert.equal(emergencyBackupDatabase(backup).works[0].title, "next-generation")
+  assert.equal(recoveryIdCalls, 2)
+  await opened.runtime.dispose()
+})
+
+test("recovery clock failure memoizes its partial ID allocation until a new generation", async () => {
+  const fixture = createFixture()
+  const providerFailure = new Error("recovery clock failed")
+  let failRecoveryNow = false
+  let failedNowCalls = 0
+  let recoveryIdCalls = 0
+  let sequence = 0
+  const opened = await openWorkSaveRuntime(fixture.options({
+    now() {
+      if (failRecoveryNow) {
+        failedNowCalls += 1
+        throw providerFailure
+      }
+      return 1_000
+    },
+    createId(kind) {
+      sequence += 1
+      if (kind === "recovery-work") recoveryIdCalls += 1
+      return `${kind}-${sequence}`
+    },
+  }))
+  assert.equal(opened.ok, true)
+  failRecoveryNow = true
+
+  assert.throws(
+    () => opened.runtime.prepareEmergencyBackup(),
+    error => error === providerFailure,
+  )
+  assert.throws(
+    () => opened.runtime.prepareEmergencyBackup(),
+    error => error === providerFailure,
+  )
+  assert.equal(failedNowCalls, 1)
+  assert.equal(recoveryIdCalls, 1)
+
+  failRecoveryNow = false
+  opened.runtime.stage(titleOperation("next-generation"))
+  const backup = opened.runtime.prepareEmergencyBackup()
+  assert.equal(emergencyBackupDatabase(backup).works[0].title, "next-generation")
+  assert.equal(recoveryIdCalls, 2)
+  await opened.runtime.dispose()
+})
+
+test("emergency backup remains available after awaited disposal with retained recovery", async t => {
+  const events = installGlobalEventTarget(t)
+  const fixture = createFixture()
+  const opened = await openWorkSaveRuntime(fixture.options())
+  assert.equal(opened.ok, true)
+  opened.runtime.stage(titleOperation("local-after-dispose"))
+  const current = JSON.parse(fixture.storage.peek(LOCAL_DATABASE_KEY))
+  const externalRaw = JSON.stringify({
+    ...current,
+    works: [{ ...current.works[0], title: "external-before-dispose", updatedAt: 90 }],
+  })
+  fixture.storage.setItem(LOCAL_DATABASE_KEY, externalRaw)
+  events.dispatch("storage", {
+    key: LOCAL_DATABASE_KEY,
+    newValue: externalRaw,
+    storageArea: fixture.storage,
+  })
+  assert.equal(opened.runtime.snapshot().state, "conflict")
+
+  await opened.runtime.dispose()
+  const disposedSnapshot = opened.runtime.snapshot()
+  const databaseWritesBefore = fixture.storage.count("setItem", LOCAL_DATABASE_KEY)
+  const backup = opened.runtime.prepareEmergencyBackup()
+  const restored = emergencyBackupDatabase(backup)
+
+  assert.equal(disposedSnapshot.state, "disposed")
+  assert.deepEqual(restored.works.map(work => work.title), [
+    "external-before-dispose",
+    "local-after-dispose（冲突恢复副本）",
+  ])
+  assert.equal(restored.works[1].recoveryMetadata.sourceState, "disposed")
+  assert.equal(opened.runtime.snapshot(), disposedSnapshot)
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), databaseWritesBefore)
+  assert.equal(fixture.scheduler.activeTimeouts(), 0)
+  assert.equal(fixture.scheduler.activeIntervals(), 0)
 })
 
 test("suspend gates every public save action synchronously, drains, and releases ownership", async () => {
