@@ -824,7 +824,9 @@ export function createWorkSaveCoordinator(options) {
     const failure = normalizeCommitFailure(suppliedFailure)
     const classification = classifyOrdinaryFailure(failure, batch)
     if (isTerminalState()) return error ?? failure
-    if (classification.state === "conflict") return enterConflict(failure, batch)
+    if (classification.state === "conflict") {
+      return enterConflict(failure, batch.kind === "unknown" ? null : batch)
+    }
     if (classification.state === "error-unknown") {
       if (blockedBatch !== null && blockedBatch !== batch) {
         return enterConflict(failure, batch)
@@ -1113,7 +1115,8 @@ export function createWorkSaveCoordinator(options) {
     if (pendingFields.size === 0
       && readyBatches.length === 0
       && activeBatch === null
-      && blockedBatch === null) {
+      && blockedBatch === null
+      && uncertainBatch === null) {
       if (emptyFlushPromise === null || emptyFlushGeneration !== generation) {
         emptyFlushGeneration = generation
         emptyFlushPromise = Promise.resolve(null)
@@ -1166,7 +1169,7 @@ export function createWorkSaveCoordinator(options) {
       resolveFlush,
       rejectFlush,
     )
-    if (activeBatch === null) state = "dirty"
+    if (activeBatch === null && activeAction === null) state = "dirty"
     announceSnapshot()
     startNextBatch()
     return promise

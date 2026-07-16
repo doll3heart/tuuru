@@ -2974,6 +2974,86 @@ test("an unknown prepared retry never restores mutation callbacks and can return
   assert.equal(recheckCalls, 2)
 })
 
+test("a prepared conflict keeps callback-free unknown provenance and disposes cleanly", async () => {
+  const attempt = createDeferred()
+  const batches = []
+  const preparedEnvelopes = []
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  const conflict = mutationFailure("mutation-conflict", {
+    operationId: "foreign-batch",
+    commitState: "changed",
+  })
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => notWritten,
+    commitPreparedCandidate(envelope) {
+      preparedEnvelopes.push(envelope)
+      return Promise.reject(conflict)
+    },
+  })
+  const { batch } = await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  assert.equal(await coordinator.recheck(), notWritten)
+
+  await assert.rejects(coordinator.retry(), reason => reason === conflict)
+  assert.equal(preparedEnvelopes.length, 1)
+  assert.equal(preparedEnvelopes[0].id, batch.id)
+  assert.equal("operations" in preparedEnvelopes[0], false)
+  assert.equal("apply" in preparedEnvelopes[0], false)
+  assert.equal(coordinator.snapshot().state, "conflict")
+  assert.equal(coordinator.snapshot().error, conflict)
+  assert.equal(coordinator.snapshot().activeBatchId, batch.id)
+  assert.equal(coordinator.snapshot().pendingCount, batch.operations.length)
+
+  const disposed = await coordinator.dispose()
+  assert.equal(disposed.state, "disposed")
+  assert.equal(coordinator.snapshot().state, "disposed")
+})
+
+test("flush waits for an in-flight prepared retry without replacing saving state", async () => {
+  const attempt = createDeferred()
+  const preparedGate = createDeferred()
+  const batches = []
+  const preparedEnvelopes = []
+  const notWritten = Object.freeze({ outcome: "not-written" })
+  const { coordinator } = createHarness({
+    commitMutation(batch) {
+      batches.push(batch)
+      return attempt.promise
+    },
+    recheckUnknown: async () => notWritten,
+    commitPreparedCandidate(envelope) {
+      preparedEnvelopes.push(envelope)
+      return preparedGate.promise
+    },
+  })
+  await pauseCoordinatorAsUnknown({ coordinator, attempt, batches })
+  assert.equal(await coordinator.recheck(), notWritten)
+
+  const retryPromise = coordinator.retry()
+  await settleMicrotasks()
+  assert.equal(preparedEnvelopes.length, 1)
+  assert.equal(coordinator.snapshot().state, "saving")
+
+  const flushPromise = coordinator.flush()
+  let flushSettled = false
+  flushPromise.then(
+    () => { flushSettled = true },
+    () => { flushSettled = true },
+  )
+  await settleMicrotasks()
+  assert.equal(flushSettled, false)
+  assert.equal(coordinator.snapshot().state, "saving")
+
+  const result = verifiedResult(preparedEnvelopes[0], "-prepared-flush")
+  preparedGate.resolve(result)
+  assert.equal(await retryPromise, result)
+  assert.equal(await flushPromise, result)
+  assert.equal(coordinator.snapshot().state, "clean")
+})
+
 test("trusted unknown metadata needs no phase and later mutation cannot alter its copied raw envelope", async () => {
   const attempt = createDeferred()
   const batches = []
