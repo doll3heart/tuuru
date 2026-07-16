@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { matchRoutePattern, parseHash } from "../js/router.js"
+import { matchRoutePattern, navigate, parseHash } from "../js/router.js"
 
 test("empty hashes resolve to the home route", () => {
   assert.deepEqual(parseHash(""), { path: "/", params: {} })
@@ -22,6 +22,13 @@ test("parameters without values remain available as empty strings", () => {
   })
 })
 
+test("repeated query keys preserve the router's existing last-value-wins behavior", () => {
+  assert.deepEqual(parseHash("#/read?mode=first&mode=last"), {
+    path: "/read",
+    params: { mode: "last" },
+  })
+})
+
 test("malformed percent encoding cannot crash hash parsing", () => {
   assert.deepEqual(parseHash("#/read?broken=%E0%A4%A"), {
     path: "/read",
@@ -37,4 +44,22 @@ test("route patterns extract decoded dynamic segments", () => {
 test("route patterns reject different static paths and segment counts", () => {
   assert.equal(matchRoutePattern("/edit/:id", "/read/1"), null)
   assert.equal(matchRoutePattern("/edit/:id", "/edit/1/extra"), null)
+})
+
+test("navigate without an initialized router reports false without mutating a browser hash", async () => {
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, "location")
+  const locationObject = { hash: "#/before" }
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: locationObject,
+    writable: true,
+  })
+
+  try {
+    assert.equal(await navigate("/after"), false)
+    assert.equal(locationObject.hash, "#/before")
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, "location", previousLocation)
+    else delete globalThis.location
+  }
 })
