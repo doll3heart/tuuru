@@ -315,10 +315,38 @@ function isTagNameBoundary(character) {
   return isHtmlWhitespace(character) || character === "/" || character === ">"
 }
 
+function isAttributeNameBoundary(character) {
+  return isHtmlWhitespace(character)
+    || character === "="
+    || character === "/"
+    || character === ">"
+}
+
+function htmlWhitespaceSeparatedTokens(value) {
+  const tokens = []
+  let index = 0
+  while (index < value.length) {
+    while (isHtmlWhitespace(value[index])) index += 1
+    const start = index
+    while (index < value.length && !isHtmlWhitespace(value[index])) index += 1
+    if (index > start) tokens.push(value.slice(start, index))
+  }
+  return tokens
+}
+
+function commentEnd(content, start) {
+  const standardStart = content.indexOf("-->", start + 2)
+  const bangStart = content.indexOf("--!>", start + 2)
+  if (standardStart < 0) {
+    return bangStart < 0 ? content.length : bangStart + 4
+  }
+  if (bangStart < 0 || standardStart < bangStart) return standardStart + 3
+  return bangStart + 4
+}
+
 function finishNonElementTag(content, start) {
   if (content.startsWith("<!--", start)) {
-    const commentEnd = content.indexOf("-->", start + 4)
-    return { end: commentEnd < 0 ? content.length : commentEnd + 3, other: true }
+    return { end: commentEnd(content, start), other: true }
   }
   const end = content.indexOf(">", start + 2)
   return { end: end < 0 ? content.length : end + 1, other: true }
@@ -346,7 +374,7 @@ function readHtmlTag(content, start) {
       quote = character
     } else if (character === ">") {
       let beforeClose = index - 1
-      while (/\s/.test(content[beforeClose] ?? "")) beforeClose -= 1
+      while (isHtmlWhitespace(content[beforeClose])) beforeClose -= 1
       const tag = content.slice(start, index + 1)
       return {
         start,
@@ -414,7 +442,7 @@ function parseAttributes(reference) {
   let index = reference.nameEnd
   const contentEnd = tag.length - 1
   while (index < contentEnd) {
-    while (/\s/.test(tag[index] ?? "")) index += 1
+    while (isHtmlWhitespace(tag[index])) index += 1
     if (tag[index] === "/") {
       if (tag[index + 1] === ">") break
       index += 1
@@ -422,17 +450,17 @@ function parseAttributes(reference) {
     }
     if (tag[index] === ">" || index >= contentEnd) break
     const start = index
-    while (index < contentEnd && !/[\s=/>]/.test(tag[index])) index += 1
+    while (index < contentEnd && !isAttributeNameBoundary(tag[index])) index += 1
     if (index === start) {
       index += 1
       continue
     }
     const name = tag.slice(start, index).toLowerCase()
-    while (/\s/.test(tag[index] ?? "")) index += 1
+    while (isHtmlWhitespace(tag[index])) index += 1
     let value = ""
     if (tag[index] === "=") {
       index += 1
-      while (/\s/.test(tag[index] ?? "")) index += 1
+      while (isHtmlWhitespace(tag[index])) index += 1
       const quote = tag[index] === '"' || tag[index] === "'" ? tag[index] : null
       if (quote !== null) {
         index += 1
@@ -442,7 +470,9 @@ function parseAttributes(reference) {
         if (tag[index] === quote) index += 1
       } else {
         const valueStart = index
-        while (index < contentEnd && !/[\s>]/.test(tag[index])) index += 1
+        while (index < contentEnd && !isHtmlWhitespace(tag[index]) && tag[index] !== ">") {
+          index += 1
+        }
         value = tag.slice(valueStart, index)
       }
     }
@@ -495,7 +525,9 @@ function cardReferences(content, moduleId) {
     const cardId = serializedCardId === null
       ? null
       : decodedHtmlAttributeValue(serializedCardId)
-    if (classes?.split(/\s+/).includes("pm-inline-card") && cardId === moduleId) {
+    if (classes !== null
+      && htmlWhitespaceSeparatedTokens(classes).includes("pm-inline-card")
+      && cardId === moduleId) {
       references.push({ ...reference, attributes })
     }
   }
@@ -515,9 +547,9 @@ function normalizeCardType(content, reference, type) {
   } else {
     let insertion = reference.tag.length - 1
     let beforeClose = insertion - 1
-    while (/\s/.test(reference.tag[beforeClose] ?? "")) beforeClose -= 1
+    while (isHtmlWhitespace(reference.tag[beforeClose])) beforeClose -= 1
     if (reference.tag[beforeClose] === "/") insertion = beforeClose
-    const spacing = /\s$/.test(reference.tag.slice(0, insertion)) ? "" : " "
+    const spacing = isHtmlWhitespace(reference.tag[insertion - 1]) ? "" : " "
     tag = `${reference.tag.slice(0, insertion)}${spacing}${replacement}${reference.tag.slice(insertion)}`
   }
   return `${content.slice(0, reference.start)}${tag}${content.slice(reference.end)}`
