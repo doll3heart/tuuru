@@ -164,12 +164,12 @@ test("public methods select the required runtime boundary, stable key, and retur
     adapter.addPlaceholders([{ id: "placeholder/2", key: "hero" }]),
     adapter.deletePlaceholder("placeholder/1"),
     adapter.savePhoneModuleCard({
-      moduleId: "module/1",
+      moduleId: "module_1",
       nodeId: "node/1",
       type: "memo",
       data: { memos: [] },
     }),
-    adapter.deletePhoneModuleCard({ moduleId: "module/1", nodeId: "node/1" }),
+    adapter.deletePhoneModuleCard({ moduleId: "module_1", nodeId: "node/1" }),
   ]
 
   assert.deepEqual(staged, harness.stageResults)
@@ -192,8 +192,8 @@ test("public methods select the required runtime boundary, stable key, and retur
     "scene:scene%2F1:delete",
     "placeholder:placeholder%2F2:add",
     "placeholder:placeholder%2F1:delete",
-    "phone-module:module%2F1:save",
-    "phone-module:module%2F1:delete",
+    "phone-module:module_1:save",
+    "phone-module:module_1:delete",
   ])
   for (const input of [...harness.stageInputs, ...harness.commitInputs]) {
     assert.equal(Object.hasOwn(input, "correctsOperationId"), false)
@@ -603,6 +603,69 @@ test("strict top-level mutation inputs reject custom prototypes and inherited fi
   }
 })
 
+test("unsafe explicit and generated phone module IDs fail before runtime admission", () => {
+  const explicitUnsafeIds = [
+    "module/1",
+    "module&a",
+    `module"quote`,
+    "module:a",
+    "module&colon;a",
+    "module space",
+  ]
+  for (const moduleId of explicitUnsafeIds) {
+    for (const method of ["save", "delete"]) {
+      const harness = createHarness()
+      const action = method === "save"
+        ? () => harness.adapter.savePhoneModuleCard({
+            moduleId,
+            nodeId: "node/arbitrary",
+            type: "memo",
+            data: {},
+          })
+        : () => harness.adapter.deletePhoneModuleCard({
+            moduleId,
+            nodeId: "node/arbitrary",
+          })
+      assertInvalid(action, "invalid-phone-module-id", { entity: "phone-module" })
+      assert.equal(harness.commitInputs.length, 0, `${method}: ${moduleId}`)
+      assert.deepEqual(harness.allocatedKinds, [], `${method}: ${moduleId}`)
+    }
+  }
+
+  const emptyDeleteHarness = createHarness()
+  assertInvalid(
+    () => emptyDeleteHarness.adapter.deletePhoneModuleCard({
+      moduleId: "",
+      nodeId: "node/arbitrary",
+    }),
+    "invalid-phone-module-id",
+    { entity: "phone-module" },
+  )
+  assert.equal(emptyDeleteHarness.commitInputs.length, 0)
+
+  const recording = createRecordingRuntime()
+  let allocations = 0
+  const adapter = createArticleSaveAdapter({
+    runtime: recording.runtime,
+    createId(kind) {
+      allocations += 1
+      assert.equal(kind, "phone-module")
+      return "module&colon;a"
+    },
+  })
+  assertInvalid(
+    () => adapter.savePhoneModuleCard({
+      nodeId: "node/arbitrary",
+      type: "memo",
+      data: {},
+    }),
+    "invalid-phone-module-id",
+    { entity: "phone-module" },
+  )
+  assert.equal(allocations, 1)
+  assert.equal(recording.commitInputs.length, 0)
+})
+
 test("add and delete node are single atomic transforms with start and choice repair", () => {
   const harness = createHarness()
   harness.adapter.addNode({ afterId: "node-a", nodeId: "node-new" })
@@ -996,6 +1059,73 @@ test("phone module scanning ignores pseudo cards inside raw-text and RCDATA bodi
   assert.equal(deleted.nodes[0].content, `${rawBodies}<p>suffix</p>`)
 })
 
+test("raw-text scanning preserves source indices around U+0130 case expansion", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
+  const rawBodies = [
+    `\u0130<script>const template = '${pseudoCard}'</script>`,
+    `<script>\u0130const template = '${pseudoCard}'</script>`,
+  ]
+
+  for (const rawBody of rawBodies) {
+    const content = `${rawBody}${realCard}<p>suffix</p>`
+    const saveHarness = createHarness()
+    saveHarness.adapter.savePhoneModuleCard({
+      moduleId: "module-a",
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    const saved = applyEnvelope(saveHarness.commitInputs[0], articleWork({
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.equal(
+      saved.nodes[0].content,
+      `${rawBody}${realCard.replace('data-pm-type="old"', 'data-pm-type="memo"')}<p>suffix</p>`,
+    )
+
+    const deleteHarness = createHarness()
+    deleteHarness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+    const deleted = applyEnvelope(deleteHarness.commitInputs[0], articleWork({
+      phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [])
+    assert.equal(deleted.nodes[0].content, `${rawBody}<p>suffix</p>`)
+  }
+})
+
+test("an unterminated comment hides pseudo cards through end of content", () => {
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const unterminatedComment = `<!-- open comment ${pseudoCard}`
+  const content = `${realCard}${unterminatedComment}`
+
+  const saveHarness = createHarness()
+  saveHarness.adapter.savePhoneModuleCard({
+    moduleId: "module-a",
+    nodeId: "node-a",
+    type: "memo",
+    data: {},
+  })
+  const saved = applyEnvelope(saveHarness.commitInputs[0], articleWork({
+    nodes: [{ ...articleWork().nodes[0], content }],
+  }))
+  assert.equal(
+    saved.nodes[0].content,
+    `${realCard.replace('data-pm-type="old"', 'data-pm-type="memo"')}${unterminatedComment}`,
+  )
+
+  const deleteHarness = createHarness()
+  deleteHarness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+  const deleted = applyEnvelope(deleteHarness.commitInputs[0], articleWork({
+    phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+    nodes: [{ ...articleWork().nodes[0], content }],
+  }))
+  assert.deepEqual(deleted.phoneModules, [])
+  assert.equal(deleted.nodes[0].content, unterminatedComment)
+})
+
 test("raw-text and RCDATA card elements use their real closing tag", () => {
   for (const tagName of ["script", "style", "textarea", "title"]) {
     const harness = createHarness()
@@ -1009,16 +1139,12 @@ test("raw-text and RCDATA card elements use their real closing tag", () => {
   }
 })
 
-test("phone card matching decodes named, decimal, and hexadecimal character references", () => {
+test("phone card matching decodes safe named, decimal, and hexadecimal character references", () => {
   const cases = [
-    { moduleId: "module&a", encodedId: "module&amp;a", encodedClass: "pm-inline-card" },
     { moduleId: "module-a", encodedId: "module&#45;a", encodedClass: "pm&#45;inline&#x2d;card" },
     { moduleId: "module-a", encodedId: "module&#x2d;a", encodedClass: "pm-inline-card" },
-    {
-      moduleId: `module&"'<>`,
-      encodedId: "module&amp;&quot;&apos;&lt;&gt;",
-      encodedClass: "pm-inline-card",
-    },
+    { moduleId: "module_a", encodedId: "module&lowbar;a", encodedClass: "pm-inline-card" },
+    { moduleId: "module_a", encodedId: "module&UnderBar;a", encodedClass: "pm-inline-card" },
   ]
 
   for (const { moduleId, encodedId, encodedClass } of cases) {
@@ -1045,6 +1171,40 @@ test("phone card matching decodes named, decimal, and hexadecimal character refe
       phoneModules: [{ id: moduleId, type: "memo", nodeId: "node-a", data: {} }],
       nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
     }))
+    assert.equal(deleted.nodes[0].content, "<p>suffix</p>", encodedId)
+  }
+})
+
+test("phone card matching decodes semicolonless decimal and hexadecimal references", () => {
+  const cases = [
+    { moduleId: "module-a", encodedId: "module&#45a", encodedClass: "pm&#45inline-card" },
+    { moduleId: "module-_g", encodedId: "module&#x2D_g", encodedClass: "pm-inline-card" },
+  ]
+  for (const { moduleId, encodedId, encodedClass } of cases) {
+    const card = `<div class="${encodedClass}" data-pm-id="${encodedId}" data-pm-type="old"></div>`
+    const saveHarness = createHarness()
+    saveHarness.adapter.savePhoneModuleCard({
+      moduleId,
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    const saved = applyEnvelope(saveHarness.commitInputs[0], articleWork({
+      nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
+    }))
+    assert.equal(
+      saved.nodes[0].content,
+      `${card.replace('data-pm-type="old"', 'data-pm-type="memo"')}<p>suffix</p>`,
+      encodedId,
+    )
+
+    const deleteHarness = createHarness()
+    deleteHarness.adapter.deletePhoneModuleCard({ moduleId, nodeId: "node-a" })
+    const deleted = applyEnvelope(deleteHarness.commitInputs[0], articleWork({
+      phoneModules: [{ id: moduleId, type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [])
     assert.equal(deleted.nodes[0].content, "<p>suffix</p>", encodedId)
   }
 })

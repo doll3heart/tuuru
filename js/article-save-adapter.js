@@ -310,10 +310,10 @@ function isTagNameCharacter(character) {
 function finishNonElementTag(content, start) {
   if (content.startsWith("<!--", start)) {
     const commentEnd = content.indexOf("-->", start + 4)
-    return commentEnd < 0 ? null : { end: commentEnd + 3, other: true }
+    return { end: commentEnd < 0 ? content.length : commentEnd + 3, other: true }
   }
   const end = content.indexOf(">", start + 2)
-  return end < 0 ? null : { end: end + 1, other: true }
+  return { end: end < 0 ? content.length : end + 1, other: true }
 }
 
 function readHtmlTag(content, start) {
@@ -358,25 +358,20 @@ function readHtmlTag(content, start) {
 
 const RAW_TEXT_HTML_ELEMENTS = new Set(["script", "style", "textarea", "title"])
 
-function rawTextClosingTag(content, lowerContent, start, name) {
-  const needle = `</${name}`
-  let next = lowerContent.indexOf(needle, start)
+function rawTextClosingTag(content, start, name) {
+  let next = content.indexOf("<", start)
   while (next >= 0) {
-    const boundary = content[next + needle.length]
-    if (boundary === undefined || /[\s/>]/.test(boundary)) {
-      const tag = readHtmlTag(content, next)
-      if (tag !== null && !tag.other && tag.closing && tag.name.toLowerCase() === name) {
-        return tag
-      }
+    const tag = readHtmlTag(content, next)
+    if (tag !== null && !tag.other && tag.closing && tag.name.toLowerCase() === name) {
+      return tag
     }
-    next = lowerContent.indexOf(needle, next + needle.length)
+    next = content.indexOf("<", next + 1)
   }
   return null
 }
 
 function scanHtmlTags(content, start = 0) {
   const tags = []
-  const lowerContent = content.toLowerCase()
   let cursor = 0
   while (cursor < content.length) {
     const next = content.indexOf("<", cursor)
@@ -391,7 +386,7 @@ function scanHtmlTags(content, start = 0) {
     if (tag.start >= start) tags.push(tag)
     const name = tag.name.toLowerCase()
     if (!tag.closing && RAW_TEXT_HTML_ELEMENTS.has(name)) {
-      const closingTag = rawTextClosingTag(content, lowerContent, tag.end, name)
+      const closingTag = rawTextClosingTag(content, tag.end, name)
       if (closingTag === null) break
       if (closingTag.start >= start) tags.push(closingTag)
       cursor = closingTag.end
@@ -449,11 +444,13 @@ const HTML_ATTRIBUTE_NAMED_REFERENCES = Object.freeze({
   apos: "'",
   lt: "<",
   gt: ">",
+  lowbar: "_",
+  UnderBar: "_",
 })
 
 function decodedHtmlAttributeValue(value) {
   return value.replace(
-    /&(?:(amp|quot|apos|lt|gt)|#([0-9]+)|#[xX]([0-9A-Fa-f]+));/g,
+    /&(?:(amp|quot|apos|lt|gt|lowbar|UnderBar);|#([0-9]+);?|#[xX]([0-9A-Fa-f]+);?)/g,
     (reference, named, decimal, hexadecimal) => {
       if (named !== undefined) return HTML_ATTRIBUTE_NAMED_REFERENCES[named]
       const codePoint = Number.parseInt(decimal ?? hexadecimal, decimal === undefined ? 16 : 10)
@@ -674,6 +671,23 @@ function explicitIdentifier(value, entity) {
     throw invalid(`invalid-${entity}-id`, { entity, id: value })
   }
   return value
+}
+
+const PHONE_MODULE_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+
+function phoneModuleIdentifier(value, createId) {
+  let prepared = value
+  if ((prepared === undefined || prepared === null || prepared === "")
+    && createId !== undefined) {
+    prepared = createId("phone-module")
+  }
+  if (typeof prepared !== "string" || !PHONE_MODULE_ID_PATTERN.test(prepared)) {
+    throw invalid("invalid-phone-module-id", {
+      entity: "phone-module",
+      id: prepared,
+    })
+  }
+  return prepared
 }
 
 function encoded(value) {
@@ -922,7 +936,7 @@ export function createArticleSaveAdapter({ runtime, createId }) {
       const generatedModuleId = preparedInput.moduleId === undefined
         || preparedInput.moduleId === null
         || preparedInput.moduleId === ""
-      const moduleId = preparedIdentifier(preparedInput.moduleId, "phone-module", createId)
+      const moduleId = phoneModuleIdentifier(preparedInput.moduleId, createId)
       const nodeId = explicitIdentifier(preparedInput.nodeId, "node")
       const type = explicitIdentifier(preparedInput.type, "phone-module-type")
       const data = cloneJson(preparedInput.data, "invalid-phone-module")
@@ -941,7 +955,7 @@ export function createArticleSaveAdapter({ runtime, createId }) {
         "invalid-phone-module",
         "phone-module",
       )
-      const moduleId = explicitIdentifier(preparedInput.moduleId, "phone-module")
+      const moduleId = phoneModuleIdentifier(preparedInput.moduleId)
       const nodeId = explicitIdentifier(preparedInput.nodeId, "node")
       const contentKey = `node:${encoded(nodeId)}:content`
       return commit(
