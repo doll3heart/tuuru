@@ -1095,6 +1095,83 @@ test("raw-text scanning preserves source indices around U+0130 case expansion", 
   }
 })
 
+test("phone module save ignores equals-sign raw-text end-tag lookalikes", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
+  for (const tagName of ["script", "style", "textarea", "title"]) {
+    const rawBody = `<${tagName}>before</${tagName}=x>${pseudoCard}</${tagName}>`
+    const content = `${rawBody}${realCard}<p>suffix</p>`
+    const harness = createHarness()
+    harness.adapter.savePhoneModuleCard({
+      moduleId: "module-a",
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    const saved = applyEnvelope(harness.commitInputs[0], articleWork({
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.equal(
+      saved.nodes[0].content,
+      `${rawBody}${realCard.replace('data-pm-type="old"', 'data-pm-type="memo"')}<p>suffix</p>`,
+      tagName,
+    )
+  }
+})
+
+test("phone module delete preserves cards after equals-sign raw-text end-tag lookalikes", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  for (const tagName of ["script", "style", "textarea", "title"]) {
+    const rawBody = `<${tagName}>before</${tagName}=x>${pseudoCard}</${tagName}>`
+    const content = `${rawBody}${realCard}<p>suffix</p>`
+    const harness = createHarness()
+    harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+    const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+      phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [], tagName)
+    assert.equal(deleted.nodes[0].content, `${rawBody}<p>suffix</p>`, tagName)
+  }
+})
+
+test("phone module save ignores whitespace-after-slash raw-text end-tag lookalikes", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
+  const rawBody = `<script>before</ script>${pseudoCard}</script>`
+  const content = `${rawBody}${realCard}<p>suffix</p>`
+  const harness = createHarness()
+  harness.adapter.savePhoneModuleCard({
+    moduleId: "module-a",
+    nodeId: "node-a",
+    type: "memo",
+    data: {},
+  })
+  const saved = applyEnvelope(harness.commitInputs[0], articleWork({
+    nodes: [{ ...articleWork().nodes[0], content }],
+  }))
+  assert.equal(
+    saved.nodes[0].content,
+    `${rawBody}${realCard.replace('data-pm-type="old"', 'data-pm-type="memo"')}<p>suffix</p>`,
+  )
+})
+
+test("phone module delete preserves cards after whitespace-after-slash raw-text lookalikes", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const rawBody = `<script>before</ script>${pseudoCard}</script>`
+  const content = `${rawBody}${realCard}<p>suffix</p>`
+  const harness = createHarness()
+  harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+  const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+    phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+    nodes: [{ ...articleWork().nodes[0], content }],
+  }))
+  assert.deepEqual(deleted.phoneModules, [])
+  assert.equal(deleted.nodes[0].content, `${rawBody}<p>suffix</p>`)
+})
+
 test("an unterminated comment hides pseudo cards through end of content", () => {
   const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
   const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
@@ -1209,6 +1286,82 @@ test("phone card matching decodes semicolonless decimal and hexadecimal referenc
   }
 })
 
+test("phone module save tokenizes Tab and NewLine class references", () => {
+  for (const separator of ["Tab", "NewLine"]) {
+    const card = `<div class="other&${separator};pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>`
+    const harness = createHarness()
+    harness.adapter.savePhoneModuleCard({
+      moduleId: "module-a",
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    const saved = applyEnvelope(harness.commitInputs[0], articleWork({
+      nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
+    }))
+    assert.equal(
+      saved.nodes[0].content,
+      `${card.replace('data-pm-type="old"', 'data-pm-type="memo"')}<p>suffix</p>`,
+      separator,
+    )
+  }
+})
+
+test("phone module delete tokenizes Tab and NewLine class references", () => {
+  for (const separator of ["Tab", "NewLine"]) {
+    const card = `<div class="other&${separator};pm-inline-card" data-pm-id="module-a"></div>`
+    const harness = createHarness()
+    harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+    const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+      phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [], separator)
+    assert.equal(deleted.nodes[0].content, "<p>suffix</p>", separator)
+  }
+})
+
+test("phone module save parses attributes after a non-terminating slash", () => {
+  const cards = [
+    '<div/ class=pm-inline-card data-pm-id=module-a data-pm-type=old></div>',
+    '<div / class=pm-inline-card data-pm-id=module-a data-pm-type=old></div>',
+  ]
+  for (const card of cards) {
+    const harness = createHarness()
+    harness.adapter.savePhoneModuleCard({
+      moduleId: "module-a",
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    const saved = applyEnvelope(harness.commitInputs[0], articleWork({
+      nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
+    }))
+    assert.equal(
+      saved.nodes[0].content,
+      `${card.replace("data-pm-type=old", 'data-pm-type="memo"')}<p>suffix</p>`,
+      card,
+    )
+  }
+})
+
+test("phone module delete parses attributes after a non-terminating slash", () => {
+  const cards = [
+    '<div/ class=pm-inline-card data-pm-id=module-a></div>',
+    '<div / class=pm-inline-card data-pm-id=module-a></div>',
+  ]
+  for (const card of cards) {
+    const harness = createHarness()
+    harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+    const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+      phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content: `${card}<p>suffix</p>` }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [], card)
+    assert.equal(deleted.nodes[0].content, "<p>suffix</p>", card)
+  }
+})
+
 test("phone module save rejects a generated ID collision", () => {
   const generatedHarness = createHarness()
   generatedHarness.adapter.savePhoneModuleCard({
@@ -1291,6 +1444,30 @@ test("phone module delete preserves suffixes around void and nested matching ref
     }],
   }))
   assert.equal(nestedResult.nodes[0].content, "<p>before</p><p>after suffix</p>")
+})
+
+test("phone module delete treats whitespace after a tag opener as text", () => {
+  const harness = createHarness()
+  harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+  const content = '< div class="pm-inline-card" data-pm-id="module-a"></div><p>suffix</p>'
+  const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+    phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+    nodes: [{ ...articleWork().nodes[0], content }],
+  }))
+  assert.deepEqual(deleted.phoneModules, [])
+  assert.equal(deleted.nodes[0].content, content)
+})
+
+test("phone module delete recognizes equals-containing element names as real cards", () => {
+  const harness = createHarness()
+  harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+  const content = '<div=bogus class="pm-inline-card" data-pm-id="module-a"></div=bogus><p>suffix</p>'
+  const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+    phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+    nodes: [{ ...articleWork().nodes[0], content }],
+  }))
+  assert.deepEqual(deleted.phoneModules, [])
+  assert.equal(deleted.nodes[0].content, "<p>suffix</p>")
 })
 
 test("a slash on a non-void card start tag does not make it self-closing", () => {

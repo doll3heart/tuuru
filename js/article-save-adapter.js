@@ -303,8 +303,16 @@ function applyDeletePlaceholder(work, payload) {
   return { ...work, placeholders: placeholders.filter(placeholder => placeholder !== target) }
 }
 
-function isTagNameCharacter(character) {
-  return character !== undefined && /[A-Za-z0-9:_-]/.test(character)
+function isHtmlWhitespace(character) {
+  return character === " "
+    || character === "\t"
+    || character === "\n"
+    || character === "\f"
+    || character === "\r"
+}
+
+function isTagNameBoundary(character) {
+  return isHtmlWhitespace(character) || character === "/" || character === ">"
 }
 
 function finishNonElementTag(content, start) {
@@ -324,10 +332,9 @@ function readHtmlTag(content, start) {
   }
   const closing = content[index] === "/"
   if (closing) index += 1
-  while (/\s/.test(content[index] ?? "")) index += 1
   const nameStart = index
   if (!/[A-Za-z]/.test(content[index] ?? "")) return null
-  while (isTagNameCharacter(content[index])) index += 1
+  while (index < content.length && !isTagNameBoundary(content[index])) index += 1
   const name = content.slice(nameStart, index)
   const nameEnd = index - start
   let quote = null
@@ -362,7 +369,12 @@ function rawTextClosingTag(content, start, name) {
   let next = content.indexOf("<", start)
   while (next >= 0) {
     const tag = readHtmlTag(content, next)
-    if (tag !== null && !tag.other && tag.closing && tag.name.toLowerCase() === name) {
+    const boundary = tag === null || tag.other
+      ? null
+      : content[tag.start + tag.nameEnd]
+    if (tag !== null && !tag.other && tag.closing
+      && tag.name.toLowerCase() === name
+      && isTagNameBoundary(boundary)) {
       return tag
     }
     next = content.indexOf("<", next + 1)
@@ -403,7 +415,12 @@ function parseAttributes(reference) {
   const contentEnd = tag.length - 1
   while (index < contentEnd) {
     while (/\s/.test(tag[index] ?? "")) index += 1
-    if (tag[index] === "/" || tag[index] === ">" || index >= contentEnd) break
+    if (tag[index] === "/") {
+      if (tag[index + 1] === ">") break
+      index += 1
+      continue
+    }
+    if (tag[index] === ">" || index >= contentEnd) break
     const start = index
     while (index < contentEnd && !/[\s=/>]/.test(tag[index])) index += 1
     if (index === start) {
@@ -446,11 +463,13 @@ const HTML_ATTRIBUTE_NAMED_REFERENCES = Object.freeze({
   gt: ">",
   lowbar: "_",
   UnderBar: "_",
+  Tab: "\t",
+  NewLine: "\n",
 })
 
 function decodedHtmlAttributeValue(value) {
   return value.replace(
-    /&(?:(amp|quot|apos|lt|gt|lowbar|UnderBar);|#([0-9]+);?|#[xX]([0-9A-Fa-f]+);?)/g,
+    /&(?:(amp|quot|apos|lt|gt|lowbar|UnderBar|Tab|NewLine);|#([0-9]+);?|#[xX]([0-9A-Fa-f]+);?)/g,
     (reference, named, decimal, hexadecimal) => {
       if (named !== undefined) return HTML_ATTRIBUTE_NAMED_REFERENCES[named]
       const codePoint = Number.parseInt(decimal ?? hexadecimal, decimal === undefined ? 16 : 10)
