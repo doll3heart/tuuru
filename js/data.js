@@ -90,7 +90,7 @@ export const DEFAULT_PHONE_SKIN = {
   topBgImage: null,
 }
 
-function makePhoneApps() {
+function makePhoneApps(phoneAppIds) {
   var grid = [
     [0,0],[1,0],[2,0],[3,0],
     [0,1],[1,1],[2,1],[3,1],
@@ -102,7 +102,7 @@ function makePhoneApps() {
   return keys.map(function(k, i) {
     var def = PHONE_APP_DEFS[k]
     var pos = grid[i] || [i % 4, Math.floor(i / 4)]
-    return { id: uid(), type: k, name: def.label, icon: def.icon, color: DEFAULT_PHONE_APP_COLORS[k] || def.color, desktopX: pos[0], desktopY: pos[1], enabled: true }
+    return { id: phoneAppIds[i], type: k, name: def.label, icon: def.icon, color: DEFAULT_PHONE_APP_COLORS[k] || def.color, desktopX: pos[0], desktopY: pos[1], enabled: true }
   })
 }
 const AC=["#6366f1","#8b5cf6","#a855f7","#d946ef","#ec4899","#f43f5e","#ef4444","#f97316","#f59e0b","#84cc16","#22c55e","#10b981","#14b8a6","#06b6d4","#0ea5e9","#3b82f6","#64748b","#78716c"]
@@ -141,34 +141,43 @@ export function getWorks(){return rd().works}
 export function getWork(id){return rd().works.find(w=>w.id===id)}
 export function getWorksByType(t){return rd().works.filter(w=>w.type===t)}
 
-export function createWork(data){
-  var db=rd()
+export function createWorkRecord(data, {
+  workId,
+  firstChapterId,
+  firstNodeId,
+  firstSceneId,
+  colorSeedId,
+  phoneAppIds,
+  now,
+  updatedAt = now,
+}) {
+  var rawType=data.type
   var w={
-    id:uid(),
+    id:workId,
     schemaVersion:CURRENT_WORK_SCHEMA_VERSION,
     type:data.type||WORK_TYPE.ARTICLE,
     title:data.title||"无标题作品",
     desc:data.desc||"",
-    coverColor:data.coverColor||avatarColor(uid()),
+    coverColor:data.coverColor||avatarColor(colorSeedId),
     author:data.author||"",
     authorNote:data.authorNote||"",
-    createdAt:Date.now(),
-    updatedAt:Date.now(),
+    createdAt:now,
+    updatedAt:updatedAt,
     password:data.password||"",
     locked:data.locked||false,
-    nodes:data.type===WORK_TYPE.ARTICLE?[{id:"start",title:"开始",content:"",choices:[],scene:"",chapterId:""}]:[],
-    chapters:data.type===WORK_TYPE.ARTICLE?[{id:uid(),name:"第一章"}]:[],
+    nodes:rawType===WORK_TYPE.ARTICLE?[{id:firstNodeId,title:"开始",content:"",choices:[],scene:"",chapterId:""}]:[],
+    chapters:rawType===WORK_TYPE.ARTICLE?[{id:firstChapterId,name:"第一章"}]:[],
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
     placeholderMode:data.placeholderMode||PLACEHOLDER_MODE.RANDOM_EACH,
-   phoneModules:data.type===WORK_TYPE.ARTICLE?[]:undefined,
-   phoneData:data.type===WORK_TYPE.PHONE?{
+   phoneModules:rawType===WORK_TYPE.ARTICLE?[]:undefined,
+   phoneData:rawType===WORK_TYPE.PHONE?{
       contacts:[],
       chats:[],
       moments:[],
       forumPosts:[],
       forumNpcs:[],
-      apps:makePhoneApps(),
+      apps:makePhoneApps(phoneAppIds),
       skin:JSON.parse(JSON.stringify(DEFAULT_PHONE_SKIN)),
       memos:[],
       photos:[],
@@ -176,17 +185,52 @@ export function createWork(data){
       browserHistory:[],
       shoppingItems:[]
     }:undefined,
-    startNode:"start"
+    startNode:firstNodeId
   }
   if(w.type===WORK_TYPE.ARTICLE&&(!w.scenes||!w.scenes.length)){
-    var $s=uid()
+    var $s=firstSceneId
     w.scenes=[{id:$s,name:"第一章"}]
     if(w.nodes.length) w.nodes[0].scene=$s
   }
   if(typeof w.chapters==="undefined"||!w.chapters.length){
-    w.chapters=[{id:uid(),name:"第一章"}]
+    w.chapters=[{id:firstChapterId,name:"第一章"}]
     w.nodes.forEach(function(n){if(!n.chapterId)n.chapterId=w.chapters[0].id})
   }
+  return w
+}
+
+export function createWork(data){
+  var db=rd()
+  var workId=uid()
+  var colorSeedId=data.coverColor?"":uid()
+  var now=Date.now()
+  var updatedAt=Date.now()
+  var firstNodeId="start"
+  var firstChapterId
+  var firstSceneId
+  var phoneAppIds=[]
+  if(data.type===WORK_TYPE.ARTICLE){
+    firstChapterId=uid()
+    if(!data.scenes||!data.scenes.length) firstSceneId=uid()
+  }else if(data.type===WORK_TYPE.PHONE){
+    phoneAppIds=Object.keys(PHONE_APP_DEFS)
+      .filter(function(k){return !PHONE_READER_OWNED_CONTROL_TYPES.includes(k)})
+      .map(function(){return uid()})
+    firstChapterId=uid()
+  }else{
+    if(!data.type) firstSceneId=uid()
+    firstChapterId=uid()
+  }
+  var w=createWorkRecord(data,{
+    workId:workId,
+    firstChapterId:firstChapterId,
+    firstNodeId:firstNodeId,
+    firstSceneId:firstSceneId,
+    colorSeedId:colorSeedId,
+    phoneAppIds:phoneAppIds,
+    now:now,
+    updatedAt:updatedAt
+  })
   db.works.push(w)
   wr(db)
   return w
