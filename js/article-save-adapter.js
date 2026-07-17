@@ -55,6 +55,12 @@ function cloneJson(value, reason = "invalid-payload", active = new Set()) {
   }
 }
 
+function prepareMutationInput(input, reason, entity) {
+  const prepared = cloneJson(input, reason)
+  if (!isRecord(prepared)) throw invalid(reason, { entity })
+  return prepared
+}
+
 function candidateWork(work) {
   if (!isRecord(work)) throw invalid("invalid-work", { entity: "work" })
   return work
@@ -350,9 +356,28 @@ function readHtmlTag(content, start) {
   return null
 }
 
+const RAW_TEXT_HTML_ELEMENTS = new Set(["script", "style", "textarea", "title"])
+
+function rawTextClosingTag(content, lowerContent, start, name) {
+  const needle = `</${name}`
+  let next = lowerContent.indexOf(needle, start)
+  while (next >= 0) {
+    const boundary = content[next + needle.length]
+    if (boundary === undefined || /[\s/>]/.test(boundary)) {
+      const tag = readHtmlTag(content, next)
+      if (tag !== null && !tag.other && tag.closing && tag.name.toLowerCase() === name) {
+        return tag
+      }
+    }
+    next = lowerContent.indexOf(needle, next + needle.length)
+  }
+  return null
+}
+
 function scanHtmlTags(content, start = 0) {
   const tags = []
-  let cursor = start
+  const lowerContent = content.toLowerCase()
+  let cursor = 0
   while (cursor < content.length) {
     const next = content.indexOf("<", cursor)
     if (next < 0) break
@@ -362,7 +387,15 @@ function scanHtmlTags(content, start = 0) {
       continue
     }
     cursor = tag.end
-    if (!tag.other) tags.push(tag)
+    if (tag.other) continue
+    if (tag.start >= start) tags.push(tag)
+    const name = tag.name.toLowerCase()
+    if (!tag.closing && RAW_TEXT_HTML_ELEMENTS.has(name)) {
+      const closingTag = rawTextClosingTag(content, lowerContent, tag.end, name)
+      if (closingTag === null) break
+      if (closingTag.start >= start) tags.push(closingTag)
+      cursor = closingTag.end
+    }
   }
   return tags
 }
@@ -410,13 +443,42 @@ function attribute(attributes, name) {
   return attributes.find(candidate => candidate.name === name) ?? null
 }
 
+const HTML_ATTRIBUTE_NAMED_REFERENCES = Object.freeze({
+  amp: "&",
+  quot: '"',
+  apos: "'",
+  lt: "<",
+  gt: ">",
+})
+
+function decodedHtmlAttributeValue(value) {
+  return value.replace(
+    /&(?:(amp|quot|apos|lt|gt)|#([0-9]+)|#[xX]([0-9A-Fa-f]+));/g,
+    (reference, named, decimal, hexadecimal) => {
+      if (named !== undefined) return HTML_ATTRIBUTE_NAMED_REFERENCES[named]
+      const codePoint = Number.parseInt(decimal ?? hexadecimal, decimal === undefined ? 16 : 10)
+      if (codePoint === 0 || codePoint > 0x10FFFF
+        || codePoint >= 0xD800 && codePoint <= 0xDFFF) {
+        return "\uFFFD"
+      }
+      return String.fromCodePoint(codePoint)
+    },
+  )
+}
+
 function cardReferences(content, moduleId) {
   const references = []
   for (const reference of scanHtmlTags(content)) {
     if (reference.closing) continue
     const attributes = parseAttributes(reference)
-    const classes = attribute(attributes, "class")?.value ?? null
-    const cardId = attribute(attributes, "data-pm-id")?.value ?? null
+    const serializedClasses = attribute(attributes, "class")?.value ?? null
+    const serializedCardId = attribute(attributes, "data-pm-id")?.value ?? null
+    const classes = serializedClasses === null
+      ? null
+      : decodedHtmlAttributeValue(serializedClasses)
+    const cardId = serializedCardId === null
+      ? null
+      : decodedHtmlAttributeValue(serializedCardId)
     if (classes?.split(/\s+/).includes("pm-inline-card") && cardId === moduleId) {
       references.push({ ...reference, attributes })
     }
@@ -451,14 +513,14 @@ const VOID_HTML_ELEMENTS = new Set([
 ])
 
 function cardElementRange(content, reference, moduleId) {
-  if (reference.selfClosing || VOID_HTML_ELEMENTS.has(reference.name.toLowerCase())) {
+  if (VOID_HTML_ELEMENTS.has(reference.name.toLowerCase())) {
     return { start: reference.start, end: reference.end }
   }
   let depth = 1
   for (const tag of scanHtmlTags(content, reference.end)) {
     if (tag.name.toLowerCase() !== reference.name.toLowerCase()) continue
     if (tag.closing) depth -= 1
-    else if (!tag.selfClosing && !VOID_HTML_ELEMENTS.has(tag.name.toLowerCase())) depth += 1
+    else if (!VOID_HTML_ELEMENTS.has(tag.name.toLowerCase())) depth += 1
     if (depth === 0) return { start: reference.start, end: tag.end }
   }
   throw invalid("invalid-phone-card-reference", {
@@ -678,11 +740,13 @@ export function createArticleSaveAdapter({ runtime, createId }) {
       )
     },
     addNode(input, options) {
-      if (!isRecord(input)) throw invalid("invalid-node", { entity: "node" })
-      const nodeId = preparedIdentifier(input.nodeId, "node", createId)
+      const preparedInput = prepareMutationInput(input, "invalid-node", "node")
+      const nodeId = preparedIdentifier(preparedInput.nodeId, "node", createId)
       const payload = { nodeId }
-      if (input.afterId !== undefined && input.afterId !== null && input.afterId !== "") {
-        payload.afterId = explicitIdentifier(input.afterId, "node")
+      if (preparedInput.afterId !== undefined
+        && preparedInput.afterId !== null
+        && preparedInput.afterId !== "") {
+        payload.afterId = explicitIdentifier(preparedInput.afterId, "node")
       }
       return commit(`node:${encoded(nodeId)}:add`, payload, applyAddNode, options)
     },
@@ -760,9 +824,9 @@ export function createArticleSaveAdapter({ runtime, createId }) {
       return commit("nodes:reorder", { order: preparedOrder }, applyReorderNodes, options)
     },
     addChapter(input, options) {
-      if (!isRecord(input)) throw invalid("invalid-chapter", { entity: "chapter" })
-      const chapterId = preparedIdentifier(input.chapterId, "chapter", createId)
-      const name = cloneJson(input.name, "invalid-chapter")
+      const preparedInput = prepareMutationInput(input, "invalid-chapter", "chapter")
+      const chapterId = preparedIdentifier(preparedInput.chapterId, "chapter", createId)
+      const name = cloneJson(preparedInput.name, "invalid-chapter")
       return commit(
         `chapter:${encoded(chapterId)}:add`,
         { chapterId, name },
@@ -790,9 +854,9 @@ export function createArticleSaveAdapter({ runtime, createId }) {
       )
     },
     addScene(input, options) {
-      if (!isRecord(input)) throw invalid("invalid-scene", { entity: "scene" })
-      const sceneId = preparedIdentifier(input.sceneId, "scene", createId)
-      const name = cloneJson(input.name, "invalid-scene")
+      const preparedInput = prepareMutationInput(input, "invalid-scene", "scene")
+      const sceneId = preparedIdentifier(preparedInput.sceneId, "scene", createId)
+      const name = cloneJson(preparedInput.name, "invalid-scene")
       return commit(`scene:${encoded(sceneId)}:add`, { sceneId, name }, applyAddScene, options)
     },
     deleteScene(sceneId, options) {
@@ -850,14 +914,18 @@ export function createArticleSaveAdapter({ runtime, createId }) {
       )
     },
     savePhoneModuleCard(input, options) {
-      if (!isRecord(input)) throw invalid("invalid-phone-module", { entity: "phone-module" })
-      const generatedModuleId = input.moduleId === undefined
-        || input.moduleId === null
-        || input.moduleId === ""
-      const moduleId = preparedIdentifier(input.moduleId, "phone-module", createId)
-      const nodeId = explicitIdentifier(input.nodeId, "node")
-      const type = explicitIdentifier(input.type, "phone-module-type")
-      const data = cloneJson(input.data, "invalid-phone-module")
+      const preparedInput = prepareMutationInput(
+        input,
+        "invalid-phone-module",
+        "phone-module",
+      )
+      const generatedModuleId = preparedInput.moduleId === undefined
+        || preparedInput.moduleId === null
+        || preparedInput.moduleId === ""
+      const moduleId = preparedIdentifier(preparedInput.moduleId, "phone-module", createId)
+      const nodeId = explicitIdentifier(preparedInput.nodeId, "node")
+      const type = explicitIdentifier(preparedInput.type, "phone-module-type")
+      const data = cloneJson(preparedInput.data, "invalid-phone-module")
       if (!isRecord(data)) throw invalid("invalid-phone-module", { entity: "phone-module" })
       const contentKey = `node:${encoded(nodeId)}:content`
       return commit(
@@ -868,9 +936,13 @@ export function createArticleSaveAdapter({ runtime, createId }) {
       )
     },
     deletePhoneModuleCard(input, options) {
-      if (!isRecord(input)) throw invalid("invalid-phone-module", { entity: "phone-module" })
-      const moduleId = explicitIdentifier(input.moduleId, "phone-module")
-      const nodeId = explicitIdentifier(input.nodeId, "node")
+      const preparedInput = prepareMutationInput(
+        input,
+        "invalid-phone-module",
+        "phone-module",
+      )
+      const moduleId = explicitIdentifier(preparedInput.moduleId, "phone-module")
+      const nodeId = explicitIdentifier(preparedInput.nodeId, "node")
       const contentKey = `node:${encoded(nodeId)}:content`
       return commit(
         `phone-module:${encoded(moduleId)}:delete`,
