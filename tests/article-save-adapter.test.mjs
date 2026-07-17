@@ -1281,6 +1281,83 @@ test("phone module scanning uses the earliest supported comment closer", () => {
   }
 })
 
+test("phone module save does not overlap malformed comment opener dashes", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="pseudo"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
+  for (const opener of ["<!--!>", "<!---!>"]) {
+    const comment = `${opener}${pseudoCard}-->`
+    const content = `${comment}${realCard}<p>suffix</p>`
+    const harness = createHarness()
+    harness.adapter.savePhoneModuleCard({
+      moduleId: "module-a",
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    const saved = applyEnvelope(harness.commitInputs[0], articleWork({
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.equal(
+      saved.nodes[0].content,
+      `${comment}${realCard.replace('data-pm-type="old"', 'data-pm-type="memo"')}<p>suffix</p>`,
+      opener,
+    )
+  }
+})
+
+test("phone module delete does not overlap malformed comment opener dashes", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  const realCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  for (const opener of ["<!--!>", "<!---!>"]) {
+    const comment = `${opener}${pseudoCard}-->`
+    const content = `${comment}${realCard}<p>suffix</p>`
+    const harness = createHarness()
+    harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+    const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+      phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [], opener)
+    assert.equal(deleted.nodes[0].content, `${comment}<p>suffix</p>`, opener)
+  }
+})
+
+test("phone module save treats malformed comment openers without a closer as EOF", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  for (const opener of ["<!--!>", "<!---!>"]) {
+    const content = `${opener}${pseudoCard}`
+    const harness = createHarness()
+    harness.adapter.savePhoneModuleCard({
+      moduleId: "module-a",
+      nodeId: "node-a",
+      type: "memo",
+      data: {},
+    })
+    assertInvalid(
+      () => applyEnvelope(harness.commitInputs[0], articleWork({
+        nodes: [{ ...articleWork().nodes[0], content }],
+      })),
+      "phone-card-reference-not-found",
+      { entity: "phone-card-reference", id: "module-a" },
+    )
+  }
+})
+
+test("phone module delete preserves malformed comment openers without a closer", () => {
+  const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'
+  for (const opener of ["<!--!>", "<!---!>"]) {
+    const content = `${opener}${pseudoCard}`
+    const harness = createHarness()
+    harness.adapter.deletePhoneModuleCard({ moduleId: "module-a", nodeId: "node-a" })
+    const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+      phoneModules: [{ id: "module-a", type: "memo", nodeId: "node-a", data: {} }],
+      nodes: [{ ...articleWork().nodes[0], content }],
+    }))
+    assert.deepEqual(deleted.phoneModules, [], opener)
+    assert.equal(deleted.nodes[0].content, content, opener)
+  }
+})
+
 test("an unterminated comment hides pseudo cards through end of content", () => {
   const realCard = '<div class="pm-inline-card" data-pm-id="module-a" data-pm-type="old"></div>'
   const pseudoCard = '<div class="pm-inline-card" data-pm-id="module-a"></div>'

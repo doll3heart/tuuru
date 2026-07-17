@@ -335,8 +335,10 @@ function htmlWhitespaceSeparatedTokens(value) {
 }
 
 function commentEnd(content, start) {
-  const standardStart = content.indexOf("-->", start + 2)
-  const bangStart = content.indexOf("--!>", start + 2)
+  if (content.startsWith("<!-->", start)) return start + 5
+  if (content.startsWith("<!--->", start)) return start + 6
+  const standardStart = content.indexOf("-->", start + 4)
+  const bangStart = content.indexOf("--!>", start + 4)
   if (standardStart < 0) {
     return bangStart < 0 ? content.length : bangStart + 4
   }
