@@ -72,7 +72,7 @@ test("author phone removes reader-owned appearance and profile Apps from legacy 
   draft.dispose()
 })
 
-test("reader exposes appearance and profile as reader controls instead of phone Apps", async t => {
+test("reader exposes article, phone appearance, and profile as reader-owned controls", async t => {
   installDom(t, "http://localhost/reader/")
   await import(`../reader/reader.js?reader-owned-controls=${Date.now()}`)
 
@@ -81,12 +81,19 @@ test("reader exposes appearance and profile as reader controls instead of phone 
   assert.equal(document.querySelector('.rd-app-icon[data-app="customize"]'), null)
   assert.equal(document.querySelector('.rd-app-icon[data-app="profile"]'), null)
 
+  const reading = document.querySelector('[data-reader-phone-control="reading"]')
   const appearance = document.querySelector('[data-reader-phone-control="appearance"]')
   const profile = document.querySelector('[data-reader-phone-control="profile"]')
+  assert.ok(reading)
   assert.ok(appearance)
   assert.ok(profile)
+  assert.equal(reading.tagName, "BUTTON")
   assert.equal(appearance.tagName, "BUTTON")
   assert.equal(profile.tagName, "BUTTON")
+
+  reading.click()
+  assert.ok(document.querySelector(".rs-sheet"))
+  document.getElementById("rsClose").click()
 
   appearance.click()
   assert.ok(document.getElementById("cuSave"))

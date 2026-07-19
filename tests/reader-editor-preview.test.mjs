@@ -96,12 +96,9 @@ test("author preview uses the real reader connection flow without author control
   assert.ok(trigger)
   trigger.click()
 
-  const memoIcon = document.querySelector('[data-app-type="memo"]')
-  assert.ok(memoIcon)
-  memoIcon.click()
-
   const gate = document.querySelector(".rd-connection-gate")
   assert.ok(gate)
+  assert.equal(document.querySelector('.phone-app-icon'), null)
   assert.match(gate.textContent, /Bob/)
   assert.match(gate.textContent, /Signal from Bob\. Confirm before connecting\./)
   assert.doesNotMatch(gate.textContent, /Bob private memo/)

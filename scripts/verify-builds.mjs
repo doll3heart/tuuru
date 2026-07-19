@@ -55,14 +55,9 @@ export function createBuildPlan({ repoRoot, tempParent, tempRoot }) {
 
   return [
     {
-      name: "editor",
+      name: "app",
       configFile: path.join(resolvedRepoRoot, "vite.config.ts"),
-      outDir: path.join(safeTempRoot, "editor"),
-    },
-    {
-      name: "reader",
-      configFile: path.join(resolvedRepoRoot, "vite.reader.config.ts"),
-      outDir: path.join(safeTempRoot, "reader"),
+      outDir: path.join(safeTempRoot, "app"),
     },
   ]
 }

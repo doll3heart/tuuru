@@ -1,18 +1,22 @@
 import { defineConfig } from 'vite'
+import { realpathSync } from 'node:fs'
 import path from 'path'
 
+const projectRoot = realpathSync(__dirname)
+
 export default defineConfig({
+  root: projectRoot,
   base: './',
-  cacheDir: path.resolve(__dirname, '.vite/editor'),
+  cacheDir: path.resolve(projectRoot, '.vite/editor'),
   server: {
     port: 8765,
   },
   build: {
-    outDir: 'dist-editor',
+    outDir: path.resolve(projectRoot, 'dist'),
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        reader: path.resolve(__dirname, 'reader/index.html'),
+        main: path.resolve(projectRoot, 'index.html'),
+        reader: path.resolve(projectRoot, 'reader/index.html'),
       },
     },
   },

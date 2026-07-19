@@ -11,6 +11,7 @@ import {
   phoneGridItemStyle,
 } from "../phone-grid.js"
 import { showToast, renderHeader, modal } from "../app.js"
+import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
 
 var _workId = null
 var _dragState = null
@@ -4150,17 +4151,9 @@ function openChatEditor(frame, wid, chatId, pd) {
     } else if (msg.type === 'link') {
       h += '<div class="chat-bubble" style="background:#e8f4e8;border:1px solid #b8d8b8"><div style="font-size:.72rem;font-weight:500">' + esc(msg.linkTitle || '链接') + '</div><div style="font-size:.62rem;color:var(--c-text2)">' + esc(msg.linkUrl || '') + '</div></div>'
     } else if (msg.type === 'redpacket') {
-      h += '<div class="chat-bubble rp-card">'
-      h += '<div class="rp-top"><div class="rp-icon"><svg viewBox="0 0 24 24" width="28" height="28" fill="none"><rect x="1" y="4" width="22" height="17" rx="3" fill="#DC2626" stroke="#DC2626" stroke-width="1"/><circle cx="12" cy="8" r="4" fill="#FCD34D"/><path d="M6 21l6-6 6 6" stroke="#DC2626" stroke-width="2" stroke-linecap="round"/></svg></div>'
-      h += '<div class="rp-amount">' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="rp-label">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div>'
-      h += '<div class="rp-bottom">微信红包</div>'
-      h += '</div>'
+      h += '<div class="chat-bubble chat-payment-card chat-payment-redpacket rp-card"><div class="chat-payment-main rp-top"><div class="chat-payment-type">红包</div><div class="chat-payment-amount rp-amount">&yen;' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note rp-label">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer rp-bottom">微信红包</div></div>'
     } else if (msg.type === 'transfer') {
-      h += '<div class="chat-bubble tf-card">'
-      h += '<div class="tf-row"><div class="tf-left"><div class="tf-type">转账</div><div class="tf-amount">&yen;' + (msg.transferAmount || 0).toFixed(2) + '</div></div>'
-      h += '<div class="tf-arrow"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></div>'
-      h += '<div class="tf-note">' + esc(msg.transferNote || '') + '</div>'
-      h += '</div>'
+      h += '<div class="chat-bubble chat-payment-card chat-payment-transfer tf-card"><div class="chat-payment-main tf-row"><div class="chat-payment-type tf-type">转账</div><div class="chat-payment-amount tf-amount">&yen;' + (msg.transferAmount || 0).toFixed(2) + '</div><div class="chat-payment-note tf-note">' + esc(msg.transferNote || '请确认收款') + '</div></div><div class="chat-payment-footer">转账记录</div></div>'
     } else if (msg.type === 'familycard') {
       h += '<div class="chat-bubble fc-card">'
       h += '<div class="fc-head"><div class="fc-badge">亲属卡</div></div>'
@@ -4838,6 +4831,7 @@ function openSettingsEditor(wid) {
   if (!w || !w.phoneData) return
   var pd = w.phoneData
   if (!pd.readingFlow) pd.readingFlow = { enabled: false, sequence: [] }
+  pd.readingFlow.sequence = expandPhoneReadingFlowSequence(pd, pd.readingFlow.sequence)
   var flow = pd.readingFlow
 
   var frame = document.getElementById('phoneFrame')
@@ -4850,7 +4844,7 @@ function openSettingsEditor(wid) {
     // Build sequence from actual data
     var seq = flow.sequence.length > 0 ? flow.sequence : []
     if (seq.length === 0) {
-      seq = flow.sequence = buildFlowSequence()
+      seq = flow.sequence = buildPhoneReadingFlowSequence(pd)
     }
 
     var typeLabels = { messages: '消息', forum: '论坛', memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物', moments: '动态' }
@@ -4947,7 +4941,7 @@ function openSettingsEditor(wid) {
 
     var rebuildBtn = frame.querySelector('#flowRebuild')
     if (rebuildBtn) rebuildBtn.onclick = function() {
-      flow.sequence = buildFlowSequence()
+      flow.sequence = buildPhoneReadingFlowSequence(pd)
       frame.innerHTML = buildPanel()
       bindAll()
     }

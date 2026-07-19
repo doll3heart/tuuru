@@ -71,6 +71,17 @@ test("reader home controls navigate without relying on module globals", async t 
   await import(`../reader/reader.js?reader-home-navigation=${Date.now()}`)
   assert.ok(document.querySelector(".rd-home"))
 
+  const productHeader = document.querySelector(".rd-product-header")
+  assert.ok(productHeader)
+  const modeSwitch = productHeader.querySelector(".rd-mode-switch")
+  assert.equal(modeSwitch.getAttribute("aria-label"), "应用模式")
+  const authorEntry = modeSwitch.querySelector("a")
+  assert.equal(authorEntry.textContent, "创作端")
+  assert.equal(authorEntry.href, "http://localhost/index.html")
+  assert.equal(modeSwitch.querySelector('[aria-current="page"]').textContent, "读者端")
+  assert.match(readerCss, /\.rd-mode-link\s*\{[^}]*min-height:\s*44px;/s)
+  assert.match(readerCss, /\.rd-mode-link:focus-visible\s*\{[^}]*outline:/s)
+
   const tabList = document.querySelector(".rd-tabs")
   assert.equal(tabList.getAttribute("role"), "tablist")
   assert.match(tabList.getAttribute("aria-label") ?? "", /[\u3400-\u9fff]/)

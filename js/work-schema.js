@@ -1,6 +1,7 @@
 export const CURRENT_WORK_SCHEMA_VERSION = 1
 
 import { isSafeCssColor, isSafeIconValue, isSafeIdentifier } from "./safe-values.js"
+import { normalizeWorkWatermark } from "./work-watermark.js"
 
 const SUPPORTED_WORK_TYPES = new Set(["article", "phone"])
 const ARTICLE_COLLECTIONS = ["chapters", "phoneModules", "placeholders", "scenes"]
@@ -363,6 +364,10 @@ function validateAndNormalizeWorkUnchecked(input, {
       : asWorkFailure(phoneResult, "invalid-phone", "手机作品结构无效。")
   }
   if (!normalized.ok) return normalized
+
+  if (Object.hasOwn(input, "watermark")) {
+    normalized.work.watermark = normalizeWorkWatermark(input.watermark)
+  }
 
   const renderValuesResult = validateWorkRenderValues(normalized.work, path, {
     strictPresentation: context !== "reader-import",

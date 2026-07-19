@@ -13,6 +13,11 @@ import {
   updateHomeWorkInfo,
 } from "../home-work-mutations.js"
 import { createJsonToken } from "../local-database-mutation.js"
+import {
+  WORK_WATERMARK_IMAGE_MAX_BYTES,
+  hasRenderableWorkWatermark,
+  normalizeWorkWatermark,
+} from "../work-watermark.js"
 
 const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请稍后刷新查看，不要重复操作。"
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
@@ -470,22 +475,220 @@ window.dupWork = function(id){
   return result
 }
 
+function renderWorkWatermarkPreview(container, candidate) {
+  if (!container) return
+  var watermark = normalizeWorkWatermark(candidate)
+  container.className = 'wi-watermark-preview is-' + watermark.coverage + ' is-' + watermark.pattern
+  container.dataset.position = watermark.position
+  container.style.setProperty('--wi-wm-opacity', String(watermark.opacity))
+  container.style.setProperty('--wi-wm-spacing', watermark.spacing + 'px')
+  container.innerHTML = ''
+
+  if (!hasRenderableWorkWatermark(watermark)) {
+    var empty = document.createElement('span')
+    empty.className = 'wi-watermark-preview-empty'
+    empty.textContent = watermark.enabled ? '补充水印内容后可预览' : '启用后可预览水印位置'
+    container.appendChild(empty)
+    return
+  }
+
+  function appendWatermarkPreviewItem(target) {
+    var item = document.createElement('span')
+    item.className = 'wi-watermark-preview-item'
+    if (watermark.kind === 'image') {
+      var image = document.createElement('img')
+      image.src = watermark.image
+      image.alt = ''
+      item.appendChild(image)
+    } else {
+      item.textContent = watermark.text
+    }
+    target.appendChild(item)
+  }
+
+  if (watermark.coverage === 'full') {
+    var previewCell = Math.min(66, Math.max(38, watermark.spacing / 4))
+    var previewWidth = Math.max(620, Number(container.clientWidth) || 0)
+    var previewHeight = Math.max(190, Number(container.clientHeight) || 0)
+    var columnCount = Math.ceil(previewWidth / previewCell) + 3
+    var rowCount = Math.ceil(previewHeight / previewCell) + 3
+    var pattern = document.createElement('div')
+    pattern.className = 'wi-watermark-preview-pattern'
+    for (var rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+      var row = document.createElement('div')
+      row.className = 'wi-watermark-preview-row'
+      row.dataset.offset = watermark.pattern === 'cross' && rowIndex % 2 === 1 ? 'staggered' : 'base'
+      for (var columnIndex = 0; columnIndex < columnCount; columnIndex++) appendWatermarkPreviewItem(row)
+      pattern.appendChild(row)
+    }
+    container.appendChild(pattern)
+  } else {
+    appendWatermarkPreviewItem(container)
+  }
+}
+
+function watermarkSelectOptions(options, selected) {
+  return options.map(function(option) {
+    return '<option value="' + option.value + '"' + (option.value === selected ? ' selected' : '') + '>' + option.label + '</option>'
+  }).join('')
+}
+
+function workWatermarkSettingsHtml(candidate) {
+  var watermark = normalizeWorkWatermark(candidate)
+  var kind = watermark.kind
+  return '<section class="wi-watermark-section" aria-labelledby="wiWatermarkHeading">' +
+    '<div class="wi-watermark-heading"><span><strong id="wiWatermarkHeading">作者水印</strong><small>随导出文件传播，读者界面不提供关闭入口</small></span>' +
+    '<label class="wi-watermark-toggle"><input type="checkbox" id="wiWatermarkEnabled"' + (watermark.enabled ? ' checked' : '') + '><span>启用</span></label></div>' +
+    '<div class="wi-watermark-fields" id="wiWatermarkFields">' +
+    '<div class="wi-watermark-choice-row" role="radiogroup" aria-label="水印内容类型">' +
+    '<label class="wi-watermark-choice"><input type="radio" name="wiWatermarkKind" value="text"' + (kind === 'text' ? ' checked' : '') + '><span>文字</span></label>' +
+    '<label class="wi-watermark-choice"><input type="radio" name="wiWatermarkKind" value="image"' + (kind === 'image' ? ' checked' : '') + '><span>图片</span></label></div>' +
+    '<div class="wi-watermark-kind" data-wi-watermark-kind="text"><label class="wi-label" for="wiWatermarkText">水印文字</label><input class="wi-input" id="wiWatermarkText" maxlength="80" value="' + escHtml(watermark.text) + '" placeholder="例如：纯代乙向禁止偷吃"></div>' +
+    '<div class="wi-watermark-kind" data-wi-watermark-kind="image"><span class="wi-label">水印图片</span><div class="wi-watermark-image-actions"><input class="wi-visually-hidden" type="file" id="wiWatermarkImage" accept="image/png,image/jpeg,image/webp"><label class="wi-watermark-upload" for="wiWatermarkImage" role="button" tabindex="0">选择本地图片</label><button class="btn btn-sm btn-ghost" type="button" id="wiWatermarkImageClear">清除图片</button><span id="wiWatermarkImageName" class="wi-help">' + (watermark.image ? '已选择内嵌图片' : 'PNG、JPG 或 WebP，最大 1 MiB') + '</span></div></div>' +
+    '<div class="wi-watermark-grid">' +
+    '<label class="wi-row" for="wiWatermarkOpacity"><span class="wi-label">透明度 <output id="wiWatermarkOpacityValue">' + Math.round(watermark.opacity * 100) + '%</output></span><input type="range" id="wiWatermarkOpacity" min="5" max="45" step="1" value="' + Math.round(watermark.opacity * 100) + '"></label>' +
+    '<label class="wi-row" for="wiWatermarkCoverage"><span class="wi-label">显示范围</span><select class="wi-input" id="wiWatermarkCoverage">' + watermarkSelectOptions([{value:'single',label:'固定在一处'},{value:'full',label:'铺满页面'}], watermark.coverage) + '</select></label>' +
+    '<label class="wi-row" for="wiWatermarkPosition" data-wi-watermark-single><span class="wi-label">水印位置</span><select class="wi-input" id="wiWatermarkPosition">' + watermarkSelectOptions([{value:'top-left',label:'左上'},{value:'top-right',label:'右上'},{value:'center',label:'居中'},{value:'bottom-left',label:'左下'},{value:'bottom-right',label:'右下'}], watermark.position) + '</select></label>' +
+    '<label class="wi-row" for="wiWatermarkPattern" data-wi-watermark-full><span class="wi-label">铺放样式</span><select class="wi-input" id="wiWatermarkPattern">' + watermarkSelectOptions([{value:'diagonal',label:'同向斜排'},{value:'cross',label:'交叉斜排'}], watermark.pattern) + '</select></label>' +
+    '<label class="wi-row" for="wiWatermarkSpacing" data-wi-watermark-full><span class="wi-label">水印间距 <output id="wiWatermarkSpacingValue">' + watermark.spacing + 'px</output></span><input type="range" id="wiWatermarkSpacing" min="80" max="260" step="10" value="' + watermark.spacing + '"></label>' +
+    '</div>' +
+    '<div class="wi-watermark-preview" id="wiWatermarkPreview" aria-label="水印效果预览"></div>' +
+    '<p class="wi-watermark-status" id="wiWatermarkStatus" role="status" aria-live="polite"></p>' +
+    '</div></section>'
+}
+
 window.editWorkInfo = function(id){
   var w = getWorks().find(function(x){ return x.id === id })
   if (!w) return
   var expectedWorkToken = createJsonToken(w)
   var trigger = document.activeElement
+  var watermarkDraft = normalizeWorkWatermark(w.watermark)
   var body = '<div class="wi-form">'
   body += '<div class="wi-row"><label class="wi-label">作品标题</label><input class="wi-input" id="wiTitle" value="' + escHtml(w.title || '') + '" placeholder="作品标题"></div>'
   body += '<div class="wi-row"><label class="wi-label">作者署名</label><input class="wi-input" id="wiAuthor" value="' + escHtml(w.author || '') + '" placeholder="作者署名"></div>'
   body += '<div class="wi-row"><label class="wi-label">作者有话说</label><textarea class="wi-textarea" id="wiNote" rows="3" placeholder="想对读者说的话...">' + escHtml(w.authorNote || '') + '</textarea></div>'
   body += '<div class="wi-row"><label class="wi-label">阅读密码（选填）</label><input class="wi-input" id="wiPwd" value="' + escHtml(w.password || '') + '" placeholder="设置后读者需输入密码"><div class="wi-help">阅读密码仅限制通过阅读界面进入，不会加密导出的 JSON 或 PNG 文件。</div></div>'
+  body += workWatermarkSettingsHtml(watermarkDraft)
   body += '</div>'
   var ov = document.createElement('div')
   ov.className = 'modal-overlay'
   ov.style.cssText = 'z-index:2000'
-  ov.innerHTML = '<div class="modal" role="dialog" aria-labelledby="wiTitleLabel" style="max-width:480px"><div class="modal-header"><span class="modal-title" id="wiTitleLabel">作品信息</span><button class="btn-icon" id="wiCloseBtn" type="button" aria-label="关闭" style="font-size:1.2rem;cursor:pointer;border:none;background:transparent;color:var(--c-text2)">&times;</button></div><div class="modal-body">' + body + '<div id="wiStatus" role="status" aria-live="polite" style="min-height:1.4em;margin-top:10px;color:var(--c-accent3)"></div></div><div class="modal-footer"><button class="btn btn-primary" id="wiSaveBtn">保存</button><button class="btn btn-ghost" id="wiCancelBtn" type="button">取消</button></div></div>'
+  ov.innerHTML = '<div class="modal wi-modal" role="dialog" aria-labelledby="wiTitleLabel"><div class="modal-header"><span class="modal-title" id="wiTitleLabel">作品信息</span><button class="btn-icon" id="wiCloseBtn" type="button" aria-label="关闭" style="font-size:1.2rem;cursor:pointer;border:none;background:transparent;color:var(--c-text2)">&times;</button></div><div class="modal-body">' + body + '<div id="wiStatus" role="status" aria-live="polite" style="min-height:1.4em;margin-top:10px;color:var(--c-accent3)"></div></div><div class="modal-footer"><button class="btn btn-primary" id="wiSaveBtn">保存</button><button class="btn btn-ghost" id="wiCancelBtn" type="button">取消</button></div></div>'
   document.body.appendChild(ov)
+  var watermarkFields = ov.querySelector('#wiWatermarkFields')
+  var watermarkStatus = ov.querySelector('#wiWatermarkStatus')
+  var watermarkPreview = ov.querySelector('#wiWatermarkPreview')
+  var watermarkImageName = ov.querySelector('#wiWatermarkImageName')
+
+  function setWatermarkStatus(message, error) {
+    if (!watermarkStatus) return
+    watermarkStatus.textContent = message || ''
+    watermarkStatus.classList.toggle('is-error', !!error)
+  }
+
+  function refreshWatermarkControls() {
+    watermarkDraft = normalizeWorkWatermark(watermarkDraft)
+    if (watermarkFields) watermarkFields.hidden = !watermarkDraft.enabled
+    ov.querySelectorAll('[data-wi-watermark-kind]').forEach(function(panel) {
+      panel.hidden = panel.dataset.wiWatermarkKind !== watermarkDraft.kind
+    })
+    ov.querySelectorAll('[data-wi-watermark-single]').forEach(function(row) {
+      row.hidden = watermarkDraft.coverage !== 'single'
+    })
+    ov.querySelectorAll('[data-wi-watermark-full]').forEach(function(row) {
+      row.hidden = watermarkDraft.coverage !== 'full'
+    })
+    var opacityValue = ov.querySelector('#wiWatermarkOpacityValue')
+    if (opacityValue) opacityValue.textContent = Math.round(watermarkDraft.opacity * 100) + '%'
+    var spacingValue = ov.querySelector('#wiWatermarkSpacingValue')
+    if (spacingValue) spacingValue.textContent = watermarkDraft.spacing + 'px'
+    if (watermarkImageName) watermarkImageName.textContent = watermarkDraft.image ? '已选择内嵌图片' : 'PNG、JPG 或 WebP，最大 1 MiB'
+    renderWorkWatermarkPreview(watermarkPreview, watermarkDraft)
+  }
+
+  var watermarkEnabled = ov.querySelector('#wiWatermarkEnabled')
+  if (watermarkEnabled) watermarkEnabled.onchange = function() {
+    watermarkDraft.enabled = this.checked
+    setWatermarkStatus('')
+    refreshWatermarkControls()
+  }
+  ov.querySelectorAll('input[name="wiWatermarkKind"]').forEach(function(input) {
+    input.onchange = function() {
+      if (!this.checked) return
+      watermarkDraft.kind = this.value
+      setWatermarkStatus('')
+      refreshWatermarkControls()
+    }
+  })
+  var watermarkText = ov.querySelector('#wiWatermarkText')
+  if (watermarkText) watermarkText.oninput = function() {
+    watermarkDraft.text = this.value
+    setWatermarkStatus('')
+    refreshWatermarkControls()
+  }
+  var watermarkOpacity = ov.querySelector('#wiWatermarkOpacity')
+  if (watermarkOpacity) watermarkOpacity.oninput = function() {
+    watermarkDraft.opacity = Number(this.value) / 100
+    refreshWatermarkControls()
+  }
+  var watermarkCoverage = ov.querySelector('#wiWatermarkCoverage')
+  if (watermarkCoverage) watermarkCoverage.onchange = function() {
+    watermarkDraft.coverage = this.value
+    refreshWatermarkControls()
+  }
+  var watermarkPosition = ov.querySelector('#wiWatermarkPosition')
+  if (watermarkPosition) watermarkPosition.onchange = function() {
+    watermarkDraft.position = this.value
+    refreshWatermarkControls()
+  }
+  var watermarkPattern = ov.querySelector('#wiWatermarkPattern')
+  if (watermarkPattern) watermarkPattern.onchange = function() {
+    watermarkDraft.pattern = this.value
+    refreshWatermarkControls()
+  }
+  var watermarkSpacing = ov.querySelector('#wiWatermarkSpacing')
+  if (watermarkSpacing) watermarkSpacing.oninput = function() {
+    watermarkDraft.spacing = Number(this.value)
+    refreshWatermarkControls()
+  }
+  var watermarkImage = ov.querySelector('#wiWatermarkImage')
+  var watermarkUpload = ov.querySelector('.wi-watermark-upload')
+  if (watermarkUpload) watermarkUpload.onkeydown = function(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    watermarkImage?.click()
+  }
+  if (watermarkImage) watermarkImage.onchange = function() {
+    var file = this.files && this.files[0]
+    if (!file) return
+    if (!/^image\/(?:png|jpeg|webp)$/i.test(file.type || '') || !Number.isFinite(file.size) || file.size <= 0 || file.size > WORK_WATERMARK_IMAGE_MAX_BYTES) {
+      setWatermarkStatus('请选择 1 MiB 以内的 PNG、JPG 或 WebP 图片。', true)
+      this.value = ''
+      return
+    }
+    var reader = new FileReader()
+    reader.onerror = function() { setWatermarkStatus('图片读取失败，请换一张再试。', true) }
+    reader.onload = function() {
+      var candidate = normalizeWorkWatermark(Object.assign({}, watermarkDraft, { image: reader.result }))
+      if (!candidate.image) {
+        setWatermarkStatus('图片内容无效，请换一张再试。', true)
+        return
+      }
+      watermarkDraft = candidate
+      setWatermarkStatus('图片已嵌入作品，导出后可离线显示。')
+      refreshWatermarkControls()
+    }
+    reader.readAsDataURL(file)
+  }
+  var clearWatermarkImage = ov.querySelector('#wiWatermarkImageClear')
+  if (clearWatermarkImage) clearWatermarkImage.onclick = function() {
+    watermarkDraft.image = null
+    if (watermarkImage) watermarkImage.value = ''
+    setWatermarkStatus('已清除水印图片。')
+    refreshWatermarkControls()
+  }
+  refreshWatermarkControls()
+
   var requestClose = function(){
     if (ov.querySelector('#wiSaveBtn')?.disabled) return
     ov.remove()
@@ -496,6 +699,13 @@ window.editWorkInfo = function(id){
   ov.addEventListener('click', function(e) { if (e.target === ov) requestClose() })
   ov.querySelector('#wiSaveBtn').onclick = function(){
     var password = (document.getElementById('wiPwd')?.value || '').trim()
+    watermarkDraft = normalizeWorkWatermark(watermarkDraft)
+    if (watermarkDraft.enabled && !hasRenderableWorkWatermark(watermarkDraft)) {
+      setWatermarkStatus(watermarkDraft.kind === 'image' ? '请先选择一张水印图片。' : '请填写水印文字。', true)
+      if (watermarkDraft.kind === 'image') ov.querySelector('.wi-watermark-upload')?.focus()
+      else watermarkText?.focus()
+      return
+    }
     var result = homeWriteController.update({
       workId: id,
       expectedWorkToken: expectedWorkToken,
@@ -504,7 +714,8 @@ window.editWorkInfo = function(id){
         author: (document.getElementById('wiAuthor')?.value || '').trim(),
         authorNote: (document.getElementById('wiNote')?.value || '').trim(),
         password: password,
-        locked: !!password
+        locked: !!password,
+        watermark: normalizeWorkWatermark(watermarkDraft)
       },
       close: function(){ ov.remove() }
     })

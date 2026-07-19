@@ -40,6 +40,11 @@ test("current article and phone exports have identical JSON and PNG reader seman
       phoneModules: [{ id: "module", type: "memo", data: { memos: [] } }],
       editorSettings: { fontSize: 18 },
       futureField: { preserved: true },
+      watermark: {
+        enabled: true, kind: "text", text: "作者署名", image: null,
+        opacity: 0.16, coverage: "full", position: "bottom-right",
+        pattern: "cross", spacing: 160,
+      },
     },
     {
       id: "phone-golden",
@@ -61,6 +66,11 @@ test("current article and phone exports have identical JSON and PNG reader seman
         futurePhoneField: { preserved: true },
       },
       editorSettings: { fontSize: 12 },
+      watermark: {
+        enabled: true, kind: "image", text: "", image: "data:image/png;base64,AA==",
+        opacity: 0.12, coverage: "single", position: "top-left",
+        pattern: "diagonal", spacing: 140,
+      },
     },
   ]
   globalThis.localStorage = {
@@ -75,6 +85,7 @@ test("current article and phone exports have identical JSON and PNG reader seman
     const pngWork = throughStegano(serialized, windowObject)
 
     assert.deepEqual(pngWork, jsonWork)
+    assert.deepEqual(jsonWork.watermark, fixture.watermark)
     assert.equal(jsonWork.editorSettings, undefined)
     if (fixture.type === "article") assert.deepEqual(jsonWork.futureField, { preserved: true })
     if (fixture.type === "phone") {

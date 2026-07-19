@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import path from "node:path"
-import { readFile } from "node:fs/promises"
+import { access, readFile } from "node:fs/promises"
 
 import {
   createBuildPlan,
@@ -37,93 +37,40 @@ async function captureOutcome(promise) {
   )
 }
 
-test("the build plan uses existing configs and isolated output children", () => {
+test("the build plan uses one unified app config and isolated output child", () => {
   const paths = fixturePaths()
   const plan = createBuildPlan(paths)
 
   assert.deepEqual(plan, [
     {
-      name: "editor",
+      name: "app",
       configFile: path.join(paths.repoRoot, "vite.config.ts"),
-      outDir: path.join(paths.tempRoot, "editor"),
-    },
-    {
-      name: "reader",
-      configFile: path.join(paths.repoRoot, "vite.reader.config.ts"),
-      outDir: path.join(paths.tempRoot, "reader"),
+      outDir: path.join(paths.tempRoot, "app"),
     },
   ])
 })
 
-test("successful validation builds sequentially and cleans once", async () => {
+test("successful validation builds the unified app once and cleans once", async () => {
   const events = []
-  let markEditorStarted
-  let releaseEditor
-  const editorStarted = new Promise(resolve => { markEditorStarted = resolve })
-  const editorGate = new Promise(resolve => { releaseEditor = resolve })
-  let buildCalls = 0
   const options = dependencies({
-    build: async config => {
-      buildCalls += 1
-      events.push(["build", config])
-      if (buildCalls === 1) {
-        markEditorStarted()
-        await editorGate
-      }
-    },
+    build: async config => events.push(["build", config]),
     remove: async (target, removeOptions) => events.push(["remove", target, removeOptions]),
   })
   const plan = createBuildPlan(options)
-  const expectedEditorBuild = [
+  const expectedAppBuild = [
     "build",
     { configFile: plan[0].configFile, build: { outDir: plan[0].outDir, emptyOutDir: true } },
   ]
-  const expectedReaderBuild = [
-    "build",
-    { configFile: plan[1].configFile, build: { outDir: plan[1].outDir, emptyOutDir: true } },
-  ]
-  const capturedValidationOutcome = captureOutcome(runBuildValidation(options))
-  let pendingObservationError = null
-
-  try {
-    const firstLifecycleEvent = await Promise.race([
-      editorStarted.then(() => ({ type: "editor-started" })),
-      capturedValidationOutcome.then(outcome => ({ type: "validation-settled", outcome })),
-    ])
-    if (firstLifecycleEvent.type === "validation-settled") {
-      throw new Error(
-        `Build validation ${firstLifecycleEvent.outcome.status} before the editor build started`,
-      )
-    }
-    const pendingEvents = [...events]
-    assert.deepEqual(pendingEvents, [expectedEditorBuild])
-  } catch (error) {
-    pendingObservationError = error
-  } finally {
-    releaseEditor()
-  }
-
-  const validationOutcome = await capturedValidationOutcome
-  if (pendingObservationError) {
-    if (validationOutcome.status === "rejected") {
-      throw new AggregateError(
-        [pendingObservationError, validationOutcome.reason],
-        "Pending-build observation and validation both failed",
-      )
-    }
-    throw pendingObservationError
-  }
-  if (validationOutcome.status === "rejected") throw validationOutcome.reason
+  await runBuildValidation(options)
 
   assert.deepEqual(events, [
-    expectedEditorBuild,
-    expectedReaderBuild,
+    expectedAppBuild,
     ["remove", options.tempRoot, { recursive: true, force: true }],
   ])
 })
 
-test("an editor failure stops the reader and still cleans", async () => {
-  const buildError = new Error("editor failed")
+test("an app build failure still cleans", async () => {
+  const buildError = new Error("app failed")
   let buildCalls = 0
   let removeCalls = 0
   const options = dependencies({
@@ -139,22 +86,6 @@ test("an editor failure stops the reader and still cleans", async () => {
   assert.equal(removeCalls, 1)
 })
 
-test("a reader failure still cleans after both build attempts", async () => {
-  const buildError = new Error("reader failed")
-  let buildCalls = 0
-  let removeCalls = 0
-  const options = dependencies({
-    build: async () => {
-      buildCalls += 1
-      if (buildCalls === 2) throw buildError
-    },
-    remove: async () => { removeCalls += 1 },
-  })
-
-  await assert.rejects(runBuildValidation(options), error => error === buildError)
-  assert.equal(buildCalls, 2)
-  assert.equal(removeCalls, 1)
-})
 
 test("build and cleanup failures remain visible together", async () => {
   const buildError = new Error("build failed")
@@ -321,19 +252,25 @@ test("only the validated canonical temporary root is built and removed", async (
 
   assert.deepEqual(events, [
     ["build", { configFile: plan[0].configFile, build: { outDir: plan[0].outDir, emptyOutDir: true } }],
-    ["build", { configFile: plan[1].configFile, build: { outDir: plan[1].outDir, emptyOutDir: true } }],
     ["remove", canonicalRoot, { recursive: true, force: true }],
   ])
 })
 
-test("package exposes clean verification without changing release commands", async () => {
+test("package exposes one supported app development and release surface", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+  const nodeConfig = JSON.parse(await readFile(new URL("../tsconfig.node.json", import.meta.url), "utf8"))
 
   assert.equal(packageJson.scripts["build:verify"], "tsc -b --pretty false && node scripts/verify-builds.mjs")
   assert.equal(packageJson.scripts.verify, "npm test && npm run build:verify")
-  assert.equal(packageJson.scripts.build, "npm run build:editor && npm run build:reader")
-  assert.equal(packageJson.scripts["build:editor"], "tsc -b && vite build --config vite.config.ts")
-  assert.equal(packageJson.scripts["build:reader"], "vite build --config vite.reader.config.ts")
+  assert.equal(packageJson.scripts.dev, "vite --config vite.config.ts")
+  assert.equal(packageJson.scripts.build, "tsc -b && vite build --config vite.config.ts")
   assert.equal(packageJson.scripts.preview, "vite preview --config vite.config.ts")
-  assert.equal(packageJson.scripts["preview:reader"], "vite preview --config vite.reader.config.ts")
+  assert.equal(packageJson.scripts["dev:reader"], undefined)
+  assert.equal(packageJson.scripts["build:editor"], undefined)
+  assert.equal(packageJson.scripts["build:reader"], undefined)
+  assert.equal(packageJson.scripts["preview:reader"], undefined)
+  assert.match(packageJson.devDependencies["@types/node"], /^\^24\./)
+  assert.deepEqual(nodeConfig.compilerOptions.types, ["node"])
+  assert.deepEqual(nodeConfig.include, ["vite.config.ts"])
+  await assert.rejects(access(new URL("../vite.reader.config.ts", import.meta.url)))
 })

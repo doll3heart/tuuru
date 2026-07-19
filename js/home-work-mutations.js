@@ -12,6 +12,7 @@ import {
 import { createWebLocksAdapter } from "./local-locks.js"
 import { readLocalDatabase } from "./storage.js"
 import { runWithWorkEditSession } from "./work-edit-session.js"
+import { normalizeWorkWatermark } from "./work-watermark.js"
 
 const HOME_INFO_FIELDS = Object.freeze([
   "title",
@@ -19,6 +20,7 @@ const HOME_INFO_FIELDS = Object.freeze([
   "authorNote",
   "password",
   "locked",
+  "watermark",
 ])
 
 const NO_CLEANUP_ERROR = Symbol("no-cleanup-error")
@@ -268,7 +270,8 @@ function selectHomeInfoPatch(patch) {
   assertRecord(patch, "patch")
   const selected = {}
   for (const field of HOME_INFO_FIELDS) {
-    if (Object.hasOwn(patch, field)) selected[field] = patch[field]
+    if (!Object.hasOwn(patch, field)) continue
+    selected[field] = field === "watermark" ? normalizeWorkWatermark(patch[field]) : patch[field]
   }
   return selected
 }

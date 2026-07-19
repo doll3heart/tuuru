@@ -224,13 +224,9 @@ test("article gallery modules preserve their authored character connection in th
   document.getElementById("rdStartBtn").click()
   document.querySelector(".rd-pm-trigger").click()
 
-  const galleryIcon = document.querySelector('[data-app-type="gallery"]')
-  assert.ok(galleryIcon)
-  assert.ok(galleryIcon.querySelector('[style*="#ef4444"]'))
-
-  galleryIcon.click()
   const gate = document.querySelector(".rd-connection-gate")
   assert.ok(gate)
+  assert.equal(document.querySelector('.phone-app-icon'), null)
   assert.match(gate.textContent, /Bob/)
   assert.match(gate.textContent, /Bob wants to show you this album\./)
   assert.doesNotMatch(gate.textContent, /Bob summer album/)

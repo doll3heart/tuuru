@@ -54,5 +54,7 @@ test("preview URLs stay same-origin under a subdirectory and encode the work id"
 })
 
 test("the editor production build includes the real reader entry", () => {
-  assert.match(viteSource, /reader\s*:\s*path\.resolve\(__dirname,\s*["']reader\/index\.html["']\)/)
+  assert.match(viteSource, /const projectRoot = realpathSync\(__dirname\)/)
+  assert.match(viteSource, /outDir:\s*path\.resolve\(projectRoot,\s*["']dist["']\)/)
+  assert.match(viteSource, /reader\s*:\s*path\.resolve\(projectRoot,\s*["']reader\/index\.html["']\)/)
 })

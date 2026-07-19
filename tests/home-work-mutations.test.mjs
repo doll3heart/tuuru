@@ -406,6 +406,15 @@ test("metadata update uses the confirmation token and preserves unknown fields",
       authorNote: "备注",
       password: "1234",
       locked: true,
+      watermark: {
+        enabled: true,
+        kind: "text",
+        text: "纯代乙向禁止偷吃",
+        opacity: 9,
+        coverage: "full",
+        pattern: "cross",
+        spacing: 4,
+      },
       id: "must-not-change",
       desc: "must-not-change",
       futureWork: { overwritten: true },
@@ -416,6 +425,17 @@ test("metadata update uses the confirmation token and preserves unknown fields",
   assert.equal(result.work.id, "work-a")
   assert.equal(result.work.title, "以后")
   assert.equal(result.work.author, "作者")
+  assert.deepEqual(result.work.watermark, {
+    enabled: true,
+    kind: "text",
+    text: "纯代乙向禁止偷吃",
+    image: null,
+    opacity: 0.45,
+    coverage: "full",
+    position: "bottom-right",
+    pattern: "cross",
+    spacing: 80,
+  })
   assert.equal(result.work.updatedAt, 2_000)
   assert.equal(result.work.desc, "不能由信息补丁改写")
   assert.deepEqual(result.work.futureWork, { preserved: true })

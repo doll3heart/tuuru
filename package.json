@@ -5,18 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.ts",
-    "dev:reader": "vite --config vite.reader.config.ts",
-    "build": "npm run build:editor && npm run build:reader",
-    "build:editor": "tsc -b && vite build --config vite.config.ts",
-    "build:reader": "vite build --config vite.reader.config.ts",
+    "build": "tsc -b && vite build --config vite.config.ts",
     "build:verify": "tsc -b --pretty false && node scripts/verify-builds.mjs",
     "verify": "npm test && npm run build:verify",
     "test": "node --test",
     "test:locks:browser": "node scripts/serve-lock-harness.mjs --port 4177 --timeout 180000",
-    "preview": "vite preview --config vite.config.ts",
-    "preview:reader": "vite preview --config vite.reader.config.ts"
+    "preview": "vite preview --config vite.config.ts"
   },
   "devDependencies": {
+    "@types/node": "^24.13.3",
     "jsdom": "^27.0.1",
     "typescript": "~5.7.0",
     "vite": "^6.0.0"

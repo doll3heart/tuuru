@@ -38,7 +38,7 @@ const boundedPhone = blockFrom(
 test("reader settings render named hooks for their compact controls", () => {
   assert.match(readerSource, /class=["']rs-upload-font-btn["'][^>]*id=["']rsUploadFont["']/)
   assert.match(readerSource, /class=["']rs-delete-font-btn["'][^>]*data-rs-del-font=/)
-  assert.match(readerSource, /class=["']rs-close-btn["'][^>]*aria-label=["']关闭排版设置["'][^>]*id=["']rsClose["']/)
+  assert.match(readerSource, /class=["']rs-close-btn["'][^>]*aria-label=["']关闭文章阅读外观["'][^>]*id=["']rsClose["']/)
 })
 
 test("bounded reader settings expose 44px touch targets", () => {

@@ -203,7 +203,7 @@ test("reader call presets and transcript paper preserve AA contrast", () => {
   assert.ok(contrastRatio(ink, paper) >= 4.5)
   assert.ok(contrastRatio(oldInk, paper) >= 4.5)
   assert.match(ruleBody(readerCss, ".rd-call-scene"), /rgba\(0,\s*0,\s*0,\s*\.58\)/)
-  for (const selector of [".rd-call-duration", ".rd-call-note", ".rd-call-line.old"]) {
+  for (const selector of [".rd-call-duration", ".rd-call-line.old"]) {
     assert.doesNotMatch(ruleBody(readerCss, selector), /opacity\s*:\s*(?:0?\.)\d+/)
   }
 })

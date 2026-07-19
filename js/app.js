@@ -10,6 +10,7 @@ import { createWebLocksAdapter } from "./local-locks.js"
 import { pickReadableColor } from "./color-contrast.js"
 import { startLocalLibraryRestore } from "./library-restore-ui.js"
 import { downloadBlob } from "./download.js"
+import { buildReaderHomeUrl } from "./app-entry-links.js"
 
 // ==================== Render helpers ====================
 export function h(tag, attrs={}, ...children){
@@ -160,9 +161,14 @@ document.addEventListener('click', function(e) {
 export function renderHeader(){
   const path = location.hash.slice(1).split("?")[0]||"/"
   const activeTheme = getTheme()
+  const readerHomeUrl = buildReaderHomeUrl(location.href)
   return `<header class="app-header">
     <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>
-    <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+    <div class="app-header-actions">
+      <nav class="app-mode-switch" aria-label="应用模式">
+        <span class="app-mode-link active" aria-current="page">创作端</span>
+        <a class="app-mode-link" href="${readerHomeUrl}">读者端</a>
+      </nav>
       <div class="theme-wrap">
         <button class="btn btn-sm btn-ghost" onclick="toggleThemePopover(event)" title="外观">外观</button>
         <div class="theme-popover" id="themePopover">
