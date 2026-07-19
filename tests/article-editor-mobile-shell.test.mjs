@@ -186,6 +186,52 @@ test("rendered mobile view controls switch panes in place without a storage writ
   assert.equal(location.hash, beforeHash)
 })
 
+test("the mobile writing dock progressively discloses insert and format tools", async () => {
+  const work = article("mobile-command-work", [{ id: "mobile-command-node" }])
+  seed(work)
+  const root = await render(work.id)
+  const shell = root.querySelector(".editor-body-area")
+  const editable = root.querySelector(".content-editable")
+  const commandbar = root.querySelector(".editor-mobile-commandbar")
+  assert.ok(commandbar)
+
+  const dockLabels = [...commandbar.querySelectorAll(".editor-mobile-dock > button")]
+    .map(button => button.textContent.trim())
+  const insertTrigger = commandbar.querySelector('[data-a="mobile-tools"][data-panel="insert"]')
+  const formatTrigger = commandbar.querySelector('[data-a="mobile-tools"][data-panel="format"]')
+  const insertPanel = commandbar.querySelector('[data-mobile-tool-panel="insert"]')
+  const formatPanel = commandbar.querySelector('[data-mobile-tool-panel="format"]')
+  const outlineTrigger = commandbar.querySelector('[data-a="mobile-pane"][data-pane="outline"]')
+
+  assert.deepEqual(dockLabels, ["正文", "大纲", "插入", "格式"])
+  assert.equal(insertPanel.hidden, true)
+  assert.equal(formatPanel.hidden, true)
+  assert.equal(insertTrigger.getAttribute("aria-expanded"), "false")
+  assert.equal(formatTrigger.getAttribute("aria-expanded"), "false")
+  assert.ok(insertPanel.querySelector('[data-a="ph"]'))
+  assert.ok(insertPanel.querySelector('[data-a="pa-msg"]'))
+  assert.ok(formatPanel.querySelector('[data-a="bold"]'))
+  assert.ok(formatPanel.querySelector('[data-a="fs-font"]'))
+  assert.ok(formatPanel.querySelector('[data-a="fs-mt"]'))
+
+  insertTrigger.click()
+  assert.equal(insertPanel.hidden, false)
+  assert.equal(formatPanel.hidden, true)
+  assert.equal(insertTrigger.getAttribute("aria-expanded"), "true")
+
+  formatTrigger.click()
+  assert.equal(insertPanel.hidden, true)
+  assert.equal(formatPanel.hidden, false)
+  assert.equal(insertTrigger.getAttribute("aria-expanded"), "false")
+  assert.equal(formatTrigger.getAttribute("aria-expanded"), "true")
+
+  outlineTrigger.click()
+  assert.equal(shell.dataset.mobilePane, "outline")
+  assert.equal(formatPanel.hidden, true)
+  assert.equal(formatTrigger.getAttribute("aria-expanded"), "false")
+  assert.equal(root.querySelector(".content-editable"), editable)
+})
+
 test("outline selection returns to editing while an editor choice does not steal focus", async t => {
   const work = article("focus-work", [
     { id: "focus-a", choices: [{ id: "choice-a", text: "Next", targetId: "focus-b" }] },
@@ -530,4 +576,20 @@ test("bounded action rails scroll horizontally with touch-safe targets", () => {
   assert.doesNotMatch(marginInputFocus, /outline\s*:\s*none/)
   assert.match(iconFocus, /outline\s*:\s*2px\s+solid/)
   assert.match(toolbarFocus, /outline\s*:\s*2px\s+solid/)
+})
+
+test("bounded phone authoring replaces stacked rails with one bottom command dock", () => {
+  const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
+  assert.ok(bounded)
+
+  assert.match(ruleBodiesFor(cssWithoutComments, ".editor-mobile-commandbar"), /display\s*:\s*none/)
+  assert.match(ruleBodiesFor(bounded, ".editor-iconbar"), /display\s*:\s*none/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-view-switch"), /display\s*:\s*none/)
+  assert.match(ruleBodiesFor(bounded, ".editor-toolbar"), /display\s*:\s*none/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-commandbar"), /display\s*:\s*flex/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock"), /min-height\s*:\s*56px/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock > button"), /min-height\s*:\s*56px/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-tool-panel"), /position\s*:\s*absolute/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-tool-panel"), /bottom\s*:\s*56px/)
+  assert.match(ruleBodiesFor(bounded, ".editor-area"), /flex\s*:\s*1\s+1\s+0/)
 })

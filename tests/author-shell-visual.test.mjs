@@ -35,3 +35,11 @@ test("the author shell exposes an accessible product mode switch", () => {
   assert.match(rule(".app-mode-link"), /min-height\s*:\s*44px/)
   assert.match(css, /\.app-mode-link:focus-visible[^}]*outline\s*:/s)
 })
+
+test("the article editor route can collapse secondary global navigation on phones", () => {
+  assert.match(app, /path\.startsWith\("\/edit\/"\)/)
+  assert.match(app, /app-header-editor/)
+  assert.match(css, /\.app-header-editor\s+\.logo/)
+  assert.match(css, /\.app-header-editor\s+\.theme-wrap/)
+  assert.match(css, /\.app-header-editor\s+\.app-header-actions\s*>\s*nav:not\(\.app-mode-switch\)/)
+})

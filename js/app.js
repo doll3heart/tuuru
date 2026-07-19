@@ -160,10 +160,11 @@ document.addEventListener('click', function(e) {
 // ==================== Header ====================
 export function renderHeader(){
   const path = location.hash.slice(1).split("?")[0]||"/"
+  const isEditorRoute = path.startsWith("/edit/")
   const activeTheme = getTheme()
   const readerHomeUrl = buildReaderHomeUrl(location.href)
-  return `<header class="app-header">
-    <a class="logo" href="#/" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>
+  return `<header class="app-header${isEditorRoute ? " app-header-editor" : ""}">
+    <a class="logo" href="#/" aria-label="${isEditorRoute ? "返回作品库" : "Tuuru 首页"}" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>
     <div class="app-header-actions">
       <nav class="app-mode-switch" aria-label="应用模式">
         <span class="app-mode-link active" aria-current="page">创作端</span>

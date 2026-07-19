@@ -87,7 +87,8 @@ export function renderEditor(wid) {
   var L = buildIconbar(wid)
   var E = buildEditor(w, _nodeId)
   var W = buildWorldTree(w)
-  return '<div class="editor-page"><div class="editor-body-area" data-mobile-pane="' + _mobilePane + '">' + L + buildMobileViewSwitch() + E + W + '</div></div>'
+  var M = buildMobileCommandbar(wid, _nodeId)
+  return '<div class="editor-page"><div class="editor-body-area" data-mobile-pane="' + _mobilePane + '">' + L + buildMobileViewSwitch() + E + W + M + '</div></div>'
 }
 
 function buildMobileViewSwitch() {
@@ -98,6 +99,111 @@ function buildMobileViewSwitch() {
   h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">大纲</button>'
   h += '</div>'
   return h
+}
+
+function buildMobileCommandbar(wid, nid) {
+  var es = getSettings(wid)
+  var editorPressed = _mobilePane === "editor" ? "true" : "false"
+  var outlinePressed = _mobilePane === "outline" ? "true" : "false"
+  var editorToolsDisabled = _mobilePane === "editor" && nid ? "" : " disabled"
+  var h = '<div class="editor-mobile-commandbar" aria-label="移动端编辑工具">'
+  h += '<div class="editor-mobile-dock" role="group" aria-label="写作导航与工具">'
+  h += '<button type="button" data-a="mobile-pane" data-pane="editor" aria-controls="articleEditorPane" aria-pressed="' + editorPressed + '">正文</button>'
+  h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">大纲</button>'
+  h += '<button type="button" data-a="mobile-tools" data-panel="insert" data-mobile-editor-tool aria-controls="mobileInsertPanel" aria-expanded="false"' + editorToolsDisabled + '>插入</button>'
+  h += '<button type="button" data-a="mobile-tools" data-panel="format" data-mobile-editor-tool aria-controls="mobileFormatPanel" aria-expanded="false"' + editorToolsDisabled + '>格式</button>'
+  h += '</div>'
+
+  h += '<section class="editor-mobile-tool-panel" id="mobileInsertPanel" data-mobile-tool-panel="insert" aria-label="插入内容" hidden>'
+  h += '<div class="editor-mobile-tool-head"><strong>插入内容</strong><button type="button" data-a="mobile-tools-close" data-panel="insert">完成</button></div>'
+  h += '<div class="editor-mobile-insert-grid">'
+  h += '<button type="button" data-a="ph" data-w="' + wid + '"><span aria-hidden="true">{}</span><span>占位符</span></button>'
+  h += '<button type="button" data-a="ch" data-w="' + wid + '"><span aria-hidden="true">⇄</span><span>选项</span></button>'
+  h += '<button type="button" data-a="im"><span aria-hidden="true">＋</span><span>图片</span></button>'
+  h += '<button type="button" data-a="pa-msg" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.messages.icon + '</span><span>消息</span></button>'
+  h += '<button type="button" data-a="pa-forum" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.forum.icon + '</span><span>论坛</span></button>'
+  h += '<button type="button" data-a="pa-memo" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.memo.icon + '</span><span>备忘</span></button>'
+  h += '<button type="button" data-a="pa-gallery" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.gallery.icon + '</span><span>相册</span></button>'
+  h += '<button type="button" data-a="pa-browser" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.browser.icon + '</span><span>浏览器</span></button>'
+  h += '<button type="button" data-a="pa-shop" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.shopping.icon + '</span><span>购物</span></button>'
+  h += '<button type="button" data-a="pa-contacts" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.contacts.icon + '</span><span>联系人</span></button>'
+  h += '</div></section>'
+
+  h += '<section class="editor-mobile-tool-panel" id="mobileFormatPanel" data-mobile-tool-panel="format" aria-label="文字格式" hidden>'
+  h += '<div class="editor-mobile-tool-head"><strong>文字格式</strong><button type="button" data-a="mobile-tools-close" data-panel="format">完成</button></div>'
+  h += '<div class="editor-mobile-format-buttons" role="group" aria-label="文字样式与对齐">'
+  h += '<button type="button" data-a="bold" data-n="' + nid + '" aria-label="加粗"><b>B</b></button>'
+  h += '<button type="button" data-a="italic" data-n="' + nid + '" aria-label="斜体"><i>I</i></button>'
+  h += '<button type="button" data-a="underline" data-n="' + nid + '" aria-label="下划线"><u>U</u></button>'
+  h += '<button type="button" data-a="left" data-n="' + nid + '" aria-label="左对齐">左</button>'
+  h += '<button type="button" data-a="center" data-n="' + nid + '" aria-label="居中对齐">中</button>'
+  h += '<button type="button" data-a="right" data-n="' + nid + '" aria-label="右对齐">右</button>'
+  h += '</div>'
+  h += '<div class="editor-mobile-format-settings">'
+  h += '<label class="editor-mobile-setting-field is-wide"><span>字体</span><select class="toolbar-setting" data-a="fs-font" aria-label="字体"><option value="">字体</option>'
+  for (var fi = 0; fi < BUILTIN_FONTS.length; fi++) {
+    var bf = BUILTIN_FONTS[fi]
+    h += '<option value="' + esc(bf.value) + '"' + ((es.fontFamily || DEFAULT_EDITOR_SETTINGS.fontFamily) === bf.value ? ' selected' : '') + '>' + esc(bf.name) + '</option>'
+  }
+  var customFonts = es.customFonts || []
+  for (var cfi = 0; cfi < customFonts.length; cfi++) {
+    var customFont = customFonts[cfi]
+    h += '<option value="' + esc(customFont.value) + '"' + (es.fontFamily === customFont.value ? ' selected' : '') + '>' + esc(customFont.name) + '</option>'
+  }
+  h += '<option value="__custom__">+ 导入字体…</option></select></label>'
+  h += '<label class="editor-mobile-setting-field"><span>字号</span><select class="toolbar-setting" data-a="fs-size" aria-label="字号">'
+  var sizes = [12,14,16,18,20,22,24,28,32]
+  for (var si = 0; si < sizes.length; si++) {
+    h += '<option value="' + sizes[si] + '"' + (es.fontSize === sizes[si] ? ' selected' : '') + '>' + sizes[si] + 'px</option>'
+  }
+  h += '</select></label>'
+  h += '<label class="editor-mobile-setting-field"><span>行距</span><select class="toolbar-setting" data-a="fs-lh" aria-label="行间距">'
+  var lineHeights = [1.4,1.6,1.8,1.9,2.0,2.2,2.5]
+  for (var li = 0; li < lineHeights.length; li++) {
+    h += '<option value="' + lineHeights[li] + '"' + (es.lineHeight === lineHeights[li] ? ' selected' : '') + '>' + lineHeights[li] + '</option>'
+  }
+  h += '</select></label>'
+  h += '<label class="editor-mobile-setting-field"><span>字距</span><input class="toolbar-number" data-a="fs-ls" type="number" min="0" max="10" step="0.5" aria-label="字间距" value="' + (es.letterSpacing || 0) + '"></label>'
+  h += '<label class="editor-mobile-setting-field editor-mobile-indent"><input type="checkbox" data-a="fs-indent"' + (es.indentFirstLine ? ' checked' : '') + '><span>段首缩进</span></label>'
+  h += '<fieldset class="editor-mobile-margin-settings"><legend>页边距</legend>'
+  h += '<label><span>上</span><input class="margin-num" data-a="fs-mt" type="number" min="0" max="120" aria-label="上边距" value="' + (es.marginTop || 24) + '"></label>'
+  h += '<label><span>右</span><input class="margin-num" data-a="fs-mr" type="number" min="0" max="120" aria-label="右边距" value="' + (es.marginRight || 32) + '"></label>'
+  h += '<label><span>下</span><input class="margin-num" data-a="fs-mb" type="number" min="0" max="120" aria-label="下边距" value="' + (es.marginBottom || 24) + '"></label>'
+  h += '<label><span>左</span><input class="margin-num" data-a="fs-ml" type="number" min="0" max="120" aria-label="左边距" value="' + (es.marginLeft || 32) + '"></label>'
+  h += '</fieldset></div></section></div>'
+  return h
+}
+
+function closeMobileToolPanels(shell, restoreFocus) {
+  if (!shell) return false
+  var openPanel = shell.querySelector('[data-mobile-tool-panel]:not([hidden])')
+  var panelName = openPanel?.dataset.mobileToolPanel
+  shell.querySelectorAll('[data-mobile-tool-panel]').forEach(function(panel) { panel.hidden = true })
+  shell.querySelectorAll('[data-a="mobile-tools"]').forEach(function(trigger) { trigger.setAttribute("aria-expanded", "false") })
+  shell.removeAttribute("data-mobile-tools")
+  if (restoreFocus && panelName) shell.querySelector('[data-a="mobile-tools"][data-panel="' + panelName + '"]')?.focus()
+  return Boolean(openPanel)
+}
+
+function toggleMobileToolPanel(shell, panelName) {
+  if (!shell || (panelName !== "insert" && panelName !== "format")) return false
+  var panel = shell.querySelector('[data-mobile-tool-panel="' + panelName + '"]')
+  var trigger = shell.querySelector('[data-a="mobile-tools"][data-panel="' + panelName + '"]')
+  if (!panel || !trigger || trigger.disabled) return false
+  var shouldOpen = panel.hidden
+  closeMobileToolPanels(shell, false)
+  if (shouldOpen) {
+    panel.hidden = false
+    trigger.setAttribute("aria-expanded", "true")
+    shell.dataset.mobileTools = panelName
+  }
+  return true
+}
+
+function updateMobileEditorToolAvailability(shell, pane) {
+  shell?.querySelectorAll('[data-mobile-editor-tool]').forEach(function(control) {
+    control.disabled = pane !== "editor" || !_nodeId
+  })
 }
 
 function prepareMobilePaneRefresh(pane, restoreFocus) {
@@ -447,14 +553,25 @@ function handleClick(e) {
   var a = b.dataset.a
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
+  var mobileShell = b.closest(".editor-body-area")
+  if (a === "mobile-tools") {
+    toggleMobileToolPanel(mobileShell, b.dataset.panel)
+    return
+  }
+  if (a === "mobile-tools-close") {
+    closeMobileToolPanels(mobileShell, true)
+    return
+  }
   if (a === "mobile-pane") {
-    var shell = b.closest(".editor-body-area")
-    if (applyEditorMobilePane(shell, b.dataset.pane)) {
+    closeMobileToolPanels(mobileShell, false)
+    if (applyEditorMobilePane(mobileShell, b.dataset.pane)) {
       _mobilePane = b.dataset.pane
       _pendingMobileFocus = null
+      updateMobileEditorToolAvailability(mobileShell, _mobilePane)
     }
     return
   }
+  if (b.closest('[data-mobile-tool-panel="insert"]')) closeMobileToolPanels(mobileShell, false)
   if (a === "outline-actions") return
   if (a === "target-return") {
     var inspectState = _articleTargetInspect
@@ -1372,6 +1489,11 @@ function fmt(cmd, val) {
 
 // Handle backspace/delete for hr elements
 document.addEventListener("keydown", function(e) {
+  if (e.key === "Escape") {
+    var mobileShell = document.querySelector('.editor-body-area[data-mobile-tools]')
+    if (mobileShell && closeMobileToolPanels(mobileShell, true)) e.preventDefault()
+    return
+  }
   if (e.key !== "Backspace" && e.key !== "Delete") return
   var sel = window.getSelection()
   if (!sel || !sel.rangeCount) return
