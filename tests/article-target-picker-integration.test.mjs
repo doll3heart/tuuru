@@ -139,6 +139,7 @@ test("deleting an option group persists immediately", () => {
   render()
   const panel = openChoices()
   panel.querySelector('[data-ch-a="delete-all"]').click()
+  document.getElementById("cK").click()
 
   assert.deepEqual(getWork(work.id).nodes[0].choices, [])
   assert.equal(document.querySelector(".ch-panel"), null)

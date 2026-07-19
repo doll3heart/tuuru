@@ -96,22 +96,19 @@ function buildMobileViewSwitch() {
   var outlinePressed = _mobilePane === "outline" ? "true" : "false"
   var h = '<div class="editor-mobile-view-switch" role="group" aria-label="编辑器视图">'
   h += '<button type="button" data-a="mobile-pane" data-pane="editor" aria-controls="articleEditorPane" aria-pressed="' + editorPressed + '">正文</button>'
-  h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">大纲</button>'
+  h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">结构</button>'
   h += '</div>'
   return h
 }
 
 function buildMobileCommandbar(wid, nid) {
   var es = getSettings(wid)
-  var editorPressed = _mobilePane === "editor" ? "true" : "false"
-  var outlinePressed = _mobilePane === "outline" ? "true" : "false"
   var editorToolsDisabled = _mobilePane === "editor" && nid ? "" : " disabled"
   var h = '<div class="editor-mobile-commandbar" aria-label="移动端编辑工具">'
-  h += '<div class="editor-mobile-dock" role="group" aria-label="写作导航与工具">'
-  h += '<button type="button" data-a="mobile-pane" data-pane="editor" aria-controls="articleEditorPane" aria-pressed="' + editorPressed + '">正文</button>'
-  h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">大纲</button>'
-  h += '<button type="button" data-a="mobile-tools" data-panel="insert" data-mobile-editor-tool aria-controls="mobileInsertPanel" aria-expanded="false"' + editorToolsDisabled + '>插入</button>'
-  h += '<button type="button" data-a="mobile-tools" data-panel="format" data-mobile-editor-tool aria-controls="mobileFormatPanel" aria-expanded="false"' + editorToolsDisabled + '>格式</button>'
+  h += '<div class="editor-mobile-dock" role="group" aria-label="写作工具">'
+  h += '<button type="button" data-a="mobile-tools" data-panel="format" data-mobile-editor-tool aria-label="文字格式" aria-controls="mobileFormatPanel" aria-expanded="false"' + editorToolsDisabled + '><span aria-hidden="true">Aa</span></button>'
+  h += '<button type="button" data-a="mobile-tools" data-panel="insert" data-mobile-editor-tool aria-label="插入内容" aria-controls="mobileInsertPanel" aria-expanded="false"' + editorToolsDisabled + '><span aria-hidden="true">＋</span></button>'
+  h += '<span class="editor-mobile-save-state" aria-live="polite">已保存</span>'
   h += '</div>'
 
   h += '<section class="editor-mobile-tool-panel" id="mobileInsertPanel" data-mobile-tool-panel="insert" aria-label="插入内容" hidden>'
@@ -420,8 +417,13 @@ function buildWorldTree(w) {
   } else {
     h += '<div class="wt-header"><span>节点列表</span><div>'
     h += '<button type="button" data-a="pick-start" data-w="' + w.id + '" aria-label="选择故事起点" title="选择故事起点">起点</button>'
-    h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节">+章</button>'
-    h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点">+</button></div></div>'
+    h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节"><span class="wt-action-label-desktop">+章</span><span class="wt-action-label-mobile">+章节</span></button>'
+    h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点"><span class="wt-action-label-desktop">+</span><span class="wt-action-label-mobile">+节点</span></button></div></div>'
+    h += '<div class="wt-chapter-create" hidden>'
+    h += '<input type="text" maxlength="40" aria-label="新章节名称" placeholder="输入章节名称">'
+    h += '<button type="button" data-a="chapter-create-confirm" data-w="' + w.id + '">添加</button>'
+    h += '<button type="button" data-a="chapter-create-cancel">取消</button>'
+    h += '</div>'
   }
   h += '<div class="wt-body">'
   if (ns.length === 0) {
@@ -447,7 +449,7 @@ function buildWorldTree(w) {
       h += '<div class="wt-chapter" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
       h += '<div class="wt-chapter-title" data-outline-action-host>'
       h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="true" aria-controls="' + chapterContentId + '">'
-      h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span></button>'
+      h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span><span class="chapter-count">' + cNodes.length + ' 节</span></button>'
       h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + chapterActionPanelId + '" aria-label="' + esc(chapterActionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
       h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
       h += '<div class="wt-chapter-content" id="' + chapterContentId + '" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
@@ -637,8 +639,35 @@ function handleClick(e) {
     return
   }
   if (a === "as") {
-    var sn = prompt("章节名称:")
-    if (sn) { var wo = getWork(w); wo.chapters = wo.chapters || []; wo.chapters.push({id:uid(), name:sn}); updateWork(w, {chapters: wo.chapters}); refreshEditor(w) }
+    var chapterCreator = b.closest(".world-tree")?.querySelector(".wt-chapter-create")
+    if (chapterCreator) {
+      chapterCreator.hidden = false
+      chapterCreator.querySelector("input")?.focus()
+    }
+    return
+  }
+  if (a === "chapter-create-cancel") {
+    var cancelledCreator = b.closest(".wt-chapter-create")
+    var cancelledInput = cancelledCreator?.querySelector("input")
+    if (cancelledInput) cancelledInput.value = ""
+    if (cancelledCreator) cancelledCreator.hidden = true
+    cancelledCreator?.parentElement?.querySelector('[data-a="as"]')?.focus()
+    return
+  }
+  if (a === "chapter-create-confirm") {
+    var confirmedCreator = b.closest(".wt-chapter-create")
+    var chapterInput = confirmedCreator?.querySelector("input")
+    var chapterName = chapterInput?.value?.trim() || ""
+    if (!chapterName) {
+      chapterInput?.focus()
+      return
+    }
+    var chapterWork = getWork(w)
+    var chapters = (chapterWork.chapters || []).slice()
+    chapters.push({id:uid(), name:chapterName})
+    updateWork(w, {chapters:chapters})
+    prepareMobilePaneRefresh("outline", true)
+    refreshEditor(w)
     return
   }
   if (a === "sl") { _nodeId = n; prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
@@ -651,12 +680,12 @@ function handleClick(e) {
     return
   }
   if (a === "dl") {
-    if (confirm("确定删除?")) {
+    showConfirm("删除节点", "确定删除此节点？", function() {
       deleteNode(w, n)
       var remainingNodes = (getWork(w)?.nodes || []).length
       if (remainingNodes === 0) prepareMobilePaneRefresh("outline", true)
       refreshEditor(w)
-    } else restoreOutlineActionFocus(outlineActionTrigger, b)
+    }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
     return
   }
   if (a === "rn2") {
@@ -995,10 +1024,10 @@ function openPlaceholderPanel(wid) {
         return
       }
       if (act === 'delete' && pid) {
-        if (confirm('确定删除此占位符？')) {
+        showConfirm('删除占位符', '确定删除此占位符？', function() {
           deletePlaceholder(wid, pid)
           refreshPhList(wid, ov)
-        }
+        })
         return
       }
       if (act === 'save' && pid) {
@@ -1210,11 +1239,11 @@ function openChoicePanel(wid, nid, options) {
         return
       }
       if (act === 'delete-all') {
-        if (confirm('确定删除此节点的选项组？')) {
+        showConfirm('删除选项组', '确定删除此节点的选项组？', function() {
           updateNode(wid, nid, {choices: []})
           ov.remove()
           refreshEditor(wid)
-        }
+        })
         return
       }
     })
@@ -1710,7 +1739,7 @@ function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
       }
     } else if (act === 'delete') {
       menu.remove()
-      if (confirm('确定删除此手机模块？')) {
+      showConfirm('删除手机模块', '确定删除此手机模块？', function() {
         deletePhoneModule(wid, pmid)
         var card = document.querySelector('[data-pm-id="' + pmid + '"]')
         if (card) {
@@ -1719,7 +1748,7 @@ function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
           if (ce) updateNode(_workId, nid, {content: ce.innerHTML})
         }
         showToast('已删除')
-      }
+      })
     }
   })
 

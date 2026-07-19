@@ -452,21 +452,15 @@ test("desktop outline actions regain focus after cancellation", () => {
 
   root = render()
   action = root.querySelector('.wt-node-select[data-n="node-a"]').closest(".wt-node").querySelector('[data-a="dl"]')
-  const originalConfirm = globalThis.confirm
   const before = localStorage.getItem("tuuru_works")
-  try {
-    globalThis.confirm = () => false
-    action.click()
-    assert.equal(document.activeElement, action)
-    assert.equal(localStorage.getItem("tuuru_works"), before)
-  } finally {
-    globalThis.confirm = originalConfirm
-  }
+  action.click()
+  assert.equal(document.activeElement?.id, "cN")
+  document.getElementById("cN").click()
+  assert.equal(document.activeElement, action)
+  assert.equal(localStorage.getItem("tuuru_works"), before)
 })
 
 test("node action panels reuse move, reorder, and delete command paths", () => {
-  const originalConfirm = globalThis.confirm
-
   try {
     const movableWork = JSON.parse(JSON.stringify(work))
     movableWork.chapters.push({ id: "chapter-b", name: "Chapter B" })
@@ -506,14 +500,12 @@ test("node action panels reuse move, reorder, and delete command paths", () => {
     row = root.querySelector('.wt-node-select[data-n="node-a"]').closest(".wt-node")
     trigger = row.querySelector(".wt-action-disclosure")
     const beforeDelete = localStorage.getItem("tuuru_works")
-    globalThis.confirm = () => {
-      assert.equal(trigger.getAttribute("aria-expanded"), "false")
-      return false
-    }
     trigger.click()
     document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="dl"]').click()
 
     assert.equal(trigger.getAttribute("aria-expanded"), "false")
+    assert.equal(document.activeElement?.id, "cN")
+    document.getElementById("cN").click()
     assert.equal(document.activeElement, trigger)
     assert.equal(localStorage.getItem("tuuru_works"), beforeDelete)
 
@@ -525,7 +517,6 @@ test("node action panels reuse move, reorder, and delete command paths", () => {
     assert.equal(document.activeElement, trigger)
     assert.equal(localStorage.getItem("tuuru_works"), beforeDelete)
   } finally {
-    globalThis.confirm = originalConfirm
     localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
     render()
   }

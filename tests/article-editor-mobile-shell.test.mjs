@@ -171,7 +171,7 @@ test("rendered mobile view controls switch panes in place without a storage writ
   assert.equal(editorButton?.type, "button")
   assert.equal(editorButton?.textContent.trim(), "正文")
   assert.equal(editorButton?.getAttribute("aria-controls"), "articleEditorPane")
-  assert.equal(outlineButton?.textContent.trim(), "大纲")
+  assert.equal(outlineButton?.textContent.trim(), "结构")
   assert.equal(outlineButton?.getAttribute("aria-controls"), "articleOutlinePane")
 
   const beforeStorage = localStorage.getItem("tuuru_works")
@@ -186,7 +186,7 @@ test("rendered mobile view controls switch panes in place without a storage writ
   assert.equal(location.hash, beforeHash)
 })
 
-test("the mobile writing dock progressively discloses insert and format tools", async () => {
+test("the compact mobile writing dock progressively discloses insert and format tools", async () => {
   const work = article("mobile-command-work", [{ id: "mobile-command-node" }])
   seed(work)
   const root = await render(work.id)
@@ -196,14 +196,14 @@ test("the mobile writing dock progressively discloses insert and format tools", 
   assert.ok(commandbar)
 
   const dockLabels = [...commandbar.querySelectorAll(".editor-mobile-dock > button")]
-    .map(button => button.textContent.trim())
+    .map(button => button.getAttribute("aria-label"))
   const insertTrigger = commandbar.querySelector('[data-a="mobile-tools"][data-panel="insert"]')
   const formatTrigger = commandbar.querySelector('[data-a="mobile-tools"][data-panel="format"]')
   const insertPanel = commandbar.querySelector('[data-mobile-tool-panel="insert"]')
   const formatPanel = commandbar.querySelector('[data-mobile-tool-panel="format"]')
-  const outlineTrigger = commandbar.querySelector('[data-a="mobile-pane"][data-pane="outline"]')
+  const outlineTrigger = paneButton("outline")
 
-  assert.deepEqual(dockLabels, ["正文", "大纲", "插入", "格式"])
+  assert.deepEqual(dockLabels, ["文字格式", "插入内容"])
   assert.equal(insertPanel.hidden, true)
   assert.equal(formatPanel.hidden, true)
   assert.equal(insertTrigger.getAttribute("aria-expanded"), "false")
@@ -230,6 +230,28 @@ test("the mobile writing dock progressively discloses insert and format tools", 
   assert.equal(formatPanel.hidden, true)
   assert.equal(formatTrigger.getAttribute("aria-expanded"), "false")
   assert.equal(root.querySelector(".content-editable"), editable)
+})
+
+test("chapter creation stays inline and the editor source has no native dialogs", async () => {
+  const work = article("inline-chapter-work", [{ id: "inline-chapter-node" }])
+  seed(work)
+  const root = await render(work.id)
+  const addChapter = root.querySelector('[data-a="as"]')
+
+  assert.ok(addChapter)
+  addChapter.click()
+
+  const creator = root.querySelector(".wt-chapter-create")
+  assert.ok(creator)
+  assert.equal(creator.hidden, false)
+  assert.equal(document.activeElement, creator.querySelector("input"))
+
+  creator.querySelector("input").value = "第二章"
+  creator.querySelector('[data-a="chapter-create-confirm"]').click()
+
+  const saved = JSON.parse(localStorage.getItem("tuuru_works"))
+  assert.ok(saved.works[0].chapters.some(chapter => chapter.name === "第二章"))
+  assert.doesNotMatch(editorSource, /\b(?:prompt|confirm|alert)\s*\(/)
 })
 
 test("outline selection returns to editing while an editor choice does not steal focus", async t => {
@@ -273,6 +295,7 @@ test("empty, first-node, last-node, and cross-work transitions choose a reachabl
 
   paneButton("outline").click()
   document.querySelector('.wt-node [data-a="dl"]').click()
+  document.getElementById("cK").click()
   assert.equal(document.querySelector(".editor-body-area").dataset.mobilePane, "outline")
   assert.equal(document.activeElement, paneButton("outline"))
 
@@ -578,18 +601,24 @@ test("bounded action rails scroll horizontally with touch-safe targets", () => {
   assert.match(toolbarFocus, /outline\s*:\s*2px\s+solid/)
 })
 
-test("bounded phone authoring replaces stacked rails with one bottom command dock", () => {
+test("bounded phone authoring separates primary page tabs from a compact writing dock", () => {
   const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
   assert.ok(bounded)
 
   assert.match(ruleBodiesFor(cssWithoutComments, ".editor-mobile-commandbar"), /display\s*:\s*none/)
   assert.match(ruleBodiesFor(bounded, ".editor-iconbar"), /display\s*:\s*none/)
-  assert.match(ruleBodiesFor(bounded, ".editor-mobile-view-switch"), /display\s*:\s*none/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-view-switch"), /display\s*:\s*flex/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-view-switch button"), /min-height\s*:\s*44px/)
+  assert.match(ruleBodiesFor(bounded, '.editor-mobile-view-switch button[aria-pressed="true"]::after'), /height\s*:\s*2px/)
   assert.match(ruleBodiesFor(bounded, ".editor-toolbar"), /display\s*:\s*none/)
   assert.match(ruleBodiesFor(bounded, ".editor-mobile-commandbar"), /display\s*:\s*flex/)
-  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock"), /min-height\s*:\s*56px/)
-  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock > button"), /min-height\s*:\s*56px/)
+  assert.match(ruleBodiesFor(bounded, '.editor-body-area[data-mobile-pane="outline"] .editor-mobile-commandbar'), /display\s*:\s*none/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock"), /min-height\s*:\s*52px/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock > button"), /min-width\s*:\s*44px/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-dock > button"), /min-height\s*:\s*44px/)
   assert.match(ruleBodiesFor(bounded, ".editor-mobile-tool-panel"), /position\s*:\s*absolute/)
-  assert.match(ruleBodiesFor(bounded, ".editor-mobile-tool-panel"), /bottom\s*:\s*56px/)
+  assert.match(ruleBodiesFor(bounded, ".editor-mobile-tool-panel"), /bottom\s*:\s*52px/)
+  assert.match(ruleBodiesFor(bounded, ".world-tree .wt-chapter-content"), /border-left\s*:\s*1px\s+solid/)
+  assert.match(ruleBodiesFor(bounded, ".world-tree .wt-node-drag-handle"), /opacity\s*:\s*1/)
   assert.match(ruleBodiesFor(bounded, ".editor-area"), /flex\s*:\s*1\s+1\s+0/)
 })
