@@ -169,6 +169,69 @@ test("backdrop close flushes the focused app field before draft snapshot", async
   dom.window.close()
 })
 
+test("article contacts expose the full card and persist App identities and avatar", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
+    url: "http://localhost/",
+  })
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.localStorage = dom.window.localStorage
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.Node = dom.window.Node
+  globalThis.Event = dom.window.Event
+  globalThis.MouseEvent = dom.window.MouseEvent
+  globalThis.MutationObserver = dom.window.MutationObserver
+
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({
+    id: "article-contact-card",
+    type: "article",
+    phoneData: {
+      contacts: [{ id: "contact-1", name: "林雾" }],
+      chats: [], moments: [], forumPosts: [], forumNpcs: [], memos: [], photos: [], albums: [],
+      browserHistory: [], shoppingItems: [], skin: { readerId: "Reader" }, apps: [],
+    },
+  })
+
+  const overlay = openPhoneAppModal(draft.id, "contacts")
+  assert.ok(overlay.querySelector(".ct-card"))
+  assert.ok(overlay.querySelector("[data-ct-avatar]"))
+
+  const expectedFields = {
+    "[data-ct-alias]": "小雾",
+    "[data-ct-note]": "主角联系人",
+    "[data-ct-msgid]": "雾中来信",
+    "[data-ct-forum]": "北岸观测员",
+    "[data-ct-face]": "https://example.invalid/face.png",
+  }
+  for (const [selector, value] of Object.entries(expectedFields)) {
+    const input = overlay.querySelector(selector)
+    assert.ok(input, selector)
+    input.value = value
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+  }
+
+  overlay.querySelector("[data-ct-avatar]").click()
+  const avatarInput = document.querySelector("#ctAvatarUrlInput")
+  assert.ok(avatarInput)
+  avatarInput.value = "https://example.invalid/avatar.png"
+  document.querySelector("#ctAvatarOk").click()
+
+  const saved = draft.snapshot().phoneData.contacts[0]
+  assert.equal(saved.alias, "小雾")
+  assert.equal(saved.note, "主角联系人")
+  assert.equal(saved.msgId, "雾中来信")
+  assert.equal(saved.forumId, "北岸观测员")
+  assert.equal(saved.faceUrl, "https://example.invalid/face.png")
+  assert.equal(saved.avatarUrl, "https://example.invalid/avatar.png")
+
+  overlay.querySelector(".phone-app-modal-close").click()
+  draft.dispose()
+  dom.window.close()
+})
+
 test("every embedded app Back control settles the hosting modal", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
     url: "http://localhost/",

@@ -12,6 +12,7 @@ import {
 } from "../phone-grid.js"
 import { showToast, renderHeader, modal } from "../app.js"
 import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
+import { contactDisplayName, resolveContactIdentity } from "../contact-identity.js"
 
 var _workId = null
 var _dragState = null
@@ -392,10 +393,32 @@ export function openPhoneAppModal(wid, appType, options = {}) {
 function renderContactsModal(frame, wid, pd) {
   var contacts = pd.contacts || []
 
-  function saveAndRefresh() {
+  function persist() {
     pd.contacts = contacts
     updateWork(wid, { phoneData: pd })
+  }
+
+  function saveAndRefresh() {
+    persist()
     renderList()
+  }
+
+  function collectField(field, key) {
+    var inputs = frame.querySelectorAll('[data-ct-' + field + ']')
+    inputs.forEach(function(input) {
+      var idx = parseInt(input.dataset.ctIdx)
+      if (idx >= 0 && idx < contacts.length) contacts[idx][key] = input.value || ''
+    })
+  }
+
+  function flushFields() {
+    collectField('name', 'name')
+    collectField('alias', 'alias')
+    collectField('note', 'note')
+    collectField('msgid', 'msgId')
+    collectField('forum', 'forumId')
+    collectField('face', 'faceUrl')
+    persist()
   }
 
   function renderList() {
@@ -404,14 +427,7 @@ function renderContactsModal(frame, wid, pd) {
     if (contacts.length === 0) {
       h += '<div class="pf-empty">暂无联系人，点击下方按钮添加</div>'
     } else {
-      contacts.forEach(function(c, idx) {
-        var color = avatarColor(c.id || uid())
-        h += '<div class="pf-contact-row" style="align-items:center">'
-        h += '<div class="pf-contact-avatar" style="background:' + color + '">' + esc(c.name.charAt(0)) + '</div>'
-        h += '<div class="pf-contact-info"><input class="ct-name" data-ct-idx="' + idx + '" value="' + esc(c.name) + '" style="flex:1;min-width:0;background:transparent;border:none;outline:none;font-size:.8rem;color:var(--c-text);padding:2px 0;line-height:1.4;font-family:inherit"></div>'
-        h += '<button class="pf-contact-del" data-ct-idx="' + idx + '" title="删除" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:1px solid var(--c-accent3);background:rgba(217,160,179,.1);color:var(--c-accent3);cursor:pointer;font-size:.7rem;padding:0;flex-shrink:0">\u2715</button>'
-        h += '</div>'
-      })
+      h += renderPfContacts(contacts)
     }
     h += '</div>'
     h += '<div style="padding:8px 10px;border-top:1px solid var(--c-border);background:var(--c-surface);flex-shrink:0">'
@@ -424,6 +440,7 @@ function renderContactsModal(frame, wid, pd) {
     var addBtn = frame.querySelector('#ctModalAddBtn')
     if (addBtn) {
       addBtn.onclick = function() {
+        flushFields()
         var ov = modal('添加联系人', '<div class="form-group"><input id="ctNewNameInput" class="form-input" placeholder="联系人姓名" autofocus></div>', '<button id="ctNewNameOk" class="btn btn-primary btn-sm">确定</button><button id="ctNewNameCancel" class="btn btn-ghost btn-sm">取消</button>')
         var okBtn = ov.querySelector('#ctNewNameOk')
         var cancelBtn2 = ov.querySelector('#ctNewNameCancel')
@@ -432,7 +449,7 @@ function renderContactsModal(frame, wid, pd) {
           okBtn.onclick = function() {
             var name = inputEl.value.trim()
             if (!name) return
-            contacts.push({ id: uid(), name: name, alias: '', avatarUrl: '', note: '', forumId: '' })
+            contacts.push({ id: uid(), name: name, alias: '', avatarUrl: '', note: '', faceUrl: '', msgId: '', forumId: '' })
             saveAndRefresh()
             ov.remove()
           }
@@ -443,30 +460,46 @@ function renderContactsModal(frame, wid, pd) {
       }
     }
 
-    // Bind name inputs (save on blur)
-    var nameInputs = frame.querySelectorAll('.ct-name')
-    nameInputs.forEach(function(inp) {
-      inp.addEventListener('blur', function() {
-        var idx = parseInt(inp.dataset.ctIdx)
-        if (idx >= 0 && idx < contacts.length) {
-          contacts[idx].name = inp.value.trim() || contacts[idx].name
-          saveAndRefresh()
-        }
-      })
-      inp.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') { e.preventDefault(); inp.blur() }
+    var cardInputs = frame.querySelectorAll('[data-ct-name], [data-ct-alias], [data-ct-note], [data-ct-msgid], [data-ct-forum], [data-ct-face]')
+    cardInputs.forEach(function(input) {
+      input.addEventListener('change', flushFields)
+      input.addEventListener('blur', flushFields)
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur() }
       })
     })
 
-    // Bind delete buttons
-    var delBtns = frame.querySelectorAll('.pf-contact-del')
+    var delBtns = frame.querySelectorAll('[data-ct-del]')
     delBtns.forEach(function(btn) {
       btn.onclick = function() {
+        flushFields()
         var idx = parseInt(btn.dataset.ctIdx)
         if (idx >= 0 && idx < contacts.length) {
           contacts.splice(idx, 1)
           saveAndRefresh()
         }
+      }
+    })
+
+    var avatars = frame.querySelectorAll('[data-ct-avatar]')
+    avatars.forEach(function(avatar) {
+      avatar.onclick = function() {
+        flushFields()
+        var idx = parseInt(avatar.dataset.ctIdx)
+        if (idx < 0 || idx >= contacts.length) return
+        var ov = modal('设置头像', '<div class="form-group"><label class="form-label">图片链接</label><input id="ctAvatarUrlInput" class="form-input" placeholder="输入头像图片 URL" value="' + esc(contacts[idx].avatarUrl || '') + '" autofocus></div>' + IMGHOST_HINT, '<button id="ctAvatarOk" class="btn btn-primary btn-sm">确定</button><button id="ctAvatarCancel" class="btn btn-ghost btn-sm">取消</button>')
+        var inputEl = ov.querySelector('#ctAvatarUrlInput')
+        var okBtn = ov.querySelector('#ctAvatarOk')
+        if (okBtn && inputEl) {
+          okBtn.onclick = function() {
+            contacts[idx].avatarUrl = inputEl.value.trim()
+            saveAndRefresh()
+            ov.remove()
+          }
+          inputEl.onkeydown = function(e) { if (e.key === 'Enter') okBtn.click() }
+        }
+        var cancelBtn = ov.querySelector('#ctAvatarCancel')
+        if (cancelBtn) cancelBtn.onclick = function() { ov.remove() }
       }
     })
   }
@@ -2691,7 +2724,10 @@ function openForumEditor(frame, wid, contact, pd) {
     // Check contacts first
     var contacts = pd.contacts || []
     var c = contacts.find(function(x) { return x.id === id })
-    if (c) return { name: c.name, avatar: c.avatarUrl || '', isContact: true }
+    if (c) {
+      var contactIdentity = resolveContactIdentity(pd, id, { surface: 'forum', authoredName: c.name })
+      return { name: contactIdentity.name, avatar: contactIdentity.avatar, isContact: true }
+    }
 
     // Check npcs
     var n = npcs.find(function(x) { return x.id === id })
@@ -2743,13 +2779,17 @@ function openForumEditor(frame, wid, contact, pd) {
     var h = ''
     var f = (filter || '').toLowerCase()
     // Contacts section
-    var filteredContacts = contacts.filter(function(c) { return !f || c.name.toLowerCase().indexOf(f) >= 0 })
+    var filteredContacts = contacts.filter(function(c) {
+      var displayName = contactDisplayName(c, 'forum')
+      return !f || c.name.toLowerCase().indexOf(f) >= 0 || displayName.toLowerCase().indexOf(f) >= 0
+    })
     if (filteredContacts.length > 0) {
       h += '<div class="forum-id-section">联系人</div>'
       filteredContacts.forEach(function(c, i) {
+        var displayName = contactDisplayName(c, 'forum')
         h += '<label class="forum-id-opt">'
-        h += '<input type="radio" name="forumId" value="' + c.id + '|' + esc(c.name) + '|' + esc(c.avatarUrl || '') + '"' + (i === 0 && !filter ? ' checked' : '') + '>'
-        h += '<span>' + esc(c.name) + '</span>'
+        h += '<input type="radio" name="forumId" value="' + c.id + '|' + esc(displayName) + '|' + esc(c.avatarUrl || '') + '"' + (i === 0 && !filter ? ' checked' : '') + '>'
+        h += '<span>' + esc(displayName) + (displayName !== c.name ? ' <small>' + esc(c.name) + '</small>' : '') + '</span>'
         h += '</label>'
       })
     }
@@ -2977,11 +3017,11 @@ function openForumEditor(frame, wid, contact, pd) {
       var author = getIdInfo(post.contactId)
       h += '<div class="forum-post-full">'
       h += '<div class="forum-post-head">'
-      h += '<div class="forum-post-avatar" style="' + (post.contactAvatar ? 'background-image:url(' + esc(post.contactAvatar) + ');background-size:cover' : 'background:' + avatarColor(post.contactId)) + '">'
-      if (!post.contactAvatar) h += '<span>' + esc((post.contactName || '?').charAt(0)) + '</span>'
+      h += '<div class="forum-post-avatar" style="' + (author.avatar ? 'background-image:url(' + esc(author.avatar) + ');background-size:cover' : 'background:' + avatarColor(post.contactId)) + '">'
+      if (!author.avatar) h += '<span>' + esc((author.name || '?').charAt(0)) + '</span>'
       h += '</div>'
       h += '<div class="forum-post-by">'
-      h += '<div class="forum-post-author">' + esc(post.contactName || author.name) + ' <span class="forum-badge-op">楼主</span></div>'
+      h += '<div class="forum-post-author">' + esc(author.name || post.contactName) + ' <span class="forum-badge-op">楼主</span></div>'
       h += '<div class="forum-post-time">' + fmtTime(post.time) + '</div>'
       h += '</div>'
       h += '</div>'
@@ -3021,12 +3061,12 @@ function openForumEditor(frame, wid, contact, pd) {
         var p = posts[pi]
         var a = getIdInfo(p.contactId)
         h += '<div class="forum-list-card" data-post-id="' + p.id + '">'
-        h += '<div class="forum-list-avatar" style="' + (p.contactAvatar ? 'background-image:url(' + esc(p.contactAvatar) + ');background-size:cover' : 'background:' + avatarColor(p.contactId)) + '">'
-        if (!p.contactAvatar) h += '<span>' + esc((p.contactName || '?').charAt(0)) + '</span>'
+        h += '<div class="forum-list-avatar" style="' + (a.avatar ? 'background-image:url(' + esc(a.avatar) + ');background-size:cover' : 'background:' + avatarColor(p.contactId)) + '">'
+        if (!a.avatar) h += '<span>' + esc((a.name || '?').charAt(0)) + '</span>'
         h += '</div>'
         h += '<div class="forum-list-info">'
         h += '<div class="forum-list-title">' + esc(p.title) + '</div>'
-        h += '<div class="forum-list-meta">' + esc(p.contactName || a.name) + ' / ' + fmtTime(p.time) + '</div>'
+        h += '<div class="forum-list-meta">' + esc(a.name || p.contactName) + ' / ' + fmtTime(p.time) + '</div>'
         h += '<div class="forum-list-stats">'
         h += '<span>赞 ' + (p.likes || 0) + '</span>'
         h += '<span>收藏 ' + (p.bookmarks || 0) + '</span>'
@@ -3482,7 +3522,7 @@ function openMessagesEditor(frame, wid, pd) {
   function getChatName(ch) {
     if (ch.type === 'group') return ch.groupName || '群聊'
     var c = contacts.find(function(x) { return x.id === ch.contactIds[0] })
-    return c ? c.name : '未知'
+    return c ? contactDisplayName(c, 'messages') : '未知'
   }
 
   function renderMessages() {
@@ -3818,7 +3858,7 @@ function openChatEditor(frame, wid, chatId, pd) {
   function getChatName() {
     if (ch.type === 'group') return ch.groupName || '群聊'
     var c = contacts.find(function(x) { return x.id === ch.contactIds[0] })
-    return c ? c.name : '未知'
+    return c ? contactDisplayName(c, 'messages') : '未知'
   }
 
   function addMsg(type) {
@@ -4046,7 +4086,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (senderId === 'self') return '读者'
     if (senderId === 'system') return '系统'
     var contact = contacts.find(function(c) { return c.id === senderId })
-    return contact ? contact.name : '未知'
+    return contact ? contactDisplayName(contact, 'messages') : '未知'
   }
 
   function currentRound() {

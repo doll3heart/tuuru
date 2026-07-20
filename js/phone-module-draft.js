@@ -13,7 +13,7 @@ const DRAFT_COLLECTIONS = [
 
 const MODULE_FIELDS = {
   messages: ["chats", "contacts"],
-  forum: ["forumPosts"],
+  forum: ["forumPosts", "forumNpcs", "contacts"],
   memo: ["memos", "contacts"],
   gallery: ["photos", "albums", "contacts"],
   browser: ["browserHistory", "contacts"],
@@ -41,10 +41,9 @@ export function createPhoneModuleDraftData(work, moduleData) {
   const source = moduleData && typeof moduleData === "object" ? moduleData : {}
   const draft = clone(source)
 
-  if (!Array.isArray(draft.contacts)) {
-    const sharedContacts = work?.phoneData?.contacts
-    draft.contacts = Array.isArray(sharedContacts) ? clone(sharedContacts) : []
-  }
+  const sharedContacts = work?.phoneData?.contacts
+  if (Array.isArray(sharedContacts)) draft.contacts = clone(sharedContacts)
+  else if (!Array.isArray(draft.contacts)) draft.contacts = []
 
   for (const field of DRAFT_COLLECTIONS) {
     if (!Array.isArray(draft[field])) draft[field] = []

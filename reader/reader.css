@@ -1576,8 +1576,11 @@ body.rd-theme-gray .article-meta { color: #333; }
   border: 1px solid rgba(64, 56, 59, .3); border-radius: 4px;
   background: var(--rd-avatar-bg, var(--phone-system-accent));
   box-shadow: 2px 2px 0 rgba(64, 56, 59, .14);
-  color: #fff; font-size: .72rem; font-weight: 700;
+  overflow: hidden; color: #fff; font-size: .72rem; font-weight: 700;
 }
+.rd-forum-avatar img,
+.rd-contact-avatar img,
+.rd-message-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .rd-forum-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .rd-forum-title {
   overflow: hidden; color: var(--rd-forum-title, var(--phone-system-text));
@@ -1768,7 +1771,7 @@ body.rd-theme-gray .article-meta { color: #333; }
   border: 1px solid rgba(64, 56, 59, .32); border-radius: var(--rd-contact-radius, 50%);
   background: var(--rd-avatar-bg, var(--phone-system-accent));
   box-shadow: 2px 2px 0 rgba(64, 56, 59, .14);
-  color: #fff; font-size: .78rem; font-weight: 700;
+  overflow: hidden; color: #fff; font-size: .78rem; font-weight: 700;
 }
 .rd-contact-name {
   min-width: 0; overflow: hidden;
@@ -2321,6 +2324,7 @@ body.rd-theme-gray .article-meta { color: #333; }
   color: #fff;
   font-weight: 700;
 }
+.rd-message-avatar { overflow: hidden; }
 .rd-message-avatar { width: 36px; height: 36px; }
 .rd-message-card-copy {
   display: flex;

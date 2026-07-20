@@ -11,6 +11,10 @@ import { createEditorNodeDragController } from "../editor-node-drag.js"
 import { reorderArticleNode } from "../article-node-reorder.js"
 import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
 import { openPhoneAppModal } from "./phone.js"
+import { editorFontFormat, editorFontValue, installEditorCustomFonts, upsertEditorCustomFont } from "../editor-custom-fonts.js"
+import { compressEditorImage } from "../image-compression.js"
+
+const MAX_EDITOR_FONT_BYTES = 2 * 1024 * 1024
 
 // State
 var _workId = null
@@ -79,6 +83,7 @@ export function renderEditor(wid) {
   _workId = wid
   var w = getWork(wid)
   if (!w) return '<div class="app-main"><div class="empty-state"><h3>作品未找到</h3></div></div>'
+  installEditorCustomFonts(document, w.editorSettings?.customFonts)
   var ns = w.nodes || []
   if (!_nodeId || !ns.find(function(n){ return n.id === _nodeId })) {
     _nodeId = ns.length ? ns[0].id : null
@@ -127,7 +132,10 @@ function buildMobileCommandbar(wid, nid) {
   h += '</div></section>'
 
   h += '<section class="editor-mobile-tool-panel" id="mobileFormatPanel" data-mobile-tool-panel="format" aria-label="文字格式" hidden>'
-  h += '<div class="editor-mobile-tool-head"><strong>文字格式</strong><button type="button" data-a="mobile-tools-close" data-panel="format">完成</button></div>'
+  h += '<div class="editor-mobile-tool-head"><strong>文字格式</strong><div class="editor-mobile-tool-actions">'
+  h += '<button type="button" data-a="undo" data-n="' + nid + '" title="撤回" aria-label="撤回"><span aria-hidden="true">↶</span></button>'
+  h += '<button type="button" data-a="redo" data-n="' + nid + '" title="重做" aria-label="重做"><span aria-hidden="true">↷</span></button>'
+  h += '<button type="button" data-a="mobile-tools-close" data-panel="format">完成</button></div></div>'
   h += '<div class="editor-mobile-format-buttons" role="group" aria-label="文字样式与对齐">'
   h += '<button type="button" data-a="bold" data-n="' + nid + '" aria-label="加粗"><b>B</b></button>'
   h += '<button type="button" data-a="italic" data-n="' + nid + '" aria-label="斜体"><i>I</i></button>'
@@ -286,6 +294,10 @@ function buildToolbar(nid) {
   var es = getSettings(_workId)
 
   var h = '<div class="editor-toolbar"><div class="editor-toolbar-scroll">'
+  // Editing history
+  h += '<button type="button" data-a="undo" data-n="' + nid + '" title="撤回" aria-label="撤回"><span aria-hidden="true">↶</span></button>'
+  h += '<button type="button" data-a="redo" data-n="' + nid + '" title="重做" aria-label="重做"><span aria-hidden="true">↷</span></button>'
+  h += '<div class="tb-divider"></div>'
   // Text style buttons
   h += '<button type="button" data-a="bold" data-n="' + nid + '" title="加粗" aria-label="加粗"><b>B</b></button>'
   h += '<button type="button" data-a="italic" data-n="' + nid + '" title="斜体" aria-label="斜体"><i>I</i></button>'
@@ -790,6 +802,8 @@ function handleClick(e) {
     return
   }
   // Formatting
+  if (a === "undo") { runHistoryCommand("undo"); return }
+  if (a === "redo") { runHistoryCommand("redo"); return }
   if (a === "bold") { fmt("bold"); return }
   if (a === "italic") { fmt("italic"); return }
   if (a === "underline") { fmt("underline"); return }
@@ -857,22 +871,29 @@ function handleChange(e) {
       input.onchange = function() {
         var file = input.files && input.files[0]
         if (!file) return
+        if (file.size > MAX_EDITOR_FONT_BYTES) {
+          showToast("字体超过 2MB，请压缩或选择更小的字体文件", "error")
+          return
+        }
         var reader = new FileReader()
         reader.onload = function() {
           var fontName = file.name.replace(/\.[^.]+$/, "")
           var fontData = reader.result
-          // Inject @font-face
-          var styleEl = document.createElement("style")
-          styleEl.textContent = '@font-face{font-family:"' + fontName + '";src:url(' + fontData + ') format("' + (file.name.endsWith('.ttf')?'truetype':'opentype') + '");}'
-          document.head.appendChild(styleEl)
-          // Save to editorSettings
+          var fontValue = editorFontValue(fontName)
+          var customFont = {name: fontName, value: fontValue, data: fontData, format: editorFontFormat(file.name)}
           var _es = getSettings(_workId)
-          _es.customFonts = _es.customFonts || []
-          _es.customFonts.push({name: fontName, value: '"' + fontName + '", sans-serif'})
-          _es.fontFamily = '"' + fontName + '", sans-serif'
-          updateWork(_workId, {editorSettings: _es})
-          refreshEditor(_workId)
+          _es.customFonts = upsertEditorCustomFont(_es.customFonts, customFont)
+          _es.fontFamily = fontValue
+          try {
+            updateWork(_workId, {editorSettings: _es})
+            installEditorCustomFonts(document, _es.customFonts)
+            refreshEditor(_workId)
+            showToast("字体已导入并应用")
+          } catch (error) {
+            showToast("字体保存失败：浏览器本地空间不足", "error")
+          }
         }
+        reader.onerror = function() { showToast("字体读取失败，请换一个文件重试", "error") }
         reader.readAsDataURL(file)
       }
       input.click()
@@ -1358,7 +1379,7 @@ function openImagePanel() {
   body += '<div class="im-body">'
   body += '<div class="im-section">'
   body += '<div class="im-section-title">上传本地图片</div>'
-  body += '<p class="im-hint">图片将转为 base64 嵌入 HTML。大图建议使用外链。</p>'
+  body += '<p class="im-hint">图片会自动压缩至约 500KB，再以 base64 嵌入作品（压缩后最多 1MB）。</p>'
   body += '<button class="btn btn-sm btn-primary" id="imUploadBtn">选择图片</button>'
   body += '</div>'
   body += '<div class="im-divider"><span>或</span></div>'
@@ -1383,21 +1404,21 @@ function openImagePanel() {
     uploadBtn.onclick = function() {
       var input = document.createElement('input')
       input.type = 'file'
-      input.accept = 'image/*'
-      input.onchange = function() {
+      input.accept = '.jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif'
+      input.onchange = async function() {
         var file = input.files && input.files[0]
         if (!file) return
-        if (file.size > 2 * 1024 * 1024) {
-          showToast('图片超过 2MB，建议压缩后上传或使用外链', 'error')
-          return
-        }
-        var reader = new FileReader()
-        reader.onload = function() {
-          var dataUrl = reader.result
-          insertImageAtCursor(dataUrl)
+        try {
+          showToast('正在处理图片…', 'info')
+          var result = await compressEditorImage(file)
+          insertImageAtCursor(result.dataUrl)
           ov.remove()
+          if (result.compressed) {
+            showToast('图片已压缩至 ' + Math.max(1, Math.round(result.outputBytes / 1024)) + 'KB')
+          }
+        } catch (error) {
+          showToast(error?.message || '图片处理失败，请换一张重试', 'error')
         }
-        reader.readAsDataURL(file)
       }
       input.click()
     }
@@ -1701,6 +1722,21 @@ function openPhoneAppModalForCard(wid, nid, pmid, type, def, onClose) {
     console.error('Failed to open phone module editor', error)
     showToast('手机模块编辑器打开失败', 'error')
   }
+}
+
+function persistEditableContent(ce) {
+  if (!ce || !_workId || !_nodeId) return
+  updateNode(_workId, _nodeId, {content: ce.innerHTML})
+  var wc = document.getElementById("wc_" + _nodeId)
+  if (wc) wc.textContent = formatEditorCharacterCount(ce)
+}
+
+function runHistoryCommand(cmd) {
+  var ce = document.getElementById("ce_" + _nodeId)
+  if (!ce) return
+  ce.focus()
+  document.execCommand(cmd, false, null)
+  persistEditableContent(ce)
 }
 
 function showPhoneModuleMenu(wid, nid, pmid, btnEl) {

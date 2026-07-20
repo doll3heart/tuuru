@@ -210,6 +210,8 @@ test("the compact mobile writing dock progressively discloses insert and format 
   assert.equal(formatTrigger.getAttribute("aria-expanded"), "false")
   assert.ok(insertPanel.querySelector('[data-a="ph"]'))
   assert.ok(insertPanel.querySelector('[data-a="pa-msg"]'))
+  assert.ok(formatPanel.querySelector('[data-a="undo"]'))
+  assert.ok(formatPanel.querySelector('[data-a="redo"]'))
   assert.ok(formatPanel.querySelector('[data-a="bold"]'))
   assert.ok(formatPanel.querySelector('[data-a="fs-font"]'))
   assert.ok(formatPanel.querySelector('[data-a="fs-mt"]'))
@@ -230,6 +232,58 @@ test("the compact mobile writing dock progressively discloses insert and format 
   assert.equal(formatPanel.hidden, true)
   assert.equal(formatTrigger.getAttribute("aria-expanded"), "false")
   assert.equal(root.querySelector(".content-editable"), editable)
+})
+
+test("undo and redo are available in both toolbars and persist their resulting HTML", async t => {
+  const work = article("history-work", [{ id: "history-node" }])
+  seed(work)
+  const root = await render(work.id)
+  const editable = root.querySelector(".content-editable")
+  const desktopToolbar = root.querySelector(".editor-toolbar")
+  const mobileToolbar = root.querySelector('[data-mobile-tool-panel="format"]')
+  const originalExecCommand = document.execCommand
+  const commands = []
+
+  document.execCommand = command => {
+    commands.push(command)
+    editable.innerHTML = command === "undo" ? "<p>undone</p>" : "<p>redone</p>"
+    return true
+  }
+  t.after(() => { document.execCommand = originalExecCommand })
+
+  assert.ok(desktopToolbar.querySelector('[data-a="undo"]'))
+  assert.ok(desktopToolbar.querySelector('[data-a="redo"]'))
+  assert.ok(mobileToolbar.querySelector('[data-a="undo"]'))
+  assert.ok(mobileToolbar.querySelector('[data-a="redo"]'))
+
+  desktopToolbar.querySelector('[data-a="undo"]').click()
+  let saved = JSON.parse(localStorage.getItem("tuuru_works"))
+  assert.equal(saved.works[0].nodes[0].content, "<p>undone</p>")
+
+  mobileToolbar.querySelector('[data-a="redo"]').click()
+  saved = JSON.parse(localStorage.getItem("tuuru_works"))
+  assert.equal(saved.works[0].nodes[0].content, "<p>redone</p>")
+  assert.deepEqual(commands, ["undo", "redo"])
+})
+
+test("a saved editor font is reinstalled and applied when the editor opens again", async () => {
+  const work = article("font-work", [{ id: "font-node" }])
+  work.editorSettings.customFonts = [{
+    name: "Saved Font",
+    value: "'Saved Font', sans-serif",
+    data: "data:font/ttf;base64,AA==",
+    format: "truetype",
+  }]
+  work.editorSettings.fontFamily = "'Saved Font', sans-serif"
+  seed(work)
+
+  const root = await render(work.id)
+  const style = document.getElementById("editor-custom-fonts-style")
+
+  assert.ok(style)
+  assert.match(style.textContent, /Saved Font/)
+  assert.equal(root.querySelector('[data-a="fs-font"] option:checked').value, "'Saved Font', sans-serif")
+  assert.match(root.querySelector(".content-editable").getAttribute("style"), /Saved Font/)
 })
 
 test("chapter creation stays inline and the editor source has no native dialogs", async () => {

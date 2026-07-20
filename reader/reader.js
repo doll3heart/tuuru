@@ -27,6 +27,7 @@ import {
   hasRenderableWorkWatermark,
   normalizeWorkWatermark,
 } from '../js/work-watermark.js'
+import { resolveContactIdentity } from '../js/contact-identity.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -1465,7 +1466,9 @@ function renderArticleReader() {
       for (var i = 0; i < pms.length; i++) { if (pms[i].id === pmid) { pm = pms[i]; break } }
       if (!pm) return
       var d = pm.data || {}
-      var contacts = d.contacts || []
+      var contacts = (_work.phoneData && Array.isArray(_work.phoneData.contacts))
+        ? _work.phoneData.contacts
+        : (d.contacts || [])
       var photos = Array.isArray(d.photos) ? d.photos : []
       var albums = Array.isArray(d.albums) ? d.albums : []
 
@@ -1503,7 +1506,7 @@ function renderArticleReader() {
         chats: d.chats || [],
         moments: [],
         forumPosts: d.forumPosts || [],
-        forumNpcs: [],
+        forumNpcs: d.forumNpcs || [],
         memos: d.memos || [],
         photos: photos,
         albums: albums,
@@ -1964,13 +1967,18 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
         if (chats.length === 0) h += '<div class="rd-app-empty">暂无对话</div>'
         chats.forEach(function(ch, chatIndex) {
           var name = ''
+          var chatIdentity = null
           if (ch.type === 'group') name = ch.groupName || '群聊'
           else {
             var cc = contacts.find(function(x) { return x.id === ch.contactIds[0] })
-            name = cc ? cc.name : '未知'
+            chatIdentity = resolveContactIdentity(pd, ch.contactIds[0], { surface: 'messages', authoredName: '未知' })
+            name = chatIdentity.name || '未知'
           }
           h += '<button type="button" class="rd-chat-card" data-chat-index="' + chatIndex + '" aria-label="' + escapeHtmlAttribute('打开与 ' + name + ' 的对话') + '">'
-          h += '<span class="rd-message-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(ch.type === 'group' ? '#769b8f' : avatarColor(ch.contactIds && ch.contactIds[0])) + '">' + esc(name.charAt(0)) + '</span>'
+          h += '<span class="rd-message-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(ch.type === 'group' ? '#769b8f' : avatarColor(ch.contactIds && ch.contactIds[0])) + '">'
+          if (chatIdentity && chatIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(chatIdentity.avatar) + '" alt="">'
+          else h += esc(name.charAt(0))
+          h += '</span>'
           h += '<span class="rd-message-card-copy"><strong>' + esc(name) + '</strong><small>打开聊天</small></span>'
           h += '</button>'
         })
@@ -2082,10 +2090,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var h = ''
     if (posts.length === 0) h += '<div class="rd-app-empty">暂无帖子</div>'
     posts.forEach(function(p, postIndex) {
+      var forumIdentity = resolveContactIdentity(pd, p.contactId, { surface: 'forum', authoredName: p.contactName, authoredAvatar: p.contactAvatar })
       var forumVars = '--rd-forum-card:' + sanitizeCssColor(forumVisual.cardBg) + ';--rd-forum-radius:' + boundedReaderSetting(getAppSettings('forum').cardRadius, 0, 0, 16) + 'px;--rd-forum-title:' + sanitizeCssColor(forumVisual.titleColor) + ';--rd-forum-title-size:' + boundedReaderSetting(getAppSettings('forum').titleSize, 13, 10, 18) + 'px;--rd-forum-time:' + sanitizeCssColor(forumVisual.timeColor)
       h += '<button type="button" class="rd-post-card' + (flowStep && String(p.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-post-index="' + postIndex + '" aria-label="' + escapeHtmlAttribute('查看帖子 ' + (p.title || '')) + '" style="' + forumVars + '">'
-      h += '<span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(p.contactId)) + '">' + esc((p.contactName || '?').charAt(0)) + '</span>'
-      h += '<span class="rd-forum-copy"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-meta">' + esc(p.contactName || '') + ' / ' + esc(p.time || '') + '</span></span>'
+      h += '<span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(p.contactId)) + '">'
+      if (forumIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(forumIdentity.avatar) + '" alt="">'
+      else h += esc((forumIdentity.name || '?').charAt(0))
+      h += '</span>'
+      h += '<span class="rd-forum-copy"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-meta">' + esc(forumIdentity.name) + ' / ' + esc(p.time || '') + '</span></span>'
       h += '</button>'
     })
     wrapPanel('论坛', h)
@@ -2288,7 +2300,10 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     if (contacts.length === 0) h += '<div class="rd-app-empty">暂无联系人</div>'
     contacts.forEach(function(c) {
       h += '<div class="rd-contact-entry">'
-      h += '<div class="rd-contact-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(c.id)) + '">' + esc((c.name || '?').charAt(0)) + '</div>'
+      h += '<div class="rd-contact-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(c.id)) + '">'
+      if (c.avatarUrl) h += '<img src="' + escapeHtmlAttribute(c.avatarUrl) + '" alt="">'
+      else h += esc((c.name || '?').charAt(0))
+      h += '</div>'
       h += '<div class="rd-contact-name">' + esc(c.name || '未命名') + '</div>'
       h += '</div>'
     })
@@ -2476,8 +2491,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
 
   function getChatName() {
     if (ch.type === 'group') return ch.groupName || '群聊'
-    var c = contacts.find(function(x) { return x.id === ch.contactIds[0] })
-    return c ? c.name : '未知'
+    return resolveContactIdentity(pd, ch.contactIds[0], { surface: 'messages', authoredName: '未知' }).name || '未知'
   }
 
   function openCallScene(msg, callKey) {
@@ -2485,7 +2499,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     mayAutoOpenCall = false
     openedCallScenes[callKey] = true
     var caller = contacts.find(function(contact) { return contact.id === msg.senderId })
-    var callerName = caller ? caller.name : getChatName()
+    var callerIdentity = resolveContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: getChatName() })
+    var callerName = callerIdentity.name || getChatName()
     var modeLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
     var playback = createCallPlaybackState(msg.callLines, msg.text)
 
@@ -2497,7 +2512,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       h += '<div class="rd-call-status"><span>' + (msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL') + '</span><span>' + (playback.isComplete ? '通话内容已结束' : '剧情进行中') + '</span></div>'
       h += '<div class="rd-call-tag">' + esc(callerName) + '打来的' + modeLabel + '</div>'
       h += '<div class="rd-call-portrait">'
-      if (caller && caller.avatarUrl) h += '<img src="' + escapeHtmlAttribute(caller.avatarUrl) + '" alt="">'
+      if (callerIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(callerIdentity.avatar) + '" alt="">'
       else h += '<span>' + esc((callerName || '?').charAt(0)) + '</span>'
       h += '</div><h3>' + esc(callerName) + '</h3><div class="rd-call-duration">正在通话</div>'
 
@@ -2657,8 +2672,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         }
         if (msg.type === 'call') {
           var callKey = ri + '-' + mi
-          var callContact = contacts.find(function(contact) { return contact.id === msg.senderId })
-          var callName = callContact ? callContact.name : chatName
+          var callIdentity = resolveContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: chatName })
+          var callName = callIdentity.name || chatName
           var callLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
           callMessages.push({ key: callKey, message: msg })
           if (mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
@@ -3000,7 +3015,10 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
   function renderForumComment(comment, floor, depth, containerKey) {
     var generated = readerThreadGeneratedItem(forumChoiceRuns, containerKey, comment.id)
     var isReader = comment.contactId === 'self' || comment.senderId === 'self'
-    var name = String(comment.contactName || (isReader ? readerThreadDisplayName(pd, custom) : '角色')).trim() || (isReader ? '我' : '角色')
+    var commentIdentity = isReader
+      ? null
+      : resolveContactIdentity(pd, comment.contactId || comment.senderId, { surface: 'forum', authoredName: comment.contactName })
+    var name = String(isReader ? readerThreadDisplayName(pd, custom) : (commentIdentity.name || '角色')).trim() || (isReader ? '我' : '角色')
     var content = String(comment.content != null ? comment.content : (comment.text != null ? comment.text : ''))
     var h = '<article class="rd-forum-comment' + (isReader ? ' is-reader' : '') + (generated ? ' is-generated' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '" style="--rd-thread-depth:' + depth + '">'
     h += '<div class="rd-forum-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
@@ -3033,12 +3051,15 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
   }
 
   function renderForumPost() {
+    var postIdentity = resolveContactIdentity(pd, post.contactId, { surface: 'forum', authoredName: post.contactName, authoredAvatar: post.contactAvatar })
     var h = '<div class="rd-forum-detail">'
     h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><span class="rd-back-spacer" aria-hidden="true"></span></header>'
     h += '<div class="rd-forum-detail-scroll">'
     h += '<article class="rd-forum-post-body">'
-    h += '<header class="rd-forum-post-author"><span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">' + esc((post.contactName || '?').charAt(0)) + '</span>'
-    h += '<span><strong>' + esc(post.contactName || '匿名') + '</strong><time>' + esc(post.time || '') + '</time></span></header>'
+    h += '<header class="rd-forum-post-author"><span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
+    if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
+    else h += esc((postIdentity.name || '?').charAt(0))
+    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong><time>' + esc(post.time || '') + '</time></span></header>'
     h += '<h3>' + esc(post.title || '') + '</h3><div class="rd-forum-post-content">' + esc(post.content || '') + '</div>'
     var postImages = Array.isArray(post.images) ? post.images.slice() : []
     if (post.imageUrl) postImages.unshift(post.imageUrl)

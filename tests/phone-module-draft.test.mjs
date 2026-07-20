@@ -29,7 +29,11 @@ test("shared article contacts are copied into a module draft", () => {
     phoneData: { contacts: [{ id: "contact-1", profile: { name: "A" } }] },
   }
 
-  const draft = createPhoneModuleDraftData(article, { memos: [] })
+  const draft = createPhoneModuleDraftData(article, {
+    memos: [],
+    contacts: [{ id: "contact-1", profile: { name: "stale module copy" } }],
+  })
+  assert.equal(draft.contacts[0].profile.name, "A")
   draft.contacts[0].profile.name = "B"
 
   assert.equal(article.phoneData.contacts[0].profile.name, "A")
@@ -40,6 +44,7 @@ test("module payload projection follows the existing schema for every app", () =
     chats: [{ id: "chat-1" }],
     contacts: [{ id: "contact-1" }],
     forumPosts: [{ id: "post-1" }],
+    forumNpcs: [{ id: "npc-1" }],
     memos: [{ id: "memo-1" }],
     photos: [{ id: "photo-1" }],
     albums: [{ id: "album-1" }],
@@ -60,6 +65,8 @@ test("module payload projection follows the existing schema for every app", () =
   })
   assert.deepEqual(pickPhoneModuleData("forum", phoneData), {
     forumPosts: phoneData.forumPosts,
+    forumNpcs: phoneData.forumNpcs,
+    contacts: phoneData.contacts,
   })
   assert.deepEqual(pickPhoneModuleData("memo", phoneData), {
     memos: phoneData.memos,
