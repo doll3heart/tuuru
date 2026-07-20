@@ -2,6 +2,7 @@ node_modules/
 .worktrees/
 .vite/
 dist/
+.toolchains/
 *.tsbuildinfo
 *.pyc
 .DS_Store
@@ -9,3 +10,15 @@ temp_git/
 .superpowers/brainstorm/.last-token
 .superpowers/brainstorm/.last-port
 .superpowers/brainstorm/**/state/
+android/*.keystore
+android/*.jks
+android/*.apk
+android/*.apk.idsig
+android/*.aab
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/decompressed/
+android/signing-credentials.*
+android/twa-manifest.local.json

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Tuuru</title>
+  <rect width="512" height="512" fill="#EEE6E7"/>
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="#C7A1AA"/>
+  <path d="M136 376c20-60 60-100 120-120 20 0 60-20 80-60 0 40-20 80-40 100 20 0 60 0 80-20 0 40-20 80-60 100-40 20-100 20-180 0z" fill="#FFFAF9"/>
+</svg>

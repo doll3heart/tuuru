@@ -454,3 +454,11 @@ test("production pages keep one closed shared flag and import only the reliable 
   assert.doesNotMatch(homeSource, /renderHome\([^)]*flags/)
   assert.doesNotMatch(newSource, /renderNew\([^)]*flags/)
 })
+
+test("the new-work chooser keeps the article action without the oversized RW decoration", async () => {
+  const newSource = await readFile(new URL("../js/pages/new.js", import.meta.url), "utf8")
+
+  assert.match(newSource, />互动文章</)
+  assert.match(newSource, /id="articleForm"/)
+  assert.doesNotMatch(newSource, />\s*RW\s*</)
+})

@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "chat.tuuru.app",
+      "sha256_cert_fingerprints": [
+        "58:DE:33:C9:0B:CF:D0:E4:7C:A8:18:D4:24:47:DE:E8:11:63:CE:C4:B2:2B:9D:1B:1B:A4:EA:91:56:C3:A1:F3"
+      ]
+    }
+  }
+]

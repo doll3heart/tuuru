@@ -132,7 +132,6 @@ export function renderNew(){
     
     <div class="grid-2">
       <div class="card" style="cursor:pointer;text-align:center;padding:40px 20px" onclick="document.getElementById('articleForm').style.display='block';this.style.borderColor='var(--c-primary)'">
-        <div style="font-size:3rem;margin-bottom:12px">RW</div>
         <h3 style="font-weight:600;margin-bottom:8px">互动文章</h3>
         <p style="font-size:.85rem;color:var(--c-text2)">节点式分支故事，每节末尾设置选项跳转</p>
         <div style="margin-top:12px">
@@ -142,7 +141,6 @@ export function renderNew(){
       </div>
       
       <div class="card" style="cursor:pointer;text-align:center;padding:40px 20px" onclick="document.getElementById('phoneForm').style.display='block';this.style.borderColor='var(--c-primary)'">
-        <div style="font-size:3rem;margin-bottom:12px"></div>
         <h3 style="font-weight:600;margin-bottom:8px">小手机</h3>
         <p style="font-size:.85rem;color:var(--c-text2)">模拟手机界面：短信、群聊、朋友圈、论坛</p>
         <div style="margin-top:12px">
