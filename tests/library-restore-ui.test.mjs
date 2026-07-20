@@ -698,7 +698,8 @@ test("homepage uses the guarded restore controller and accurate download copy", 
 
   assert.match(homeSource, /import \{ startLocalLibraryRestore \} from "\.\.\/library-restore-ui\.js"/)
   assert.match(homeSource, /onclick="restoreLibraryBackup\(\)"/)
-  assert.match(homeSource, />检查 \/ 恢复备份<\/button>/)
+  assert.match(homeSource, /aria-label="检查或恢复备份"/)
+  assert.match(homeSource, />检查 \/ 恢复<\/span>/)
   assert.match(homeSource, /备份下载已发起；文件包含私密内容，请妥善保管/)
   assert.doesNotMatch(homeSource, /inspectLibraryBackup|showBackupPreview|readLocalDatabaseBackupFile/)
 })

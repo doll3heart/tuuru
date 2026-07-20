@@ -1003,7 +1003,7 @@ function openReaderSettingsPanel(triggerElement) {
     body += '<button class="rs-font-btn' + (rs.fontFamily === '"' + cf.name + '"' ? ' active' : '') + '" data-rs-font="' + esc('"' + cf.name + '"') + '">' + esc(cf.name) + '</button>'
   }
   body += '</div>'
-  body += '<div style="padding:4px 0;margin-top:6px"><button class="rs-upload-font-btn" style="padding:5px 14px;font-size:.72rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;border-radius:4px" id="rsUploadFont">上传字体 (.ttf/.woff)</button></div>'
+  body += '<div style="padding:4px 0;margin-top:6px"><button class="rs-upload-font-btn" style="padding:5px 14px;font-size:.72rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer;border-radius:4px" id="rsUploadFont">上传字体 (.ttf/.woff)</button></div>'
   body += '<div id="rsFontList" style="padding:4px 0">'
   for (var cfi2 = 0; cfi2 < customFonts.length; cfi2++) {
     body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button class="rs-delete-font-btn" style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-rs-del-font="' + cfi2 + '">删除</button></div>'
@@ -3262,7 +3262,7 @@ function openReaderCustomizePanel() {
   body += '</div></div>'
 
   body += '<div class="cu-section"><div class="cu-section-title">自定义背景图</div>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="cuWpUrl" value="' + esc(ct.wallpaperImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer" id="cuUploadBg">上传</button></div>'
+  body += '<div class="rd-input-row"><input class="rd-input" id="cuWpUrl" value="' + esc(ct.wallpaperImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="cuUploadBg">上传</button></div>'
   if (ct.wallpaperImage) body += '<div class="rd-preview-img"><img src="' + esc(ct.wallpaperImage) + '" alt=""><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="cuClearBg">清除</button></div>'
   body += '</div>'
 
@@ -3283,7 +3283,7 @@ function openReaderCustomizePanel() {
     body += '<button class="btn btn-sm' + (ct.fontFamily === ffn ? ' btn-primary' : ' btn-outline') + '" data-cu-font="' + esc(cf.name) + '">' + esc(cf.name) + '</button>'
   }
   body += '</div>'
-  body += '<div style="padding:4px 0"><button style="padding:5px 14px;font-size:.72rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;border-radius:4px" id="cuUploadFont">上传字体 (.ttf/.woff)</button></div>'
+  body += '<div style="padding:4px 0"><button style="padding:5px 14px;font-size:.72rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer;border-radius:4px" id="cuUploadFont">上传字体 (.ttf/.woff)</button></div>'
   body += '<div id="cuFontList" style="padding:4px 0">'
   for (var cfi2 = 0; cfi2 < customFonts.length; cfi2++) {
     body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-cu-del-font="' + cfi2 + '">删除</button></div>'
@@ -3374,10 +3374,10 @@ function openReaderProfilePanel() {
   var body = '<div class="cu-section"><div class="cu-section-title">个人信息</div>'
   body += '<label class="cu-label">昵称</label><input class="rd-input" id="rpName" value="' + esc(ct.readerId || '') + '" placeholder="默认使用作品昵称">'
   body += '<label class="cu-label">头像</label>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + esc(ct.readerAvatar || '') + '" placeholder="输入头像URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer" id="rpUploadAv">上传</button></div>'
+  body += '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + esc(ct.readerAvatar || '') + '" placeholder="输入头像URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadAv">上传</button></div>'
   if (ct.readerAvatar) body += '<div class="rd-preview-img"><img src="' + esc(ct.readerAvatar) + '" alt="" style="border-radius:50%"><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearAv">清除</button></div>'
   body += '<label class="cu-label">顶部背景图</label>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="rpTopBgUrl" value="' + esc(ct.topBgImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer" id="rpUploadTop">上传</button></div>'
+  body += '<div class="rd-input-row"><input class="rd-input" id="rpTopBgUrl" value="' + esc(ct.topBgImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadTop">上传</button></div>'
   if (ct.topBgImage) body += '<div class="rd-preview-img"><img src="' + esc(ct.topBgImage) + '" alt=""><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearTop">清除</button></div>'
   body += '</div>'
 
@@ -4211,7 +4211,7 @@ function openReaderAppSettings(type, trigger) {
   body += cuCard('应用图标',
     cuRow('自定义', '<div style="display:flex;gap:6px;align-items:center">' +
       '<input class="rd-input rd-input-sm" id="cuIconUrl" value="' + esc(curIcon) + '" placeholder="输入图标URL或上传...">' +
-      '<button style="padding:4px 10px;font-size:.7rem;border:1px solid #A4C6EB;background:transparent;color:#A4C6EB;cursor:pointer;white-space:nowrap" id="cuIconUpload">上传</button>' +
+      '<button style="padding:4px 10px;font-size:.7rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer;white-space:nowrap" id="cuIconUpload">上传</button>' +
       (curIcon ? '<button style="padding:4px 10px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;white-space:nowrap" id="cuIconClear">清除</button>' : '') +
       '</div>')
   )

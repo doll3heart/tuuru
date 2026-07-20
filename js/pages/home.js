@@ -45,12 +45,11 @@ export function renderHome(){
   }, 50)
 
   return `
-    <div class="flex-between mb-4">
-      <h2 style="font-size:1.2rem;font-weight:600">我的作品</h2>
-      <div class="flex-row">
-        <button class="btn btn-outline" onclick="backupLibrary()" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机">备份全部作品</button>
-        <button class="btn btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成">检查 / 恢复备份</button>
-        <button class="btn btn-primary" onclick="navigate('/new')"> 新建作品</button>
+    <div class="library-heading mb-4">
+      <h2 class="library-heading-title">我的作品</h2>
+      <div class="library-heading-actions">
+        <button class="btn btn-sm btn-outline" onclick="backupLibrary()" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
+        <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
       </div>
     </div>
     
@@ -66,7 +65,7 @@ export function renderHome(){
 
 function renderWorkList(works){
   if(!works.length){
-    return `<div class="empty-state"><div class="empty-icon" aria-hidden="true"></div><h3>还没有作品</h3><p>点击右上角「新建作品」开始创作</p></div>`
+    return `<div class="empty-state"><div class="empty-icon" aria-hidden="true"></div><h3>还没有作品</h3><p>点击右上角「新建」开始创作</p></div>`
   }
   
   return `<div class="work-grid">${works.map(w=>`

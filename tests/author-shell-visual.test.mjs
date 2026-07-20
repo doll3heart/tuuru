@@ -27,6 +27,19 @@ test("the empty library renders the designed empty-state ornament", () => {
   assert.match(rule(".empty-state"), /background\s*:/)
 })
 
+test("the library heading keeps compact backup actions beside its title", () => {
+  assert.match(home, /class="library-heading mb-4"/)
+  assert.match(home, /class="library-heading-actions"/)
+  assert.match(home, /class="library-action-label library-action-label-short"/)
+  assert.doesNotMatch(home, /class="library-heading-actions"[\s\S]*navigate\('\/new'\)/)
+  assert.match(home, /点击右上角「新建」开始创作/)
+
+  assert.match(rule(".library-heading"), /display\s*:\s*flex/)
+  assert.match(rule(".library-heading-actions"), /display\s*:\s*flex/)
+  assert.match(css, /@media\s*\(max-width:\s*480px\)[\s\S]*\.library-heading\s*\{[^}]*flex-direction\s*:\s*row/)
+  assert.match(css, /@media\s*\(max-width:\s*480px\)[\s\S]*\.library-heading-actions\s+\.btn\s*\{[^}]*min-height\s*:\s*44px/)
+})
+
 test("the author shell exposes an accessible product mode switch", () => {
   assert.match(app, /class="app-mode-switch"/)
   assert.match(app, /aria-label="应用模式"/)
