@@ -414,6 +414,7 @@ test("article sample unlocks, substitutes the reader name, follows a complete br
   goTo("rooftop")
   goTo("ending")
 
-  assert.match(document.querySelector(".article-content").textContent, /这一次，你没有来迟/)
-  assert.equal(document.querySelectorAll(".article-choice-btn").length, 0)
+  assert.match(document.querySelector(".article-reader").textContent, /这一次，你没有来迟/)
+  assert.equal(document.querySelectorAll(".article-node.is-active .article-choice-btn").length, 0)
+  assert.ok(document.querySelectorAll(".article-choice-btn").length > 0, "earlier choices stay available for reselecting")
 })

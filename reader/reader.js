@@ -10,6 +10,7 @@ import { advanceCallPlayback, createCallPlaybackState } from './call-playback.js
 import { applyChatChoice, rollbackChatChoice } from '../js/chat-choice-runtime.js'
 import { applyThreadChoice, rollbackThreadChoice } from '../js/thread-choice-runtime.js'
 import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
+import { appendArticleChoice, currentArticleChapterEntries, previousArticleChapterPath } from '../js/article-chapter-runtime.js'
 import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
 import {
@@ -193,6 +194,7 @@ function renderReaderThreadReselect(item, scope, containerKey, runs) {
 var _work = null
 var _nodeId = null
 var _visitedNodes = []
+var _articlePath = []
 var _renderedRecentIds = []
 var _readerPhoneChoiceSession = null
 var _readerPhoneFlowSession = null
@@ -348,9 +350,11 @@ document.addEventListener('click', function(event) {
   var previousTrigger = target.closest('[data-reader-previous]')
   if (previousTrigger) {
     event.preventDefault()
-    var previousNodeId = _visitedNodes.pop()
-    if (previousNodeId) {
-      _nodeId = previousNodeId
+    var previousPath = previousArticleChapterPath((_work && _work.nodes) || [], _articlePath)
+    if (previousPath.length && previousPath.length < _articlePath.length) {
+      _articlePath = previousPath
+      _nodeId = _articlePath[_articlePath.length - 1]
+      _visitedNodes = _articlePath.slice(0, -1)
       renderArticleReader()
     }
     return
@@ -747,6 +751,7 @@ function loadWork(work, options) {
   resetReaderPhoneFlowSession(work)
   _nodeId = null
   _visitedNodes = []
+  _articlePath = []
   var rememberWork = !options || options.remember !== false
   if (rememberWork) {
     var cached = tryReaderStorageWrite(function() {
@@ -1301,56 +1306,55 @@ function openReaderSettingsPanel(triggerElement) {
 function renderArticleReader() {
   if (!_work || _work.type === 'phone') return renderPhoneReader()
   var nodes = _work.nodes || []
-  if (!_nodeId || !nodes.find(function(n) { return n.id === _nodeId })) {
-    _nodeId = _work.startNode || (nodes.length ? nodes[0].id : null)
+  if (!_articlePath.length) {
+    var initialNodeId = _work.startNode || (nodes.length ? nodes[0].id : null)
+    if (initialNodeId) _articlePath = [initialNodeId]
   }
+  _nodeId = _articlePath[_articlePath.length - 1] || null
   var node = nodes.find(function(n) { return n.id === _nodeId })
   if (!node) {
     render('app', '<div class="drop-zone"><p>作品内容为空</p><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>')
     return
   }
 
-  // Substitute placeholders
-  var content = node.content || ''
   var phs = _work.placeholders || []
-  if (phs.length > 0 && _work.readerPhValues) {
-    content = substitutePlaceholders(content, phs, {
-      valuesMap: _work.readerPhValues,
-      usePlaceholderMode: false
-    })
-  }
+  var chapterEntries = currentArticleChapterEntries(nodes, _articlePath)
+  if (!chapterEntries.length) chapterEntries = [{node:node, pathIndex:_articlePath.length - 1}]
+  var currentChapterId = String(node.chapterId || '')
+  var chapters = Array.isArray(_work.chapters) ? _work.chapters : []
+  var currentChapter = chapters.find(function(chapter) { return String(chapter.id || '') === currentChapterId })
+  var chapterTitle = currentChapter?.name || chapterEntries[0].node.title || _work.title || ''
 
   // Progress dots
   var visitedSet = {}
-  _visitedNodes.forEach(function(id) { visitedSet[id] = true })
-  visitedSet[_nodeId] = true
+  _articlePath.forEach(function(id) {
+    var pathNode = nodes.find(function(candidate) { return candidate.id === id })
+    if (pathNode) visitedSet[String(pathNode.chapterId || '')] = true
+  })
+  var chapterDots = chapters.length ? chapters : nodes.reduce(function(list, candidate) {
+    var chapterId = String(candidate.chapterId || '')
+    if (!list.some(function(item) { return item.id === chapterId })) list.push({id:chapterId})
+    return list
+  }, [])
+  var previousChapterPath = previousArticleChapterPath(nodes, _articlePath)
+  var hasPreviousChapter = previousChapterPath.length > 0 && previousChapterPath.length < _articlePath.length
   var h = '<div class="article-reading-backdrop" aria-hidden="true"></div>'
   h += renderWorkWatermark(_work.watermark, 'article')
-  if (_visitedNodes.length > 0) {
-    h += '<button type="button" class="reader-back" data-reader-previous title="返回上一节" aria-label="返回上一节">←</button>'
+  if (hasPreviousChapter) {
+    h += '<button type="button" class="reader-back" data-reader-previous title="返回上一章" aria-label="返回上一章">←</button>'
   } else {
     h += '<button type="button" class="reader-back" data-reader-home title="返回首页" aria-label="返回首页">←</button>'
   }
   h += '<button type="button" class="reader-settings-btn" title="文章阅读外观" aria-label="打开文章阅读外观">⚙</button>'
   h += '<div class="article-reader">'
   h += '<div class="article-progress">'
-  for (var ni = 0; ni < nodes.length; ni++) {
-    var nid = nodes[ni].id
-    h += '<span class="dot' + (nid === _nodeId ? ' current' : '') + (visitedSet[nid] ? ' visited' : '') + '"></span>'
+  for (var ni = 0; ni < chapterDots.length; ni++) {
+    var dotChapterId = String(chapterDots[ni].id || '')
+    h += '<span class="dot' + (dotChapterId === currentChapterId ? ' current' : '') + (visitedSet[dotChapterId] ? ' visited' : '') + '"></span>'
   }
   h += '</div>'
 
-  // Phone module cards in content - render as notification buttons
-  var cleanContent = content.replace(/<div class="pm-inline-card"[^>]*>[\s\S]*?<\/div>/gi, '<span class="rd-pm-marker"></span>')
-  var pmCards = content.match(/<div class="pm-inline-card"[^>]*data-pm-id="([^"]*)"[^>]*data-pm-type="([^"]*)"[^>]*>/gi)
   var pmTriggers = []
-  if (pmCards) {
-    for (var pmi = 0; pmi < pmCards.length; pmi++) {
-      var idMatch = pmCards[pmi].match(/data-pm-id="([^"]*)"/)
-      var typeMatch = pmCards[pmi].match(/data-pm-type="([^"]*)"/)
-      if (idMatch && typeMatch) pmTriggers.push({ pmid: idMatch[1], type: typeMatch[1] })
-    }
-  }
   var visitedPm = {}
   try { visitedPm = JSON.parse(sessionStorage.getItem('rd_pm_visited_' + _work.id) || '{}') } catch(e) { visitedPm = {} }
 
@@ -1364,47 +1368,64 @@ function renderArticleReader() {
     contacts:{icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>',label:'联系人'}
   }
 
-  var triggerIndex = 0
-  cleanContent = cleanContent.replace(/<span class="rd-pm-marker"><\/span>/g, function() {
-    if (triggerIndex >= pmTriggers.length) return ''
-    var pt = pmTriggers[triggerIndex]
-    var def = PH_APP_DEFS[pt.type] || PH_APP_DEFS.messages
-    var hasUnread = !visitedPm[pt.pmid]
-    triggerIndex++
-    return buildReaderPhoneModuleTrigger({
-      pmid: pt.pmid,
-      type: pt.type,
-      label: def.label,
-      trustedIconHtml: def.icon,
-      hasUnread: hasUnread
-    })
-  })
-
-  h += '<h1 class="article-title">' + esc(node.title || '') + '</h1>'
+  h += '<h1 class="article-title">' + esc(chapterTitle) + '</h1>'
   h += '<div class="article-meta">' + esc(_work.author || '') + '</div>'
-  h += '<div class="article-content">' + cleanContent + '</div>'
-
-  // Choices
-  var choices = node.choices || []
-  if (choices.length > 0) {
-    h += '<div class="article-choices">'
-    choices.forEach(function(c, ci) {
-      var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
-      var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
-      var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
-      h += '<button class="article-choice-btn" data-target="' + escapeHtmlAttribute(c.targetId || '') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
+  chapterEntries.forEach(function(entry, entryIndex) {
+    var entryNode = entry.node
+    var content = entryNode.content || ''
+    if (phs.length > 0 && _work.readerPhValues) {
+      content = substitutePlaceholders(content, phs, {valuesMap:_work.readerPhValues, usePlaceholderMode:false})
+    }
+    var cleanContent = content.replace(/<div class="pm-inline-card"[^>]*>[\s\S]*?<\/div>/gi, '<span class="rd-pm-marker"></span>')
+    var pmCards = content.match(/<div class="pm-inline-card"[^>]*data-pm-id="([^"]*)"[^>]*data-pm-type="([^"]*)"[^>]*>/gi) || []
+    var entryTriggers = []
+    pmCards.forEach(function(card) {
+      var idMatch = card.match(/data-pm-id="([^"]*)"/)
+      var typeMatch = card.match(/data-pm-type="([^"]*)"/)
+      if (idMatch && typeMatch) entryTriggers.push({pmid:idMatch[1], type:typeMatch[1]})
     })
-    h += '</div>'
-  } else {
+    var triggerIndex = 0
+    cleanContent = cleanContent.replace(/<span class="rd-pm-marker"><\/span>/g, function() {
+      if (triggerIndex >= entryTriggers.length) return ''
+      var pt = entryTriggers[triggerIndex++]
+      var def = PH_APP_DEFS[pt.type] || PH_APP_DEFS.messages
+      return buildReaderPhoneModuleTrigger({pmid:pt.pmid, type:pt.type, label:def.label, trustedIconHtml:def.icon, hasUnread:!visitedPm[pt.pmid]})
+    })
+
+    var isActive = entryIndex === chapterEntries.length - 1
+    h += '<section class="article-node' + (isActive ? ' is-active' : ' is-resolved') + '" data-article-path-index="' + entry.pathIndex + '">'
+    if (entryNode.title && (chapterEntries.length > 1 || entryNode.title !== chapterTitle)) {
+      h += '<h2 class="article-node-title">' + esc(entryNode.title) + '</h2>'
+    }
+    h += '<div class="article-content"' + (isActive ? ' data-active="true"' : '') + '>' + cleanContent + '</div>'
+    var choices = entryNode.choices || []
+    if (choices.length > 0) {
+      var selectedTarget = _articlePath[entry.pathIndex + 1] || ''
+      h += '<div class="article-choices">'
+      choices.forEach(function(c, ci) {
+        var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
+        var selected = selectedTarget && selectedTarget === c.targetId
+        var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
+        var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
+        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
+      })
+      h += '</div>'
+    }
+    h += '</section>'
+  })
+  var frontierChoices = chapterEntries[chapterEntries.length - 1].node.choices || []
+  if (frontierChoices.length === 0) {
     h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>'
   }
+  h += '</div>'
 
   render('app', h)
 
   // Apply reader settings and bind controls as soon as the article enters the DOM.
   var rs = getReaderSettings()
-  var ac = document.querySelector('.article-content')
-  if (ac) applyReaderSettings(ac, rs)
+  var articleContents = Array.from(document.querySelectorAll('.article-content'))
+  articleContents.forEach(function(contentElement) { applyReaderSettings(contentElement, rs) })
+  var ac = document.querySelector('.article-content[data-active="true"]')
   var sb = document.querySelector('.reader-settings-btn')
   if (sb) sb.onclick = function() { openReaderSettingsPanel(sb) }
 
@@ -1444,9 +1465,20 @@ function renderArticleReader() {
     btn.onclick = function() {
       var targetState = resolveArticleChoiceTarget(nodes, btn.dataset.target)
       if (targetState.ok) {
-        _visitedNodes.push(_nodeId)
-        _nodeId = targetState.targetId
+        var sourcePathIndex = Number(btn.dataset.sourcePathIndex)
+        var transition = appendArticleChoice(nodes, _articlePath, sourcePathIndex, targetState.targetId)
+        if (!transition.ok) return
+        _articlePath = transition.path
+        _nodeId = _articlePath[_articlePath.length - 1]
+        _visitedNodes = _articlePath.slice(0, -1)
         renderArticleReader()
+        if (transition.chapterChanged) {
+          document.documentElement.scrollTop = 0
+          document.body.scrollTop = 0
+        } else {
+          var activeNode = document.querySelector('.article-node.is-active')
+          if (activeNode && typeof activeNode.scrollIntoView === 'function') activeNode.scrollIntoView({block:'start'})
+        }
       }
     }
   })

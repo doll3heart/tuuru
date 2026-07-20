@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { JSDOM } from "jsdom"
 
 import {
+  activateEditorCustomFonts,
   editorFontFormat,
   editorFontValue,
   installEditorCustomFonts,
@@ -45,4 +46,38 @@ test("reimporting a font replaces the same name instead of growing duplicates", 
   assert.equal(result.length, 1)
   assert.equal(result[0].data, replacement.data)
   assert.equal(result[0].format, "woff2")
+})
+
+test("font import success waits for the browser font engine to load and register the face", async () => {
+  const events = []
+  class FakeFontFace {
+    constructor(name, source) { this.family = name; this.source = source }
+    async load() { events.push("loaded"); return this }
+  }
+  const doc = {
+    fonts: {
+      add(face) { events.push(`added:${face.family}`) },
+      delete() {},
+    },
+  }
+
+  await activateEditorCustomFonts(doc, [{
+    name: "Engine Font",
+    url: "blob:engine-font",
+    format: "truetype",
+  }], FakeFontFace)
+
+  assert.deepEqual(events, ["loaded", "added:Engine Font"])
+})
+
+test("font engine rejection propagates instead of reporting a false import success", async () => {
+  class BrokenFontFace {
+    async load() { throw new Error("invalid font") }
+  }
+  const doc = { fonts: { add() {}, delete() {} } }
+
+  await assert.rejects(
+    activateEditorCustomFonts(doc, [{ name: "Broken", url: "blob:broken", format: "truetype" }], BrokenFontFace),
+    /invalid font/,
+  )
 })

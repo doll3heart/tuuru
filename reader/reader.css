@@ -440,6 +440,17 @@ body.rd-reading-active .article-meta {
   line-height: 1.9;
   margin-bottom: 32px;
 }
+.article-node + .article-node {
+  margin-top: 42px;
+  padding-top: 34px;
+  border-top: 1px solid color-mix(in srgb, var(--rd-reading-text, var(--c-text)) 16%, transparent);
+}
+.article-node-title {
+  margin: 0 0 18px;
+  font-size: 1.08rem;
+  font-weight: 600;
+  color: inherit;
+}
 .article-content p { margin-bottom: 1em; }
 .article-content img {
   max-width: 100%;
@@ -469,6 +480,10 @@ body.rd-reading-active .article-meta {
 .article-choice-btn:hover {
   border-color: var(--c-primary);
   background: rgba(199, 161, 170, .06);
+}
+.article-choice-btn.is-selected {
+  border-color: var(--c-primary);
+  background: color-mix(in srgb, var(--c-primary) 12%, var(--c-surface));
 }
 .article-choice-btn:disabled {
   cursor: not-allowed;

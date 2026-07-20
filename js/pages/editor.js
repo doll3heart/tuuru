@@ -11,7 +11,7 @@ import { createEditorNodeDragController } from "../editor-node-drag.js"
 import { reorderArticleNode } from "../article-node-reorder.js"
 import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
 import { openPhoneAppModal } from "./phone.js"
-import { editorFontFormat, editorFontValue, installEditorCustomFonts, upsertEditorCustomFont } from "../editor-custom-fonts.js"
+import { activateEditorCustomFonts, editorFontFormat, editorFontValue, installEditorCustomFonts, upsertEditorCustomFont } from "../editor-custom-fonts.js"
 import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets } from "../editor-font-storage.js"
 import { compressEditorImage } from "../image-compression.js"
 
@@ -874,17 +874,21 @@ function handleChange(e) {
           var fontValue = editorFontValue(fontName)
           var _es = getSettings(_workId)
           var previous = (_es.customFonts || []).find(function(font) { return font.name === fontName })
-          var fontId = previous?.id || uid()
+          var fontId = uid()
           var customFont = await persistEditorFontAsset({workId:_workId, fontId:fontId, name:fontName, value:fontValue, format:editorFontFormat(file.name), blob:file})
-          _es.customFonts = upsertEditorCustomFont(_es.customFonts, customFont)
-          _es.fontFamily = fontValue
           try {
+            var loadedFont = await resolveEditorFontAssets(_workId, [customFont])
+            if (!loadedFont.length) throw new Error("字体文件没有成功写入本地资产库")
+            await activateEditorCustomFonts(document, loadedFont)
+            _es.customFonts = upsertEditorCustomFont(_es.customFonts, customFont)
+            _es.fontFamily = fontValue
             updateWork(_workId, {editorSettings: _es})
+            if (previous?.id) await deleteEditorFontAsset(_workId, previous.id).catch(function() {})
             refreshEditor(_workId)
             showToast("字体已导入并应用")
           } catch (error) {
-            if (!previous?.id) await deleteEditorFontAsset(_workId, fontId).catch(function() {})
-            showToast("字体保存失败：浏览器本地空间不足", "error")
+            await deleteEditorFontAsset(_workId, fontId).catch(function() {})
+            showToast("字体无法加载，请确认文件完整且格式受支持", "error")
           }
         } catch (error) {
           showToast(error?.message || "字体保存失败：浏览器本地空间不足", "error")
@@ -1523,10 +1527,12 @@ function refreshEditor(wid) {
 function loadEditorCustomFonts(wid, fonts) {
   var legacyFonts = (fonts || []).filter(function(font) { return font?.data })
   installEditorCustomFonts(document, legacyFonts)
-  resolveEditorFontAssets(wid, fonts).then(function(storedFonts) {
-    if (_workId === wid) installEditorCustomFonts(document, legacyFonts.concat(storedFonts))
+  return resolveEditorFontAssets(wid, fonts).then(function(storedFonts) {
+    if (_workId === wid) return activateEditorCustomFonts(document, legacyFonts.concat(storedFonts))
+    return []
   }).catch(function() {
     // Legacy Base64 fonts remain usable; missing local assets fall back safely.
+    return []
   })
 }
 

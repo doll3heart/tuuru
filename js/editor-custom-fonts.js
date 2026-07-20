@@ -1,5 +1,6 @@
 const STYLE_ID = "editor-custom-fonts-style"
 let activeObjectUrls = []
+let activeFontFaces = []
 
 function cssString(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n\f]/g, " ")
@@ -49,4 +50,26 @@ export function installEditorCustomFonts(doc, fonts) {
     return '@font-face{font-family:"' + cssString(font.name) + '";src:url("' + cssString(source) + '") format("' + format + '");font-display:swap;}'
   }).join("\n")
   doc.head.appendChild(style)
+}
+
+export async function activateEditorCustomFonts(doc, fonts, FontFaceConstructor = globalThis.FontFace) {
+  installEditorCustomFonts(doc, fonts)
+  if (!doc?.fonts || typeof FontFaceConstructor !== "function") {
+    return []
+  }
+  activeFontFaces.forEach(function(face) { try { doc.fonts.delete(face) } catch {} })
+  activeFontFaces = []
+  var loaded = []
+  for (var i = 0; i < (fonts || []).length; i++) {
+    var font = fonts[i]
+    var source = font?.url || font?.data
+    if (!font?.name || !source) continue
+    var format = /^(truetype|opentype|woff2?|embedded-opentype)$/.test(font.format || "") ? font.format : "opentype"
+    var face = new FontFaceConstructor(font.name, 'url("' + cssString(source) + '") format("' + format + '")')
+    var ready = await face.load()
+    doc.fonts.add(ready)
+    loaded.push(ready)
+  }
+  activeFontFaces = loaded
+  return loaded
 }

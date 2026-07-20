@@ -60,11 +60,14 @@ function articleWork() {
     id: "critical-article",
     type: "article",
     title: "Article",
-    placeholders: [], scenes: [], chapters: [],
+    placeholders: [], scenes: [], chapters: [
+      { id: "chapter-one", name: "第一节" },
+      { id: "chapter-two", name: "第二节" },
+    ],
     startNode: "start",
     nodes: [
-      { id: "start", title: "第一节", content: '<p>开头</p><div class="pm-inline-card" data-pm-id="memo-module" data-pm-type="memo"><span>备忘录</span></div>', choices: [{ id: "go", text: "下一节", targetId: "second" }] },
-      { id: "second", title: "第二节", content: "<p>继续</p>", choices: [] },
+      { id: "start", title: "第一节", chapterId: "chapter-one", content: '<p>开头</p><div class="pm-inline-card" data-pm-id="memo-module" data-pm-type="memo"><span>备忘录</span></div>', choices: [{ id: "go", text: "下一节", targetId: "second" }] },
+      { id: "second", title: "第二节", chapterId: "chapter-two", content: "<p>继续</p>", choices: [] },
     ],
     phoneModules: [{
       id: "memo-module",
@@ -134,14 +137,14 @@ test("article phone cards open their App directly and App back closes the overla
   assert.equal(document.querySelector(".article-title").textContent, "第一节")
 })
 
-test("article back returns to the previous section before it exits the reader", async t => {
+test("article back returns to the previous chapter before it exits the reader", async t => {
   installDom(t)
   await startWork(articleWork(), "article-previous-section")
 
   document.querySelector('.article-choice-btn[data-target="second"]').click()
   const previous = document.querySelector(".reader-back")
   assert.equal(previous.dataset.readerPrevious, "")
-  assert.equal(previous.getAttribute("aria-label"), "返回上一节")
+  assert.equal(previous.getAttribute("aria-label"), "返回上一章")
   previous.click()
 
   assert.equal(document.querySelector(".article-title").textContent, "第一节")

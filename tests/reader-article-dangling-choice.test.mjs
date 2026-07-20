@@ -71,5 +71,8 @@ test("reader disables a dangling article choice instead of silently restarting",
   assert.equal(document.querySelector(".article-title").textContent, "Start")
 
   choices[0].click()
-  assert.equal(document.querySelector(".article-title").textContent, "Ending")
+  assert.equal(document.querySelector(".article-title").textContent, "Start")
+  assert.equal(document.querySelectorAll(".article-node").length, 2)
+  assert.match(document.querySelector(".article-reader").textContent, /Opening[\s\S]*Done/)
+  assert.equal(document.querySelector('.article-choice-btn[data-target="ending"]').getAttribute("aria-pressed"), "true")
 })
