@@ -203,15 +203,17 @@ test("the compact mobile writing dock progressively discloses insert and format 
   const formatPanel = commandbar.querySelector('[data-mobile-tool-panel="format"]')
   const outlineTrigger = paneButton("outline")
 
-  assert.deepEqual(dockLabels, ["文字格式", "插入内容"])
+  assert.deepEqual(dockLabels, ["文字格式", "插入内容", "撤回", "重做"])
   assert.equal(insertPanel.hidden, true)
   assert.equal(formatPanel.hidden, true)
   assert.equal(insertTrigger.getAttribute("aria-expanded"), "false")
   assert.equal(formatTrigger.getAttribute("aria-expanded"), "false")
   assert.ok(insertPanel.querySelector('[data-a="ph"]'))
   assert.ok(insertPanel.querySelector('[data-a="pa-msg"]'))
-  assert.ok(formatPanel.querySelector('[data-a="undo"]'))
-  assert.ok(formatPanel.querySelector('[data-a="redo"]'))
+  assert.ok(commandbar.querySelector('.editor-mobile-dock [data-a="undo"]'))
+  assert.ok(commandbar.querySelector('.editor-mobile-dock [data-a="redo"]'))
+  assert.equal(formatPanel.querySelector('[data-a="undo"]'), null)
+  assert.equal(formatPanel.querySelector('[data-a="redo"]'), null)
   assert.ok(formatPanel.querySelector('[data-a="bold"]'))
   assert.ok(formatPanel.querySelector('[data-a="fs-font"]'))
   assert.ok(formatPanel.querySelector('[data-a="fs-mt"]'))
@@ -240,7 +242,7 @@ test("undo and redo are available in both toolbars and persist their resulting H
   const root = await render(work.id)
   const editable = root.querySelector(".content-editable")
   const desktopToolbar = root.querySelector(".editor-toolbar")
-  const mobileToolbar = root.querySelector('[data-mobile-tool-panel="format"]')
+  const mobileToolbar = root.querySelector(".editor-mobile-dock")
   const originalExecCommand = document.execCommand
   const commands = []
 

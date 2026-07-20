@@ -1,4 +1,5 @@
 const STYLE_ID = "editor-custom-fonts-style"
+let activeObjectUrls = []
 
 function cssString(value) {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n\f]/g, " ")
@@ -32,8 +33,10 @@ export function upsertEditorCustomFont(fonts, nextFont) {
 export function installEditorCustomFonts(doc, fonts) {
   if (!doc?.head) return
   doc.getElementById(STYLE_ID)?.remove()
+  activeObjectUrls.forEach(function(url) { try { URL.revokeObjectURL(url) } catch {} })
+  activeObjectUrls = []
   var usable = (Array.isArray(fonts) ? fonts : []).filter(function(font) {
-    return font?.name && typeof font.data === "string" && /^data:[^,]+;base64,/i.test(font.data)
+    return font?.name && ((typeof font.data === "string" && /^data:[^,]+;base64,/i.test(font.data)) || (typeof font.url === "string" && /^blob:/i.test(font.url)))
   })
   if (!usable.length) return
 
@@ -41,7 +44,9 @@ export function installEditorCustomFonts(doc, fonts) {
   style.id = STYLE_ID
   style.textContent = usable.map(function(font) {
     var format = /^(truetype|opentype|woff2?|embedded-opentype)$/.test(font.format || "") ? font.format : "opentype"
-    return '@font-face{font-family:"' + cssString(font.name) + '";src:url("' + cssString(font.data) + '") format("' + format + '");font-display:swap;}'
+    var source = font.url || font.data
+    if (font.url) activeObjectUrls.push(font.url)
+    return '@font-face{font-family:"' + cssString(font.name) + '";src:url("' + cssString(source) + '") format("' + format + '");font-display:swap;}'
   }).join("\n")
   doc.head.appendChild(style)
 }

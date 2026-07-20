@@ -12,9 +12,8 @@ import { reorderArticleNode } from "../article-node-reorder.js"
 import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
 import { openPhoneAppModal } from "./phone.js"
 import { editorFontFormat, editorFontValue, installEditorCustomFonts, upsertEditorCustomFont } from "../editor-custom-fonts.js"
+import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets } from "../editor-font-storage.js"
 import { compressEditorImage } from "../image-compression.js"
-
-const MAX_EDITOR_FONT_BYTES = 2 * 1024 * 1024
 
 // State
 var _workId = null
@@ -83,7 +82,7 @@ export function renderEditor(wid) {
   _workId = wid
   var w = getWork(wid)
   if (!w) return '<div class="app-main"><div class="empty-state"><h3>作品未找到</h3></div></div>'
-  installEditorCustomFonts(document, w.editorSettings?.customFonts)
+  loadEditorCustomFonts(wid, w.editorSettings?.customFonts)
   var ns = w.nodes || []
   if (!_nodeId || !ns.find(function(n){ return n.id === _nodeId })) {
     _nodeId = ns.length ? ns[0].id : null
@@ -113,6 +112,8 @@ function buildMobileCommandbar(wid, nid) {
   h += '<div class="editor-mobile-dock" role="group" aria-label="写作工具">'
   h += '<button type="button" data-a="mobile-tools" data-panel="format" data-mobile-editor-tool aria-label="文字格式" aria-controls="mobileFormatPanel" aria-expanded="false"' + editorToolsDisabled + '><span aria-hidden="true">Aa</span></button>'
   h += '<button type="button" data-a="mobile-tools" data-panel="insert" data-mobile-editor-tool aria-label="插入内容" aria-controls="mobileInsertPanel" aria-expanded="false"' + editorToolsDisabled + '><span aria-hidden="true">＋</span></button>'
+  h += '<button type="button" data-a="undo" data-n="' + nid + '" aria-label="撤回" title="撤回"' + editorToolsDisabled + '><span aria-hidden="true">↶</span></button>'
+  h += '<button type="button" data-a="redo" data-n="' + nid + '" aria-label="重做" title="重做"' + editorToolsDisabled + '><span aria-hidden="true">↷</span></button>'
   h += '<span class="editor-mobile-save-state" aria-live="polite">已保存</span>'
   h += '</div>'
 
@@ -132,10 +133,7 @@ function buildMobileCommandbar(wid, nid) {
   h += '</div></section>'
 
   h += '<section class="editor-mobile-tool-panel" id="mobileFormatPanel" data-mobile-tool-panel="format" aria-label="文字格式" hidden>'
-  h += '<div class="editor-mobile-tool-head"><strong>文字格式</strong><div class="editor-mobile-tool-actions">'
-  h += '<button type="button" data-a="undo" data-n="' + nid + '" title="撤回" aria-label="撤回"><span aria-hidden="true">↶</span></button>'
-  h += '<button type="button" data-a="redo" data-n="' + nid + '" title="重做" aria-label="重做"><span aria-hidden="true">↷</span></button>'
-  h += '<button type="button" data-a="mobile-tools-close" data-panel="format">完成</button></div></div>'
+  h += '<div class="editor-mobile-tool-head"><strong>文字格式</strong><button type="button" data-a="mobile-tools-close" data-panel="format">完成</button></div>'
   h += '<div class="editor-mobile-format-buttons" role="group" aria-label="文字样式与对齐">'
   h += '<button type="button" data-a="bold" data-n="' + nid + '" aria-label="加粗"><b>B</b></button>'
   h += '<button type="button" data-a="italic" data-n="' + nid + '" aria-label="斜体"><i>I</i></button>'
@@ -868,33 +866,29 @@ function handleChange(e) {
       var input = document.createElement("input")
       input.type = "file"
       input.accept = ".ttf,.otf,.woff,.woff2"
-      input.onchange = function() {
+      input.onchange = async function() {
         var file = input.files && input.files[0]
         if (!file) return
-        if (file.size > MAX_EDITOR_FONT_BYTES) {
-          showToast("字体超过 2MB，请压缩或选择更小的字体文件", "error")
-          return
-        }
-        var reader = new FileReader()
-        reader.onload = function() {
+        try {
           var fontName = file.name.replace(/\.[^.]+$/, "")
-          var fontData = reader.result
           var fontValue = editorFontValue(fontName)
-          var customFont = {name: fontName, value: fontValue, data: fontData, format: editorFontFormat(file.name)}
           var _es = getSettings(_workId)
+          var previous = (_es.customFonts || []).find(function(font) { return font.name === fontName })
+          var fontId = previous?.id || uid()
+          var customFont = await persistEditorFontAsset({workId:_workId, fontId:fontId, name:fontName, value:fontValue, format:editorFontFormat(file.name), blob:file})
           _es.customFonts = upsertEditorCustomFont(_es.customFonts, customFont)
           _es.fontFamily = fontValue
           try {
             updateWork(_workId, {editorSettings: _es})
-            installEditorCustomFonts(document, _es.customFonts)
             refreshEditor(_workId)
             showToast("字体已导入并应用")
           } catch (error) {
+            if (!previous?.id) await deleteEditorFontAsset(_workId, fontId).catch(function() {})
             showToast("字体保存失败：浏览器本地空间不足", "error")
           }
+        } catch (error) {
+          showToast(error?.message || "字体保存失败：浏览器本地空间不足", "error")
         }
-        reader.onerror = function() { showToast("字体读取失败，请换一个文件重试", "error") }
-        reader.readAsDataURL(file)
       }
       input.click()
       return
@@ -1524,6 +1518,16 @@ function refreshEditor(wid) {
     a.innerHTML = renderHeader() + '<div id="editorMain">' + renderEditor(wid) + '</div>'
     restorePendingMobilePaneFocus(a.querySelector(".editor-body-area"))
   }
+}
+
+function loadEditorCustomFonts(wid, fonts) {
+  var legacyFonts = (fonts || []).filter(function(font) { return font?.data })
+  installEditorCustomFonts(document, legacyFonts)
+  resolveEditorFontAssets(wid, fonts).then(function(storedFonts) {
+    if (_workId === wid) installEditorCustomFonts(document, legacyFonts.concat(storedFonts))
+  }).catch(function() {
+    // Legacy Base64 fonts remain usable; missing local assets fall back safely.
+  })
 }
 
 function fmt(cmd, val) {
