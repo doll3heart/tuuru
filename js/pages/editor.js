@@ -14,6 +14,8 @@ import { openPhoneAppModal } from "./phone.js"
 import { activateEditorCustomFonts, editorFontFormat, editorFontValue, installEditorCustomFonts, upsertEditorCustomFont } from "../editor-custom-fonts.js"
 import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets } from "../editor-font-storage.js"
 import { compressEditorImage } from "../image-compression.js"
+import { searchArticleWork } from "../article-work-search.js"
+import { createEditorSplitPaneController, readEditorSplitPreference } from "../editor-split-pane.js"
 
 // State
 var _workId = null
@@ -25,6 +27,7 @@ var _phoneModuleDragController = null
 var _nodeDragController = null
 var _articleTargetPick = null
 var _articleTargetInspect = null
+var _splitPaneController = null
 
 function esc(s) {
   if (!s) return ""
@@ -92,7 +95,12 @@ export function renderEditor(wid) {
   var E = buildEditor(w, _nodeId)
   var W = buildWorldTree(w)
   var M = buildMobileCommandbar(wid, _nodeId)
-  return '<div class="editor-page"><div class="editor-body-area" data-mobile-pane="' + _mobilePane + '">' + L + buildMobileViewSwitch() + E + W + M + '</div></div>'
+  var split = readEditorSplitPreference(globalThis.localStorage)
+  var splitState = split.collapsed ? ' data-outline-collapsed="true"' : ''
+  if (split.collapsed && _articleTargetPick) splitState += ' data-outline-overlay="true"'
+  var divider = '<div class="editor-splitter" data-editor-splitter role="separator" aria-label="调整正文与作品结构宽度" aria-orientation="vertical" aria-valuemin="180" aria-valuemax="520" aria-valuenow="' + split.width + '" tabindex="0"><span aria-hidden="true"></span></div>'
+  var reopen = '<button type="button" class="editor-outline-reopen" data-editor-outline-reopen data-a="outline-reopen" aria-label="打开作品结构">结构</button>'
+  return '<div class="editor-page"><div class="editor-body-area" data-mobile-pane="' + _mobilePane + '"' + splitState + ' style="--editor-outline-width:' + split.width + 'px">' + L + buildMobileViewSwitch() + E + divider + W + reopen + M + '</div></div>'
 }
 
 function buildMobileViewSwitch() {
@@ -426,6 +434,7 @@ function buildWorldTree(w) {
     h += '<div class="target-picker-search-wrap"><input type="search" class="target-picker-search" aria-label="搜索目标节点" placeholder="搜索章节或节点"></div>'
   } else {
     h += '<div class="wt-header"><span>节点列表</span><div>'
+    h += '<button type="button" data-a="outline-overlay-close" aria-label="收起作品结构" title="收起作品结构" class="wt-overlay-close">×</button>'
     h += '<button type="button" data-a="pick-start" data-w="' + w.id + '" aria-label="选择故事起点" title="选择故事起点">起点</button>'
     h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节"><span class="wt-action-label-desktop">+章</span><span class="wt-action-label-mobile">+章节</span></button>'
     h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点"><span class="wt-action-label-desktop">+</span><span class="wt-action-label-mobile">+节点</span></button></div></div>'
@@ -434,6 +443,7 @@ function buildWorldTree(w) {
     h += '<button type="button" data-a="chapter-create-confirm" data-w="' + w.id + '">添加</button>'
     h += '<button type="button" data-a="chapter-create-cancel">取消</button>'
     h += '</div>'
+    h += '<div class="work-search"><label><span class="sr-only">搜索当前作品</span><input type="search" data-work-search autocomplete="off" placeholder="搜索标题、正文或选项" aria-label="搜索当前作品"></label><div class="work-search-results" data-work-search-results hidden></div></div>'
   }
   h += '<div class="wt-body">'
   if (ns.length === 0) {
@@ -566,6 +576,25 @@ function handleClick(e) {
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
   var mobileShell = b.closest(".editor-body-area")
+  if (a === "outline-reopen") {
+    _splitPaneController?.openOverlay(mobileShell)
+    mobileShell?.querySelector("[data-work-search]")?.focus()
+    return
+  }
+  if (a === "outline-overlay-close") {
+    _splitPaneController?.closeOverlay(mobileShell)
+    mobileShell?.querySelector("[data-editor-outline-reopen]")?.focus()
+    return
+  }
+  if (a === "search-node") {
+    if (!getNode(w, n)) return
+    _nodeId = n
+    _mobilePane = "editor"
+    _splitPaneController?.closeOverlay(mobileShell)
+    prepareMobilePaneRefresh("editor", true)
+    refreshEditor(w)
+    return
+  }
   if (a === "mobile-tools") {
     toggleMobileToolPanel(mobileShell, b.dataset.panel)
     return
@@ -680,7 +709,7 @@ function handleClick(e) {
     refreshEditor(w)
     return
   }
-  if (a === "sl") { _nodeId = n; prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
+  if (a === "sl") { _nodeId = n; _splitPaneController?.closeOverlay(mobileShell); prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
   if (a === "up") {
     if (!moveNode(w, n, -1)) restoreOutlineActionFocus(outlineActionTrigger, b)
     return
@@ -1831,8 +1860,49 @@ _phoneModuleDragController = createEditorPhoneModuleDragController({
   }
 })
 
+_splitPaneController = createEditorSplitPaneController(document, globalThis.localStorage)
+
+function renderWorkSearchResults(input) {
+  var panel = input.closest(".work-search")?.querySelector("[data-work-search-results]")
+  if (!panel) return
+  var query = input.value.trim()
+  panel.replaceChildren()
+  if (!query) {
+    panel.hidden = true
+    return
+  }
+  var results = searchArticleWork(getWork(_workId), query)
+  panel.hidden = false
+  if (!results.length) {
+    var empty = document.createElement("div")
+    empty.className = "work-search-empty"
+    empty.textContent = "没有找到相关内容"
+    panel.appendChild(empty)
+    return
+  }
+  results.forEach(function(result) {
+    var button = document.createElement("button")
+    button.type = "button"
+    button.className = "work-search-result"
+    button.dataset.a = "search-node"
+    button.dataset.w = _workId
+    button.dataset.n = result.nodeId
+    var path = document.createElement("strong")
+    path.textContent = result.chapterName + " / " + result.title
+    var excerpt = document.createElement("span")
+    excerpt.textContent = result.excerpt || "匹配节点标题或选项"
+    button.append(path, excerpt)
+    panel.appendChild(button)
+  })
+}
+
 // Auto-save content on input
 document.addEventListener("input", function(e) {
+  var workSearch = e.target.closest?.("[data-work-search]")
+  if (workSearch) {
+    renderWorkSearchResults(workSearch)
+    return
+  }
   var targetSearch = e.target.closest?.(".target-picker-search")
   if (targetSearch) {
     var tree = targetSearch.closest(".world-tree.target-pick-mode")

@@ -366,6 +366,21 @@ test("empty, first-node, last-node, and cross-work transitions choose a reachabl
   assert.equal(document.querySelector(".editor-body-area").dataset.mobilePane, "editor")
 })
 
+test("desktop and tablet shells expose an accessible resizable outline boundary", async () => {
+  const work = article("split-work", [{ id: "split-node" }])
+  seed(work)
+  const root = await render(work.id)
+  const shell = root.querySelector(".editor-body-area")
+  const splitter = shell.querySelector("[data-editor-splitter]")
+
+  assert.ok(splitter)
+  assert.equal(splitter.getAttribute("role"), "separator")
+  assert.equal(splitter.getAttribute("aria-orientation"), "vertical")
+  assert.equal(splitter.tabIndex, 0)
+  assert.ok(shell.querySelector("[data-editor-outline-reopen]"))
+  assert.match(editorSource, /data-work-search/)
+})
+
 test("bounded phone layouts expose one editor pane without changing desktop coexistence", () => {
   assert.match(css, /\.editor-mobile-view-switch\s*\{[^}]*display\s*:\s*none/)
   assert.match(
