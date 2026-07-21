@@ -181,6 +181,45 @@ test("the author multi-function tools open as an in-editor sheet", async () => {
   }
 })
 
+test("takeaway lives in the plus sheet while ending a round lives in the header menu", async () => {
+  const fixture = await openSingleChat("message-editor-takeaway")
+  const { draft, overlay } = fixture
+
+  try {
+    let shell = overlay.querySelector(".chat-author-shell")
+    shell.querySelector("#chatPlusBtn").click()
+    shell.querySelector("#chatToolNext").click()
+    const takeaway = shell.querySelector('[data-chat-tool="takeaway"]')
+    assert.ok(takeaway)
+    assert.equal(shell.querySelector('[data-chat-tool="round"]'), null)
+    takeaway.click()
+
+    document.querySelector("#amTkShop").value = "春风小馆"
+    document.querySelector("#amTkOrder").value = "番茄牛腩饭 × 1"
+    document.querySelector("#amTkAmt").value = "28.5"
+    document.querySelector("#amTkStatus").value = "骑手正在配送"
+    document.querySelector("#amSave").click()
+
+    const message = draft.snapshot().phoneData.chats[0].rounds[0].messages.at(-1)
+    assert.deepEqual(
+      { type:message.type, shop:message.takeawayShop, order:message.takeawayOrder, amount:message.takeawayAmount, status:message.takeawayStatus },
+      { type:"takeaway", shop:"春风小馆", order:"番茄牛腩饭 × 1", amount:28.5, status:"骑手正在配送" },
+    )
+    shell = overlay.querySelector(".chat-author-shell")
+    const card = shell.querySelector(".chat-takeaway-card")
+    assert.equal(card?.tagName, "A")
+    assert.match(card.href, /meituan\.com\/s\//)
+
+    shell.querySelector("#chatBgBtn").click()
+    assert.ok(document.querySelector("#chatEndRound"))
+    assert.equal(document.querySelector("#bsSelfColor"), null)
+    document.querySelector("#chatEndRound").click()
+    assert.equal(draft.snapshot().phoneData.chats[0].rounds.length, 2)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("saving an authored voice call appends its scripted lines to the draft", async () => {
   const fixture = await openSingleChat("message-editor-voice-call")
   const { draft, overlay } = fixture

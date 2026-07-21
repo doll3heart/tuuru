@@ -1064,8 +1064,8 @@ body.rd-theme-gray .article-meta { color: #333; }
   color: #fff;
   box-shadow: 0 2px 6px rgba(54, 35, 40, .12);
 }
-.chat-payment-redpacket { background: #b85c63; }
-.chat-payment-transfer { background: #bd7d52; }
+.chat-payment-redpacket { background: #eadcdf; }
+.chat-payment-transfer { background: #e6ddd5; }
 .chat-payment-main {
   display: flex;
   flex: 1;
@@ -1077,10 +1077,13 @@ body.rd-theme-gray .article-meta { color: #333; }
   padding: 9px 11px;
   text-align: left;
 }
-.chat-payment-type { font-size: .62rem; font-weight: 700; letter-spacing: .08em; color: rgba(255,255,255,.82); }
-.chat-payment-amount { margin-top: 2px; font-size: .9rem; font-weight: 700; line-height: 1.2; color: #fff; }
-.chat-payment-note { width: 100%; margin-top: 4px; padding: 0!important; border: 0!important; font-size: .6rem; line-height: 1.35; color: rgba(255,255,255,.78); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-payment-footer { min-height: 23px; box-sizing: border-box; padding: 5px 11px; background: rgba(42,24,28,.12); font-size: .56rem; letter-spacing: .06em; color: rgba(255,255,255,.7); }
+.chat-payment-type { font-size: .62rem; font-weight: 700; letter-spacing: .08em; color: #684a53; }
+.chat-payment-amount { margin-top: 2px; font-size: .9rem; font-weight: 700; line-height: 1.2; color: #3f3035; }
+.chat-payment-note { width: 100%; margin-top: 4px; padding: 0!important; border: 0!important; font-size: .6rem; line-height: 1.35; color: #66575c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-payment-footer { min-height: 23px; box-sizing: border-box; padding: 5px 11px; background: rgba(78,56,63,.08); font-size: .56rem; letter-spacing: .06em; color: #76666b; }
+.chat-link-card,.chat-takeaway-card{display:flex;width:165px;max-width:165px;box-sizing:border-box;flex-direction:column;gap:3px;padding:10px 11px;border:1px solid #cdbbc0;border-radius:7px;background:#eee5e7;color:#44363a;text-decoration:none;box-shadow:0 2px 6px rgba(54,35,40,.1)}
+.chat-link-card strong,.chat-takeaway-card strong{font-size:.72rem;color:#44363a}.chat-link-card span,.chat-takeaway-card span{font-size:.61rem;line-height:1.4;color:#6d5c61;overflow-wrap:anywhere}
+.chat-link-card:focus-visible,.chat-takeaway-card:focus-visible{outline:2px solid #805d67;outline-offset:2px}.chat-takeaway-card b{font-size:.82rem;color:#5b3f47}.chat-takeaway-card small{font-size:.57rem;color:#76666b}.chat-takeaway-card .chat-takeaway-type{font-weight:700;letter-spacing:.08em;color:#805d67}
 .rd-memo-note.is-flow-target,
 .rd-browser-entry.is-flow-target,
 .rd-shop-item.is-flow-target,

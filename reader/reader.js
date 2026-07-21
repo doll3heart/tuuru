@@ -13,6 +13,7 @@ import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
 import { appendArticleChoice, currentArticleChapterEntries, previousArticleChapterPath } from '../js/article-chapter-runtime.js'
 import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
+import { buildTakeawaySearchUrl, safeMessageCardUrl } from '../js/message-card-links.js'
 import {
   normalizePhoneReadingFlow,
   phoneReadingFlowAppType,
@@ -2733,12 +2734,19 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           h += '<div style="' + bubbleStyle + '">'
           h += '<img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
           h += '</div>'
+        } else if (msg.type === 'link') {
+          var cardLinkUrl = safeMessageCardUrl(msg.linkUrl)
+          if (cardLinkUrl) h += '<a class="chat-link-card" href="' + escapeHtmlAttribute(cardLinkUrl) + '" target="_blank" rel="noopener noreferrer"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></a>'
+          else h += '<div class="chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></div>'
         } else if (msg.type === 'redpacket') {
           h += '<div class="chat-payment-card chat-payment-redpacket"><div class="chat-payment-main"><div class="chat-payment-type">红包</div><div class="chat-payment-amount">¥' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer">微信红包</div></div>'
         } else if (msg.type === 'transfer') {
           h += '<div class="chat-payment-card chat-payment-transfer"><div class="chat-payment-main"><div class="chat-payment-type">转账</div><div class="chat-payment-amount">¥' + (msg.transferAmount || 0).toFixed(2) + '</div><div class="chat-payment-note">' + esc(msg.transferNote || '请确认收款') + '</div></div><div class="chat-payment-footer">转账记录</div></div>'
         } else if (msg.type === 'familycard') {
           h += '<div style="max-width:180px;padding:10px 12px;background:#8B7AAA;color:#fff;border-radius:8px;text-align:center"><div style="font-size:.6rem;opacity:.8">亲属卡</div><div style="font-size:.75rem">' + esc(msg.fcRelation || '亲人') + '</div><div style="font-size:.85rem;font-weight:700">¥' + (msg.fcAmount || 0).toFixed(2) + '</div></div>'
+        } else if (msg.type === 'takeaway') {
+          var takeawayUrl = buildTakeawaySearchUrl(msg.takeawayShop, msg.takeawayOrder)
+          h += '<a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击搜索</small></a>'
         } else if (msg.type === 'voice') {
           var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
           var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))

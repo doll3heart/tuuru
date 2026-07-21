@@ -333,3 +333,27 @@ test("red packets and transfers share one card geometry and both name their type
   assert.match(authorCss, /\.chat-payment-card\s*\{[^}]*width:\s*165px[^}]*min-height:/s)
   assert.match(authorPhoneSource, /chat-payment-card/)
 })
+
+test("reader link and takeaway cards open safe external searches", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "clickable-message-cards"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.chats[0].rounds[0].messages = [
+    { id:"link", type:"link", senderId:"contact-1", linkTitle:"站点", linkUrl:"https://example.com/story" },
+    { id:"unsafe", type:"link", senderId:"contact-1", linkTitle:"无效", linkUrl:"javascript:alert(1)" },
+    { id:"takeaway", type:"takeaway", senderId:"contact-1", takeawayShop:"春风小馆", takeawayOrder:"番茄牛腩饭", takeawayAmount:28.5, takeawayStatus:"配送中" },
+  ]
+  await startWork(work, "clickable-message-cards")
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+
+  const link = document.querySelector('a.chat-link-card')
+  assert.equal(link?.href, "https://example.com/story")
+  assert.equal(link?.rel, "noopener noreferrer")
+  assert.equal(document.querySelectorAll(".chat-link-card").length, 2)
+  assert.equal(document.querySelectorAll("a.chat-link-card").length, 1)
+  const takeaway = document.querySelector("a.chat-takeaway-card")
+  assert.match(takeaway?.href || "", /meituan\.com\/s\//)
+  assert.match(takeaway?.textContent || "", /外卖.*春风小馆.*番茄牛腩饭/s)
+})

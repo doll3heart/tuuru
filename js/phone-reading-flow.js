@@ -28,6 +28,7 @@ function messageLabel(message) {
   if (message.type === "call") return message.callMode === "video" ? "视频通话" : "语音通话"
   if (message.type === "redpacket") return `红包 ¥${Number(message.redpacketAmount || 0).toFixed(2)}`
   if (message.type === "transfer") return `转账 ¥${Number(message.transferAmount || 0).toFixed(2)}`
+  if (message.type === "takeaway") return `外卖 ${message.takeawayShop || message.takeawayOrder || "订单"}`
   if (message.type === "familycard") return "亲属卡"
   if (message.type === "image") return "图片"
   if (message.type === "voice") return `语音 ${message.duration || ""}秒`.trim()

@@ -13,6 +13,7 @@ import {
 import { showToast, renderHeader, modal } from "../app.js"
 import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
 import { contactDisplayName, resolveContactIdentity } from "../contact-identity.js"
+import { buildTakeawaySearchUrl, safeMessageCardUrl } from "../message-card-links.js"
 
 var _workId = null
 var _dragState = null
@@ -3877,16 +3878,18 @@ function openChatEditor(frame, wid, chatId, pd) {
       return '<option value="' + escapeHtmlAttribute(id) + '">' + esc(c ? c.name : '未知') + '</option>'
     }).join('')
 
-    var typeLabel = type === 'text' ? '文字' : (type === 'image' ? '图片' : (type === 'link' ? '链接' : (type === 'redpacket' ? '红包' : (type === 'transfer' ? '转账' : '亲属卡'))))
+    var typeLabels = { text:'文字', image:'图片', link:'链接', redpacket:'红包', transfer:'转账', familycard:'亲属卡', takeaway:'外卖卡片' }
+    var typeLabel = typeLabels[type] || '消息'
     var extraHtml = ''
     if (type === 'image') extraHtml = '<div class="form-group"><label class="form-label">图片URL</label><input id="amImg" class="form-input" placeholder="https://..."></div>'
     else if (type === 'link') extraHtml = '<div class="form-group"><label class="form-label">链接标题</label><input id="amLinkTitle" class="form-input" placeholder="标题"><label class="form-label">链接URL</label><input id="amLinkUrl" class="form-input" placeholder="https://..."></div>'
     else if (type === 'redpacket') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amRpAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">祝福语</label><input id="amRpMsg" class="form-input" placeholder="恭喜发财"></div>'
     else if (type === 'transfer') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amTrAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">备注</label><input id="amTrNote" class="form-input" placeholder="转账"></div>'
     else if (type === 'familycard') extraHtml = '<div class="form-group"><label class="form-label">亲属关系</label><input id="amFcRel" class="form-input" placeholder="例如：爸爸/妈妈/姐姐"><label class="form-label">金额</label><input id="amFcAmt" class="form-input" type="number" step="0.01" placeholder="0.00"></div>'
+    else if (type === 'takeaway') extraHtml = '<div class="form-group"><label class="form-label">商家</label><input id="amTkShop" class="form-input" placeholder="例如：春风小馆"><label class="form-label">订单内容</label><textarea id="amTkOrder" class="form-textarea" placeholder="例如：番茄牛腩饭 × 1，少辣"></textarea><label class="form-label">金额</label><input id="amTkAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">状态</label><input id="amTkStatus" class="form-input" placeholder="例如：骑手正在配送"></div>'
 
     var ov = modal('添加' + typeLabel,
-      (type !== 'image' && type !== 'redpacket' && type !== 'transfer' && type !== 'familycard' ? '<div class="form-group"><textarea id="amText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>' : '') +
+      (type !== 'image' && type !== 'redpacket' && type !== 'transfer' && type !== 'familycard' && type !== 'takeaway' ? '<div class="form-group"><textarea id="amText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>' : '') +
       extraHtml +
       '<div class="form-group"><label class="form-label">发送者</label><select id="amSender" class="form-select">' + optionsHtml + '</select></div>',
       '<button id="amSave" class="btn btn-primary btn-sm">添加</button><button id="amCancel" class="btn btn-ghost btn-sm">取消</button>')
@@ -3902,6 +3905,13 @@ function openChatEditor(frame, wid, chatId, pd) {
       if (type === 'redpacket') { msg.redpacketAmount = parseFloat(ov.querySelector('#amRpAmt').value) || 0; msg.redpacketMsg = ov.querySelector('#amRpMsg').value.trim() || '恭喜发财' }
       if (type === 'transfer') { msg.transferAmount = parseFloat(ov.querySelector('#amTrAmt').value) || 0; msg.transferNote = ov.querySelector('#amTrNote').value.trim() || '转账' }
       if (type === 'familycard') { msg.fcRelation = ov.querySelector('#amFcRel').value.trim() || '亲人'; msg.fcAmount = parseFloat(ov.querySelector('#amFcAmt').value) || 0 }
+      if (type === 'takeaway') {
+        msg.takeawayShop = ov.querySelector('#amTkShop').value.trim()
+        msg.takeawayOrder = ov.querySelector('#amTkOrder').value.trim()
+        msg.takeawayAmount = parseFloat(ov.querySelector('#amTkAmt').value) || 0
+        msg.takeawayStatus = ov.querySelector('#amTkStatus').value.trim() || '订单进行中'
+        if (!msg.takeawayOrder) { ov.querySelector('#amTkOrder').focus(); return }
+      }
       var currentRound = ch.rounds[ch.rounds.length - 1]
       if (!currentRound) { currentRound = { id: uid(), label: '第1轮', messages: [] }; ch.rounds.push(currentRound) }
       currentRound.messages.push(msg)
@@ -4024,7 +4034,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       ['transfer', '¥', '转账'], ['location', '⌖', '位置'], ['time', '◷', '日期时间'], ['system', '!', '系统消息']
     ]
     var secondPage = [
-      ['link', '↗', '链接'], ['redpacket', '封', '红包'], ['familycard', '卡', '亲属卡'], ['round', 'Ⅱ', '结束此轮']
+      ['link', '↗', '链接'], ['redpacket', '封', '红包'], ['familycard', '卡', '亲属卡'], ['takeaway', '餐', '外卖卡片']
     ]
     var tools = page === 0 ? firstPage : secondPage
     var h = '<section class="chat-tool-sheet" aria-label="添加剧情内容">'
@@ -4067,12 +4077,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     bindTool('link', function() { closeAnd(function() { addMsg('link') }) })
     bindTool('redpacket', function() { closeAnd(function() { addMsg('redpacket') }) })
     bindTool('familycard', function() { closeAnd(function() { addMsg('familycard') }) })
-    bindTool('round', function() {
-      var num = ch.rounds.length + 1
-      ch.rounds.push({ id: uid(), label: '第' + num + '轮', messages: [] })
-      save()
-      renderChat()
-    })
+    bindTool('takeaway', function() { closeAnd(function() { addMsg('takeaway') }) })
   }
 
   function deleteRound(roundIdx) {
@@ -4128,7 +4133,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     h += '<div class="chat-round-header">'
     h += '<button id="chatBack" class="chat-round-control" type="button" aria-label="返回消息列表">‹</button>'
     h += '<div class="chat-round-title"><strong>' + esc(getChatName()) + '</strong><span>· ' + esc(roundLabel) + '</span></div>'
-    h += '<button id="chatBgBtn" class="chat-round-control" type="button" aria-label="聊天外观与气泡样式">···</button>'
+    h += '<button id="chatBgBtn" class="chat-round-control" type="button" aria-label="对话操作">···</button>'
     h += '</div>'
 
     h += '<div class="chat-msg-area" id="chatMsgArea">'
@@ -4197,7 +4202,9 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (msg.type === 'image') {
       h += '<div class="chat-bubble"><img src="' + escapeHtmlAttribute(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'"></div>'
     } else if (msg.type === 'link') {
-      h += '<div class="chat-bubble" style="background:#e8f4e8;border:1px solid #b8d8b8"><div style="font-size:.72rem;font-weight:500">' + esc(msg.linkTitle || '链接') + '</div><div style="font-size:.62rem;color:var(--c-text2)">' + esc(msg.linkUrl || '') + '</div></div>'
+      var linkUrl = safeMessageCardUrl(msg.linkUrl)
+      var linkTag = linkUrl ? 'a href="' + escapeHtmlAttribute(linkUrl) + '" target="_blank" rel="noopener noreferrer"' : 'div'
+      h += '<' + linkTag + ' class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></' + (linkUrl ? 'a' : 'div') + '>'
     } else if (msg.type === 'redpacket') {
       h += '<div class="chat-bubble chat-payment-card chat-payment-redpacket rp-card"><div class="chat-payment-main rp-top"><div class="chat-payment-type">红包</div><div class="chat-payment-amount rp-amount">&yen;' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note rp-label">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer rp-bottom">微信红包</div></div>'
     } else if (msg.type === 'transfer') {
@@ -4207,6 +4214,9 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '<div class="fc-head"><div class="fc-badge">亲属卡</div></div>'
       h += '<div class="fc-body"><div class="fc-rel">' + esc(msg.fcRelation || '亲人') + '</div><div class="fc-amount">&yen;' + ((msg.fcAmount || 0)).toFixed(2) + '</div></div>'
       h += '</div>'
+    } else if (msg.type === 'takeaway') {
+      var takeawayUrl = buildTakeawaySearchUrl(msg.takeawayShop, msg.takeawayOrder)
+      h += '<a class="chat-bubble chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>&yen;' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击搜索</small></a>'
     } else if (msg.type === 'call') {
       var callModeLabel = msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL'
       h += '<div class="chat-bubble chat-call-card">'
@@ -4322,39 +4332,19 @@ function openChatEditor(frame, wid, chatId, pd) {
       })
     }
 
-    // Background / Bubble style button — SVG gear icon, opens style panel
+    // Conversation actions belong in the header menu; appearance is reader-owned.
     var bgBtn = frame.querySelector('#chatBgBtn')
     if (bgBtn) bgBtn.onclick = function() {
-      if (!ch.bubbleStyle) ch.bubbleStyle = {}
-      var bs = ch.bubbleStyle
-      var h = '<div class="form-group"><label class="form-label">聊天背景图URL</label><input id="bgUrl" class="form-input" value="' + esc(ch.bgImage || '') + '" placeholder="https://..."></div>'
-      h += '<div class="cu-section-title" style="margin-top:12px">我方气泡颜色</div>'
-      h += '<input id="bsSelfColor" class="form-input" value="' + esc(bs.selfColor || '') + '" placeholder="#CEE5F6">'
-      h += '<div class="cu-section-title" style="margin-top:8px">对方气泡颜色</div>'
-      h += '<input id="bsOtherColor" class="form-input" value="' + esc(bs.otherColor || '') + '" placeholder="#F1DEEC">'
-      h += '<div class="cu-section-title" style="margin-top:8px">气泡透明度 (0-1)</div>'
-      h += '<input id="bsOpacity" class="form-input" type="number" min="0" max="1" step="0.05" value="' + (bs.opacity !== undefined ? bs.opacity : '1') + '" placeholder="1">'
-      h += '<div class="cu-section-title" style="margin-top:8px">气泡圆角 (px)</div>'
-      h += '<input id="bsRadius" class="form-input" type="number" min="0" max="30" value="' + (bs.borderRadius !== undefined ? bs.borderRadius : '8') + '" placeholder="8">'
-      h += '<div class="cu-section-title" style="margin-top:8px">气泡字体颜色</div>'
-      h += '<input id="bsTextColor" class="form-input" value="' + esc(bs.textColor || '') + '" placeholder="inherit">'
-      var ov = modal('气泡样式 & 背景', h,
-        '<button id="bsSave" class="btn btn-primary btn-sm">保存</button><button id="bsCancel" class="btn btn-ghost btn-sm">取消</button>')
-      ov.querySelector('#bsSave').onclick = function() {
-        ch.bgImage = ov.querySelector('#bgUrl').value.trim()
-        bs.selfColor = ov.querySelector('#bsSelfColor').value.trim()
-        bs.otherColor = ov.querySelector('#bsOtherColor').value.trim()
-        bs.opacity = parseFloat(ov.querySelector('#bsOpacity').value)
-        bs.borderRadius = parseInt(ov.querySelector('#bsRadius').value)
-        bs.textColor = ov.querySelector('#bsTextColor').value.trim()
-        if (isNaN(bs.opacity) || bs.opacity < 0) bs.opacity = 1
-        if (isNaN(bs.borderRadius) || bs.borderRadius < 0) bs.borderRadius = 8
+      var ov = modal('对话操作', '<p style="font-size:.78rem;color:var(--c-text2)">结束当前轮后，后续消息将进入新一轮。</p>',
+        '<button id="chatEndRound" class="btn btn-primary btn-sm">结束此轮</button><button id="chatActionCancel" class="btn btn-ghost btn-sm">取消</button>')
+      ov.querySelector('#chatEndRound').onclick = function() {
+        var num = ch.rounds.length + 1
+        ch.rounds.push({ id: uid(), label: '第' + num + '轮', messages: [] })
         save()
         ov.remove()
-        applyBubbleStyle()
         renderChat()
       }
-      ov.querySelector('#bsCancel').onclick = function() { ov.remove() }
+      ov.querySelector('#chatActionCancel').onclick = function() { ov.remove() }
     }
 
     // Context menu for messages (PC right-click / mobile long-press)
@@ -4590,30 +4580,6 @@ function openChatEditor(frame, wid, chatId, pd) {
       d.onclick = function() { deleteRound(parseInt(d.dataset.roundDel)) }
     })
 
-    applyBubbleStyle()
-  }
-
-  function applyBubbleStyle() {
-    // Apply saved bubble styles to CSS variables via a <style> element
-    var styleId = 'chatBubbleStyle_' + chatId
-    var existing = document.getElementById(styleId)
-    if (existing) existing.remove()
-    if (!ch.bubbleStyle) return
-    var bs = ch.bubbleStyle
-    var css = ''
-    if (bs.selfColor) css += '.chat-msg.self .chat-bubble{background:' + bs.selfColor + '!important;}'
-    if (bs.otherColor) css += '.chat-msg.other .chat-bubble{background:' + bs.otherColor + '!important;}'
-    if (bs.opacity !== undefined && bs.opacity !== 1) css += '.chat-bubble{opacity:' + bs.opacity + '!important;}'
-    if (bs.borderRadius !== undefined && bs.borderRadius !== 8) {
-      css += '.chat-msg.other .chat-bubble{border-radius:' + bs.borderRadius + 'px ' + bs.borderRadius + 'px ' + bs.borderRadius + 'px 2px!important;}'
-      css += '.chat-msg.self .chat-bubble{border-radius:' + bs.borderRadius + 'px ' + bs.borderRadius + 'px 2px ' + bs.borderRadius + 'px!important;}'
-    }
-    if (bs.textColor) css += '.chat-bubble{color:' + bs.textColor + '!important;}'
-    if (!css) return
-    var styleEl = document.createElement('style')
-    styleEl.id = styleId
-    styleEl.textContent = css
-    document.head.appendChild(styleEl)
   }
 
   var chatHtml = '<div class="cu-panel cu-panel-embedded" id="chatPanel">'
