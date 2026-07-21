@@ -236,6 +236,42 @@ test("the compact mobile writing dock progressively discloses insert and format 
   assert.equal(root.querySelector(".content-editable"), editable)
 })
 
+test("article authors can save and reapply their local placeholder preset", async t => {
+  const work = article("author-placeholder-preset-work", [{ id: "preset-node" }])
+  work.placeholders = [{
+    id: "placeholder-a",
+    key: "某某",
+    label: "姓名",
+    prompt: "你的名字？",
+    mode: "each",
+    forbidden: ["偷吃"],
+    values: [],
+    default: "",
+  }]
+  localStorage.removeItem("tuuru_author_placeholder_presets")
+  t.after(() => {
+    localStorage.removeItem("tuuru_author_placeholder_presets")
+    document.querySelectorAll(".modal-overlay").forEach(overlay => overlay.remove())
+  })
+  seed(work)
+  const root = await render(work.id)
+  root.querySelector('[data-a="ph"]').click()
+
+  document.querySelector('[data-ph-a="save-author-preset"]').click()
+  document.getElementById("pI").value = "我的称呼"
+  document.getElementById("pK").click()
+  const stored = JSON.parse(localStorage.getItem("tuuru_author_placeholder_presets"))
+  assert.equal(stored.presets[0].name, "我的称呼")
+  assert.equal(stored.presets[0].fields[0].values, undefined)
+
+  const selector = document.getElementById("phAuthorPreset")
+  assert.equal(selector.value, stored.presets[0].id)
+  document.querySelector('[data-ph-a="apply-author-preset"]').click()
+  const savedWork = JSON.parse(localStorage.getItem("tuuru_works")).works[0]
+  assert.equal(savedWork.placeholders.length, 2)
+  assert.notEqual(savedWork.placeholders[0].id, savedWork.placeholders[1].id)
+})
+
 test("undo and redo are available in both toolbars and persist their resulting HTML", async t => {
   const work = article("history-work", [{ id: "history-node" }])
   seed(work)

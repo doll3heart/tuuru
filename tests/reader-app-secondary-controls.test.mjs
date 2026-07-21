@@ -67,7 +67,7 @@ function phoneWork() {
         contactName: "Alice",
         title: "First post",
         content: "Post body",
-        time: "Now",
+        time: "",
       }],
       forumNpcs: [],
       memos: [],
@@ -124,9 +124,11 @@ test("reader App lists and shopping tabs use native controls with focus continui
   assert.equal(post.getAttribute("data-post-id"), null)
   assert.equal(document.querySelector("[data-forged]"), null)
   assert.match(post.getAttribute("aria-label") ?? "", /First post/)
+  assert.equal(post.querySelector(".rd-forum-meta").textContent, "Alice")
   post.focus()
   post.click()
   assert.match(document.querySelector(".phone-frame").textContent, /First post/)
+  assert.equal(document.querySelector(".rd-forum-post-author time"), null)
   document.querySelector(".rd-back-btn").click()
   post = document.querySelector('.rd-post-card[data-post-index="0"]')
   assert.equal(document.activeElement, post)

@@ -332,6 +332,40 @@ test("red packets and transfers share one card geometry and both name their type
   assert.match(readerCss, /\.chat-payment-card\s*\{[^}]*width:\s*165px[^}]*min-height:/s)
   assert.match(authorCss, /\.chat-payment-card\s*\{[^}]*width:\s*165px[^}]*min-height:/s)
   assert.match(authorPhoneSource, /chat-payment-card/)
+  assert.doesNotMatch(authorPhoneSource, /微信红包/)
+  assert.match(authorCss, /\.chat-round-control\{[^}]*box-sizing:border-box[^}]*padding:0/s)
+  assert.match(authorCss, /#chatBgBtn\{[^}]*margin-right:\s*6px[^}]*letter-spacing:\s*0/s)
+})
+
+test("reader can claim every benefit card without changing authored data", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "claimable-benefit-cards"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.chats[0].rounds[0].messages = [
+    { id:"red", type:"redpacket", senderId:"contact-1", redpacketAmount:66, redpacketMsg:"收下吧" },
+    { id:"transfer", type:"transfer", senderId:"contact-1", transferAmount:88, transferNote:"夜宵" },
+    { id:"family", type:"familycard", senderId:"contact-1", fcRelation:"姐姐", fcAmount:100 },
+    { id:"takeaway", type:"takeaway", senderId:"contact-1", takeawayShop:"春风小馆", takeawayOrder:"番茄牛腩饭", takeawayAmount:28.5, takeawayStatus:"配送中" },
+  ]
+  const authoredBefore = structuredClone(work.phoneData.chats[0].rounds[0].messages)
+  await startWork(work, "claimable-benefit-cards")
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+
+  const buttons = [...document.querySelectorAll(".rd-card-claim")]
+  assert.equal(buttons.length, 4)
+  assert.match(document.querySelector(".chat-payment-redpacket").textContent, /红包/)
+  assert.doesNotMatch(document.querySelector(".chat-payment-redpacket").textContent, /微信红包/)
+  assert.match(document.querySelector(".chat-takeaway-card").textContent, /点击查看/)
+  for (const button of buttons) button.click()
+  assert.deepEqual(buttons.map(button => button.textContent), ["已领取", "已收款", "已领取", "已领取"])
+  assert.ok(buttons.every(button => button.disabled))
+
+  document.querySelector("#chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  assert.ok([...document.querySelectorAll(".rd-card-claim")].every(button => button.disabled))
+  assert.deepEqual(work.phoneData.chats[0].rounds[0].messages, authoredBefore)
 })
 
 test("reader link and takeaway cards open safe external searches", async t => {
@@ -356,4 +390,81 @@ test("reader link and takeaway cards open safe external searches", async t => {
   const takeaway = document.querySelector("a.chat-takeaway-card")
   assert.match(takeaway?.href || "", /meituan\.com\/s\//)
   assert.match(takeaway?.textContent || "", /外卖.*春风小馆.*番茄牛腩饭/s)
+  assert.match(takeaway?.textContent || "", /点击查看/)
+  assert.doesNotMatch(takeaway?.textContent || "", /点击搜索/)
+})
+
+test("reader opens an authored forum post inside a closable chat picture-in-picture", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "inline-forum-message-card"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.forumPosts = [{
+    id: "post-inline",
+    contactId: "contact-1",
+    title: "夜雨讨论",
+    content: "这是内联帖子正文",
+    time: "",
+    comments: [],
+  }]
+  work.phoneData.chats[0].rounds[0].messages = [{
+    id: "inline-link",
+    type: "link",
+    senderId: "contact-1",
+    linkTitle: "夜雨讨论",
+    forumPostId: "post-inline",
+  }]
+
+  await startWork(work, "inline-forum-message-card")
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+
+  const card = document.querySelector("button.rd-inline-forum-card")
+  assert.ok(card)
+  assert.equal(card.getAttribute("href"), null)
+  card.click()
+  const pip = document.querySelector(".rd-inline-forum-pip")
+  assert.match(pip?.textContent || "", /夜雨讨论.*这是内联帖子正文/s)
+  pip.querySelector(".rd-inline-forum-close").click()
+  assert.equal(document.querySelector(".rd-inline-forum-pip"), null)
+  assert.equal(document.activeElement, card)
+})
+
+test("reader blocks forbidden placeholder values before entering a phone work", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "forbidden-phone-placeholder"
+  work.phoneData.readingFlow.enabled = false
+  work.placeholders = [{ id:"reader-name", label:"读者名字", key:"{{reader}}", prompt:"填写名字", forbidden:["偷吃"] }]
+  seedWork(work)
+  await import(`../reader/reader.js?forbidden=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  const input = document.querySelector('[data-ph-id="reader-name"]')
+  input.value = "禁止偷吃"
+  document.getElementById("rdStartBtn").click()
+  assert.ok(document.querySelector(".rd-landing"), "forbidden input must keep the landing page open")
+  assert.match(input.parentElement.querySelector(".rd-placeholder-error").textContent, /违禁词/)
+  input.value = "小雨"
+  document.getElementById("rdStartBtn").click()
+  assert.ok(document.querySelector(".phone-frame"), "valid input should enter the phone work")
+})
+
+test("reader message list and bubbles show group avatar and roles", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "reader-group-identity"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.chats[0].rounds[0].messages = work.phoneData.chats[0].rounds[0].messages.filter(message => message.type !== "call")
+  Object.assign(work.phoneData.chats[0], {
+    type:"group", groupName:"编辑部", groupAvatarUrl:"https://example.com/group.png",
+    groupOwnerId:"contact-1", groupAdminIds:[], groupTitles:{ "contact-1":"主笔" },
+  })
+  await startWork(work, "reader-group-identity")
+  document.querySelector('[data-app-type="messages"]').click()
+  const avatar = document.querySelector('.rd-chat-card[data-chat-index="0"] .rd-message-avatar img')
+  assert.equal(avatar?.src, "https://example.com/group.png")
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  const role = document.querySelector(".rd-chat-group-role")
+  assert.ok(role, document.querySelector(".phone-frame")?.innerHTML || "missing phone frame")
+  assert.match(role.textContent, /群主.*主笔/)
 })

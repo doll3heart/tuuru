@@ -179,3 +179,26 @@ test("author can edit choices attached to a nested forum reply", async () => {
     closeFixture(fixture)
   }
 })
+
+test("forum post time starts empty and remains directly editable", async () => {
+  const fixture = await openApp("forum-post-time-editor", "forum")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector("#fbAddPost").click()
+    document.querySelector("#idOk").click()
+    const createModal = document.querySelector("#fpSave").closest(".modal-overlay")
+    assert.equal(createModal.querySelector("#fpTime").value, "")
+    createModal.querySelector("#fpTitle").value = "没有默认时间"
+    createModal.querySelector("#fpSave").click()
+
+    assert.equal(draft.snapshot().phoneData.forumPosts[0].time, "")
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    const timeInput = overlay.querySelector(".forum-post-time-edit")
+    assert.ok(timeInput)
+    timeInput.value = "2026-07-22 20:30"
+    timeInput.dispatchEvent(new window.Event("change", { bubbles: true }))
+    assert.equal(draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-a").time, "2026-07-22 20:30")
+  } finally {
+    closeFixture(fixture)
+  }
+})

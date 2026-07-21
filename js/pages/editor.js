@@ -16,6 +16,7 @@ import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets 
 import { compressEditorImage } from "../image-compression.js"
 import { searchArticleWork } from "../article-work-search.js"
 import { createEditorSplitPaneController, readEditorSplitPreference } from "../editor-split-pane.js"
+import { deleteAuthorPlaceholderPreset, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset } from "../author-placeholder-presets.js"
 
 // State
 var _workId = null
@@ -1010,6 +1011,7 @@ function openPlaceholderPanel(wid) {
   var w = getWork(wid)
   if (!w) return
   var phs = w.placeholders || []
+  var authorPresets = readAuthorPlaceholderPresets()
   var body = '<div class="ph-panel" id="phPanel">'
 
   // Header row
@@ -1026,6 +1028,8 @@ function openPlaceholderPanel(wid) {
   body += '<button class="btn btn-sm btn-outline" data-ph-a="preset-name">添加 NAME 预设</button>'
   body += '<button class="btn btn-sm btn-primary" data-ph-a="add">添加占位符</button>'
   body += '</div>'
+  body += '<div class="ph-author-presets"><select class="ph-select" id="phAuthorPreset"><option value="">我的预设</option>'
+  body += '</select><button class="btn btn-sm btn-outline" data-ph-a="apply-author-preset">套用预设</button><button class="btn btn-sm btn-ghost" data-ph-a="save-author-preset">保存当前为预设</button><button class="btn btn-sm btn-ghost" data-ph-a="delete-author-preset">删除预设</button></div>'
 
   // List
   body += '<div class="ph-list">'
@@ -1048,6 +1052,39 @@ function openPlaceholderPanel(wid) {
   // Bind panel events
   var panel = ov.querySelector('#phPanel')
   if (panel) {
+    function refreshAuthorPresetSelect(selectedId) {
+      authorPresets = readAuthorPlaceholderPresets()
+      var select = panel.querySelector('#phAuthorPreset')
+      if (!select) return
+      select.innerHTML = '<option value="">我的预设</option>'
+      authorPresets.forEach(function(preset) {
+        var option = document.createElement('option')
+        option.value = preset.id
+        option.textContent = preset.name
+        select.appendChild(option)
+      })
+      if (selectedId) select.value = selectedId
+    }
+
+    function collectVisiblePlaceholders() {
+      var latest = getWork(wid)
+      return (latest && latest.placeholders || []).map(function(ph) {
+        var card = Array.from(panel.querySelectorAll('[data-ph-id]')).find(function(item) { return String(item.dataset.phId) === String(ph.id) })
+        if (!card) return ph
+        var pendingForbidden = card.querySelector('.ph-forbidden-input')?.value?.trim()
+        var forbidden = Array.isArray(ph.forbidden) ? ph.forbidden.slice() : []
+        if (pendingForbidden) forbidden.push(pendingForbidden)
+        return Object.assign({}, ph, {
+          key: document.getElementById('ph_key_' + ph.id)?.value?.trim() || ph.key || '',
+          prompt: document.getElementById('ph_prompt_' + ph.id)?.value?.trim() || ph.prompt || '',
+          mode: document.getElementById('ph_mode_' + ph.id)?.value || ph.mode || 'each',
+          forbidden: forbidden
+        })
+      })
+    }
+
+    refreshAuthorPresetSelect('')
+
     panel.addEventListener('click', function(ev) {
       var t = ev.target
       // Help button
@@ -1069,6 +1106,39 @@ function openPlaceholderPanel(wid) {
       if (act === 'add') {
         addPlaceholder(wid, uid().slice(0,6), '新占位符', '请填写')
         refreshPhList(wid, ov)
+        return
+      }
+      if (act === 'save-author-preset') {
+        var current = collectVisiblePlaceholders()
+        if (!current.length) { showToast('请先添加占位符'); return }
+        showPrompt('保存当前为预设', '给这套预设起个名字', function(name) {
+          var saved = saveAuthorPlaceholderPreset(name, current)
+          if (!saved) { showToast('预设保存失败'); return }
+          refreshAuthorPresetSelect(saved.id)
+          showToast('作者预设已保存在本机')
+        })
+        return
+      }
+      if (act === 'apply-author-preset') {
+        var presetId = panel.querySelector('#phAuthorPreset')?.value || ''
+        var preset = authorPresets.find(function(item) { return item.id === presetId })
+        if (!preset) { showToast('请先选择预设'); return }
+        var currentWork = getWork(wid)
+        var created = instantiateAuthorPlaceholderPreset(preset, uid)
+        updateWork(wid, { placeholders: (currentWork.placeholders || []).concat(created) })
+        refreshPhList(wid, ov)
+        showToast('已套用预设')
+        return
+      }
+      if (act === 'delete-author-preset') {
+        var selectedId = panel.querySelector('#phAuthorPreset')?.value || ''
+        var selectedPreset = authorPresets.find(function(item) { return item.id === selectedId })
+        if (!selectedPreset) { showToast('请先选择预设'); return }
+        showConfirm('删除作者预设', '确定删除“' + selectedPreset.name + '”吗？不会影响已经使用它的作品。', function() {
+          deleteAuthorPlaceholderPreset(selectedId)
+          refreshAuthorPresetSelect('')
+          showToast('预设已删除')
+        })
         return
       }
       if (act === 'delete' && pid) {

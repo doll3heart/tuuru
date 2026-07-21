@@ -15,6 +15,7 @@ function installDom() {
   globalThis.Event = dom.window.Event
   globalThis.MouseEvent = dom.window.MouseEvent
   globalThis.MutationObserver = dom.window.MutationObserver
+  globalThis.requestAnimationFrame = callback => { callback(); return 1 }
   return dom
 }
 
@@ -76,6 +77,7 @@ test("the author message page exposes the demo editor skeleton", async () => {
     assert.ok(shell, "missing the author-only message editor shell")
     assert.ok(shell.querySelector(".chat-author-status"), "missing the author save/status row")
     assert.ok(shell.querySelector(".chat-round-header"), "missing the current round header")
+    assert.equal(shell.querySelector("#chatBgBtn").textContent.trim(), "⋯")
     assert.ok(shell.querySelector("#chatMsgArea"), "missing the message canvas")
 
     const speakerStrip = shell.querySelector(".chat-speaker-strip")
@@ -96,6 +98,92 @@ test("the author message page exposes the demo editor skeleton", async () => {
     assert.ok(shell.querySelector(".chat-editor-modebar"), "missing the bottom editor mode bar")
   } finally {
     closeFixture(fixture)
+  }
+})
+
+test("group chats can update identity, membership, roles, and titles", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts.push({ id: "contact-2", name: "周遥", avatarUrl: "" })
+  Object.assign(phoneData.chats[0], {
+    type: "group",
+    groupName: "旧群名",
+    groupOwnerId: "self",
+    groupAdminIds: [],
+    groupTitles: {},
+  })
+  const fixture = await openSingleChat("group-chat-management", phoneData)
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector("#chatBgBtn").click()
+    document.querySelector("#chatManageGroup").click()
+    const manager = document.querySelector("#groupEditSave").closest(".modal-overlay")
+    manager.querySelector("#groupEditName").value = "新群名"
+    manager.querySelector("#groupEditAvatar").value = "https://example.com/group.png"
+    manager.querySelector('[data-group-include][value="contact-2"]').checked = true
+    manager.querySelector("#groupOwner").value = "contact-2"
+    manager.querySelector('[data-group-admin][value="contact-1"]').checked = true
+    manager.querySelector('[data-group-member="contact-1"] [data-group-title]').value = "记录员"
+    manager.querySelector("#groupEditSave").click()
+
+    const group = draft.snapshot().phoneData.chats[0]
+    assert.equal(group.groupName, "新群名")
+    assert.equal(group.groupAvatarUrl, "https://example.com/group.png")
+    assert.deepEqual(group.contactIds, ["contact-1", "contact-2"])
+    assert.equal(group.groupOwnerId, "contact-2")
+    assert.deepEqual(group.groupAdminIds, ["contact-1"])
+    assert.deepEqual(group.groupTitles, { "contact-1": "记录员" })
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("the Settings App places editable placeholders and forbidden words before reading flow", async () => {
+  const { readFile } = await import("node:fs/promises")
+  const source = await readFile(new URL("../js/pages/phone.js", import.meta.url), "utf8")
+  const settings = source.slice(source.indexOf("function openSettingsEditor"), source.indexOf("// ===== Phone Skin Customization"))
+  assert.ok(settings.indexOf("phone-placeholder-settings") < settings.indexOf("阅读节奏控制"))
+  assert.match(settings, />标记</)
+  assert.match(settings, />问题</)
+  assert.match(settings, />模式</)
+  assert.match(settings, /添加 NAME 预设/)
+  assert.match(settings, /data-ph-forbidden/)
+  assert.doesNotMatch(settings, /placeholder="显示名称"/)
+  assert.doesNotMatch(settings, /placeholder="正文中的占位文字"/)
+  assert.match(settings, /updateWork\(wid, \{ phoneData: pd, placeholders: placeholders \}\)/)
+})
+
+test("phone authors can save and reapply their local placeholder preset", async () => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { renderPhoneEditor } = await import(`../js/pages/phone.js?author-presets=${Date.now()}-${Math.random()}`)
+  localStorage.removeItem("tuuru_author_placeholder_presets")
+  const draft = createPhoneWorkDraft({
+    id: "phone-author-placeholder-preset",
+    type: "article",
+    placeholders: [{ id:"placeholder-a", key:"某某", label:"姓名", prompt:"名字？", mode:"each", forbidden:[], values:[], default:"" }],
+    phoneData: makePhoneData(),
+  })
+  document.getElementById("app").innerHTML = renderPhoneEditor(draft.id)
+  document.querySelector('[data-app-type="settings"]').click()
+  const frame = document.getElementById("phoneFrame")
+  try {
+    frame.querySelector("#phoneAuthorPresetSave").click()
+    document.querySelector("#phoneAuthorPresetName").value = "手机常用"
+    document.querySelector("#phoneAuthorPresetConfirm").click()
+    const stored = JSON.parse(localStorage.getItem("tuuru_author_placeholder_presets"))
+    assert.equal(stored.presets[0].name, "手机常用")
+
+    const selector = frame.querySelector("#phoneAuthorPreset")
+    assert.equal(selector.value, stored.presets[0].id)
+    frame.querySelector("#phoneAuthorPresetApply").click()
+    frame.querySelector("#flowSave").click()
+    const placeholders = draft.snapshot().placeholders
+    assert.equal(placeholders.length, 2)
+    assert.notEqual(placeholders[0].id, placeholders[1].id)
+  } finally {
+    localStorage.removeItem("tuuru_author_placeholder_presets")
+    draft.dispose()
+    dom.window.close()
   }
 })
 
@@ -215,6 +303,31 @@ test("takeaway lives in the plus sheet while ending a round lives in the header 
     assert.equal(document.querySelector("#bsSelfColor"), null)
     document.querySelector("#chatEndRound").click()
     assert.equal(draft.snapshot().phoneData.chats[0].rounds.length, 2)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("author link cards can target an existing forum post", async () => {
+  const phoneData = makePhoneData()
+  phoneData.forumPosts = [{ id:"post-1", title:"夜雨讨论", content:"帖子正文", comments:[] }]
+  const fixture = await openSingleChat("message-editor-inline-post", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const shell = overlay.querySelector(".chat-author-shell")
+    shell.querySelector("#chatPlusBtn").click()
+    shell.querySelector("#chatToolNext").click()
+    shell.querySelector('[data-chat-tool="link"]').click()
+    const postSelect = document.querySelector("#amForumPost")
+    assert.ok(postSelect)
+    postSelect.value = "post-1"
+    document.querySelector("#amSave").click()
+
+    const message = draft.snapshot().phoneData.chats[0].rounds[0].messages.at(-1)
+    assert.equal(message.forumPostId, "post-1")
+    assert.equal(message.linkTitle, "夜雨讨论")
+    assert.match(overlay.querySelector(".chat-link-card")?.textContent || "", /内联论坛帖子/)
   } finally {
     closeFixture(fixture)
   }

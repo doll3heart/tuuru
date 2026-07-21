@@ -647,6 +647,14 @@ function importWork(work) {
 }
 
 // ====== Landing Page (work info + password + placeholders) ======
+function placeholderForbiddenWord(placeholder, value) {
+  var normalized = String(value || '').toLocaleLowerCase()
+  return (placeholder && Array.isArray(placeholder.forbidden) ? placeholder.forbidden : []).find(function(word) {
+    var candidate = String(word || '').trim().toLocaleLowerCase()
+    return candidate && normalized.includes(candidate)
+  }) || ''
+}
+
 function showLandingPage(work, callback) {
   var phs = work.placeholders || []
   var hasPassword = !!(work.password && work.password.trim())
@@ -679,6 +687,7 @@ function showLandingPage(work, callback) {
       h += '<div class="rd-landing-field">'
       h += '<label>' + esc(ph.label || ph.key) + '</label>'
       h += '<input type="text" class="rd-landing-input" data-ph-id="' + escapeHtmlAttribute(ph.id || '') + '" value="' + escapeHtmlAttribute(ph.default || '') + '" placeholder="' + escapeHtmlAttribute(ph.prompt || '') + '">'
+      h += '<div class="rd-placeholder-error" data-ph-error="' + escapeHtmlAttribute(ph.id || '') + '" role="alert" hidden></div>'
       h += '</div>'
     })
     h += '<button class="rd-landing-preset-btn" id="rdPresetBtn">从预设填入</button>'
@@ -731,9 +740,19 @@ function showLandingPage(work, callback) {
     // Collect placeholders
     var values = {}
     var inputs = overlay.querySelectorAll('.rd-landing-input[data-ph-id]')
+    var forbiddenFound = false
     inputs.forEach(function(inp) {
+      var placeholder = phs.find(function(ph) { return String(ph.id || '') === String(inp.dataset.phId || '') })
+      var forbidden = placeholderForbiddenWord(placeholder, inp.value)
+      var error = inp.parentElement ? inp.parentElement.querySelector('.rd-placeholder-error') : null
+      if (error) {
+        error.hidden = !forbidden
+        error.textContent = forbidden ? '内容包含作者设置的违禁词，请修改后继续。' : ''
+      }
+      if (forbidden) { forbiddenFound = true; return }
       values[inp.dataset.phId] = [inp.value || '']
     })
+    if (forbiddenFound) return
     work.readerPhValues = values
     tryReaderStorageWrite(function() { lsSet('readerPhValues', values) })
     document.body.removeChild(overlay)
@@ -2009,7 +2028,8 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
           }
           h += '<button type="button" class="rd-chat-card" data-chat-index="' + chatIndex + '" aria-label="' + escapeHtmlAttribute('打开与 ' + name + ' 的对话') + '">'
           h += '<span class="rd-message-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(ch.type === 'group' ? '#769b8f' : avatarColor(ch.contactIds && ch.contactIds[0])) + '">'
-          if (chatIdentity && chatIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(chatIdentity.avatar) + '" alt="">'
+          if (ch.type === 'group' && ch.groupAvatarUrl) h += '<img src="' + escapeHtmlAttribute(ch.groupAvatarUrl) + '" alt="">'
+          else if (chatIdentity && chatIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(chatIdentity.avatar) + '" alt="">'
           else h += esc(name.charAt(0))
           h += '</span>'
           h += '<span class="rd-message-card-copy"><strong>' + esc(name) + '</strong><small>打开聊天</small></span>'
@@ -2130,7 +2150,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       if (forumIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(forumIdentity.avatar) + '" alt="">'
       else h += esc((forumIdentity.name || '?').charAt(0))
       h += '</span>'
-      h += '<span class="rd-forum-copy"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-meta">' + esc(forumIdentity.name) + ' / ' + esc(p.time || '') + '</span></span>'
+      h += '<span class="rd-forum-copy"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-meta">' + esc(forumIdentity.name) + (p.time ? ' / ' + esc(p.time) : '') + '</span></span>'
       h += '</button>'
     })
     wrapPanel('论坛', h)
@@ -2382,6 +2402,38 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
 
   refreshChatFlowContext()
 
+  function openInlineForumPost(postId, trigger) {
+    var post = (pd.forumPosts || []).find(function(item) { return String(item.id) === String(postId) })
+    if (!post) return
+    var previous = frame.querySelector('.rd-inline-forum-pip')
+    if (previous) previous.remove()
+    var postIdentity = resolveContactIdentity(pd, post.contactId, { surface:'forum', authoredName:post.contactName, authoredAvatar:post.contactAvatar })
+    var postImages = Array.isArray(post.images) ? post.images.slice() : []
+    if (post.imageUrl) postImages.unshift(post.imageUrl)
+    var h = '<section class="rd-inline-forum-pip" role="dialog" aria-label="帖子画中画">'
+    h += '<header class="rd-inline-forum-pip-head"><strong>内联帖子</strong><button type="button" class="rd-inline-forum-close" aria-label="关闭帖子画中画">×</button></header>'
+    h += '<div class="rd-inline-forum-pip-scroll"><div class="rd-inline-forum-author"><span class="rd-inline-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
+    if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
+    else h += esc((postIdentity.name || '?').charAt(0))
+    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + '</span></div>'
+    h += '<h3>' + esc(post.title || '未命名帖子') + '</h3><div class="rd-inline-forum-content">' + esc(post.content || '') + '</div>'
+    if (postImages.length) {
+      h += '<div class="rd-inline-forum-images">'
+      postImages.forEach(function(image) {
+        var src = typeof image === 'string' ? image : (image && (image.url || image.src) || '')
+        if (src) h += '<img src="' + escapeHtmlAttribute(src) + '" alt="" onerror="this.style.display=\'none\'">'
+      })
+      h += '</div>'
+    }
+    h += '</div></section>'
+    var chatRoot = frame.firstElementChild || frame
+    chatRoot.insertAdjacentHTML('beforeend', h)
+    var pip = chatRoot.querySelector('.rd-inline-forum-pip')
+    var close = pip.querySelector('.rd-inline-forum-close')
+    close.onclick = function() { pip.remove(); if (trigger && trigger.isConnected) trigger.focus() }
+    close.focus()
+  }
+
   function isFlowTargetMessage(message, round) {
     if (!flowStep) return false
     var playbackId = currentFlowPlaybackMessageId()
@@ -2402,11 +2454,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       chat: JSON.parse(JSON.stringify(ch)),
       choiceRuns: new Map(),
       flowTypedMessageIds: new Set(),
+      claimedMessageIds: new Set(),
       flowGeneratedPlayback: null,
     }
     phoneChoiceSession.chats.set(chatSessionKey, chatSession)
   }
   if (!(chatSession.flowTypedMessageIds instanceof Set)) chatSession.flowTypedMessageIds = new Set()
+  if (!(chatSession.claimedMessageIds instanceof Set)) chatSession.claimedMessageIds = new Set()
   ch = chatSession.chat
   var openedCallScenes = Object.create(null)
   var mayAutoOpenCall = true
@@ -2727,6 +2781,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         }
         // Bubble content
         h += '<div class="rd-chat-message-body">'
+        if (ch.type === 'group' && !isSelf) {
+          var groupLabels = []
+          if (ch.groupOwnerId === msg.senderId) groupLabels.push('群主')
+          else if (Array.isArray(ch.groupAdminIds) && ch.groupAdminIds.includes(msg.senderId)) groupLabels.push('管理员')
+          if (ch.groupTitles && ch.groupTitles[msg.senderId]) groupLabels.push(ch.groupTitles[msg.senderId])
+          if (groupLabels.length) h += '<div class="rd-chat-group-role">' + esc(groupLabels.join(' · ')) + '</div>'
+        }
         var bubbleStyle = isSelf
           ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
           : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
@@ -2735,18 +2796,27 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           h += '<img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
           h += '</div>'
         } else if (msg.type === 'link') {
-          var cardLinkUrl = safeMessageCardUrl(msg.linkUrl)
-          if (cardLinkUrl) h += '<a class="chat-link-card" href="' + escapeHtmlAttribute(cardLinkUrl) + '" target="_blank" rel="noopener noreferrer"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></a>'
-          else h += '<div class="chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></div>'
+          var inlineForumPost = msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
+          if (inlineForumPost) h += '<button type="button" class="chat-link-card rd-inline-forum-card" data-inline-forum-post-id="' + escapeHtmlAttribute(msg.forumPostId) + '"><strong>' + esc(msg.linkTitle || inlineForumPost.title || '帖子') + '</strong><span>论坛帖子 · 点击查看</span></button>'
+          else if (msg.forumPostId) h += '<div class="chat-link-card is-unavailable"><strong>' + esc(msg.linkTitle || '帖子') + '</strong><span>关联帖子已不存在</span></div>'
+          else {
+            var cardLinkUrl = safeMessageCardUrl(msg.linkUrl)
+            if (cardLinkUrl) h += '<a class="chat-link-card" href="' + escapeHtmlAttribute(cardLinkUrl) + '" target="_blank" rel="noopener noreferrer"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></a>'
+            else h += '<div class="chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></div>'
+          }
         } else if (msg.type === 'redpacket') {
-          h += '<div class="chat-payment-card chat-payment-redpacket"><div class="chat-payment-main"><div class="chat-payment-type">红包</div><div class="chat-payment-amount">¥' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer">微信红包</div></div>'
+          var redpacketClaimed = chatSession.claimedMessageIds.has(String(msg.id))
+          h += '<div class="chat-payment-card chat-payment-redpacket rd-claimable-card' + (redpacketClaimed ? ' is-claimed' : '') + '"><div class="chat-payment-main"><div class="chat-payment-type">红包</div><div class="chat-payment-amount">¥' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer"><span>红包</span>' + (!isSelf ? '<button type="button" class="rd-card-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (redpacketClaimed ? ' disabled' : '') + '>' + (redpacketClaimed ? '已领取' : '领取') + '</button>' : '') + '</div></div>'
         } else if (msg.type === 'transfer') {
-          h += '<div class="chat-payment-card chat-payment-transfer"><div class="chat-payment-main"><div class="chat-payment-type">转账</div><div class="chat-payment-amount">¥' + (msg.transferAmount || 0).toFixed(2) + '</div><div class="chat-payment-note">' + esc(msg.transferNote || '请确认收款') + '</div></div><div class="chat-payment-footer">转账记录</div></div>'
+          var transferClaimed = chatSession.claimedMessageIds.has(String(msg.id))
+          h += '<div class="chat-payment-card chat-payment-transfer rd-claimable-card' + (transferClaimed ? ' is-claimed' : '') + '"><div class="chat-payment-main"><div class="chat-payment-type">转账</div><div class="chat-payment-amount">¥' + (msg.transferAmount || 0).toFixed(2) + '</div><div class="chat-payment-note">' + esc(msg.transferNote || '请确认收款') + '</div></div><div class="chat-payment-footer"><span>转账记录</span>' + (!isSelf ? '<button type="button" class="rd-card-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已收款"' + (transferClaimed ? ' disabled' : '') + '>' + (transferClaimed ? '已收款' : '收款') + '</button>' : '') + '</div></div>'
         } else if (msg.type === 'familycard') {
-          h += '<div style="max-width:180px;padding:10px 12px;background:#8B7AAA;color:#fff;border-radius:8px;text-align:center"><div style="font-size:.6rem;opacity:.8">亲属卡</div><div style="font-size:.75rem">' + esc(msg.fcRelation || '亲人') + '</div><div style="font-size:.85rem;font-weight:700">¥' + (msg.fcAmount || 0).toFixed(2) + '</div></div>'
+          var familyCardClaimed = chatSession.claimedMessageIds.has(String(msg.id))
+          h += '<div class="chat-family-card rd-claimable-card' + (familyCardClaimed ? ' is-claimed' : '') + '"><div class="chat-family-card-copy"><div>亲属卡</div><strong>' + esc(msg.fcRelation || '亲人') + '</strong><b>¥' + (msg.fcAmount || 0).toFixed(2) + '</b></div>' + (!isSelf ? '<button type="button" class="rd-card-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (familyCardClaimed ? ' disabled' : '') + '>' + (familyCardClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
         } else if (msg.type === 'takeaway') {
           var takeawayUrl = buildTakeawaySearchUrl(msg.takeawayShop, msg.takeawayOrder)
-          h += '<a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击搜索</small></a>'
+          var takeawayClaimed = chatSession.claimedMessageIds.has(String(msg.id))
+          h += '<div class="rd-claimable-takeaway rd-claimable-card' + (takeawayClaimed ? ' is-claimed' : '') + '"><a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>' + (!isSelf ? '<button type="button" class="rd-card-claim rd-takeaway-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (takeawayClaimed ? ' disabled' : '') + '>' + (takeawayClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
         } else if (msg.type === 'voice') {
           var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
           var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))
@@ -2819,6 +2889,21 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         var call = callMessages.find(function(entry) { return entry.key === card.dataset.callKey })
         if (call) openCallScene(call.message, call.key)
       }
+    })
+
+    frame.querySelectorAll('.rd-card-claim').forEach(function(button) {
+      button.onclick = function(e) {
+        e.preventDefault()
+        e.stopPropagation()
+        chatSession.claimedMessageIds.add(String(button.dataset.claimMessageId || ''))
+        button.textContent = button.dataset.claimedLabel || '已领取'
+        button.disabled = true
+        button.closest('.rd-claimable-card')?.classList.add('is-claimed')
+      }
+    })
+
+    frame.querySelectorAll('.rd-inline-forum-card').forEach(function(card) {
+      card.onclick = function() { openInlineForumPost(card.dataset.inlineForumPostId, card) }
     })
 
     var chatInput = frame.querySelector('#chatInput')
@@ -3099,7 +3184,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
     h += '<header class="rd-forum-post-author"><span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
     if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
     else h += esc((postIdentity.name || '?').charAt(0))
-    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong><time>' + esc(post.time || '') + '</time></span></header>'
+    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + '</span></header>'
     h += '<h3>' + esc(post.title || '') + '</h3><div class="rd-forum-post-content">' + esc(post.content || '') + '</div>'
     var postImages = Array.isArray(post.images) ? post.images.slice() : []
     if (post.imageUrl) postImages.unshift(post.imageUrl)

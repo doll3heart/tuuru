@@ -1,5 +1,5 @@
 // Tuuru Works - Phone Editor
-import { uid, PHONE_APP_DEFS, PHONE_READER_OWNED_CONTROL_TYPES, DEFAULT_PHONE_APP_COLORS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
+import { uid, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, PHONE_READER_OWNED_CONTROL_TYPES, DEFAULT_PHONE_APP_COLORS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
 import { escapeHtmlAttribute, sanitizeCssColor, sanitizeIconHtml } from "../sanitize.js"
 import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
@@ -14,6 +14,7 @@ import { showToast, renderHeader, modal } from "../app.js"
 import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
 import { contactDisplayName, resolveContactIdentity } from "../contact-identity.js"
 import { buildTakeawaySearchUrl, safeMessageCardUrl } from "../message-card-links.js"
+import { deleteAuthorPlaceholderPreset, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset } from "../author-placeholder-presets.js"
 
 var _workId = null
 var _dragState = null
@@ -2883,6 +2884,7 @@ function openForumEditor(frame, wid, contact, pd) {
       var ov = modal('发帖',
         '<div class="form-group"><label class="form-label">标题</label><input id="fpTitle" class="form-input" placeholder="帖子标题"></div>' +
         '<div class="form-group"><label class="form-label">内容</label><textarea id="fpContent" class="form-textarea" placeholder="主楼内容" style="min-height:100px"></textarea></div>' +
+        '<div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fpImg" class="form-input" placeholder="https://..."></div>' +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">发帖身份：' + esc(identity.name) + '</span></div>',
         '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>')
@@ -2890,12 +2892,13 @@ function openForumEditor(frame, wid, contact, pd) {
       ov.querySelector('#fpSave').onclick = function() {
         var title = ov.querySelector('#fpTitle').value.trim()
         var content = ov.querySelector('#fpContent').value.trim()
+        var time = ov.querySelector('#fpTime').value.trim()
         var imgUrl = ov.querySelector('#fpImg') ? ov.querySelector('#fpImg').value.trim() : ''
         if (!title) return
         posts.unshift({
           id: uid(), contactId: identity.id, contactName: identity.name,
           contactAvatar: identity.avatar, title: title, content: content, imageUrl: imgUrl || '',
-          time: new Date().toLocaleString(), likes: 0, bookmarks: 0, comments: []
+          time: time, likes: 0, bookmarks: 0, comments: []
         })
         saveData()
         ov.remove()
@@ -3023,7 +3026,7 @@ function openForumEditor(frame, wid, contact, pd) {
       h += '</div>'
       h += '<div class="forum-post-by">'
       h += '<div class="forum-post-author">' + esc(author.name || post.contactName) + ' <span class="forum-badge-op">楼主</span></div>'
-      h += '<div class="forum-post-time">' + fmtTime(post.time) + '</div>'
+      h += '<input class="forum-post-time forum-post-time-edit" data-post-time="' + escAttr(post.id) + '" value="' + escAttr(post.time || '') + '" placeholder="未设置发帖时间">'
       h += '</div>'
       h += '</div>'
       h += '<div class="forum-post-title">' + esc(post.title) + '</div>'
@@ -3067,7 +3070,7 @@ function openForumEditor(frame, wid, contact, pd) {
         h += '</div>'
         h += '<div class="forum-list-info">'
         h += '<div class="forum-list-title">' + esc(p.title) + '</div>'
-        h += '<div class="forum-list-meta">' + esc(a.name || p.contactName) + ' / ' + fmtTime(p.time) + '</div>'
+        h += '<div class="forum-list-meta">' + esc(a.name || p.contactName) + (p.time ? ' / ' + fmtTime(p.time) : '') + '</div>'
         h += '<div class="forum-list-stats">'
         h += '<span>赞 ' + (p.likes || 0) + '</span>'
         h += '<span>收藏 ' + (p.bookmarks || 0) + '</span>'
@@ -3237,6 +3240,13 @@ function openForumEditor(frame, wid, contact, pd) {
     if (postTitle) postTitle.oncontextmenu = function(e) { e.preventDefault(); editPostField(currentPostId, 'title') }
     var postContent = frame.querySelector('.forum-post-content')
     if (postContent) postContent.oncontextmenu = function(e) { e.preventDefault(); editPostField(currentPostId, 'content') }
+    var postTime = frame.querySelector('[data-post-time]')
+    if (postTime) postTime.onchange = function() {
+      var post = posts.find(function(item) { return String(item.id) === String(postTime.dataset.postTime) })
+      if (!post) return
+      post.time = postTime.value.trim()
+      saveData()
+    }
 
     // Right-click on comments to edit
     var commentContents = frame.querySelectorAll('.forum-comment-content')
@@ -3434,7 +3444,7 @@ function openMessagesEditor(frame, wid, pd) {
       ov2.querySelector('#gnOk').onclick = function() {
         var name = ov2.querySelector('#gnInput').value.trim()
         if (!name) name = '群聊(' + (selContactIds.length + 1) + '人)'
-        chats.push({ id: uid(), type: 'group', contactIds: selContactIds, groupName: name, messages: [], rounds: [] })
+        chats.push({ id: uid(), type: 'group', contactIds: selContactIds, groupName: name, groupAvatarUrl: '', groupOwnerId: 'self', groupAdminIds: [], groupTitles: {}, messages: [], rounds: [] })
         saveData()
         ov2.remove()
         renderMessages()
@@ -3541,13 +3551,13 @@ function openMessagesEditor(frame, wid, pd) {
         var name = getChatName(ch)
         var chatContact = ch.type === 'single' ? contacts.find(function(x) { return x.id === ch.contactIds[0] }) : null
         var chatAvatarStyle = ch.type === 'group'
-          ? 'background:#10b981'
+          ? (ch.groupAvatarUrl ? 'background-image:url(' + ch.groupAvatarUrl + ');background-size:cover' : 'background:#10b981')
           : (chatContact && chatContact.avatarUrl
               ? 'background-image:url(' + chatContact.avatarUrl + ');background-size:cover'
               : 'background:' + avatarColor((chatContact && chatContact.id) || ch.id))
         h += '<div class="forum-list-card" data-chat-id="' + escapeHtmlAttribute(ch.id) + '" style="position:relative">'
         h += '<div class="forum-list-avatar" style="' + escapeHtmlAttribute(chatAvatarStyle) + '">'
-        if (ch.type === 'group' || !chatContact || !chatContact.avatarUrl) h += '<span>' + esc(name.charAt(0)) + '</span>'
+        if ((ch.type === 'group' && !ch.groupAvatarUrl) || (ch.type !== 'group' && (!chatContact || !chatContact.avatarUrl))) h += '<span>' + esc(name.charAt(0)) + '</span>'
         h += '</div>'
         h += '<div class="forum-list-info">'
         h += '<div class="forum-list-title">' + esc(name) + '</div>'
@@ -3881,8 +3891,11 @@ function openChatEditor(frame, wid, chatId, pd) {
     var typeLabels = { text:'文字', image:'图片', link:'链接', redpacket:'红包', transfer:'转账', familycard:'亲属卡', takeaway:'外卖卡片' }
     var typeLabel = typeLabels[type] || '消息'
     var extraHtml = ''
+    var forumPostOptions = (pd.forumPosts || []).map(function(post) {
+      return '<option value="' + escapeHtmlAttribute(post.id) + '">' + esc(post.title || '未命名帖子') + '</option>'
+    }).join('')
     if (type === 'image') extraHtml = '<div class="form-group"><label class="form-label">图片URL</label><input id="amImg" class="form-input" placeholder="https://..."></div>'
-    else if (type === 'link') extraHtml = '<div class="form-group"><label class="form-label">链接标题</label><input id="amLinkTitle" class="form-input" placeholder="标题"><label class="form-label">链接URL</label><input id="amLinkUrl" class="form-input" placeholder="https://..."></div>'
+    else if (type === 'link') extraHtml = '<div class="form-group"><label class="form-label">链接标题</label><input id="amLinkTitle" class="form-input" placeholder="不填则使用帖子标题"><label class="form-label">链接内容</label><select id="amForumPost" class="form-select"><option value="">外部网址</option>' + forumPostOptions + '</select><div class="form-hint">选择作品内帖子后，读者会在聊天里画中画查看。</div><label class="form-label" style="margin-top:10px">外部网址</label><input id="amLinkUrl" class="form-input" placeholder="https://..."></div>'
     else if (type === 'redpacket') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amRpAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">祝福语</label><input id="amRpMsg" class="form-input" placeholder="恭喜发财"></div>'
     else if (type === 'transfer') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amTrAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">备注</label><input id="amTrNote" class="form-input" placeholder="转账"></div>'
     else if (type === 'familycard') extraHtml = '<div class="form-group"><label class="form-label">亲属关系</label><input id="amFcRel" class="form-input" placeholder="例如：爸爸/妈妈/姐姐"><label class="form-label">金额</label><input id="amFcAmt" class="form-input" type="number" step="0.01" placeholder="0.00"></div>'
@@ -3901,7 +3914,13 @@ function openChatEditor(frame, wid, chatId, pd) {
         time: new Date().toLocaleString(), type: type
       }
       if (type === 'image') msg.image = ov.querySelector('#amImg').value.trim()
-      if (type === 'link') { msg.linkTitle = ov.querySelector('#amLinkTitle').value.trim(); msg.linkUrl = ov.querySelector('#amLinkUrl').value.trim() }
+      if (type === 'link') {
+        var forumPostId = ov.querySelector('#amForumPost').value
+        var linkedForumPost = (pd.forumPosts || []).find(function(post) { return String(post.id) === String(forumPostId) })
+        msg.forumPostId = forumPostId
+        msg.linkTitle = ov.querySelector('#amLinkTitle').value.trim() || (linkedForumPost && linkedForumPost.title) || '链接'
+        msg.linkUrl = forumPostId ? '' : ov.querySelector('#amLinkUrl').value.trim()
+      }
       if (type === 'redpacket') { msg.redpacketAmount = parseFloat(ov.querySelector('#amRpAmt').value) || 0; msg.redpacketMsg = ov.querySelector('#amRpMsg').value.trim() || '恭喜发财' }
       if (type === 'transfer') { msg.transferAmount = parseFloat(ov.querySelector('#amTrAmt').value) || 0; msg.transferNote = ov.querySelector('#amTrNote').value.trim() || '转账' }
       if (type === 'familycard') { msg.fcRelation = ov.querySelector('#amFcRel').value.trim() || '亲人'; msg.fcAmount = parseFloat(ov.querySelector('#amFcAmt').value) || 0 }
@@ -4102,6 +4121,15 @@ function openChatEditor(frame, wid, chatId, pd) {
     return contact ? contactDisplayName(contact, 'messages') : '未知'
   }
 
+  function getGroupRoleLabel(senderId) {
+    if (ch.type !== 'group') return ''
+    var labels = []
+    if (ch.groupOwnerId === senderId) labels.push('群主')
+    else if ((ch.groupAdminIds || []).includes(senderId)) labels.push('管理员')
+    if (ch.groupTitles && ch.groupTitles[senderId]) labels.push(ch.groupTitles[senderId])
+    return labels.join(' · ')
+  }
+
   function currentRound() {
     var round = ch.rounds[ch.rounds.length - 1]
     if (!round) {
@@ -4109,6 +4137,42 @@ function openChatEditor(frame, wid, chatId, pd) {
       ch.rounds.push(round)
     }
     return round
+  }
+
+  function showGroupEditor() {
+    if (ch.type !== 'group') return
+    var titles = ch.groupTitles && typeof ch.groupTitles === 'object' ? ch.groupTitles : {}
+    var selected = new Set(ch.contactIds || [])
+    var h = '<div class="form-group"><label class="form-label">群聊名称</label><input id="groupEditName" class="form-input" value="' + escapeHtmlAttribute(ch.groupName || '') + '"><label class="form-label">群头像链接</label><input id="groupEditAvatar" class="form-input" value="' + escapeHtmlAttribute(ch.groupAvatarUrl || '') + '" placeholder="https://..."></div>'
+    h += '<div class="form-group"><label class="form-label">群成员与身份</label><div id="groupMemberList" style="max-height:42vh;overflow:auto">'
+    contacts.forEach(function(contact) {
+      var checked = selected.has(contact.id) ? ' checked' : ''
+      var isAdmin = (ch.groupAdminIds || []).includes(contact.id)
+      h += '<div class="group-member-editor" data-group-member="' + escapeHtmlAttribute(contact.id) + '"><label><input type="checkbox" data-group-include value="' + escapeHtmlAttribute(contact.id) + '"' + checked + '> ' + esc(contact.name || '未命名') + '</label><label><input type="checkbox" data-group-admin value="' + escapeHtmlAttribute(contact.id) + '"' + (isAdmin ? ' checked' : '') + '> 管理员</label><input class="form-input" data-group-title value="' + escapeHtmlAttribute(titles[contact.id] || '') + '" placeholder="群头衔（可选）"></div>'
+    })
+    h += '</div></div><div class="form-group"><label class="form-label">群主</label><select id="groupOwner" class="form-select"><option value="self"' + (ch.groupOwnerId === 'self' || !ch.groupOwnerId ? ' selected' : '') + '>读者</option>'
+    contacts.forEach(function(contact) { h += '<option value="' + escapeHtmlAttribute(contact.id) + '"' + (ch.groupOwnerId === contact.id ? ' selected' : '') + '>' + esc(contact.name || '未命名') + '</option>' })
+    h += '</select></div>'
+    var ov = modal('管理群聊', h, '<button id="groupEditSave" class="btn btn-primary btn-sm">保存</button><button id="groupEditCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.querySelector('#groupEditSave').onclick = function() {
+      var memberIds = Array.from(ov.querySelectorAll('[data-group-include]:checked')).map(function(input) { return input.value })
+      if (!memberIds.length) { showToast('群聊至少需要一位角色'); return }
+      ch.groupName = ov.querySelector('#groupEditName').value.trim() || '群聊'
+      ch.groupAvatarUrl = ov.querySelector('#groupEditAvatar').value.trim()
+      ch.contactIds = memberIds
+      var requestedOwner = ov.querySelector('#groupOwner').value
+      ch.groupOwnerId = requestedOwner === 'self' || memberIds.includes(requestedOwner) ? requestedOwner : 'self'
+      ch.groupAdminIds = Array.from(ov.querySelectorAll('[data-group-admin]:checked')).map(function(input) { return input.value }).filter(function(id) { return memberIds.includes(id) && id !== ch.groupOwnerId })
+      ch.groupTitles = {}
+      ov.querySelectorAll('[data-group-member]').forEach(function(row) {
+        var id = row.dataset.groupMember
+        var title = row.querySelector('[data-group-title]').value.trim()
+        if (memberIds.includes(id) && title) ch.groupTitles[id] = title
+      })
+      if (activeSpeakerId !== 'self' && activeSpeakerId !== 'system' && !memberIds.includes(activeSpeakerId)) activeSpeakerId = 'self'
+      save(); ov.remove(); renderChat()
+    }
+    ov.querySelector('#groupEditCancel').onclick = function() { ov.remove() }
   }
 
   function renderChat() {
@@ -4133,7 +4197,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     h += '<div class="chat-round-header">'
     h += '<button id="chatBack" class="chat-round-control" type="button" aria-label="返回消息列表">‹</button>'
     h += '<div class="chat-round-title"><strong>' + esc(getChatName()) + '</strong><span>· ' + esc(roundLabel) + '</span></div>'
-    h += '<button id="chatBgBtn" class="chat-round-control" type="button" aria-label="对话操作">···</button>'
+    h += '<button id="chatBgBtn" class="chat-round-control" type="button" aria-label="对话操作">⋯</button>'
     h += '</div>'
 
     h += '<div class="chat-msg-area" id="chatMsgArea">'
@@ -4199,14 +4263,21 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '</div>'
     }
     h += '<div style="min-width:0;max-width:100%">'
+    var groupRoleLabel = getGroupRoleLabel(msg.senderId)
+    if (groupRoleLabel) h += '<div class="chat-group-role">' + esc(groupRoleLabel) + '</div>'
     if (msg.type === 'image') {
       h += '<div class="chat-bubble"><img src="' + escapeHtmlAttribute(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'"></div>'
     } else if (msg.type === 'link') {
-      var linkUrl = safeMessageCardUrl(msg.linkUrl)
-      var linkTag = linkUrl ? 'a href="' + escapeHtmlAttribute(linkUrl) + '" target="_blank" rel="noopener noreferrer"' : 'div'
-      h += '<' + linkTag + ' class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></' + (linkUrl ? 'a' : 'div') + '>'
+      var authoredForumPost = msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
+      if (msg.forumPostId) {
+        h += '<div class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || (authoredForumPost && authoredForumPost.title) || '帖子') + '</strong><span>' + (authoredForumPost ? '内联论坛帖子 · 读者点击后画中画查看' : '关联帖子已不存在') + '</span></div>'
+      } else {
+        var linkUrl = safeMessageCardUrl(msg.linkUrl)
+        var linkTag = linkUrl ? 'a href="' + escapeHtmlAttribute(linkUrl) + '" target="_blank" rel="noopener noreferrer"' : 'div'
+        h += '<' + linkTag + ' class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></' + (linkUrl ? 'a' : 'div') + '>'
+      }
     } else if (msg.type === 'redpacket') {
-      h += '<div class="chat-bubble chat-payment-card chat-payment-redpacket rp-card"><div class="chat-payment-main rp-top"><div class="chat-payment-type">红包</div><div class="chat-payment-amount rp-amount">&yen;' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note rp-label">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer rp-bottom">微信红包</div></div>'
+      h += '<div class="chat-bubble chat-payment-card chat-payment-redpacket rp-card"><div class="chat-payment-main rp-top"><div class="chat-payment-type">红包</div><div class="chat-payment-amount rp-amount">&yen;' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note rp-label">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer rp-bottom">红包</div></div>'
     } else if (msg.type === 'transfer') {
       h += '<div class="chat-bubble chat-payment-card chat-payment-transfer tf-card"><div class="chat-payment-main tf-row"><div class="chat-payment-type tf-type">转账</div><div class="chat-payment-amount tf-amount">&yen;' + (msg.transferAmount || 0).toFixed(2) + '</div><div class="chat-payment-note tf-note">' + esc(msg.transferNote || '请确认收款') + '</div></div><div class="chat-payment-footer">转账记录</div></div>'
     } else if (msg.type === 'familycard') {
@@ -4216,7 +4287,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '</div>'
     } else if (msg.type === 'takeaway') {
       var takeawayUrl = buildTakeawaySearchUrl(msg.takeawayShop, msg.takeawayOrder)
-      h += '<a class="chat-bubble chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>&yen;' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击搜索</small></a>'
+      h += '<a class="chat-bubble chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>&yen;' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>'
     } else if (msg.type === 'call') {
       var callModeLabel = msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL'
       h += '<div class="chat-bubble chat-call-card">'
@@ -4335,8 +4406,11 @@ function openChatEditor(frame, wid, chatId, pd) {
     // Conversation actions belong in the header menu; appearance is reader-owned.
     var bgBtn = frame.querySelector('#chatBgBtn')
     if (bgBtn) bgBtn.onclick = function() {
-      var ov = modal('对话操作', '<p style="font-size:.78rem;color:var(--c-text2)">结束当前轮后，后续消息将进入新一轮。</p>',
-        '<button id="chatEndRound" class="btn btn-primary btn-sm">结束此轮</button><button id="chatActionCancel" class="btn btn-ghost btn-sm">取消</button>')
+      var actionBody = '<p style="font-size:.78rem;color:var(--c-text2)">结束当前轮后，后续消息将进入新一轮。</p>'
+      var actionButtons = (ch.type === 'group' ? '<button id="chatManageGroup" class="btn btn-outline btn-sm">管理群聊</button>' : '') + '<button id="chatEndRound" class="btn btn-primary btn-sm">结束此轮</button><button id="chatActionCancel" class="btn btn-ghost btn-sm">取消</button>'
+      var ov = modal('对话操作', actionBody, actionButtons)
+      var manageGroup = ov.querySelector('#chatManageGroup')
+      if (manageGroup) manageGroup.onclick = function() { ov.remove(); showGroupEditor() }
       ov.querySelector('#chatEndRound').onclick = function() {
         var num = ch.rounds.length + 1
         ch.rounds.push({ id: uid(), label: '第' + num + '轮', messages: [] })
@@ -4844,6 +4918,8 @@ function openSettingsEditor(wid) {
   var w = getWork(wid)
   if (!w || !w.phoneData) return
   var pd = w.phoneData
+  var placeholders = Array.isArray(w.placeholders) ? JSON.parse(JSON.stringify(w.placeholders)) : []
+  var authorPresets = readAuthorPlaceholderPresets()
   if (!pd.readingFlow) pd.readingFlow = { enabled: false, sequence: [] }
   pd.readingFlow.sequence = expandPhoneReadingFlowSequence(pd, pd.readingFlow.sequence)
   var flow = pd.readingFlow
@@ -4867,6 +4943,21 @@ function openSettingsEditor(wid) {
     var h = '<div class="cu-panel cu-panel-embedded" id="settingsPanel">'
     h += '<div class="cu-header"><span class="cu-title">设置</span><button id="settingsClose" class="cu-close-btn">&times;</button></div>'
     h += '<div class="cu-body">'
+    h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">与互动文章一致：正文写入“标记”，读者会看到“问题”并填写替换内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
+    authorPresets.forEach(function(preset) { h += '<option value="' + escapeHtmlAttribute(preset.id) + '">' + esc(preset.name) + '</option>' })
+    h += '</select><button type="button" class="btn btn-sm btn-outline" id="phoneAuthorPresetApply">套用预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetSave">保存当前为预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetDelete">删除预设</button></div><div id="phonePlaceholderList">'
+    placeholders.forEach(function(ph, index) {
+      var currentMode = ph.mode || 'each'
+      h += '<div class="phone-placeholder-row" data-placeholder-index="' + index + '"><div class="phone-placeholder-head"><strong>' + esc(ph.label || '占位符') + '</strong><button type="button" class="ph-card-del" data-ph-remove="' + index + '" title="删除">×</button></div><div class="phone-placeholder-fields">'
+      h += '<label><span>标记</span><input class="form-input" data-ph-key value="' + escapeHtmlAttribute(ph.key || '') + '" placeholder="正文中要替换的文字"></label>'
+      h += '<label><span>问题</span><input class="form-input" data-ph-prompt value="' + escapeHtmlAttribute(ph.prompt || '') + '" placeholder="对读者的问题"></label>'
+      h += '<label><span>模式</span><select class="form-select" data-ph-mode>'
+      PH_MODES.forEach(function(mode) { h += '<option value="' + escapeHtmlAttribute(mode.value) + '"' + (currentMode === mode.value ? ' selected' : '') + '>' + esc(mode.label) + '</option>' })
+      if (!PH_MODES.some(function(mode) { return mode.value === currentMode })) h += '<option value="' + escapeHtmlAttribute(currentMode) + '" selected>保留原模式</option>'
+      h += '</select></label><label class="phone-placeholder-forbidden"><span>违禁词</span><textarea class="form-textarea" data-ph-forbidden placeholder="每行一个，或用逗号分隔">' + esc((ph.forbidden || []).join('\n')) + '</textarea></label></div></div>'
+    })
+    if (placeholders.length === 0) h += '<div class="phone-placeholder-empty">暂无占位符</div>'
+    h += '</div></section>'
     h += '<div class="st-row"><div><div class="st-label">阅读节奏控制</div><div class="st-desc">启用后可拖拽排序卡片，导出后读者将按序浏览</div></div>'
     h += '<label class="tgl-switch"><input type="checkbox" id="flowToggle"' + (flow.enabled ? ' checked' : '') + '><span class="tgl-slider"></span></label></div>'
     h += '<div style="margin-top:12px"><div style="font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--c-text)">卡片序列 (' + seq.length + ')</div>'
@@ -4950,6 +5041,88 @@ function openSettingsEditor(wid) {
   _flowDragItem = null
 
   function bindAll() {
+    function collectPlaceholders() {
+      var rows = frame.querySelectorAll('[data-placeholder-index]')
+      placeholders = Array.from(rows).map(function(row, index) {
+        var previous = placeholders[index] || {}
+        var key = row.querySelector('[data-ph-key]').value.trim()
+        return Object.assign({}, previous, {
+          id: previous.id || uid(),
+          label: previous.label || key || '占位符',
+          key: key || previous.key || '新占位符',
+          prompt: row.querySelector('[data-ph-prompt]').value.trim() || previous.prompt || '请填写',
+          forbidden: row.querySelector('[data-ph-forbidden]').value.split(/[，,\n]/).map(function(value) { return value.trim() }).filter(Boolean),
+          values: Array.isArray(previous.values) ? previous.values : [],
+          default: previous.default || '',
+          mode: row.querySelector('[data-ph-mode]').value || previous.mode || 'each'
+        })
+      })
+    }
+    var saveAuthorPresetBtn = frame.querySelector('#phoneAuthorPresetSave')
+    if (saveAuthorPresetBtn) saveAuthorPresetBtn.onclick = function() {
+      collectPlaceholders()
+      if (!placeholders.length) { showToast('请先添加占位符'); return }
+      var presetModal = modal('保存当前为预设', '<div class="form-group"><label class="form-label">预设名称</label><input id="phoneAuthorPresetName" class="form-input" placeholder="例如：我的常用称呼"></div>', '<button id="phoneAuthorPresetConfirm" class="btn btn-primary btn-sm">保存</button><button id="phoneAuthorPresetCancel" class="btn btn-ghost btn-sm">取消</button>')
+      presetModal.querySelector('#phoneAuthorPresetConfirm').onclick = function() {
+        var name = presetModal.querySelector('#phoneAuthorPresetName').value.trim()
+        if (!name) { showToast('请填写预设名称'); return }
+        var saved = saveAuthorPlaceholderPreset(name, placeholders)
+        if (!saved) { showToast('预设保存失败'); return }
+        authorPresets = readAuthorPlaceholderPresets()
+        presetModal.remove()
+        frame.innerHTML = buildPanel(); bindAll()
+        var select = frame.querySelector('#phoneAuthorPreset')
+        if (select) select.value = saved.id
+        showToast('作者预设已保存在本机')
+      }
+      presetModal.querySelector('#phoneAuthorPresetCancel').onclick = function() { presetModal.remove() }
+      presetModal.querySelector('#phoneAuthorPresetName').focus()
+    }
+    var applyAuthorPresetBtn = frame.querySelector('#phoneAuthorPresetApply')
+    if (applyAuthorPresetBtn) applyAuthorPresetBtn.onclick = function() {
+      var presetId = frame.querySelector('#phoneAuthorPreset')?.value || ''
+      var preset = authorPresets.find(function(item) { return item.id === presetId })
+      if (!preset) { showToast('请先选择预设'); return }
+      collectPlaceholders()
+      placeholders = placeholders.concat(instantiateAuthorPlaceholderPreset(preset, uid))
+      frame.innerHTML = buildPanel(); bindAll()
+      showToast('已套用预设')
+    }
+    var deleteAuthorPresetBtn = frame.querySelector('#phoneAuthorPresetDelete')
+    if (deleteAuthorPresetBtn) deleteAuthorPresetBtn.onclick = function() {
+      var presetId = frame.querySelector('#phoneAuthorPreset')?.value || ''
+      var preset = authorPresets.find(function(item) { return item.id === presetId })
+      if (!preset) { showToast('请先选择预设'); return }
+      var deleteModal = modal('删除作者预设', '<p>确定删除“' + esc(preset.name) + '”吗？不会影响已经使用它的作品。</p>', '<button id="phoneAuthorPresetDeleteConfirm" class="btn btn-danger btn-sm">删除</button><button id="phoneAuthorPresetDeleteCancel" class="btn btn-ghost btn-sm">取消</button>')
+      deleteModal.querySelector('#phoneAuthorPresetDeleteConfirm').onclick = function() {
+        deleteAuthorPlaceholderPreset(presetId)
+        authorPresets = readAuthorPlaceholderPresets()
+        deleteModal.remove()
+        frame.innerHTML = buildPanel(); bindAll()
+        showToast('预设已删除')
+      }
+      deleteModal.querySelector('#phoneAuthorPresetDeleteCancel').onclick = function() { deleteModal.remove() }
+    }
+    var presetNameBtn = frame.querySelector('#phonePlaceholderPresetName')
+    if (presetNameBtn) presetNameBtn.onclick = function() {
+      collectPlaceholders()
+      PH_PRESETS.name.fields.forEach(function(field) {
+        placeholders.push(Object.assign({ id:uid(), values:[], default:'' }, field, { forbidden:(field.forbidden || []).slice() }))
+      })
+      frame.innerHTML = buildPanel(); bindAll()
+    }
+    var addPlaceholderBtn = frame.querySelector('#phonePlaceholderAdd')
+    if (addPlaceholderBtn) addPlaceholderBtn.onclick = function() {
+      collectPlaceholders()
+      placeholders.push({ id:uid(), label:'新占位符', key:'新占位符', prompt:'请填写', forbidden:[], values:[], default:'', mode:'each' })
+      frame.innerHTML = buildPanel(); bindAll()
+    }
+    frame.querySelectorAll('[data-ph-remove]').forEach(function(button) {
+      button.onclick = function() {
+        collectPlaceholders(); placeholders.splice(Number(button.dataset.phRemove), 1)
+        frame.innerHTML = buildPanel(); bindAll()
+      }
+    })
     var toggle = frame.querySelector('#flowToggle')
     if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
 
@@ -4967,8 +5140,9 @@ function openSettingsEditor(wid) {
 
     var saveBtn = frame.querySelector('#flowSave')
     if (saveBtn) saveBtn.onclick = function() {
+      collectPlaceholders()
       pd.readingFlow = flow
-      updateWork(wid, { phoneData: pd })
+      updateWork(wid, { phoneData: pd, placeholders: placeholders })
       showToast('设置已保存')
       restore()
     }
