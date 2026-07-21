@@ -370,6 +370,22 @@ test("chat ids and avatar urls cannot inject attributes into author message view
   }
 })
 
+test("single-chat list renders the current contact avatar", async () => {
+  const avatar = "data:image/png;base64,iVBORw0KGgo="
+  const phoneData = makePhoneData({ id: "contact-1", name: "林澈", avatarUrl: avatar })
+  const fixture = await openSingleChat("message-list-contact-avatar", phoneData)
+
+  try {
+    fixture.overlay.querySelector("#chatBack").click()
+    const listAvatar = fixture.overlay.querySelector(".forum-list-avatar")
+    assert.ok(listAvatar)
+    assert.match(listAvatar.getAttribute("style"), /background-image:url\(data:image\/png;base64,iVBORw0KGgo=\)/)
+    assert.equal(listAvatar.querySelector("span"), null)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("legacy addChatMessage writes into the active round when rounds already exist", async () => {
   const dom = installDom()
   const {

@@ -3538,8 +3538,16 @@ function openMessagesEditor(frame, wid, pd) {
       if (chats.length === 0) h += '<div class="pf-empty">暂无对话</div>'
       chats.forEach(function(ch) {
         var name = getChatName(ch)
+        var chatContact = ch.type === 'single' ? contacts.find(function(x) { return x.id === ch.contactIds[0] }) : null
+        var chatAvatarStyle = ch.type === 'group'
+          ? 'background:#10b981'
+          : (chatContact && chatContact.avatarUrl
+              ? 'background-image:url(' + chatContact.avatarUrl + ');background-size:cover'
+              : 'background:' + avatarColor((chatContact && chatContact.id) || ch.id))
         h += '<div class="forum-list-card" data-chat-id="' + escapeHtmlAttribute(ch.id) + '" style="position:relative">'
-        h += '<div class="forum-list-avatar" style="background:' + (ch.type === 'group' ? '#10b981' : '#6366f1') + '"><span>' + esc(name.charAt(0)) + '</span></div>'
+        h += '<div class="forum-list-avatar" style="' + escapeHtmlAttribute(chatAvatarStyle) + '">'
+        if (ch.type === 'group' || !chatContact || !chatContact.avatarUrl) h += '<span>' + esc(name.charAt(0)) + '</span>'
+        h += '</div>'
         h += '<div class="forum-list-info">'
         h += '<div class="forum-list-title">' + esc(name) + '</div>'
         h += '<div style="font-size:.68rem;color:var(--c-text2)">' + (ch.type === 'group' ? '群聊 ' + (ch.contactIds.length + 1) + '人' : '') + '</div>'
