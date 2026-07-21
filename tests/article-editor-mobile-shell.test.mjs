@@ -379,6 +379,10 @@ test("desktop and tablet shells expose an accessible resizable outline boundary"
   assert.equal(splitter.tabIndex, 0)
   assert.ok(shell.querySelector("[data-editor-outline-reopen]"))
   assert.match(editorSource, /data-work-search/)
+  assert.match(css, /\.editor-splitter\{flex:0 0 1px;/)
+  assert.match(css, /\.editor-splitter span\{[^}]*width:12px;/)
+  assert.match(css, /\.editor-splitter span::after\{[^}]*width:2px;/)
+  assert.doesNotMatch(css, /\.editor-splitter\{flex-basis:44px/)
 })
 
 test("bounded phone layouts expose one editor pane without changing desktop coexistence", () => {
