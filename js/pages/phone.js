@@ -14,7 +14,7 @@ import { showToast, renderHeader, modal } from "../app.js"
 import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
 import { contactAvatar, contactDisplayName, listForumIdentities, resolveContactIdentity } from "../contact-identity.js"
 import { normalizeContactSortMode, orderedContacts, reorderContacts } from "../contact-order.js"
-import { buildTakeawaySearchUrl, safeMessageCardUrl } from "../message-card-links.js"
+import { buildTakeawayOpenTarget, safeMessageCardUrl } from "../message-card-links.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
 import { reorderForumCommentByOffset, reorderForumCommentTree } from "../forum-comment-reorder.js"
@@ -4816,8 +4816,9 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '<div class="fc-body"><div class="fc-rel">' + esc(msg.fcRelation || '亲人') + '</div><div class="fc-amount">&yen;' + ((msg.fcAmount || 0)).toFixed(2) + '</div></div>'
       h += '</div>'
     } else if (msg.type === 'takeaway') {
-      var takeawayUrl = buildTakeawaySearchUrl(msg.takeawayShop, msg.takeawayOrder)
-      h += '<a class="chat-bubble chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>&yen;' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>'
+      var takeawayTarget = buildTakeawayOpenTarget(msg.takeawayShop, msg.takeawayOrder)
+      var takeawayExternalAttrs = takeawayTarget.opensApp ? '' : ' target="_blank" rel="noopener noreferrer"'
+      h += '<a class="chat-bubble chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayTarget.href) + '"' + takeawayExternalAttrs + '><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>&yen;' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>'
     } else if (msg.type === 'call') {
       var callModeLabel = msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL'
       h += '<div class="chat-bubble chat-call-card">'

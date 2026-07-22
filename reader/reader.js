@@ -13,7 +13,7 @@ import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
 import { appendArticleChoice, currentArticleChapterEntries, previousArticleChapterPath } from '../js/article-chapter-runtime.js'
 import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
-import { buildTakeawaySearchUrl, safeMessageCardUrl } from '../js/message-card-links.js'
+import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-links.js'
 import {
   normalizePhoneReadingFlow,
   phoneReadingFlowAppType,
@@ -2876,9 +2876,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           var familyCardClaimed = chatSession.claimedMessageIds.has(String(msg.id))
           h += '<div class="chat-family-card rd-claimable-card' + (familyCardClaimed ? ' is-claimed' : '') + '"><div class="chat-family-card-copy"><div>亲属卡</div><strong>' + esc(msg.fcRelation || '亲人') + '</strong><b>¥' + (msg.fcAmount || 0).toFixed(2) + '</b></div>' + (!isSelf ? '<button type="button" class="rd-card-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (familyCardClaimed ? ' disabled' : '') + '>' + (familyCardClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
         } else if (msg.type === 'takeaway') {
-          var takeawayUrl = buildTakeawaySearchUrl(msg.takeawayShop, msg.takeawayOrder)
+          var takeawayTarget = buildTakeawayOpenTarget(msg.takeawayShop, msg.takeawayOrder)
+          var takeawayExternalAttrs = takeawayTarget.opensApp ? '' : ' target="_blank" rel="noopener noreferrer"'
           var takeawayClaimed = chatSession.claimedMessageIds.has(String(msg.id))
-          h += '<div class="rd-claimable-takeaway rd-claimable-card' + (takeawayClaimed ? ' is-claimed' : '') + '"><a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>' + (!isSelf ? '<button type="button" class="rd-card-claim rd-takeaway-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (takeawayClaimed ? ' disabled' : '') + '>' + (takeawayClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
+          h += '<div class="rd-claimable-takeaway rd-claimable-card' + (takeawayClaimed ? ' is-claimed' : '') + '"><a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayTarget.href) + '"' + takeawayExternalAttrs + '><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>' + (!isSelf ? '<button type="button" class="rd-card-claim rd-takeaway-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (takeawayClaimed ? ' disabled' : '') + '>' + (takeawayClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
         } else if (msg.type === 'voice') {
           var resolvedMessageText = readerPhoneText(msg.text)
           var dur = msg.duration || Math.max(1, Math.round(resolvedMessageText.length * 0.3))
