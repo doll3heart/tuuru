@@ -13,8 +13,8 @@
   "backgroundColor": "#EEE6E7",
   "enableNotifications": false,
   "startUrl": "/",
-  "iconUrl": "https://tuuru.chat/icons/icon-512.png",
-  "maskableIconUrl": "https://tuuru.chat/icons/icon-maskable-512.png",
+  "iconUrl": "https://tuuru.chat/icons/tuuru-rabbit-v1-512.png",
+  "maskableIconUrl": "https://tuuru.chat/icons/tuuru-rabbit-v1-maskable-512.png",
   "splashScreenFadeOutDuration": 300,
   "signingKey": {
     "path": "./tuuru-release.keystore",
@@ -40,13 +40,13 @@
       "name": "新建作品",
       "shortName": "新建",
       "url": "/#/new",
-      "chosenIconUrl": "https://tuuru.chat/icons/icon-192.png"
+      "chosenIconUrl": "https://tuuru.chat/icons/tuuru-rabbit-v1-192.png"
     },
     {
       "name": "进入读者端",
       "shortName": "阅读",
       "url": "/reader/",
-      "chosenIconUrl": "https://tuuru.chat/icons/icon-192.png"
+      "chosenIconUrl": "https://tuuru.chat/icons/tuuru-rabbit-v1-192.png"
     }
   ]
 }
