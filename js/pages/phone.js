@@ -19,13 +19,16 @@ import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, ins
 import { downloadBlob } from "../download.js"
 import { reorderForumCommentByOffset, reorderForumCommentTree } from "../forum-comment-reorder.js"
 import { orderedForumPosts, reorderForumPosts, toggleForumPostFlag } from "../forum-post-order.js"
+import { forumDisplayCommentCount, forumDisplayFloor } from "../forum-display-metrics.js"
 import { splitMentionText } from "../mention-text.js"
 import { placeFixedMenuWithinViewport } from "../viewport-menu.js"
+import { bindPhoneMentionTrigger, insertPhoneMention } from "../phone-mention-trigger.js"
 
 var _workId = null
 var _dragState = null
 var _suppressedClickIcon = null
 var _phoneIconSnapTimers = new WeakMap()
+var _releaseStandalonePhoneMention = function() {}
 
 var PHONE_APP_TYPES_WITH_OWN_HEADER = new Set(['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping'])
 function esc(s) {
@@ -61,6 +64,77 @@ function insertAtSelection(input, value) {
   input.setSelectionRange?.(cursor, cursor)
   input.dispatchEvent(new Event('input', { bubbles:true }))
   input.focus()
+}
+
+function phoneMentionOptions(pd, placeholders) {
+  var options = []
+  orderedContacts(pd.contacts || [], pd.contactSortMode).forEach(function(contact) {
+    var messageName = contactDisplayName(contact, 'messages')
+    if (messageName) options.push({ token:messageName, label:messageName, detail:'联系人（消息）' })
+  })
+  listForumIdentities({ contacts:orderedContacts(pd.contacts || [], pd.contactSortMode) }).forEach(function(identity) {
+    options.push({ token:identity.name, label:identity.name, detail:identity.aliasId ? '联系人小号' : '联系人' })
+  })
+  ;(pd.forumNpcs || []).forEach(function(npc) {
+    if (npc && npc.name) options.push({ token:npc.name, label:npc.name, detail:'论坛 NPC' })
+  })
+  var readerLabel = String(pd.skin?.readerId || '读者').trim()
+  if (readerLabel) options.push({ token:readerLabel, label:readerLabel, detail:'读者' })
+  ;(Array.isArray(placeholders) ? placeholders : []).forEach(function(placeholder) {
+    var token = String(placeholder?.key || placeholder?.label || '').trim()
+    if (token) options.push({ token:token, label:token, detail:'占位符' })
+  })
+  var seen = new Set()
+  return options.filter(function(option) {
+    if (!option.token || seen.has(option.token)) return false
+    seen.add(option.token)
+    return true
+  })
+}
+
+function openPhoneMentionPicker(input, pd, placeholders) {
+  var choices = phoneMentionOptions(pd, placeholders)
+  if (choices.length === 0) { showToast('请先添加联系人'); return }
+  var h = '<div class="phone-mention-picker"><label class="form-label" for="phoneMentionSearch">选择要提及的人</label><input id="phoneMentionSearch" class="form-input" type="search" placeholder="搜索联系人、NPC 或占位符"><div id="phoneMentionList" class="phone-mention-picker-list"></div></div>'
+  var ov = modal('插入 @ 提及', h, '<button type="button" id="phoneMentionCancel" class="btn btn-ghost btn-sm">取消</button>')
+  ov.classList.add('phone-mention-picker-overlay')
+  var search = ov.querySelector('#phoneMentionSearch')
+  var list = ov.querySelector('#phoneMentionList')
+  function renderChoices() {
+    var query = String(search?.value || '').trim().toLowerCase()
+    var filtered = choices.filter(function(option) {
+      return !query || (option.label + ' ' + option.detail).toLowerCase().includes(query)
+    })
+    list.innerHTML = filtered.map(function(option, index) {
+      return '<button type="button" class="phone-mention-picker-option" data-phone-mention-index="' + index + '"><span>' + esc(option.label) + '</span><small>' + esc(option.detail) + '</small></button>'
+    }).join('') || '<div class="phone-mention-picker-empty">没有匹配项</div>'
+    list.querySelectorAll('[data-phone-mention-index]').forEach(function(button) {
+      button.onclick = function() {
+        var option = filtered[Number(button.dataset.phoneMentionIndex)]
+        if (!option) return
+        ov.remove()
+        insertPhoneMention(input, option.token)
+      }
+    })
+  }
+  search.oninput = renderChoices
+  ov.querySelector('#phoneMentionCancel').onclick = function() { ov.remove(); input.focus?.() }
+  renderChoices()
+  search.focus()
+}
+
+function releaseStandalonePhoneMention() {
+  _releaseStandalonePhoneMention()
+  _releaseStandalonePhoneMention = function() {}
+}
+
+function bindStandalonePhoneMention(frame, pd, placeholders) {
+  releaseStandalonePhoneMention()
+  _releaseStandalonePhoneMention = bindPhoneMentionTrigger(document, function(input) {
+    if (!frame.isConnected || document.getElementById('phoneFrame') !== frame) return
+    if (!frame.contains(input) && !input.closest?.('.modal-overlay')) return
+    openPhoneMentionPicker(input, pd, placeholders)
+  })
 }
 
 function openThreadReplyChoiceEditor(owner, options) {
@@ -238,6 +312,7 @@ function exitPhoneAppEditor(frame, wid, beforeExit) {
     active.blur()
   }
   if (beforeExit) beforeExit()
+  releaseStandalonePhoneMention()
   if (requestPhoneAppModalClose(frame, 'app-back')) return
 
   frame.style.pointerEvents = 'none'
@@ -328,6 +403,7 @@ function restorePhoneAppModalFocus(target) {
 }
 
 export function openPhoneAppModal(wid, appType, options = {}) {
+  releaseStandalonePhoneMention()
   var w = getWork(wid)
   if (!w) { showToast('作品未找到'); return }
   if (!w.phoneData) {
@@ -371,6 +447,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   // Close button
   var closeBtn = topBar.querySelector('button')
   var releaseKeyboard = function() {}
+  var releaseMention = function() {}
   var close = createPhoneModalCloseController({
     beforeClose: function(reason) {
       var active = document.activeElement
@@ -381,6 +458,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
     },
     remove: function() {
       releaseKeyboard()
+      releaseMention()
       releaseViewport()
       delete content._requestPhoneAppModalClose
       ov.remove()
@@ -413,6 +491,10 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   releaseKeyboard = function() { document.removeEventListener('keydown', onKeyDown) }
 
   document.body.appendChild(ov)
+  releaseMention = bindPhoneMentionTrigger(document, function(input) {
+    if (!ov.isConnected || !input.closest?.('.modal-overlay')) return
+    openPhoneMentionPicker(input, pd, w.placeholders)
+  })
 
   // Render the app inside
   var frame = content
@@ -452,6 +534,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
     focusPhoneAppModal(inner)
   } catch (error) {
     releaseKeyboard()
+    releaseMention()
     releaseViewport()
     delete content._requestPhoneAppModalClose
     ov.remove()
@@ -706,6 +789,7 @@ function renderContactsModal(frame, wid, pd) {
 }
 
 export function renderPhoneEditor(wid) {
+  releaseStandalonePhoneMention()
   _workId = wid
   var w = getWork(wid)
   if (!w || !w.phoneData) return '<div class="app-main"><div class="empty-state"><h3>手机模块未找到</h3></div></div>'
@@ -2236,13 +2320,16 @@ function openCharacterAccessPanel(wid, type) {
   var frame = document.getElementById('phoneFrame')
   if (!frame) return
 
+  releaseStandalonePhoneMention()
   frame.dataset._origHTML = frame.innerHTML
   frame.dataset._returnAppType = type
   if (type === 'messages') {
+    bindStandalonePhoneMention(frame, pd, w.placeholders)
     openMessagesEditor(frame, wid, pd)
     return
   }
   if (type === 'forum') {
+    bindStandalonePhoneMention(frame, pd, w.placeholders)
     openForumEditor(frame, wid, { id: uid(), name: '论坛', avatarUrl: '' }, pd)
     return
   }
@@ -3090,6 +3177,7 @@ function openForumEditor(frame, wid, contact, pd) {
     return listForumIdentities(pd).map(function(identity) { return identity.name })
       .concat(npcs.map(function(npc) { return npc.name }))
       .concat([pd.skin?.readerId || '读者'])
+      .concat((getWork(wid)?.placeholders || []).map(function(placeholder) { return placeholder.key || placeholder.label }).filter(Boolean))
   }
   function authorIpLabel(value) {
     var location = String(value || '').trim()
@@ -3156,15 +3244,6 @@ function openForumEditor(frame, wid, contact, pd) {
     }
 
     setTimeout(function() { if (search) search.focus() }, 100)
-  }
-
-  function bindForumMentionButton(overlay, buttonSelector, inputSelector) {
-    var button = overlay.querySelector(buttonSelector)
-    var input = overlay.querySelector(inputSelector)
-    if (!button || !input) return
-    button.onclick = function() {
-      selectIdentity(function(identity) { insertAtSelection(input, '@' + identity.name + ' ') })
-    }
   }
 
   function renderIdOptions(contacts, npcs, filter) {
@@ -3276,13 +3355,12 @@ function openForumEditor(frame, wid, contact, pd) {
     selectIdentity(function(identity) {
       var ov = modal('发帖',
         '<div class="form-group"><label class="form-label">标题</label><input id="fpTitle" class="form-input" placeholder="帖子标题"></div>' +
-        '<div class="form-group"><div class="mention-field-head"><label class="form-label" for="fpContent">内容</label><button type="button" id="fpMention" class="mention-insert-btn">@ 提及</button></div><textarea id="fpContent" class="form-textarea" placeholder="主楼内容" style="min-height:100px"></textarea></div>' +
+        '<div class="form-group"><label class="form-label" for="fpContent">内容</label><textarea id="fpContent" class="form-textarea" placeholder="输入 @ 可选择提及对象" style="min-height:100px"></textarea></div>' +
         '<div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
+        '<div class="form-group"><label class="form-label">显示评论数（可选）</label><input id="fpCommentCount" class="form-input" type="number" min="0" inputmode="numeric" placeholder="留空则按实际评论数显示"></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fpImg" class="form-input" placeholder="https://..."></div>' +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">发帖身份：' + esc(identity.name) + '</span></div>',
         '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>')
-
-      bindForumMentionButton(ov, '#fpMention', '#fpContent')
 
       ov.querySelector('#fpSave').onclick = function() {
         var title = ov.querySelector('#fpTitle').value.trim()
@@ -3294,7 +3372,9 @@ function openForumEditor(frame, wid, contact, pd) {
           id: uid(), contactId: identity.id, aliasId: identity.aliasId || '', contactName: identity.name,
           contactAvatar: identity.avatar, title: title, content: content, imageUrl: imgUrl || '',
           contactIpLocation: identity.ipLocation || '',
-          time: time, pinned:false, featured:false, likes: 0, bookmarks: 0, comments: []
+          time: time, pinned:false, featured:false, likes: 0, bookmarks: 0,
+          displayCommentCount: ov.querySelector('#fpCommentCount').value === '' ? null : Math.max(0, parseInt(ov.querySelector('#fpCommentCount').value) || 0),
+          comments: []
         })
         saveData()
         ov.remove()
@@ -3309,17 +3389,18 @@ function openForumEditor(frame, wid, contact, pd) {
     if (!p) return
     var ov = modal('编辑帖子',
       '<div class="form-group"><label class="form-label" for="editPostTitle">标题</label><input id="editPostTitle" class="form-input" value="' + escAttr(p.title || '') + '"></div>' +
-      '<div class="form-group"><div class="mention-field-head"><label class="form-label" for="editPostContent">主楼内容</label><button type="button" id="editPostMention" class="mention-insert-btn">@ 提及</button></div><textarea id="editPostContent" class="form-textarea" style="min-height:140px" placeholder="可使用回车分段">' + esc(p.content || '') + '</textarea><div class="form-hint">回车分段会在作者预览和读者端原样保留。</div></div>' +
+      '<div class="form-group"><label class="form-label" for="editPostContent">主楼内容</label><textarea id="editPostContent" class="form-textarea" style="min-height:140px" placeholder="可使用回车分段；输入 @ 可提及">' + esc(p.content || '') + '</textarea><div class="form-hint">回车分段会在作者预览和读者端原样保留。</div></div>' +
       '<div class="form-group"><label class="form-label" for="editPostTime">发帖时间（可选）</label><input id="editPostTime" class="form-input" value="' + escAttr(p.time || '') + '" placeholder="留空则不显示"></div>' +
+      '<div class="form-group"><label class="form-label" for="editPostCommentCount">显示评论数（可选）</label><input id="editPostCommentCount" class="form-input" type="number" min="0" inputmode="numeric" value="' + (p.displayCommentCount == null ? '' : escAttr(p.displayCommentCount)) + '" placeholder="留空则按实际评论数显示"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostImg">图片 URL（可选）</label><input id="editPostImg" class="form-input" value="' + escAttr(p.imageUrl || '') + '" placeholder="https://..."></div>',
       '<button id="editPostSave" class="btn btn-primary btn-sm">保存</button><button id="editPostCancel" class="btn btn-ghost btn-sm">取消</button>')
-    bindForumMentionButton(ov, '#editPostMention', '#editPostContent')
     ov.querySelector('#editPostSave').onclick = function() {
       var title = ov.querySelector('#editPostTitle').value.trim()
       if (!title) return
       p.title = title
       p.content = ov.querySelector('#editPostContent').value.trim()
       p.time = ov.querySelector('#editPostTime').value.trim()
+      p.displayCommentCount = ov.querySelector('#editPostCommentCount').value === '' ? null : Math.max(0, parseInt(ov.querySelector('#editPostCommentCount').value) || 0)
       p.imageUrl = ov.querySelector('#editPostImg').value.trim()
       saveData()
       ov.remove()
@@ -3353,14 +3434,13 @@ function openForumEditor(frame, wid, contact, pd) {
     if (!p) return
     selectIdentity(function(identity) {
       var ov = modal(replyToCommentId ? '回复' : '评论',
-        '<div class="form-group"><div class="mention-field-head"><label class="form-label" for="fcContent">内容</label><button type="button" id="fcMention" class="mention-insert-btn">@ 提及</button></div><textarea id="fcContent" class="form-textarea" placeholder="内容" style="min-height:60px"></textarea></div>' +
+        '<div class="form-group"><label class="form-label" for="fcContent">内容</label><textarea id="fcContent" class="form-textarea" placeholder="输入 @ 可选择提及对象" style="min-height:60px"></textarea></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fcImg" class="form-input" placeholder="https://..."></div>' +
         '<button type="button" id="fcAddTime" class="btn btn-sm btn-ghost">＋ 添加时间</button>' +
         '<div class="form-group" id="fcTimeField" hidden><label class="form-label">显示时间（可选）</label><input id="fcTime" class="form-input" placeholder="例如：2026/7/22 21:30"></div>' +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">身份：' + esc(identity.name) + '</span></div>',
         '<button id="fcSave" class="btn btn-primary btn-sm">发送</button><button id="fcCancel" class="btn btn-ghost btn-sm">取消</button>')
 
-      bindForumMentionButton(ov, '#fcMention', '#fcContent')
 
       ov.querySelector('#fcAddTime').onclick = function() {
         ov.querySelector('#fcTimeField').hidden = false
@@ -3466,13 +3546,13 @@ function openForumEditor(frame, wid, contact, pd) {
       h += '<div class="forum-post-actions">'
       h += '<span class="forum-action" data-like="' + post.id + '">赞 ' + (post.likes || 0) + '</span>'
       h += '<span class="forum-action" data-bookmark="' + post.id + '">收藏 ' + (post.bookmarks || 0) + '</span>'
-      h += '<span class="forum-action">评论 ' + (post.comments ? post.comments.length : 0) + '</span>'
+      h += '<span class="forum-action">评论 ' + forumDisplayCommentCount(post) + '</span>'
       h += '</div>'
       h += '</div>'
 
       // Comments
       h += '<div class="divider"></div>'
-      h += '<div class="forum-comments-title">评论 (' + (post.comments ? post.comments.length : 0) + ')</div>'
+      h += '<div class="forum-comments-title">评论 (' + forumDisplayCommentCount(post) + ')</div>'
       if (post.comments && post.comments.length > 0) {
         for (var ci = 0; ci < post.comments.length; ci++) {
           h += renderComment(post.comments[ci], ci + 1, post.id)
@@ -3511,7 +3591,7 @@ function openForumEditor(frame, wid, contact, pd) {
         h += '<div class="forum-list-stats">'
         h += '<span>赞 ' + (p.likes || 0) + '</span>'
         h += '<span>收藏 ' + (p.bookmarks || 0) + '</span>'
-        h += '<span>评论 ' + (p.comments ? p.comments.length : 0) + '</span>'
+        h += '<span>评论 ' + forumDisplayCommentCount(p) + '</span>'
         h += '</div>'
         h += '<div class="forum-list-controls">'
         h += '<button type="button" class="forum-post-action-button' + (p.pinned === true || p.featured === true ? ' active' : '') + '" data-post-actions="' + escAttr(p.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="轻点设置置顶或精华；长按拖动调整顺序；也可用上下方向键排序" title="轻点设置状态，长按拖动排序"><img src="./icons/forum-post-actions.png" width="24" height="12" alt=""></button>'
@@ -3550,6 +3630,7 @@ function openForumEditor(frame, wid, contact, pd) {
     if (reply.time) h += '<span class="forum-comment-time">' + fmtTime(reply.time) + '</span>'
     h += authorIpLabel(replyIdentity.ipLocation || reply.contactIpLocation) + '</div><div class="forum-reply-content">' + renderAuthorMentionText(reply.content, forumMentionNames()) + '</div></div></div>'
     h += '<div class="forum-reply-controls"><button type="button" class="forum-comment-like-author" data-forum-comment-likes="' + escAttr(reply.id) + '">赞 ' + (Number(reply.likes) || 0) + '</button>'
+    h += '<button type="button" class="forum-action-sm" data-forum-reply-edit="' + escAttr(reply.id) + '">编辑</button>'
     h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(reply.id) + '" aria-label="编辑这条楼中楼回复的读者回复选项">回复选项</button>'
     h += '<button type="button" class="forum-comment-drag-handle is-reply" data-forum-comment-drag="' + escAttr(reply.id) + '" aria-label="拖动调整这条回复的顺序" title="拖动排序"><span aria-hidden="true">↕</span></button>'
     h += '<button type="button" class="forum-delete-btn is-reply" data-forum-reply-delete="' + escAttr(reply.id) + '" aria-label="删除这条回复">×</button></div>'
@@ -3580,13 +3661,14 @@ function openForumEditor(frame, wid, contact, pd) {
     h += '</div>'
     h += '<div class="forum-comment-by">'
     h += '<span class="forum-comment-name">' + esc(commentName) + '</span>'
-    h += '<span class="forum-comment-floor">' + floor + '楼</span>' + authorIpLabel(commentIdentity.ipLocation || comment.contactIpLocation)
+    h += '<span class="forum-comment-floor">' + forumDisplayFloor(comment, floor) + '楼</span>' + authorIpLabel(commentIdentity.ipLocation || comment.contactIpLocation)
     h += '</div>'
     h += '<button type="button" class="forum-comment-drag-handle" data-forum-comment-drag="' + escAttr(comment.id) + '" aria-label="拖动调整这条评论的楼层" title="拖动排序"><span aria-hidden="true">↕</span></button>'
     h += '</div>'
     h += '<div class="forum-comment-content">' + renderAuthorMentionText(comment.content, forumMentionNames()) + '</div>'
     h += '<div class="forum-comment-actions">'
     h += '<button type="button" class="forum-action-sm" data-reply="' + comment.id + '_' + postId + '">回复</button>'
+    h += '<button type="button" class="forum-action-sm" data-forum-comment-edit="' + escAttr(comment.id) + '">编辑</button>'
     h += '<button type="button" class="forum-comment-like-author" data-forum-comment-likes="' + escAttr(comment.id) + '">赞 ' + (Number(comment.likes) || 0) + '</button>'
     h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(comment.id) + '" aria-label="编辑这条评论的读者回复选项">回复选项</button>'
     if (comment.time) h += '<span class="forum-comment-time">' + fmtTime(comment.time) + '</span>'
@@ -4021,6 +4103,12 @@ function openForumEditor(frame, wid, contact, pd) {
     frame.querySelectorAll('[data-forum-comment-delete]').forEach(function(button) {
       button.onclick = function() { deleteComment(currentPostId, button.dataset.forumCommentDelete) }
     })
+    frame.querySelectorAll('[data-forum-comment-edit]').forEach(function(button) {
+      button.onclick = function() { editComment(currentPostId, button.dataset.forumCommentEdit) }
+    })
+    frame.querySelectorAll('[data-forum-reply-edit]').forEach(function(button) {
+      button.onclick = function() { editReply(currentPostId, button.dataset.forumReplyEdit) }
+    })
     frame.querySelectorAll('[data-forum-reply-delete]').forEach(function(button) {
       button.onclick = function() { deleteReply(currentPostId, button.dataset.forumReplyDelete) }
     })
@@ -4033,14 +4121,13 @@ function openForumEditor(frame, wid, contact, pd) {
     var isTextarea = field === 'content'
     var val = esc(p[field] || '')
     var inputHtml = isTextarea
-      ? '<div class="mention-field-head"><span class="form-hint">可提及论坛身份</span><button type="button" id="editPostMention" class="mention-insert-btn">@ 提及</button></div><textarea id="editField" class="form-textarea" style="min-height:80px">' + val + '</textarea>'
+      ? '<div class="form-hint">输入 @ 可选择提及对象</div><textarea id="editField" class="form-textarea" style="min-height:80px">' + val + '</textarea>'
       : '<input id="editField" class="form-input" value="' + val + '">'
 
     var ov = modal('编辑帖子' + label,
       '<div class="form-group"><label class="form-label">' + label + '</label>' + inputHtml + '</div>' +
       '<div class="form-group"><label class="form-label">图片URL</label><input id="editImg" class="form-input" value="' + esc(p.imageUrl || '') + '" placeholder="https://..."></div>',
       '<button id="efSave" class="btn btn-primary btn-sm">保存</button><button id="efCancel" class="btn btn-ghost btn-sm">取消</button>')
-    if (isTextarea) bindForumMentionButton(ov, '#editPostMention', '#editField')
     ov.querySelector('#efSave').onclick = function() {
       p[field] = ov.querySelector('#editField').value.trim()
       p.imageUrl = ov.querySelector('#editImg').value.trim()
@@ -4057,15 +4144,16 @@ function openForumEditor(frame, wid, contact, pd) {
     var c = p.comments.find(function(x) { return x.id === commentId })
     if (!c) return
     var ov = modal('编辑评论',
-      '<div class="form-group"><div class="mention-field-head"><span class="form-label">内容</span><button type="button" id="editCommentMention" class="mention-insert-btn">@ 提及</button></div><textarea id="ecText" class="form-textarea" style="min-height:60px">' + esc(c.content || '') + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label" for="ecText">内容</label><textarea id="ecText" class="form-textarea" style="min-height:60px" placeholder="输入 @ 可选择提及对象">' + esc(c.content || '') + '</textarea></div>' +
       '<div class="form-group"><label class="form-label">图片URL</label><input id="ecImg" class="form-input" value="' + esc(c.imageUrl || '') + '" placeholder="https://..."></div>' +
-      '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="ecTime" class="form-input" value="' + escAttr(c.time || '') + '" placeholder="留空则不显示"></div>',
+      '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="ecTime" class="form-input" value="' + escAttr(c.time || '') + '" placeholder="留空则不显示"></div>' +
+      '<div class="form-group"><label class="form-label">显示楼层（可选）</label><input id="ecFloor" class="form-input" type="number" min="1" inputmode="numeric" value="' + (c.displayFloor == null ? '' : escAttr(c.displayFloor)) + '" placeholder="留空则按评论顺序显示"></div>',
       '<button id="ecSave" class="btn btn-primary btn-sm">保存</button><button id="ecCancel" class="btn btn-ghost btn-sm">取消</button>')
-    bindForumMentionButton(ov, '#editCommentMention', '#ecText')
     ov.querySelector('#ecSave').onclick = function() {
       c.content = ov.querySelector('#ecText').value.trim()
       c.imageUrl = ov.querySelector('#ecImg').value.trim()
       c.time = ov.querySelector('#ecTime').value.trim()
+      c.displayFloor = ov.querySelector('#ecFloor').value === '' ? null : Math.max(1, parseInt(ov.querySelector('#ecFloor').value) || 1)
       saveData(); ov.remove(); renderForum()
     }
     ov.querySelector('#ecCancel').onclick = function() { ov.remove() }
@@ -4077,10 +4165,9 @@ function openForumEditor(frame, wid, contact, pd) {
     var r = findForumCommentById(p.comments, replyId)
     if (!r) return
     var ov = modal('编辑回复',
-      '<div class="form-group"><div class="mention-field-head"><span class="form-label">内容</span><button type="button" id="editReplyMention" class="mention-insert-btn">@ 提及</button></div><textarea id="erText" class="form-textarea" style="min-height:60px">' + esc(r.content || '') + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label" for="erText">内容</label><textarea id="erText" class="form-textarea" style="min-height:60px" placeholder="输入 @ 可选择提及对象">' + esc(r.content || '') + '</textarea></div>' +
       '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="erTime" class="form-input" value="' + escAttr(r.time || '') + '" placeholder="留空则不显示"></div>',
       '<button id="erSave" class="btn btn-primary btn-sm">保存</button><button id="erCancel" class="btn btn-ghost btn-sm">取消</button>')
-    bindForumMentionButton(ov, '#editReplyMention', '#erText')
     ov.querySelector('#erSave').onclick = function() {
       r.content = ov.querySelector('#erText').value.trim()
       r.time = ov.querySelector('#erTime').value.trim()
@@ -4249,6 +4336,24 @@ function openMessagesEditor(frame, wid, pd) {
     renderMessages()
   }
 
+  function editMomentComment(momentId, commentIndex) {
+    var moment = moments.find(function(item) { return String(item.id) === String(momentId) })
+    var comment = moment && Array.isArray(moment.comments) ? moment.comments[commentIndex] : null
+    if (!comment) return
+    var ov = modal('编辑动态评论',
+      '<div class="form-group"><label class="form-label" for="momentCommentText">内容</label><textarea id="momentCommentText" class="form-textarea" style="min-height:70px" placeholder="输入 @ 可选择提及对象">' + esc(comment.content || comment.text || '') + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label" for="momentCommentTime">显示日期与时间（可选）</label><input id="momentCommentTime" class="form-input" value="' + escAttr(comment.time || '') + '" placeholder="留空则不显示"></div>',
+      '<button id="momentCommentSave" class="btn btn-primary btn-sm">保存</button><button id="momentCommentCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.querySelector('#momentCommentSave').onclick = function() {
+      comment.content = ov.querySelector('#momentCommentText').value.trim()
+      comment.time = ov.querySelector('#momentCommentTime').value.trim()
+      saveData()
+      ov.remove()
+      renderMessages()
+    }
+    ov.querySelector('#momentCommentCancel').onclick = function() { ov.remove() }
+  }
+
   function getChatName(ch) {
     if (ch.type === 'group') return ch.groupName || '群聊'
     var c = contacts.find(function(x) { return x.id === ch.contactIds[0] })
@@ -4260,6 +4365,11 @@ function openMessagesEditor(frame, wid, pd) {
     if (!body) return
 
     var h = ''
+    var momentMentionNames = listForumIdentities({ contacts:orderedContacts(contacts, pd.contactSortMode) }).map(function(identity) { return identity.name })
+      .concat((pd.forumNpcs || []).map(function(npc) { return npc.name }))
+      .concat([pd.skin?.readerId || '读者'])
+      .concat((getWork(wid)?.placeholders || []).map(function(placeholder) { return placeholder.key || placeholder.label }).filter(Boolean))
+      .filter(Boolean)
     if (activeTab === 'chats') {
       h += '<div class="forum-bar">'
       h += '<span class="forum-bar-title">消息列表</span>'
@@ -4311,7 +4421,7 @@ function openMessagesEditor(frame, wid, pd) {
         h += '<div class="moment-card" style="position:relative">'
         h += '<div class="moment-header"><div class="moment-avatar" style="' + momentAvatarStyle + '">' + (momentAvatar ? '' : esc((c ? c.name : '?').charAt(0))) + '</div>'
         h += '<div><div class="moment-user">' + esc(c ? c.name : '未知') + '</div><input class="moment-time-edit" data-moment-time="' + m.id + '" value="' + esc(m.time || '') + '" style="font-size:.7rem;color:var(--c-text2);border:none;background:transparent;outline:none;width:100%"></div></div>'
-        h += '<div class="moment-content">' + esc(m.content || '') + '</div>'
+        h += '<div class="moment-content">' + renderAuthorMentionText(m.content || '', momentMentionNames) + '</div>'
         if (m.images && m.images.length) {
           h += '<div class="moment-images">'
           m.images.forEach(function(img) { h += '<img src="' + esc(img) + '" onerror="this.style.display=\'none\'">' })
@@ -4324,8 +4434,9 @@ function openMessagesEditor(frame, wid, pd) {
             var mcContact = contacts.find(function(x) { return x.id === mc.contactId })
             h += '<div class="forum-reply-item" style="font-size:.7rem;line-height:1.5;padding:2px 0">'
             h += '<span class="forum-reply-name" style="color:var(--c-primary-hover);font-weight:500">' + esc(mcContact ? mcContact.name : mc.contactName || '用户') + '</span>：'
-            h += '<span>' + esc(mc.content || '') + '</span>'
+            h += '<span>' + renderAuthorMentionText(mc.content || '', momentMentionNames) + '</span>'
             h += ' <span class="forum-comment-time" style="font-size:.6rem;color:var(--c-text2)">' + esc(mc.time || '') + '</span>'
+            h += '<button type="button" class="moment-comment-edit-btn" data-moment-comment-edit="' + escAttr(m.id) + '" data-moment-comment-index="' + mci + '">编辑</button>'
             h += '<button class="moment-choice-edit-btn" data-moment-id="' + m.id + '" data-moment-ci="' + mci + '" style="margin-left:4px;border:none;background:transparent;color:var(--c-text2);cursor:pointer;font-size:.6rem" title="添加选项">+</button>'
             h += '</div>'
             if (mc.choices && mc.choices.length > 0) {
@@ -4375,8 +4486,9 @@ function bindMsgEvents() {
         if (!m) return
         var senderOptions = contacts.map(function(c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>' }).join('')
         var ov = modal('回复动态',
-          '<div class="form-group"><textarea id="mrContent" class="form-textarea" placeholder="回复内容" style="min-height:60px"></textarea></div>' +
-          '<div class="form-group"><label class="form-label">回复身份</label><select id="mrSender" class="form-select">' + senderOptions + '</select></div>',
+          '<div class="form-group"><textarea id="mrContent" class="form-textarea" placeholder="回复内容；输入 @ 可选择提及对象" style="min-height:60px"></textarea></div>' +
+          '<div class="form-group"><label class="form-label">回复身份</label><select id="mrSender" class="form-select">' + senderOptions + '</select></div>' +
+          '<div class="form-group"><label class="form-label" for="mrTime">显示日期与时间（可选）</label><input id="mrTime" class="form-input" value="' + escAttr(new Date().toLocaleString()) + '"></div>',
           '<button id="mrSave" class="btn btn-primary btn-sm">发送</button><button id="mrCancel" class="btn btn-ghost btn-sm">取消</button>')
         ov.querySelector('#mrSave').onclick = function() {
           var content = ov.querySelector('#mrContent').value.trim()
@@ -4384,12 +4496,18 @@ function bindMsgEvents() {
           var senderId = ov.querySelector('#mrSender').value
           var sc = contacts.find(function(x) { return x.id === senderId })
           m.comments = m.comments || []
-          m.comments.push({ id: uid(), contactId: senderId, contactName: sc ? sc.name : '', content: content, time: new Date().toLocaleString() })
+          m.comments.push({ id: uid(), contactId: senderId, contactName: sc ? sc.name : '', content: content, time: ov.querySelector('#mrTime').value.trim() })
           saveData()
           ov.remove()
           renderMessages()
         }
         ov.querySelector('#mrCancel').onclick = function() { ov.remove() }
+      }
+    })
+
+    frame.querySelectorAll('[data-moment-comment-edit]').forEach(function(button) {
+      button.onclick = function() {
+        editMomentComment(button.dataset.momentCommentEdit, Number(button.dataset.momentCommentIndex))
       }
     })
 
@@ -4956,7 +5074,6 @@ function openChatEditor(frame, wid, chatId, pd) {
     h += '<div class="chat-input-bar chat-composer">'
     h += '<button class="chat-btn-icon" id="chatPlusBtn" type="button" aria-label="添加剧情内容">＋</button>'
     h += '<input id="chatInput" aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
-    if (ch.type === 'group') h += '<button class="chat-mention-btn" id="chatMentionBtn" type="button" aria-label="提及群成员">@</button>'
     h += '<button class="chat-send-btn" id="chatSendBtn" type="button">添加</button>'
     h += '</div>'
     h += '</div>'
@@ -5107,22 +5224,6 @@ function openChatEditor(frame, wid, chatId, pd) {
     // Right add button — adds one complete authored message for the selected speaker.
     var sendBtn = frame.querySelector('#chatSendBtn')
     var chatInput = frame.querySelector('#chatInput')
-    var mentionBtn = frame.querySelector('#chatMentionBtn')
-    if (mentionBtn) mentionBtn.onclick = function() {
-      var mentionChoices = ['self'].concat(ch.contactIds || []).map(function(senderId) {
-        var name = getSpeakerName(senderId)
-        return '<button type="button" class="btn btn-sm btn-outline chat-mention-pick" data-mention-name="' + escapeHtmlAttribute(name) + '">@' + esc(name) + '</button>'
-      }).join('')
-      var mentionOverlay = modal('提及群成员', '<div class="mention-picker-list">' + mentionChoices + '</div>', '<button type="button" id="chatMentionCancel" class="btn btn-ghost btn-sm">取消</button>')
-      mentionOverlay.querySelectorAll('.chat-mention-pick').forEach(function(button) {
-        button.onclick = function() {
-          var name = button.dataset.mentionName || ''
-          mentionOverlay.remove()
-          insertAtSelection(chatInput, '@' + name + ' ')
-        }
-      })
-      mentionOverlay.querySelector('#chatMentionCancel').onclick = function() { mentionOverlay.remove() }
-    }
     function sendTextMessage() {
       if (!chatInput) return
       var text = chatInput.value.trim()

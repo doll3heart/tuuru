@@ -122,7 +122,7 @@ function makePhoneData() {
     albums: [],
     browserHistory: [],
     shoppingItems: [],
-    skin: { readerId: "Reader" },
+    skin: { readerId: "读者" },
     apps: [],
   }
 }
@@ -163,6 +163,38 @@ test("author moment choices open their local editor and preserve stable ids", as
     assert.deepEqual(saved.customMeta, { keep: true })
     assert.equal(saved.used, undefined)
     assert.equal(draft.snapshot().phoneData.moments[0].comments.length, 1)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("moment comments can author and edit mentions with their display time", async () => {
+  const fixture = await openApp("moment-comment-time-editor", "messages")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector("#msgTabMoments").click()
+    overlay.querySelector('.moment-comment-edit-btn[data-moment-comment-edit="moment-a"]').click()
+    document.querySelector('#momentCommentText').value = '@读者 updated'
+    document.querySelector('#momentCommentTime').value = '2026/7/22 22:30'
+    document.querySelector('#momentCommentSave').click()
+    let saved = draft.snapshot().phoneData.moments[0].comments[0]
+    assert.equal(saved.content, '@读者 updated')
+    assert.equal(saved.time, '2026/7/22 22:30')
+
+    overlay.querySelector('[data-moment-reply="moment-a"]').click()
+    const replyInput = document.querySelector('#mrContent')
+    replyInput.value = '@'
+    replyInput.setSelectionRange(1, 1)
+    replyInput.dispatchEvent(new window.InputEvent('input', { bubbles:true, data:'@', inputType:'insertText' }))
+    const readerOption = Array.from(document.querySelectorAll('.phone-mention-picker-option')).find(button => button.querySelector('span')?.textContent === '读者')
+    assert.ok(readerOption)
+    readerOption.click()
+    replyInput.value += 'new reply'
+    document.querySelector('#mrTime').value = '2026/7/23 08:00'
+    document.querySelector('#mrSave').click()
+    saved = draft.snapshot().phoneData.moments[0].comments.at(-1)
+    assert.equal(saved.content, '@读者 new reply')
+    assert.equal(saved.time, '2026/7/23 08:00')
   } finally {
     closeFixture(fixture)
   }
@@ -233,10 +265,15 @@ test("forum IP labels default off, persist their switch, and forum composer inse
     overlay.querySelector('#fbAddPost').click()
     document.querySelector('#idOk').click()
     const postModal = document.querySelector('#fpSave').closest('.modal-overlay')
-    postModal.querySelector('#fpMention').click()
-    document.querySelector('[name="forumId"][data-identity-contact="contact-2"]').click()
-    document.querySelector('#idOk').click()
+    const content = postModal.querySelector('#fpContent')
+    content.value = '@'
+    content.setSelectionRange(1, 1)
+    content.dispatchEvent(new window.InputEvent('input', { bubbles:true, data:'@', inputType:'insertText' }))
+    const mentionOverlay = document.querySelector('.phone-mention-picker')?.closest('.modal-overlay')
+    assert.ok(mentionOverlay?.classList.contains('phone-mention-picker-overlay'))
+    Array.from(document.querySelectorAll('.phone-mention-picker-option')).find(button => button.querySelector('span')?.textContent === '白榆').click()
     assert.match(postModal.querySelector('#fpContent').value, /@白榆/)
+    assert.equal(postModal.querySelector('#fpMention'), null)
   } finally {
     closeFixture(fixture)
   }
@@ -301,8 +338,21 @@ test("forum post detail exposes a complete editor and preserves paragraph breaks
     editButton.click()
 
     const editor = document.querySelector("#editPostSave").closest(".modal-overlay")
+    const contentInput = editor.querySelector("#editPostContent")
+    contentInput.value = "正文@"
+    contentInput.setSelectionRange(contentInput.value.length, contentInput.value.length)
+    contentInput.dispatchEvent(new window.CompositionEvent("compositionstart", { bubbles:true }))
+    contentInput.dispatchEvent(new window.InputEvent("input", { bubbles:true, data:"@", isComposing:true }))
+    assert.equal(document.querySelector(".phone-mention-picker"), null)
+    contentInput.dispatchEvent(new window.CompositionEvent("compositionend", { bubbles:true, data:"@" }))
+    const mentionPicker = document.querySelector(".phone-mention-picker")
+    assert.ok(mentionPicker, "mobile composition must open the mention picker after @ is committed")
+    Array.from(mentionPicker.querySelectorAll(".phone-mention-picker-option"))
+      .find(button => button.querySelector("span")?.textContent === "白榆")
+      .click()
+    assert.match(contentInput.value, /@白榆/)
     editor.querySelector("#editPostTitle").value = "更新后的主楼"
-    editor.querySelector("#editPostContent").value = "第一段\n\n第二段"
+    contentInput.value = "第一段\n\n第二段"
     editor.querySelector("#editPostTime").value = "2026-07-22 23:10"
     editor.querySelector("#editPostImg").value = "https://example.com/post.png"
     editor.querySelector("#editPostSave").click()
@@ -315,6 +365,27 @@ test("forum post detail exposes a complete editor and preserves paragraph breaks
     assert.match(overlay.querySelector(".forum-post-content").textContent, /第一段\n\n第二段/)
     assert.match(authorCss, /\.forum-post-content\s*\{[^}]*white-space:\s*pre-wrap/s)
     assert.match(readerCss, /\.rd-forum-post-content\s*\{[^}]*white-space:\s*pre-wrap/s)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("forum authors can set a displayed comment count and custom comment floor", async () => {
+  const fixture = await openApp("forum-display-metrics-editor", "forum")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    overlay.querySelector('#fbEditPost').click()
+    document.querySelector('#editPostCommentCount').value = '1288'
+    document.querySelector('#editPostSave').click()
+    assert.equal(draft.snapshot().phoneData.forumPosts[0].displayCommentCount, 1288)
+    assert.match(overlay.querySelector('.forum-comments-title').textContent, /1288/)
+
+    overlay.querySelector('[data-forum-comment-edit="forum-comment-a"]').click()
+    document.querySelector('#ecFloor').value = '520'
+    document.querySelector('#ecSave').click()
+    assert.equal(draft.snapshot().phoneData.forumPosts[0].comments[0].displayFloor, 520)
+    assert.match(overlay.querySelector('.forum-comment-floor').textContent, /520/)
   } finally {
     closeFixture(fixture)
   }

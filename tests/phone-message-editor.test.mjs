@@ -171,13 +171,16 @@ test("group composer inserts a selected @ mention and saves readable text", asyn
     const input = overlay.querySelector('#chatInput')
     input.value = "请 "
     input.setSelectionRange(input.value.length, input.value.length)
-    overlay.querySelector('#chatMentionBtn').click()
-    document.querySelector('.chat-mention-pick[data-mention-name="遥遥"]').click()
+    input.value += '@'
+    input.setSelectionRange(input.value.length, input.value.length)
+    input.dispatchEvent(new window.InputEvent('input', { bubbles:true, data:'@', inputType:'insertText' }))
+    Array.from(document.querySelectorAll('.phone-mention-picker-option')).find(button => button.querySelector('span')?.textContent === '遥遥').click()
     input.value += "看看"
     overlay.querySelector('#chatSendBtn').click()
     const message = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
     assert.equal(message.text, "请 @遥遥 看看")
     assert.equal(overlay.querySelector('.mention-token').textContent, "@遥遥")
+    assert.equal(overlay.querySelector('#chatMentionBtn'), null)
   } finally {
     closeFixture(fixture)
   }

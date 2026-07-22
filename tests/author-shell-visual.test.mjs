@@ -65,3 +65,36 @@ test("the shared header compacts before a 500px viewport can overflow", () => {
   assert.match(css, /@media\(max-width:600px\)[\s\S]*\.app-header \.logo span\{display:none\}/)
   assert.match(css, /@media\(max-width:600px\)[\s\S]*\.app-header nav a\{white-space:nowrap\}/)
 })
+
+test("mobile header actions share one 44px alignment contract", () => {
+  assert.match(rule(".app-mode-switch"), /height\s*:\s*44px/)
+  assert.match(rule(".app-mode-link"), /height\s*:\s*44px/)
+  assert.match(rule(".app-resources-link"), /height\s*:\s*44px/)
+  assert.match(rule(".app-header .theme-wrap>button"), /height\s*:\s*44px/)
+  assert.match(rule(".app-header nav a"), /height\s*:\s*44px/)
+})
+
+test("the author home starts with the mode switch and keeps page actions roomy", () => {
+  assert.match(app, /\$\{isEditorRoute\s*\?\s*`<a class="logo"/)
+  assert.match(app, /class="app-page-nav"/)
+  assert.doesNotMatch(app, /app-resources-link-label/)
+  assert.match(rule(".app-header:not(.app-header-editor) .app-header-actions"), /width\s*:\s*100%/)
+  assert.match(rule(".app-header:not(.app-header-editor) .app-header-actions"), /margin-left\s*:\s*0/)
+  assert.match(rule(".app-header:not(.app-header-editor) .theme-wrap"), /margin-left\s*:\s*auto/)
+  assert.match(rule(".app-page-nav"), /margin-left\s*:\s*0/)
+  assert.match(rule(".app-page-nav a"), /min-width\s*:\s*50px/)
+  assert.match(rule(".app-header .theme-wrap>button"), /min-width\s*:\s*44px/)
+})
+
+test("mobile work cards use a 2 by 2 article grid and a 3 by 1 phone row", () => {
+  assert.match(rule(".work-card"), /display\s*:\s*flex/)
+  assert.match(rule(".work-card"), /flex-direction\s*:\s*column/)
+  assert.match(rule(".work-card-body"), /flex\s*:\s*1/)
+  assert.match(home, /class="card work-card work-card-\$\{w\.type\}"/)
+  assert.match(css, /\.work-card-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-template-rows:repeat\(2,32px\)/)
+  assert.match(css, /\.work-card-actions-left\{display:contents\}/)
+  assert.match(css, /\.work-card-phone \.work-card-actions\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\);grid-template-rows:32px\}/)
+  assert.match(css, /\.work-card-actions \.btn\{width:100%;min-width:0;height:32px/)
+  assert.match(css, /\.work-card-more-wrap\{width:100%;height:32px/)
+  assert.match(home, /class="work-card-more-wrap"/)
+})

@@ -166,13 +166,13 @@ export function renderHeader(){
   const activeTheme = getTheme()
   const readerHomeUrl = buildReaderHomeUrl(location.href)
   return `<header class="app-header${isEditorRoute ? " app-header-editor" : ""}${isResourcesRoute ? " app-header-resources" : ""}">
-    <a class="logo" href="#/" aria-label="${isEditorRoute ? "返回作品库" : "Tuuru 首页"}" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>
+    ${isEditorRoute ? `<a class="logo" href="#/" aria-label="返回作品库" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>` : ""}
     <div class="app-header-actions">
       <nav class="app-mode-switch" aria-label="应用模式">
         <span class="app-mode-link active" aria-current="page">创作端</span>
         <a class="app-mode-link" href="${readerHomeUrl}">读者端</a>
       </nav>
-      <a class="app-resources-link${path.startsWith("/resources") ? " active" : ""}" href="#/resources/tutorial" aria-label="写作习惯与使用教程" title="打开使用教程"><span class="app-resources-link-mark" aria-hidden="true">?</span><span class="app-resources-link-label">教程</span></a>
+      <a class="app-resources-link${path.startsWith("/resources") ? " active" : ""}" href="#/resources/tutorial" aria-label="写作习惯与使用教程" title="打开使用教程"><span class="app-resources-link-mark" aria-hidden="true">?</span></a>
       <div class="theme-wrap">
         <button class="btn btn-sm btn-ghost" onclick="toggleThemePopover(event)" title="外观">外观</button>
         <div class="theme-popover" id="themePopover">
@@ -185,7 +185,7 @@ export function renderHeader(){
           <button class="theme-option" data-theme="mint" onclick="event.preventDefault();setTheme('mint')"><span class="dot" style="background:#F8F4E9"></span>薄荷生巧</button>
         </div>
       </div>
-      <nav>
+      <nav class="app-page-nav" aria-label="创作页面">
         <a href="#/" class="${path==="/"?"active":""}">首页</a>
         <a href="#/new" class="${path==="/new"?"active":""}">新建</a>
       </nav>

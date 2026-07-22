@@ -30,7 +30,7 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
     id: "reader-contact-identity",
     type: "phone",
     title: "Identity",
-    placeholders: [],
+    placeholders: [{ id:"reader-name", key:"某某", label:"读者姓名", prompt:"你的名字？", default:"读者", values:[] }],
     scenes: [],
     phoneData: {
       contacts: [{
@@ -49,7 +49,7 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
         { id: "chat-1", type: "single", contactIds: ["contact-1"], rounds: [] },
         { id:"chat-2", type:"group", groupName:"测试群", contactIds:["contact-1", "contact-2"], rounds:[{ id:"round-1", label:"第1轮", messages:[{ id:"mention-message", type:"text", senderId:"contact-1", text:"@安安 看这里" }] }] },
       ],
-      moments: [],
+      moments: [{ id:"moment-placeholder", contactId:"contact-1", content:"@某某 你好", time:"给某某", images:[], comments:[{ id:"moment-comment-placeholder", contactId:"contact-1", content:"支持某某", time:"现在" }] }],
       forumPosts: [{
         id: "post-1",
         contactId: "contact-1",
@@ -75,9 +75,15 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
 
   await import(`../reader/reader.js?reader-contact-identity=${Date.now()}`)
   document.querySelector(".rd-recent-item").click()
+  document.querySelector('[data-ph-id="reader-name"]').value = "读者"
   document.getElementById("rdStartBtn").click()
 
   document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('[data-message-section="moments"]').click()
+  assert.match(document.querySelector('.rd-moment-content').textContent, /@读者 你好/)
+  assert.equal(document.querySelector('.rd-moment-content .rd-mention')?.textContent, '@读者')
+  assert.match(document.querySelector('.rd-thread-comment-content').textContent, /支持读者/)
+  document.querySelector('[data-message-section="chats"]').click()
   assert.match(document.querySelector(".phone-frame").textContent, /雾中来信/)
   assert.doesNotMatch(document.querySelector(".phone-frame").textContent, /林雾/)
   assert.equal(document.querySelector('.rd-message-avatar img')?.getAttribute('src'), messageAvatar)

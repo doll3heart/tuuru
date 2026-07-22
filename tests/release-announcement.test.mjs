@@ -36,7 +36,7 @@ function createDom() {
 }
 
 test("current major announcement covers every user-facing release area", () => {
-  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.id, "2026-07-22-complete-creator-update")
+  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.id, "2026-07-22-phone-social-completeness")
   assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.items.length, 10)
   const copy = [
     CURRENT_RELEASE_ANNOUNCEMENT.intro,
@@ -45,7 +45,7 @@ test("current major announcement covers every user-facing release area", () => {
   for (const required of [
     "剧情分支", "普通互动", "撤销", "外卖卡片", "视频通话背景",
     "置顶", "消息头像", "论坛头像", "论坛主楼", "热门或最新",
-    "多角色续答", "@ 提及", "显示名称", "联系人包", "内置教程",
+    "多角色续答", "@ 提及", "手机输入法", "显示评论总数", "显示楼层", "动态评论", "整部小手机文本", "显示名称", "作者自定义", "@读者", "联系人包", "内置教程",
     "整机搬家", "合并策略", "动态头像", "日期时间", "不会主动清空",
     "JSON 与 PNG", "首次打开时显示一次",
   ]) assert.match(copy, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))

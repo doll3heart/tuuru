@@ -71,7 +71,7 @@ function renderWorkList(works){
   }
   
   return `<div class="work-grid">${works.map(w=>`
-    <div class="card work-card" data-id="${w.id}">
+    <div class="card work-card work-card-${w.type}" data-id="${w.id}">
       <div class="work-card-body">
         <div class="work-card-title">${escHtml(w.title)}</div>
         <div class="work-card-desc">${escHtml(w.desc||"无描述")}</div>

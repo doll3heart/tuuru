@@ -392,9 +392,10 @@ test("reader forum applies the selected avatar shape and renders avatars for com
 test("reader forum defaults to hot comments, keeps authored floors, and stores likes only in the reading session", async t => {
   const work = socialChoiceWork()
   work.id = "reader-forum-sort-like"
+  work.phoneData.forumPosts[0].displayCommentCount = 1288
   work.phoneData.forumPosts[0].comments = [
     { id:"comment-old", contactId:"contact-1", contactName:"沈岚", content:"最早评论", createdAt:100, likes:1, replies:[] },
-    { id:"comment-hot", contactId:"contact-1", contactName:"沈岚", content:"热门评论", createdAt:200, likes:9, replies:[] },
+    { id:"comment-hot", contactId:"contact-1", contactName:"沈岚", content:"热门评论", createdAt:200, likes:9, displayFloor:520, replies:[] },
     { id:"comment-latest", contactId:"contact-1", contactName:"沈岚", content:"最新评论", createdAt:300, likes:0, replies:[] },
   ]
   await openSeededPhone(t, work)
@@ -404,8 +405,9 @@ test("reader forum defaults to hot comments, keeps authored floors, and stores l
 
   let comments = [...document.querySelectorAll('.rd-forum-thread > .rd-forum-comment')]
   assert.equal(document.querySelector('[data-forum-sort="hot"]').getAttribute('aria-pressed'), 'true')
+  assert.equal(document.querySelector('.rd-forum-thread-head h4 span').textContent, '1288')
   assert.equal(comments[0].dataset.threadItemId, 'comment-hot')
-  assert.equal(comments[0].querySelector('.rd-forum-floor').textContent, '2楼')
+  assert.equal(comments[0].querySelector('.rd-forum-floor').textContent, '520楼')
 
   document.querySelector('[data-forum-sort="latest"]').click()
   comments = [...document.querySelectorAll('.rd-forum-thread > .rd-forum-comment')]

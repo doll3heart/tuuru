@@ -33,6 +33,8 @@ import {
 import { contactDisplayName, listForumIdentities, resolveContactIdentity } from '../js/contact-identity.js'
 import { orderedContacts } from '../js/contact-order.js'
 import { splitMentionText } from '../js/mention-text.js'
+import { forumDisplayCommentCount, forumDisplayFloor } from '../js/forum-display-metrics.js'
+import { substitutePhoneTextData } from '../js/phone-placeholder-text.js'
 import { showReleaseAnnouncementOnce } from '../js/release-announcement.js'
 
 // Tuuru Reader
@@ -211,6 +213,20 @@ function readerPhoneText(value) {
     valuesMap: _work && _work.readerPhValues || {},
     usePlaceholderMode: false,
   })
+}
+
+function readerPhoneData(phoneData) {
+  return substitutePhoneTextData(phoneData, _work && _work.placeholders || [], {
+    valuesMap: _work && _work.readerPhValues || {},
+    usePlaceholderMode: false,
+  })
+}
+
+function readerPlaceholderMentionNames() {
+  return (_work && Array.isArray(_work.placeholders) ? _work.placeholders : []).map(function(placeholder) {
+    var pattern = String(placeholder?.key || placeholder?.label || '').trim()
+    return pattern ? String(readerPhoneText(pattern) || '').trim() : ''
+  }).filter(Boolean)
 }
 
 function renderReaderMentionText(value, names) {
@@ -1630,7 +1646,7 @@ function renderArticleReader() {
       _work.phoneData = pd
       var phoneWrapper = document.createElement('div')
       phoneWrapper.className = 'rd-pm-phone-wrap'
-      phoneWrapper.innerHTML = buildPhoneHTML(pd, rc, _work && _work.watermark)
+      phoneWrapper.innerHTML = buildPhoneHTML(readerPhoneData(pd), rc, _work && _work.watermark)
       overlay.appendChild(phoneWrapper)
       document.body.appendChild(overlay)
       _work._overlayWrapper = phoneWrapper
@@ -1814,7 +1830,7 @@ function renderPhoneReader() {
     render('app', '<div class="drop-zone"><p>手机数据为空</p><button type="button" class="drop-btn" data-reader-home>返回</button></div>')
     return
   }
-  var pd = _work.phoneData
+  var pd = readerPhoneData(_work.phoneData)
   var rc = getPhoneCustom()
   var flowStep = currentReaderPhoneFlowStep(_work)
   var h = '<button type="button" class="reader-back" data-reader-home title="返回" aria-label="返回首页">←</button>'
@@ -1857,7 +1873,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
-  var pd = _work.phoneData
+  var pd = readerPhoneData(_work.phoneData)
   var flowTarget = flowStep ? resolvePhoneReadingFlowStep(pd, flowStep) : null
   var contacts = pd.contacts || []
   var w = _work
@@ -2027,6 +2043,11 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     if (phoneChoiceSession.moments === null) phoneChoiceSession.moments = cloneReaderThreadItems(pd.moments)
     var moments = phoneChoiceSession.moments
     var momentChoiceRuns = phoneChoiceSession.momentChoiceRuns
+    var momentMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name })
+      .concat((pd.forumNpcs || []).map(function(npc) { return npc.name }))
+      .concat([readerThreadDisplayName(pd, rc)])
+      .concat(readerPlaceholderMentionNames())
+      .filter(Boolean)
 
     function renderMomentComment(moment, comment) {
       var containerKey = String(moment.id)
@@ -2037,7 +2058,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       h += '<div class="rd-thread-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
       if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
       h += '</div>'
-      h += '<div class="rd-thread-comment-content">' + esc(content) + '</div>'
+      h += '<div class="rd-thread-comment-content">' + renderReaderMentionText(content, momentMentionNames) + '</div>'
       h += renderReaderThreadReselect(comment, 'moment', containerKey, momentChoiceRuns)
       h += renderReaderThreadChoiceControls(comment, 'moment', containerKey, momentChoiceRuns)
       h += '</div>'
@@ -2085,7 +2106,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
           else h += esc(momentName.charAt(0))
           h += '</span>'
           h += '<span><strong>' + esc(momentName) + '</strong><time>' + esc(moment.time || '') + '</time></span></header>'
-          h += '<div class="rd-moment-content">' + esc(moment.content || '') + '</div>'
+          h += '<div class="rd-moment-content">' + renderReaderMentionText(moment.content || '', momentMentionNames) + '</div>'
           if (Array.isArray(moment.images) && moment.images.length > 0) {
             h += '<div class="rd-moment-images">'
             moment.images.forEach(function(image) {
@@ -2416,7 +2437,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     ? [readerThreadDisplayName(pd, getPhoneCustom())].concat((ch.contactIds || []).map(function(contactId) {
         var contact = contacts.find(function(candidate) { return candidate.id === contactId })
         return contactDisplayName(contact, 'messages', contact?.name || '')
-      })).filter(Boolean)
+      })).concat(readerPlaceholderMentionNames()).filter(Boolean)
     : []
   var flowSession = readerPhoneFlowSession(w)
   var flowEnabled = flowSession.enabled
@@ -2466,7 +2487,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
     else h += esc((postIdentity.name || '?').charAt(0))
     h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + (pd.forumSettings?.showIpLocation === true && postIdentity.ipLocation ? '<small class="rd-forum-ip">IP 属地：' + esc(postIdentity.ipLocation) + '</small>' : '') + '</span></div>'
-    var inlineMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name }).concat((pd.forumNpcs || []).map(function(npc) { return npc.name }))
+    var inlineMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name }).concat((pd.forumNpcs || []).map(function(npc) { return npc.name })).concat(readerPlaceholderMentionNames())
     h += '<h3>' + esc(post.title || '未命名帖子') + '</h3><div class="rd-inline-forum-content">' + renderReaderMentionText(post.content || '', inlineMentionNames) + '</div>'
     if (postImages.length) {
       h += '<div class="rd-inline-forum-images">'
@@ -3184,6 +3205,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
   var forumMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name })
     .concat((pd.forumNpcs || []).map(function(npc) { return npc.name }))
     .concat([readerThreadDisplayName(pd, getPhoneCustom())])
+    .concat(readerPlaceholderMentionNames())
     .filter(Boolean)
 
   function forumIpLabel(identity, authoredIpLocation) {
@@ -3254,7 +3276,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
     else h += esc((name || '?').charAt(0))
     h += '</span>'
     h += '<div class="rd-forum-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
-    if (!generated) h += '<span class="rd-forum-floor">' + (depth > 0 ? '回复' : floor + '楼') + '</span>'
+    if (!generated) h += '<span class="rd-forum-floor">' + (depth > 0 ? '回复' : forumDisplayFloor(comment, floor) + '楼') + '</span>'
     if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
     if (!isReader) h += forumIpLabel(commentIdentity, comment.contactIpLocation)
     h += '</div>'
@@ -3308,7 +3330,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
       h += '</div>'
     }
     h += '</article>'
-    h += '<section class="rd-forum-thread" aria-label="帖子评论"><div class="rd-forum-thread-head"><h4>评论 <span>' + (Array.isArray(post.comments) ? post.comments.length : 0) + '</span></h4><div class="rd-forum-sort" role="group" aria-label="评论排序"><button type="button" data-forum-sort="hot" aria-pressed="' + (forumSession.sort === 'hot' ? 'true' : 'false') + '">热门</button><button type="button" data-forum-sort="latest" aria-pressed="' + (forumSession.sort === 'latest' ? 'true' : 'false') + '">最新</button></div></div>'
+    h += '<section class="rd-forum-thread" aria-label="帖子评论"><div class="rd-forum-thread-head"><h4>评论 <span>' + forumDisplayCommentCount(post) + '</span></h4><div class="rd-forum-sort" role="group" aria-label="评论排序"><button type="button" data-forum-sort="hot" aria-pressed="' + (forumSession.sort === 'hot' ? 'true' : 'false') + '">热门</button><button type="button" data-forum-sort="latest" aria-pressed="' + (forumSession.sort === 'latest' ? 'true' : 'false') + '">最新</button></div></div>'
     var comments = Array.isArray(post.comments) ? post.comments : []
     if (comments.length === 0) h += '<div class="rd-app-empty">暂无评论</div>'
     var floorByCommentId = new Map(comments.map(function(comment, commentIndex) { return [String(comment.id), commentIndex + 1] }))
