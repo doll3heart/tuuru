@@ -1,12 +1,12 @@
 const CACHE_PREFIX = "tuuru-web-"
-const CACHE_NAME = `${CACHE_PREFIX}v3`
+const CACHE_NAME = `${CACHE_PREFIX}v4`
 const APP_SHELL = [
   "/",
   "/reader/",
   "/manifest.webmanifest",
-  "/icons/tuuru-rabbit-v1-192.png",
-  "/icons/tuuru-rabbit-v1-512.png",
-  "/icons/tuuru-rabbit-v1-maskable-512.png",
+  "/icons/tuuru-rabbit-v2-192.png",
+  "/icons/tuuru-rabbit-v2-512.png",
+  "/icons/tuuru-rabbit-v2-maskable-512.png",
 ]
 
 self.addEventListener("install", event => {
