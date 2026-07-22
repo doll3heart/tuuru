@@ -3,10 +3,13 @@ import assert from "node:assert/strict"
 
 import {
   AUTHOR_PLACEHOLDER_PRESET_STORAGE_KEY,
+  importAuthorPlaceholderPresetBundle,
   deleteAuthorPlaceholderPreset,
   instantiateAuthorPlaceholderPreset,
+  parseAuthorPlaceholderPresetBundle,
   readAuthorPlaceholderPresets,
   saveAuthorPlaceholderPreset,
+  serializeAuthorPlaceholderPresetBundle,
 } from "../js/author-placeholder-presets.js"
 
 function memoryStorage(initial = {}) {
@@ -21,6 +24,31 @@ function memoryStorage(initial = {}) {
 test("author placeholder presets tolerate malformed local storage", () => {
   const storage = memoryStorage({ [AUTHOR_PLACEHOLDER_PRESET_STORAGE_KEY]: "{bad json" })
   assert.deepEqual(readAuthorPlaceholderPresets(storage), [])
+})
+
+test("placeholder preset libraries round-trip and merge by preset name", () => {
+  const storage = memoryStorage()
+  saveAuthorPlaceholderPreset("常用称呼", [
+    { key:"某某", label:"姓名", prompt:"名字？", mode:"each", forbidden:["偷吃", "代餐"] },
+  ], { storage, now:() => 100, idFactory:() => "preset-a" })
+  const serialized = serializeAuthorPlaceholderPresetBundle(readAuthorPlaceholderPresets(storage), { now:() => 123 })
+  const bundle = parseAuthorPlaceholderPresetBundle(serialized)
+  assert.equal(bundle.version, 1)
+  assert.equal(bundle.exportedAt, 123)
+  assert.equal(bundle.presets[0].name, "常用称呼")
+  assert.deepEqual(bundle.presets[0].fields[0].forbidden, ["偷吃", "代餐"])
+
+  const target = memoryStorage()
+  saveAuthorPlaceholderPreset("常用称呼", [{ key:"旧标记" }], { storage:target, now:() => 1, idFactory:() => "target-id" })
+  const merged = importAuthorPlaceholderPresetBundle(serialized, { storage:target, idFactory:() => "created" })
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].id, "target-id")
+  assert.equal(merged[0].fields[0].key, "某某")
+})
+
+test("placeholder preset import rejects unrelated or malformed files", () => {
+  assert.throws(() => parseAuthorPlaceholderPresetBundle('{"version":1}'), /占位符预设文件/)
+  assert.throws(() => parseAuthorPlaceholderPresetBundle('not json'), /占位符预设文件/)
 })
 
 test("saving a preset keeps author fields but excludes work and reader state", () => {

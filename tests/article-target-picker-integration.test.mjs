@@ -1,6 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { JSDOM } from "jsdom"
+import { readFile } from "node:fs/promises"
+
+const stylesSource = await readFile(new URL("../css/styles.css", import.meta.url), "utf8")
 
 const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
   url: "http://localhost/#/edit/target-work",
@@ -133,6 +136,30 @@ test("saving choices is atomic from the editor point of view and preserves stabl
   assert.equal(choices[0].text, "新的文字")
   assert.equal(choices[0].targetId, "node-c")
   assert.deepEqual(choices[0].customMeta, { keep: true })
+})
+
+test("an option group can be saved as ordinary interaction without branch targets", () => {
+  render()
+  const panel = openChoices()
+  const mode = panel.querySelector("#chMode")
+  assert.ok(mode)
+  mode.value = "interaction"
+  mode.dispatchEvent(new window.Event("change", { bubbles:true }))
+  assert.ok([...panel.querySelectorAll(".ch-target-pick")].every(button => button.hidden))
+  panel.querySelectorAll(".ch-text")[0].value = "点点头"
+  panel.querySelectorAll(".ch-text")[1].value = "摇摇头"
+  panel.querySelector('[data-ch-a="save"]').click()
+
+  const choices = getWork(work.id).nodes[0].choices
+  assert.deepEqual(choices.map(choice => [choice.text, choice.mode, choice.targetId]), [
+    ["点点头", "interaction", ""],
+    ["摇摇头", "interaction", ""],
+  ])
+})
+
+test("ordinary interaction mode collapses the destination column into one writing field", () => {
+  assert.match(stylesSource, /\.ch-panel\[data-choice-mode=["']interaction["']\]\s+\.ch-item/)
+  assert.match(stylesSource, /\.ch-panel\[data-choice-mode=["']interaction["']\][^{]*\.ch-target-pick/s)
 })
 
 test("deleting an option group persists immediately", () => {

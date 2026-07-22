@@ -29,7 +29,10 @@ import {
   hasRenderableWorkWatermark,
   normalizeWorkWatermark,
 } from '../js/work-watermark.js'
-import { resolveContactIdentity } from '../js/contact-identity.js'
+import { contactDisplayName, listForumIdentities, resolveContactIdentity } from '../js/contact-identity.js'
+import { orderedContacts } from '../js/contact-order.js'
+import { splitMentionText } from '../js/mention-text.js'
+import { showReleaseAnnouncementOnce } from '../js/release-announcement.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -196,10 +199,26 @@ var _work = null
 var _nodeId = null
 var _visitedNodes = []
 var _articlePath = []
+var _articleInteractionSelections = Object.create(null)
 var _renderedRecentIds = []
 var _readerPhoneChoiceSession = null
 var _readerPhoneFlowSession = null
 var _editorPreviewMode = false
+
+function readerPhoneText(value) {
+  return substitutePlaceholders(String(value || ''), _work && _work.placeholders || [], {
+    valuesMap: _work && _work.readerPhValues || {},
+    usePlaceholderMode: false,
+  })
+}
+
+function renderReaderMentionText(value, names) {
+  return splitMentionText(value, names).map(function(segment) {
+    return segment.mention
+      ? '<span class="rd-mention">' + esc(segment.text) + '</span>'
+      : esc(segment.text)
+  }).join('')
+}
 
 function resetReaderPhoneChoiceSession(work) {
   _readerPhoneChoiceSession = {
@@ -772,6 +791,7 @@ function loadWork(work, options) {
   _nodeId = null
   _visitedNodes = []
   _articlePath = []
+  _articleInteractionSelections = Object.create(null)
   var rememberWork = !options || options.remember !== false
   if (rememberWork) {
     var cached = tryReaderStorageWrite(function() {
@@ -1421,20 +1441,24 @@ function renderArticleReader() {
     var choices = entryNode.choices || []
     if (choices.length > 0) {
       var selectedTarget = _articlePath[entry.pathIndex + 1] || ''
-      h += '<div class="article-choices">'
+      var interactionGroup = choices.every(function(choice) { return choice.mode === 'interaction' })
+      var selectedInteraction = _articleInteractionSelections[entryNode.id] || ''
+      h += '<div class="article-choices' + (interactionGroup ? ' is-interaction' : '') + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '">'
       choices.forEach(function(c, ci) {
-        var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
-        var selected = selectedTarget && selectedTarget === c.targetId
+        var interaction = c.mode === 'interaction'
+        var targetState = interaction ? { ok:true } : resolveArticleChoiceTarget(nodes, c.targetId)
+        var selected = interaction ? selectedInteraction === String(c.id) : Boolean(selectedTarget && selectedTarget === c.targetId)
         var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
         var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
-        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
+        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '" data-choice-id="' + escapeHtmlAttribute(c.id || '') + '" data-choice-mode="' + (interaction ? 'interaction' : 'branch') + '" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
       })
       h += '</div>'
     }
     h += '</section>'
   })
   var frontierChoices = chapterEntries[chapterEntries.length - 1].node.choices || []
-  if (frontierChoices.length === 0) {
+  var frontierBranchChoices = frontierChoices.filter(function(choice) { return choice.mode !== 'interaction' })
+  if (frontierBranchChoices.length === 0) {
     h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>'
   }
   h += '</div>'
@@ -1483,6 +1507,17 @@ function renderArticleReader() {
   var btns = document.querySelectorAll('.article-choice-btn')
   btns.forEach(function(btn) {
     btn.onclick = function() {
+      if (btn.dataset.choiceMode === 'interaction') {
+        var nodeId = btn.dataset.choiceNodeId || ''
+        _articleInteractionSelections[nodeId] = btn.dataset.choiceId || ''
+        document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]').forEach(function(option) {
+          if (String(option.dataset.choiceNodeId || '') !== String(nodeId)) return
+          var selected = option === btn
+          option.classList.toggle('is-selected', selected)
+          option.setAttribute('aria-pressed', String(selected))
+        })
+        return
+      }
       var targetState = resolveArticleChoiceTarget(nodes, btn.dataset.target)
       if (targetState.ok) {
         var sourcePathIndex = Number(btn.dataset.sourcePathIndex)
@@ -1521,6 +1556,7 @@ function renderArticleReader() {
       var contacts = (_work.phoneData && Array.isArray(_work.phoneData.contacts))
         ? _work.phoneData.contacts
         : (d.contacts || [])
+      contacts = orderedContacts(contacts, d.contactSortMode)
       var photos = Array.isArray(d.photos) ? d.photos : []
       var albums = Array.isArray(d.albums) ? d.albums : []
 
@@ -2040,9 +2076,13 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
         h += '<div id="rdMessageMoments" class="rd-message-section rd-moment-feed" role="tabpanel">'
         if (moments.length === 0) h += '<div class="rd-app-empty">暂无动态</div>'
         moments.forEach(function(moment) {
-          var momentName = String(moment.contactName || readerThreadActorName(pd, moment.contactId, '', '角色'))
+          var momentIdentity = resolveContactIdentity(pd, moment.contactId, { surface: 'messages', authoredName: moment.contactName || '' })
+          var momentName = String(momentIdentity.name || readerThreadActorName(pd, moment.contactId, '', '角色'))
           h += '<article class="rd-moment-card' + (flowStep && String(moment.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-moment-id="' + escapeHtmlAttribute(String(moment.id)) + '">'
-          h += '<header class="rd-moment-head"><span class="rd-moment-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(moment.contactId)) + '">' + esc(momentName.charAt(0)) + '</span>'
+          h += '<header class="rd-moment-head"><span class="rd-moment-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(moment.contactId)) + '">'
+          if (momentIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(momentIdentity.avatar) + '" alt="">'
+          else h += esc(momentName.charAt(0))
+          h += '</span>'
           h += '<span><strong>' + esc(momentName) + '</strong><time>' + esc(moment.time || '') + '</time></span></header>'
           h += '<div class="rd-moment-content">' + esc(moment.content || '') + '</div>'
           if (Array.isArray(moment.images) && moment.images.length > 0) {
@@ -2143,8 +2183,8 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var h = ''
     if (posts.length === 0) h += '<div class="rd-app-empty">暂无帖子</div>'
     posts.forEach(function(p, postIndex) {
-      var forumIdentity = resolveContactIdentity(pd, p.contactId, { surface: 'forum', authoredName: p.contactName, authoredAvatar: p.contactAvatar })
-      var forumVars = '--rd-forum-card:' + sanitizeCssColor(forumVisual.cardBg) + ';--rd-forum-radius:' + boundedReaderSetting(getAppSettings('forum').cardRadius, 0, 0, 16) + 'px;--rd-forum-title:' + sanitizeCssColor(forumVisual.titleColor) + ';--rd-forum-title-size:' + boundedReaderSetting(getAppSettings('forum').titleSize, 13, 10, 18) + 'px;--rd-forum-time:' + sanitizeCssColor(forumVisual.timeColor)
+      var forumIdentity = resolveContactIdentity(pd, p.contactId, { surface: 'forum', aliasId:p.aliasId, authoredName: p.contactName, authoredAvatar: p.contactAvatar })
+      var forumVars = '--rd-forum-card:' + sanitizeCssColor(forumVisual.cardBg) + ';--rd-forum-radius:' + boundedReaderSetting(getAppSettings('forum').cardRadius, 0, 0, 16) + 'px;--rd-forum-avatar-radius:' + forumVisual.avatarRadius + ';--rd-forum-title:' + sanitizeCssColor(forumVisual.titleColor) + ';--rd-forum-title-size:' + boundedReaderSetting(getAppSettings('forum').titleSize, 13, 10, 18) + 'px;--rd-forum-time:' + sanitizeCssColor(forumVisual.timeColor)
       h += '<button type="button" class="rd-post-card' + (flowStep && String(p.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-post-index="' + postIndex + '" aria-label="' + escapeHtmlAttribute('查看帖子 ' + (p.title || '')) + '" style="' + forumVars + '">'
       h += '<span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(p.contactId)) + '">'
       if (forumIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(forumIdentity.avatar) + '" alt="">'
@@ -2368,6 +2408,12 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
 // ---- Chat reader ----
 function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   var contacts = pd.contacts || []
+  var chatMentionNames = ch.type === 'group'
+    ? [readerThreadDisplayName(pd, getPhoneCustom())].concat((ch.contactIds || []).map(function(contactId) {
+        var contact = contacts.find(function(candidate) { return candidate.id === contactId })
+        return contactDisplayName(contact, 'messages', contact?.name || '')
+      })).filter(Boolean)
+    : []
   var flowSession = readerPhoneFlowSession(w)
   var flowEnabled = flowSession.enabled
   var flowTarget = null
@@ -2407,7 +2453,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     if (!post) return
     var previous = frame.querySelector('.rd-inline-forum-pip')
     if (previous) previous.remove()
-    var postIdentity = resolveContactIdentity(pd, post.contactId, { surface:'forum', authoredName:post.contactName, authoredAvatar:post.contactAvatar })
+    var postIdentity = resolveContactIdentity(pd, post.contactId, { surface:'forum', aliasId:post.aliasId, authoredName:post.contactName, authoredAvatar:post.contactAvatar, authoredIpLocation:post.contactIpLocation })
     var postImages = Array.isArray(post.images) ? post.images.slice() : []
     if (post.imageUrl) postImages.unshift(post.imageUrl)
     var h = '<section class="rd-inline-forum-pip" role="dialog" aria-label="帖子画中画">'
@@ -2415,8 +2461,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     h += '<div class="rd-inline-forum-pip-scroll"><div class="rd-inline-forum-author"><span class="rd-inline-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
     if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
     else h += esc((postIdentity.name || '?').charAt(0))
-    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + '</span></div>'
-    h += '<h3>' + esc(post.title || '未命名帖子') + '</h3><div class="rd-inline-forum-content">' + esc(post.content || '') + '</div>'
+    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + (pd.forumSettings?.showIpLocation === true && postIdentity.ipLocation ? '<small class="rd-forum-ip">IP 属地：' + esc(postIdentity.ipLocation) + '</small>' : '') + '</span></div>'
+    var inlineMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name }).concat((pd.forumNpcs || []).map(function(npc) { return npc.name }))
+    h += '<h3>' + esc(post.title || '未命名帖子') + '</h3><div class="rd-inline-forum-content">' + renderReaderMentionText(post.content || '', inlineMentionNames) + '</div>'
     if (postImages.length) {
       h += '<div class="rd-inline-forum-images">'
       postImages.forEach(function(image) {
@@ -2589,11 +2636,24 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     var callerIdentity = resolveContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: getChatName() })
     var callerName = callerIdentity.name || getChatName()
     var modeLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
-    var playback = createCallPlaybackState(msg.callLines, msg.text)
+    var playback = createCallPlaybackState(
+      Array.isArray(msg.callLines) ? msg.callLines.map(readerPhoneText) : msg.callLines,
+      readerPhoneText(msg.text),
+    )
 
     function renderCallPlayback(advanced) {
       var callBackgroundSettings = normalizedReaderCallBackgroundSettings(getAppSettings('messages'))
       var background = readerCallBackgroundPresentation(callBackgroundSettings)
+      var contactVideoBackground = msg.callMode === 'video' && caller && isSafeImageUrl(caller.faceUrl)
+        ? String(caller.faceUrl).trim()
+        : ''
+      if (contactVideoBackground) {
+        background = {
+          className: ' has-call-background-image has-contact-video-background',
+          attribute: 'contact-image',
+          style: '--rd-call-image:url("' + contactVideoBackground + '")'
+        }
+      }
       var currentLine = playback.currentIndex >= 0 ? playback.lines[playback.currentIndex] : ''
       var h = '<section class="rd-call-scene' + background.className + '" data-call-background="' + background.attribute + '"' + (background.style ? ' style="' + escapeHtmlAttribute(background.style) + '"' : '') + ' aria-label="' + escapeHtmlAttribute('与' + callerName + '的' + modeLabel) + '">'
       h += '<div class="rd-call-status"><span>' + (msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL') + '</span><span>' + (playback.isComplete ? '通话内容已结束' : '剧情进行中') + '</span></div>'
@@ -2628,7 +2688,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       frame.innerHTML = h
 
       var renderedCallScene = frame.querySelector('.rd-call-scene')
-      if (callBackgroundSettings.callBackgroundType === 'image' &&
+      if (!contactVideoBackground && callBackgroundSettings.callBackgroundType === 'image' &&
           !verifiedReaderCallBackgroundImages.has(callBackgroundSettings.callBackgroundImage)) {
         verifyReaderCallBackgroundDataUrl(callBackgroundSettings.callBackgroundImage).then(function(dataUrl) {
           if (!renderedCallScene || !renderedCallScene.isConnected) return
@@ -2774,9 +2834,11 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         // Avatar for others
         if (!isSelf) {
           var sc = contacts.find(function(c) { return c.id === msg.senderId })
-          var avBg = sc ? (sc.avatarUrl ? 'background-image:url(' + esc(sc.avatarUrl) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:#ccc'
+          var messageIdentity = resolveContactIdentity(pd, msg.senderId, { surface:'messages', authoredName:sc?.name || '?' })
+          var messageAvatar = messageIdentity.avatar || ''
+          var avBg = sc ? (messageAvatar ? 'background-image:url(' + escapeHtmlAttribute(messageAvatar) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:#ccc'
           h += '<div style="width:' + avSz + ';height:' + avSz + ';flex-shrink:0;border-radius:' + ast.avatarRadius + ';display:flex;align-items:center;justify-content:center;color:#fff;font-size:.65rem;font-weight:600;' + avBg + '">'
-          if (!sc || !sc.avatarUrl) h += '<span>' + esc((sc ? sc.name : '?').charAt(0)) + '</span>'
+          if (!messageAvatar) h += '<span>' + esc((messageIdentity.name || '?').charAt(0)) + '</span>'
           h += '</div>'
         }
         // Bubble content
@@ -2818,7 +2880,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           var takeawayClaimed = chatSession.claimedMessageIds.has(String(msg.id))
           h += '<div class="rd-claimable-takeaway rd-claimable-card' + (takeawayClaimed ? ' is-claimed' : '') + '"><a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayUrl) + '" target="_blank" rel="noopener noreferrer"><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>' + (!isSelf ? '<button type="button" class="rd-card-claim rd-takeaway-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (takeawayClaimed ? ' disabled' : '') + '>' + (takeawayClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
         } else if (msg.type === 'voice') {
-          var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
+          var resolvedMessageText = readerPhoneText(msg.text)
+          var dur = msg.duration || Math.max(1, Math.round(resolvedMessageText.length * 0.3))
           var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))
           var bars = ''
           for (var bi = 0; bi < barCount; bi++) {
@@ -2828,7 +2891,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           h += '<div style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
           h += '<svg width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
           h += '<span style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
-          h += '<span class="cv-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(msg.text || '') + '</span>'
+          h += '<span class="cv-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(resolvedMessageText) + '</span>'
           h += '</div>'
         } else {
           h += '<div style="' + bubbleStyle + '">'
@@ -2839,7 +2902,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           if (streamsCurrentText) {
             h += '<span class="rd-flow-stream-text" aria-live="polite" aria-atomic="true"></span>'
           } else {
-            h += esc(msg.text || '')
+            h += renderReaderMentionText(readerPhoneText(msg.text), chatMentionNames)
           }
           h += '</div>'
         }
@@ -2860,7 +2923,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       h += '<div id="rdChoiceList" class="rd-chat-choice-list" role="listbox" aria-label="选择回复" hidden>'
       for (var ac = 0; ac < allChoices.length; ac++) {
         var acv = allChoices[ac]
-        h += '<button type="button" class="rd-reply-option" role="option" data-ri="' + acv.roundIdx + '" data-owner-id="' + escapeHtmlAttribute(acv.ownerMessageId) + '" data-ci="' + acv.choiceIdx + '">' + esc(acv.text) + '</button>'
+        h += '<button type="button" class="rd-reply-option" role="option" data-ri="' + acv.roundIdx + '" data-owner-id="' + escapeHtmlAttribute(acv.ownerMessageId) + '" data-ci="' + acv.choiceIdx + '">' + esc(readerPhoneText(acv.text)) + '</button>'
       }
       h += '</div>'
     }
@@ -2995,7 +3058,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         return
       }
 
-      var characters = Array.from(String(message.text || ''))
+      var characters = Array.from(readerPhoneText(message.text))
       if (!shouldUseMotion(true) || characters.length === 0) {
         stream.textContent = characters.join('')
         stream.classList.add('is-complete')
@@ -3102,12 +3165,46 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
   var forumSessionKey = String(postIndex) + '::' + String(postId)
   var forumSession = phoneChoiceSession.forumPosts.get(forumSessionKey)
   if (!forumSession) {
-    forumSession = { post: cloneReaderThreadItems([sourcePost])[0], choiceRuns: new Map() }
+    forumSession = { post: cloneReaderThreadItems([sourcePost])[0], choiceRuns: new Map(), likedCommentIds: new Set(), sort: 'hot' }
     phoneChoiceSession.forumPosts.set(forumSessionKey, forumSession)
   }
+  if (!(forumSession.likedCommentIds instanceof Set)) forumSession.likedCommentIds = new Set()
+  if (forumSession.sort !== 'latest') forumSession.sort = 'hot'
   var post = forumSession.post
   var custom = getPhoneCustom()
+  var forumVisual = appStyle('forum')
   var forumChoiceRuns = forumSession.choiceRuns
+  var forumLikedCommentIds = forumSession.likedCommentIds
+  var showForumIpLocation = pd.forumSettings?.showIpLocation === true
+  var forumMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name })
+    .concat((pd.forumNpcs || []).map(function(npc) { return npc.name }))
+    .concat([readerThreadDisplayName(pd, getPhoneCustom())])
+    .filter(Boolean)
+
+  function forumIpLabel(identity, authoredIpLocation) {
+    var location = String(identity?.ipLocation || authoredIpLocation || '').trim()
+    return showForumIpLocation && location ? '<span class="rd-forum-ip">IP 属地：' + esc(location) + '</span>' : ''
+  }
+
+  function forumCommentTimestamp(comment) {
+    var explicit = Number(comment?.createdAt)
+    if (Number.isFinite(explicit) && explicit > 0) return explicit
+    var parsed = Date.parse(String(comment?.time || ''))
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+
+  function forumCommentHotScore(comment) {
+    return Math.max(0, Number(comment?.likes) || 0) + (Array.isArray(comment?.replies) ? comment.replies.length * 2 : 0)
+  }
+
+  function sortedForumComments(comments) {
+    return comments.map(function(comment, index) { return { comment:comment, index:index } }).sort(function(left, right) {
+      if (forumSession.sort === 'latest') {
+        return forumCommentTimestamp(right.comment) - forumCommentTimestamp(left.comment) || right.index - left.index
+      }
+      return forumCommentHotScore(right.comment) - forumCommentHotScore(left.comment) || left.index - right.index
+    }).map(function(entry) { return entry.comment })
+  }
 
   function backToList() {
     openReaderApp('forum')
@@ -3142,16 +3239,25 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
     var isReader = comment.contactId === 'self' || comment.senderId === 'self'
     var commentIdentity = isReader
       ? null
-      : resolveContactIdentity(pd, comment.contactId || comment.senderId, { surface: 'forum', authoredName: comment.contactName })
+      : resolveContactIdentity(pd, comment.contactId || comment.senderId, { surface: 'forum', aliasId:comment.aliasId, authoredName: comment.contactName, authoredAvatar: comment.contactAvatar, authoredIpLocation:comment.contactIpLocation })
     var name = String(isReader ? readerThreadDisplayName(pd, custom) : (commentIdentity.name || '角色')).trim() || (isReader ? '我' : '角色')
+    var avatar = isReader ? (custom.readerAvatar || pd.skin?.readerAvatar || '') : (commentIdentity.avatar || '')
     var content = String(comment.content != null ? comment.content : (comment.text != null ? comment.text : ''))
-    var h = '<article class="rd-forum-comment' + (isReader ? ' is-reader' : '') + (generated ? ' is-generated' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '" style="--rd-thread-depth:' + depth + '">'
+    var h = '<article class="rd-forum-comment' + (isReader ? ' is-reader' : '') + (generated ? ' is-generated' : '') + (depth > 0 ? ' is-reply' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '" style="--rd-thread-depth:' + depth + '">'
+    h += '<span class="rd-forum-comment-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(comment.contactId || comment.senderId || 'self')) + '">'
+    if (avatar) h += '<img src="' + escapeHtmlAttribute(avatar) + '" alt="">'
+    else h += esc((name || '?').charAt(0))
+    h += '</span>'
     h += '<div class="rd-forum-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
-    if (!generated) h += '<span class="rd-forum-floor">' + (depth > 0 ? '回复' : '#' + floor) + '</span>'
+    if (!generated) h += '<span class="rd-forum-floor">' + (depth > 0 ? '回复' : floor + '楼') + '</span>'
     if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
+    if (!isReader) h += forumIpLabel(commentIdentity, comment.contactIpLocation)
     h += '</div>'
-    h += '<div class="rd-thread-comment-content">' + esc(content) + '</div>'
+    h += '<div class="rd-thread-comment-content">' + renderReaderMentionText(content, forumMentionNames) + '</div>'
     if (comment.imageUrl) h += '<img class="rd-forum-comment-image" src="' + escapeHtmlAttribute(comment.imageUrl) + '" alt="" onerror="this.style.display=\'none\'">'
+    var commentLikeId = String(comment.id)
+    var commentLikeCount = Math.max(0, Number(comment.likes) || 0) + (forumLikedCommentIds.has(commentLikeId) ? 1 : 0)
+    h += '<div class="rd-forum-comment-actions"><button type="button" class="rd-forum-comment-like' + (forumLikedCommentIds.has(commentLikeId) ? ' is-liked' : '') + '" data-forum-comment-like="' + escapeHtmlAttribute(commentLikeId) + '" aria-pressed="' + (forumLikedCommentIds.has(commentLikeId) ? 'true' : 'false') + '">赞 ' + commentLikeCount + '</button></div>'
     h += renderReaderThreadReselect(comment, 'forum', containerKey, forumChoiceRuns)
     h += renderReaderThreadChoiceControls(comment, 'forum', containerKey, forumChoiceRuns)
     if (Array.isArray(comment.replies) && comment.replies.length > 0) {
@@ -3176,16 +3282,16 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
   }
 
   function renderForumPost() {
-    var postIdentity = resolveContactIdentity(pd, post.contactId, { surface: 'forum', authoredName: post.contactName, authoredAvatar: post.contactAvatar })
-    var h = '<div class="rd-forum-detail">'
+    var postIdentity = resolveContactIdentity(pd, post.contactId, { surface: 'forum', aliasId:post.aliasId, authoredName: post.contactName, authoredAvatar: post.contactAvatar, authoredIpLocation:post.contactIpLocation })
+    var h = '<div class="rd-forum-detail" style="--rd-forum-avatar-radius:' + forumVisual.avatarRadius + '">'
     h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><span class="rd-back-spacer" aria-hidden="true"></span></header>'
     h += '<div class="rd-forum-detail-scroll">'
     h += '<article class="rd-forum-post-body">'
     h += '<header class="rd-forum-post-author"><span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
     if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
     else h += esc((postIdentity.name || '?').charAt(0))
-    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + '</span></header>'
-    h += '<h3>' + esc(post.title || '') + '</h3><div class="rd-forum-post-content">' + esc(post.content || '') + '</div>'
+    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + forumIpLabel(postIdentity, post.contactIpLocation) + '</span></header>'
+    h += '<h3>' + esc(post.title || '') + '</h3><div class="rd-forum-post-content">' + renderReaderMentionText(post.content || '', forumMentionNames) + '</div>'
     var postImages = Array.isArray(post.images) ? post.images.slice() : []
     if (post.imageUrl) postImages.unshift(post.imageUrl)
     if (postImages.length > 0) {
@@ -3197,17 +3303,36 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
       h += '</div>'
     }
     h += '</article>'
-    h += '<section class="rd-forum-thread" aria-label="帖子评论"><h4>评论 <span>' + (Array.isArray(post.comments) ? post.comments.length : 0) + '</span></h4>'
+    h += '<section class="rd-forum-thread" aria-label="帖子评论"><div class="rd-forum-thread-head"><h4>评论 <span>' + (Array.isArray(post.comments) ? post.comments.length : 0) + '</span></h4><div class="rd-forum-sort" role="group" aria-label="评论排序"><button type="button" data-forum-sort="hot" aria-pressed="' + (forumSession.sort === 'hot' ? 'true' : 'false') + '">热门</button><button type="button" data-forum-sort="latest" aria-pressed="' + (forumSession.sort === 'latest' ? 'true' : 'false') + '">最新</button></div></div>'
     var comments = Array.isArray(post.comments) ? post.comments : []
     if (comments.length === 0) h += '<div class="rd-app-empty">暂无评论</div>'
-    comments.forEach(function(comment, commentIndex) {
-      h += renderForumComment(comment, commentIndex + 1, 0, 'root')
+    var floorByCommentId = new Map(comments.map(function(comment, commentIndex) { return [String(comment.id), commentIndex + 1] }))
+    sortedForumComments(comments).forEach(function(comment) {
+      h += renderForumComment(comment, floorByCommentId.get(String(comment.id)) || 1, 0, 'root')
     })
     h += '</section></div></div>'
     frame.innerHTML = h
 
     var backBtn = frame.querySelector('.rd-back-btn')
     if (backBtn) backBtn.onclick = backToList
+
+    frame.querySelectorAll('[data-forum-sort]').forEach(function(button) {
+      button.onclick = function() {
+        forumSession.sort = button.dataset.forumSort === 'latest' ? 'latest' : 'hot'
+        renderForumPost()
+        frame.querySelector('[data-forum-sort="' + forumSession.sort + '"]')?.focus()
+      }
+    })
+
+    frame.querySelectorAll('[data-forum-comment-like]').forEach(function(button) {
+      button.onclick = function() {
+        var commentId = String(button.dataset.forumCommentLike)
+        if (forumLikedCommentIds.has(commentId)) forumLikedCommentIds.delete(commentId)
+        else forumLikedCommentIds.add(commentId)
+        renderForumPost()
+        focusForumThreadControl('[data-forum-comment-like]', 'forumCommentLike', commentId)
+      }
+    })
 
     frame.querySelectorAll('.rd-thread-choice-option[data-thread-scope="forum"]').forEach(function(button) {
       button.onclick = function() {
@@ -4691,6 +4816,7 @@ function startReader() {
   _editorPreviewMode = preview.preview
   if (!preview.preview) {
     renderHome()
+    if (!_editorPreviewMode) showReleaseAnnouncementOnce()
     return
   }
   if (!preview.ok) {

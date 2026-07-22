@@ -107,7 +107,7 @@ function seedPhoneWork(work) {
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 }
 
-function callPhoneWork({ contactName = "林澈", messages, legacyMessages = [] } = {}) {
+function callPhoneWork({ contactName = "林澈", contactFaceUrl = "", messages, legacyMessages = [] } = {}) {
   const callMessages = messages || [{
     id: "call-1",
     type: "call",
@@ -123,7 +123,7 @@ function callPhoneWork({ contactName = "林澈", messages, legacyMessages = [] }
     placeholders: [],
     scenes: [],
     phoneData: {
-      contacts: [{ id: "contact-1", name: contactName }],
+      contacts: [{ id: "contact-1", name: contactName, faceUrl: contactFaceUrl }],
       chats: [{
         id: "chat-1",
         type: "single",
@@ -223,6 +223,42 @@ test("each pointer activation reveals exactly one line and preserves prior lines
   assert.doesNotMatch(scene.outerHTML, /第三句/)
   assert.equal(document.activeElement, scene.querySelector(".rd-call-advance"))
   assert.deepEqual(snapshotLocalStorage(), storageBeforeAdvance)
+})
+
+test("a contact face URL becomes the authored background for video calls only", async t => {
+  installDom(t)
+  const contactFaceUrl = "https://example.invalid/video-background.png"
+  seedPhoneWork(callPhoneWork({
+    contactFaceUrl,
+    messages: [{
+      id: "call-video-background",
+      type: "call",
+      callMode: "video",
+      senderId: "contact-1",
+      callLines: ["看这里。"],
+    }],
+  }))
+
+  let scene = await openFirstCall("reader-call-contact-video-background")
+  assert.equal(scene.dataset.callBackground, "contact-image")
+  assert.ok(scene.classList.contains("has-contact-video-background"))
+  assert.match(scene.getAttribute("style"), /video-background\.png/)
+
+  scene.querySelector(".rd-call-hangup").click()
+  localStorage.clear()
+  seedPhoneWork(callPhoneWork({
+    contactFaceUrl,
+    messages: [{
+      id: "call-voice-background",
+      type: "call",
+      callMode: "voice",
+      senderId: "contact-1",
+      callLines: ["听这里。"],
+    }],
+  }))
+  scene = await openFirstCall("reader-call-contact-voice-background")
+  assert.notEqual(scene.dataset.callBackground, "contact-image")
+  assert.equal(scene.classList.contains("has-contact-video-background"), false)
 })
 
 test("the completed call remains visible, focuses Hang Up, and restores its card", async t => {

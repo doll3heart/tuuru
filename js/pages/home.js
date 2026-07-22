@@ -4,6 +4,7 @@ import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
 import { serializeLocalDatabaseBackup } from "../storage.js"
+import { inspectLocalProfile, mergeLocalProfile, serializeLocalProfile } from "../local-profile-transport.js"
 import { FEATURE_FLAGS } from "../feature-flags.js"
 import {
   deleteHomeWork,
@@ -50,6 +51,7 @@ export function renderHome(){
       <div class="library-heading-actions">
         <button class="btn btn-sm btn-outline" onclick="backupLibrary()" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
         <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
+        <button class="btn btn-sm btn-outline" onclick="openLocalProfileTransfer()" aria-label="导出或导入作者端和读者端本地数据" title="把作者创作库、写作设置和读者端本地信息打包迁移到其他浏览器"><span class="library-action-label library-action-label-long">整机搬家</span><span class="library-action-label library-action-label-short" aria-hidden="true">搬家</span></button>
       </div>
     </div>
     
@@ -330,6 +332,67 @@ window.restoreLibraryBackup = function() {
   libraryRestoreController.pickFile(document.getElementById("backupInspectBtn"))
 }
 
+window.openLocalProfileTransfer = function() {
+  var selectedProfile = null
+  var body = '<div class="local-profile-transfer">'
+    + '<p>搬家包同时包含作者创作库、写作习惯，以及当前浏览器的读者作品、阅读资料与小手机个性化设置。</p>'
+    + '<p class="local-profile-warning">文件可能含密码、私密内容和读者资料，请只保存在可信设备，不要公开分享。</p>'
+    + '<label class="btn btn-sm btn-outline local-profile-file">选择搬家包<input id="localProfileFile" type="file" accept="application/json,.json"></label>'
+    + '<div id="localProfileSummary" class="local-profile-summary" role="status" aria-live="polite">导入时会合并数据；同 ID 的不同作品会另存，已有个人设置不会被静默覆盖。</div>'
+    + '</div>'
+  var ov = modal('作者端＋读者端整机搬家', body,
+    '<button id="localProfileExport" class="btn btn-primary btn-sm">导出搬家包</button><button id="localProfileImport" class="btn btn-outline btn-sm" disabled>确认导入</button><button id="localProfileCancel" class="btn btn-ghost btn-sm">关闭</button>')
+  var fileInput = ov.querySelector('#localProfileFile')
+  var summary = ov.querySelector('#localProfileSummary')
+  var importButton = ov.querySelector('#localProfileImport')
+
+  ov.querySelector('#localProfileExport').onclick = function() {
+    try {
+      var exportedAt = new Date()
+      var json = serializeLocalProfile(localStorage, exportedAt)
+      downloadBlob(new Blob([json], { type:'application/json;charset=utf-8' }),
+        'tuuru-local-profile-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json')
+      showToast('整机搬家包下载已发起，请妥善保管', 'success')
+    } catch (error) {
+      summary.textContent = '导出失败：' + (error instanceof Error ? error.message : '未知错误')
+    }
+  }
+
+  fileInput.onchange = async function() {
+    selectedProfile = null
+    importButton.disabled = true
+    var file = fileInput.files && fileInput.files[0]
+    if (!file) return
+    try {
+      var inspected = inspectLocalProfile(await file.text())
+      if (!inspected.ok) throw inspected.error
+      selectedProfile = inspected.profile
+      importButton.disabled = false
+      summary.textContent = '已检查：' + inspected.summary.authorWorkCount + ' 篇作者作品、'
+        + inspected.summary.authorSettingCount + ' 项作者设置、'
+        + inspected.summary.readerEntryCount + ' 项读者端数据。'
+    } catch (error) {
+      summary.textContent = '无法导入：' + (error instanceof Error ? error.message : '文件无效')
+    }
+  }
+
+  importButton.onclick = function() {
+    if (!selectedProfile) return
+    if (!confirm('确认合并这个搬家包？请先关闭其他正在编辑作品的标签页。现有冲突设置会保留，不会整库覆盖。')) return
+    try {
+      var result = mergeLocalProfile(localStorage, selectedProfile)
+      summary.textContent = '导入完成：新增 ' + result.importedAuthorWorks + ' 篇作者作品、'
+        + result.importedReaderEntries + ' 项读者端数据；保留 ' + result.preservedConflicts + ' 项现有冲突数据。'
+      importButton.disabled = true
+      showToast('整机搬家包已合并，正在刷新', 'success')
+      setTimeout(function() { location.reload() }, 500)
+    } catch (error) {
+      summary.textContent = '导入失败，原数据未清空：' + (error instanceof Error ? error.message : '未知错误')
+    }
+  }
+  ov.querySelector('#localProfileCancel').onclick = function() { ov.remove() }
+}
+
 function openReliableDeleteDialog(id) {
   const trigger = document.activeElement
   const work = getWorks().find(candidate => candidate.id === id)
@@ -564,6 +627,7 @@ window.editWorkInfo = function(id){
   var watermarkDraft = normalizeWorkWatermark(w.watermark)
   var body = '<div class="wi-form">'
   body += '<div class="wi-row"><label class="wi-label">作品标题</label><input class="wi-input" id="wiTitle" value="' + escHtml(w.title || '') + '" placeholder="作品标题"></div>'
+  body += '<div class="wi-row"><label class="wi-label">作品描述</label><textarea class="wi-textarea" id="wiDesc" rows="3" placeholder="简单介绍这部作品...">' + escHtml(w.desc || '') + '</textarea></div>'
   body += '<div class="wi-row"><label class="wi-label">作者署名</label><input class="wi-input" id="wiAuthor" value="' + escHtml(w.author || '') + '" placeholder="作者署名"></div>'
   body += '<div class="wi-row"><label class="wi-label">作者有话说</label><textarea class="wi-textarea" id="wiNote" rows="3" placeholder="想对读者说的话...">' + escHtml(w.authorNote || '') + '</textarea></div>'
   body += '<div class="wi-row"><label class="wi-label">阅读密码（选填）</label><input class="wi-input" id="wiPwd" value="' + escHtml(w.password || '') + '" placeholder="设置后读者需输入密码"><div class="wi-help">阅读密码仅限制通过阅读界面进入，不会加密导出的 JSON 或 PNG 文件。</div></div>'
@@ -710,6 +774,7 @@ window.editWorkInfo = function(id){
       expectedWorkToken: expectedWorkToken,
       patch: {
         title: (document.getElementById('wiTitle')?.value || '').trim() || w.title,
+        desc: (document.getElementById('wiDesc')?.value || '').trim(),
         author: (document.getElementById('wiAuthor')?.value || '').trim(),
         authorNote: (document.getElementById('wiNote')?.value || '').trim(),
         password: password,
@@ -729,14 +794,21 @@ window.toggleWorkMenu = function(event, id) {
   var menu = document.getElementById('workMenu-' + id)
   if (!menu) return
   document.querySelectorAll('.work-card-more-popover.open').forEach(function(m) {
-    if (m !== menu) m.classList.remove('open')
+    if (m !== menu) {
+      m.classList.remove('open')
+      m.closest('.work-card')?.classList.remove('menu-open')
+    }
   })
   menu.classList.toggle('open')
+  menu.closest('.work-card')?.classList.toggle('menu-open', menu.classList.contains('open'))
 }
 
 window.closeWorkMenu = function(id) {
   var menu = document.getElementById('workMenu-' + id)
-  if (menu) menu.classList.remove('open')
+  if (menu) {
+    menu.classList.remove('open')
+    menu.closest('.work-card')?.classList.remove('menu-open')
+  }
 }
 
 // Close dropdown when clicking outside
@@ -744,6 +816,7 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('.work-card-more-wrap')) {
     document.querySelectorAll('.work-card-more-popover.open').forEach(function(m) {
       m.classList.remove('open')
+      m.closest('.work-card')?.classList.remove('menu-open')
     })
   }
 })

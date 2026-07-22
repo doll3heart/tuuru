@@ -320,10 +320,15 @@ test("outline actions expose one named disclosure and one sibling panel per item
   assert.equal(nodeRows[1].querySelector('[data-a="up"]').disabled, false)
   assert.equal(nodeRows[1].querySelector('[data-a="dn"]').disabled, true)
 
+  const chapterButtons = [...chapterRows[0].querySelectorAll(":scope > .chapter-actions > button")]
   assert.deepEqual(
-    [...chapterRows[0].querySelectorAll(":scope > .chapter-actions > button")].map(button => button.dataset.a),
-    ["chapter-rename", "chapter-delete"],
+    chapterButtons.map(button => button.dataset.a),
+    ["chapter-add-node", "chapter-rename", "chapter-delete"],
   )
+  for (const button of chapterButtons) {
+    assert.equal(button.type, "button")
+    assert.ok(button.getAttribute("aria-label")?.trim())
+  }
 })
 
 test("outline action disclosures keep exactly one item open without writing", () => {

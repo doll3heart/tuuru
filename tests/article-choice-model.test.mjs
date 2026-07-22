@@ -153,6 +153,21 @@ test("filters targets case-insensitively by node title, chapter name, or full pa
   assert.deepEqual(byPath.map(group => group.nodes.map(node => node.nodeId)), [["b-1"]])
 })
 
+test("reconciles non-branch interaction choices without requiring or preserving a target", () => {
+  const existing = [{ id:"choice-a", text:"旧文字", targetId:"node-b", customMeta:{ keep:true } }]
+  const result = reconcileArticleChoices(existing, [
+    { id:"choice-a", text:"点点头", targetId:"", mode:"interaction" },
+    { text:"摇摇头", targetId:"", mode:"interaction" },
+  ], () => "choice-b")
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.choices.map(choice => ({ id:choice.id, text:choice.text, targetId:choice.targetId, mode:choice.mode })), [
+    { id:"choice-a", text:"点点头", targetId:"", mode:"interaction" },
+    { id:"choice-b", text:"摇摇头", targetId:"", mode:"interaction" },
+  ])
+  assert.deepEqual(result.choices[0].customMeta, { keep:true })
+})
+
 test("describes valid and dangling article targets", () => {
   const work = fixtureWork()
   const valid = describeArticleTarget(work, "a-1")

@@ -26,7 +26,7 @@ const MEMO_CLASSES = new Map([
   ["num-text", "SPAN"],
 ])
 const IMAGE_FIELD_NAMES = new Set([
-  "avatar", "avatarUrl", "faceUrl", "image", "imageUrl", "readerAvatar",
+  "avatar", "avatarUrl", "messageAvatarUrl", "forumAvatarUrl", "faceUrl", "image", "imageUrl", "readerAvatar",
   "topBgImage", "wallpaperImage",
 ])
 const DATA_IMAGE_PATTERN = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i

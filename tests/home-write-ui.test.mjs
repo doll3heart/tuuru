@@ -462,3 +462,22 @@ test("the new-work chooser keeps the article action without the oversized RW dec
   assert.match(newSource, /id="articleForm"/)
   assert.doesNotMatch(newSource, />\s*RW\s*</)
 })
+
+test("work information can edit the description and an open card menu owns the top stacking layer", async () => {
+  const [homeSource, stylesSource] = await Promise.all([
+    readFile(new URL("../js/pages/home.js", import.meta.url), "utf8"),
+    readFile(new URL("../css/styles.css", import.meta.url), "utf8"),
+  ])
+
+  assert.match(homeSource, /id=["']wiDesc["']/)
+  assert.match(homeSource, /desc:\s*\(document\.getElementById\(["']wiDesc["']\)/)
+  assert.match(homeSource, /classList\.toggle\(["']menu-open["']/)
+  assert.match(stylesSource, /\.work-card\.menu-open\s*\{[^}]*z-index\s*:\s*60/s)
+})
+test("home exposes a compact author and reader local profile transfer", async () => {
+  const source = await readFile(new URL("../js/pages/home.js", import.meta.url), "utf8")
+  assert.match(source, /openLocalProfileTransfer\(\)/)
+  assert.match(source, /serializeLocalProfile\(localStorage/)
+  assert.match(source, /mergeLocalProfile\(localStorage/)
+  assert.match(source, /整机搬家/)
+})

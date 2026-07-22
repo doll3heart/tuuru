@@ -18,6 +18,12 @@ function choiceTargetId(draft) {
   return draft?.targetId ?? ""
 }
 
+function applyChoiceMode(choice, draft) {
+  if (draft?.mode === "interaction") choice.mode = "interaction"
+  else delete choice.mode
+  return choice
+}
+
 export function reconcileArticleChoices(existingChoices, drafts, idFactory) {
   const existing = asArray(existingChoices)
   const nextDrafts = asArray(drafts)
@@ -52,11 +58,11 @@ export function reconcileArticleChoices(existingChoices, drafts, idFactory) {
     }
 
     if (matches.length === 1) {
-      choices.push({
+      choices.push(applyChoiceMode({
         ...matches[0],
         text: choiceText(draft),
         targetId: choiceTargetId(draft),
-      })
+      }, draft))
       continue
     }
 
@@ -79,12 +85,12 @@ export function reconcileArticleChoices(existingChoices, drafts, idFactory) {
     }
     reservedIds.add(generatedId)
 
-    choices.push({
+    choices.push(applyChoiceMode({
       ...draft,
       id: generatedId,
       text: choiceText(draft),
       targetId: choiceTargetId(draft),
-    })
+    }, draft))
   }
 
   return { ok: true, choices }

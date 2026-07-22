@@ -22,7 +22,9 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
   t.after(() => dom.window.close())
 
   const icon = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>'
-  const avatar = "data:image/png;base64,iVBORw0KGgo="
+  const avatar = "data:image/png;base64,Y29udGFjdA=="
+  const messageAvatar = "data:image/png;base64,bWVzc2FnZQ=="
+  const forumAvatar = "data:image/png;base64,Zm9ydW0="
   const work = {
     schemaVersion: 1,
     id: "reader-contact-identity",
@@ -37,8 +39,16 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
         msgId: "雾中来信",
         forumId: "北岸观测员",
         avatarUrl: avatar,
-      }],
-      chats: [{ id: "chat-1", type: "single", contactIds: ["contact-1"], rounds: [] }],
+        messageAvatarUrl: messageAvatar,
+        forumAvatarUrl: forumAvatar,
+        forumIpLocation: "上海",
+        pinned: true,
+      }, { id:"contact-2", name:"安安", avatarUrl:"" }],
+      contactSortMode: "az",
+      chats: [
+        { id: "chat-1", type: "single", contactIds: ["contact-1"], rounds: [] },
+        { id:"chat-2", type:"group", groupName:"测试群", contactIds:["contact-1", "contact-2"], rounds:[{ id:"round-1", label:"第1轮", messages:[{ id:"mention-message", type:"text", senderId:"contact-1", text:"@安安 看这里" }] }] },
+      ],
       moments: [],
       forumPosts: [{
         id: "post-1",
@@ -46,9 +56,10 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
         contactName: "创建时旧姓名",
         contactAvatar: "",
         title: "测试帖子",
-        content: "正文",
+        content: "@北岸观测员 正文",
         comments: [],
       }],
+      forumSettings: { showIpLocation:true },
       forumNpcs: [], memos: [], photos: [], albums: [], browserHistory: [], shoppingItems: [],
       skin: { readerId: "Reader", showDynamicIsland: false, showHomeIndicator: false },
       apps: [
@@ -69,15 +80,24 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
   document.querySelector('[data-app-type="messages"]').click()
   assert.match(document.querySelector(".phone-frame").textContent, /雾中来信/)
   assert.doesNotMatch(document.querySelector(".phone-frame").textContent, /林雾/)
+  assert.equal(document.querySelector('.rd-message-avatar img')?.getAttribute('src'), messageAvatar)
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+  assert.equal(document.querySelector('.rd-mention')?.textContent, '@安安')
+  document.querySelector('#chatBack').click()
   document.querySelector(".rd-back-btn").click()
 
   document.querySelector('[data-app-type="forum"]').click()
   const forumFrame = document.querySelector(".phone-frame")
   assert.match(forumFrame.textContent, /北岸观测员/)
   assert.doesNotMatch(forumFrame.textContent, /创建时旧姓名/)
-  assert.ok(forumFrame.querySelector('.rd-forum-avatar img[src^="data:image/png"]'))
+  assert.equal(forumFrame.querySelector('.rd-forum-avatar img')?.getAttribute('src'), forumAvatar)
+  forumFrame.querySelector('.rd-post-card').click()
+  assert.match(forumFrame.querySelector('.rd-forum-ip')?.textContent || '', /上海/)
+  assert.equal(forumFrame.querySelector('.rd-mention')?.textContent, '@北岸观测员')
+  forumFrame.querySelector('.rd-back-btn').click()
   document.querySelector(".rd-back-btn").click()
 
   document.querySelector('[data-app-type="contacts"]').click()
-  assert.ok(document.querySelector('.rd-contact-avatar img[src^="data:image/png"]'))
+  assert.equal(document.querySelector('.rd-contact-entry:first-child .rd-contact-name').textContent, "林雾")
+  assert.equal(document.querySelector('.rd-contact-avatar img')?.getAttribute('src'), avatar)
 })

@@ -1,4 +1,5 @@
 export const AUTHOR_PLACEHOLDER_PRESET_STORAGE_KEY = "tuuru_author_placeholder_presets"
+export const AUTHOR_PLACEHOLDER_PRESET_BUNDLE_TYPE = "tuuru-placeholder-presets"
 
 function defaultId() {
   return globalThis.crypto?.randomUUID?.()
@@ -91,4 +92,45 @@ export function instantiateAuthorPlaceholderPreset(preset, idFactory = defaultId
     values: [],
     default: "",
   }))
+}
+
+export function serializeAuthorPlaceholderPresetBundle(presets = readAuthorPlaceholderPresets(), options = {}) {
+  const now = options.now ?? Date.now
+  const cleanPresets = (Array.isArray(presets) ? presets : []).map(sanitizePreset).filter(Boolean)
+  return JSON.stringify({ type:AUTHOR_PLACEHOLDER_PRESET_BUNDLE_TYPE, version:1, exportedAt:Number(now()), presets:cleanPresets }, null, 2)
+}
+
+export function parseAuthorPlaceholderPresetBundle(input) {
+  try {
+    const parsed = typeof input === "string" ? JSON.parse(input) : input
+    if (!parsed || parsed.type !== AUTHOR_PLACEHOLDER_PRESET_BUNDLE_TYPE || parsed.version !== 1 || !Array.isArray(parsed.presets)) throw new Error()
+    return {
+      type:AUTHOR_PLACEHOLDER_PRESET_BUNDLE_TYPE,
+      version:1,
+      exportedAt:Number.isFinite(Number(parsed.exportedAt)) ? Number(parsed.exportedAt) : 0,
+      presets:parsed.presets.map(sanitizePreset).filter(Boolean),
+    }
+  } catch {
+    throw new Error("不是有效的 Tuuru 占位符预设文件")
+  }
+}
+
+export function importAuthorPlaceholderPresetBundle(input, options = {}) {
+  const storage = options.storage ?? globalThis.localStorage
+  const idFactory = options.idFactory ?? defaultId
+  const parsed = parseAuthorPlaceholderPresetBundle(input)
+  const result = readAuthorPlaceholderPresets(storage)
+  for (const imported of parsed.presets) {
+    const normalizedName = imported.name.toLocaleLowerCase()
+    const existingIndex = result.findIndex(preset => preset.name.toLocaleLowerCase() === normalizedName)
+    if (existingIndex >= 0) {
+      result.splice(existingIndex, 1, { ...imported, id:result[existingIndex].id })
+      continue
+    }
+    var importedId = imported.id
+    if (!importedId || result.some(preset => preset.id === importedId)) importedId = String(idFactory())
+    result.push({ ...imported, id:importedId })
+  }
+  if (!writePresets(storage, result)) throw new Error("占位符预设导入失败，浏览器无法写入本地存储")
+  return result
 }

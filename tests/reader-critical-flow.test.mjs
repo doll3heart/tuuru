@@ -151,6 +151,29 @@ test("article back returns to the previous chapter before it exits the reader", 
   assert.ok(document.querySelector(".rd-home") === null)
 })
 
+test("ordinary article interactions select in place without changing the story path", async t => {
+  installDom(t)
+  const work = articleWork()
+  work.id = "ordinary-article-interactions"
+  work.nodes[0].choices = [
+    { id:"nod", text:"点点头", mode:"interaction", targetId:"" },
+    { id:"shake", text:"摇摇头", mode:"interaction", targetId:"" },
+  ]
+  await startWork(work, "ordinary-article-interactions")
+
+  const buttons = [...document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]')]
+  assert.equal(buttons.length, 2)
+  assert.ok(document.querySelector("[data-reader-home]"), "an interaction-only ending should still expose the home action")
+  buttons[0].click()
+  assert.equal(buttons[0].getAttribute("aria-pressed"), "true")
+  assert.equal(document.querySelectorAll(".article-node").length, 1)
+  assert.doesNotMatch(document.querySelector(".article-reader").textContent, /继续/)
+  buttons[1].click()
+  assert.equal(buttons[0].getAttribute("aria-pressed"), "false")
+  assert.equal(buttons[1].getAttribute("aria-pressed"), "true")
+  assert.equal(document.querySelectorAll(".article-node").length, 1)
+})
+
 test("standalone author flow guides one conversation and schedules calls", async t => {
   installDom(t)
   await startWork(flowPhoneWork(), "standalone-reading-flow")

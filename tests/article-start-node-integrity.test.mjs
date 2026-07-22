@@ -61,6 +61,19 @@ test("adding a node repairs a dangling startNode to the first stable node", () =
   assert.equal(getWork("work-a").startNode, "node-a")
 })
 
+test("adding a node can target a chosen chapter without changing legacy fallback", () => {
+  seed([node("node-a")], "node-a")
+  const work = getWork("work-a")
+  work.chapters.push({ id: "chapter-b", name: "第二章" })
+  localStorage.setItem("tuuru_works", JSON.stringify({ works:[work], contacts:[], groups:[] }))
+
+  const targeted = addNode("work-a", undefined, "chapter-b")
+  const fallback = addNode("work-a")
+
+  assert.equal(targeted.chapterId, "chapter-b")
+  assert.equal(fallback.chapterId, "chapter-a")
+})
+
 test("deleting a non-start node preserves the valid start and removes incoming choices", () => {
   seed([
     node("node-a", [

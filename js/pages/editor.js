@@ -16,7 +16,8 @@ import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets 
 import { compressEditorImage } from "../image-compression.js"
 import { searchArticleWork } from "../article-work-search.js"
 import { createEditorSplitPaneController, readEditorSplitPreference } from "../editor-split-pane.js"
-import { deleteAuthorPlaceholderPreset, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset } from "../author-placeholder-presets.js"
+import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
+import { downloadBlob } from "../download.js"
 
 // State
 var _workId = null
@@ -29,6 +30,7 @@ var _nodeDragController = null
 var _articleTargetPick = null
 var _articleTargetInspect = null
 var _splitPaneController = null
+var FORMAT_COMMANDS = { bold:'bold', italic:'italic', underline:'underline', left:'justifyLeft', center:'justifyCenter', right:'justifyRight' }
 
 function esc(s) {
   if (!s) return ""
@@ -144,12 +146,12 @@ function buildMobileCommandbar(wid, nid) {
   h += '<section class="editor-mobile-tool-panel" id="mobileFormatPanel" data-mobile-tool-panel="format" aria-label="文字格式" hidden>'
   h += '<div class="editor-mobile-tool-head"><strong>文字格式</strong><button type="button" data-a="mobile-tools-close" data-panel="format">完成</button></div>'
   h += '<div class="editor-mobile-format-buttons" role="group" aria-label="文字样式与对齐">'
-  h += '<button type="button" data-a="bold" data-n="' + nid + '" aria-label="加粗"><b>B</b></button>'
-  h += '<button type="button" data-a="italic" data-n="' + nid + '" aria-label="斜体"><i>I</i></button>'
-  h += '<button type="button" data-a="underline" data-n="' + nid + '" aria-label="下划线"><u>U</u></button>'
-  h += '<button type="button" data-a="left" data-n="' + nid + '" aria-label="左对齐">左</button>'
-  h += '<button type="button" data-a="center" data-n="' + nid + '" aria-label="居中对齐">中</button>'
-  h += '<button type="button" data-a="right" data-n="' + nid + '" aria-label="右对齐">右</button>'
+  h += '<button type="button" data-a="bold" data-n="' + nid + '" aria-label="加粗" aria-pressed="false"><b>B</b></button>'
+  h += '<button type="button" data-a="italic" data-n="' + nid + '" aria-label="斜体" aria-pressed="false"><i>I</i></button>'
+  h += '<button type="button" data-a="underline" data-n="' + nid + '" aria-label="下划线" aria-pressed="false"><u>U</u></button>'
+  h += '<button type="button" data-a="left" data-n="' + nid + '" aria-label="左对齐" aria-pressed="false">左</button>'
+  h += '<button type="button" data-a="center" data-n="' + nid + '" aria-label="居中对齐" aria-pressed="false">中</button>'
+  h += '<button type="button" data-a="right" data-n="' + nid + '" aria-label="右对齐" aria-pressed="false">右</button>'
   h += '</div>'
   h += '<div class="editor-mobile-format-settings">'
   h += '<label class="editor-mobile-setting-field is-wide"><span>字体</span><select class="toolbar-setting" data-a="fs-font" aria-label="字体"><option value="">字体</option>'
@@ -306,15 +308,15 @@ function buildToolbar(nid) {
   h += '<button type="button" data-a="redo" data-n="' + nid + '" title="重做" aria-label="重做"><span aria-hidden="true">↷</span></button>'
   h += '<div class="tb-divider"></div>'
   // Text style buttons
-  h += '<button type="button" data-a="bold" data-n="' + nid + '" title="加粗" aria-label="加粗"><b>B</b></button>'
-  h += '<button type="button" data-a="italic" data-n="' + nid + '" title="斜体" aria-label="斜体"><i>I</i></button>'
-  h += '<button type="button" data-a="underline" data-n="' + nid + '" title="下划线" aria-label="下划线"><u>U</u></button>'
+  h += '<button type="button" data-a="bold" data-n="' + nid + '" title="加粗" aria-label="加粗" aria-pressed="false"><b>B</b></button>'
+  h += '<button type="button" data-a="italic" data-n="' + nid + '" title="斜体" aria-label="斜体" aria-pressed="false"><i>I</i></button>'
+  h += '<button type="button" data-a="underline" data-n="' + nid + '" title="下划线" aria-label="下划线" aria-pressed="false"><u>U</u></button>'
   h += '<div class="tb-divider"></div>'
 
   // Alignment
-  h += '<button type="button" data-a="left" data-n="' + nid + '" title="左对齐" aria-label="左对齐">左</button>'
-  h += '<button type="button" data-a="center" data-n="' + nid + '" title="居中" aria-label="居中对齐">中</button>'
-  h += '<button type="button" data-a="right" data-n="' + nid + '" title="右对齐" aria-label="右对齐">右</button>'
+  h += '<button type="button" data-a="left" data-n="' + nid + '" title="左对齐" aria-label="左对齐" aria-pressed="false">左</button>'
+  h += '<button type="button" data-a="center" data-n="' + nid + '" title="居中" aria-label="居中对齐" aria-pressed="false">中</button>'
+  h += '<button type="button" data-a="right" data-n="' + nid + '" title="右对齐" aria-label="右对齐" aria-pressed="false">右</button>'
   h += '<div class="tb-divider"></div>'
 
   // Font family
@@ -415,7 +417,7 @@ function buildContent(n) {
     h += '<div class="choice-card-btns">'
     for (var ci = 0; ci < n.choices.length; ci++) {
       var c = n.choices[ci]
-      h += '<button class="choice-btn" data-a="ch-go" data-w="' + _workId + '" data-n="' + n.id + '" data-cid="' + c.id + '" data-target="' + esc(c.targetId || '') + '">' + esc(c.text || '选项') + '</button>'
+      h += '<button class="choice-btn" data-a="ch-go" data-w="' + _workId + '" data-n="' + n.id + '" data-cid="' + c.id + '" data-choice-mode="' + (c.mode === 'interaction' ? 'interaction' : 'branch') + '" data-target="' + esc(c.targetId || '') + '">' + esc(c.text || '选项') + '</button>'
     }
     h += '</div>'
     h += '</div>'
@@ -472,7 +474,7 @@ function buildWorldTree(w) {
       h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="true" aria-controls="' + chapterContentId + '">'
       h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span><span class="chapter-count">' + cNodes.length + ' 节</span></button>'
       h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + chapterActionPanelId + '" aria-label="' + esc(chapterActionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
-      h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
+      h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-add-node" data-w="' + w.id + '" data-sid="' + chid + '" title="在本章添加节点" aria-label="在本章添加节点">＋</button><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
       h += '<div class="wt-chapter-content" id="' + chapterContentId + '" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
       for (var ni = 0; ni < cNodes.length; ni++) {
         h += nodeHTML(w, cNodes[ni], nodeActionIndex++, targetPick)
@@ -549,6 +551,32 @@ function nodeHTML(w, n, actionIndex, targetPick) {
 // ====== Event Delegation ======
 document.addEventListener("click", handleClick)
 document.addEventListener("change", handleChange)
+document.addEventListener("pointerdown", function(event) {
+  var button = event.target.closest?.('[data-a]')
+  if (button && FORMAT_COMMANDS[button.dataset.a]) event.preventDefault()
+})
+document.addEventListener("selectionchange", syncEditorFormatButtons)
+document.addEventListener("keyup", function(event) { if (event.target.closest?.('.content-editable')) syncEditorFormatButtons() })
+document.addEventListener("mouseup", function(event) { if (event.target.closest?.('.content-editable')) syncEditorFormatButtons() })
+
+function syncEditorFormatButtons() {
+  var editable = document.getElementById('ce_' + _nodeId)
+  var selection = typeof window.getSelection === 'function' ? window.getSelection() : null
+  var insideEditor = false
+  if (editable && selection && selection.rangeCount > 0) {
+    insideEditor = editable.contains(selection.getRangeAt(0).commonAncestorContainer)
+  }
+  Object.keys(FORMAT_COMMANDS).forEach(function(action) {
+    var active = false
+    if (insideEditor && typeof document.queryCommandState === 'function') {
+      try { active = Boolean(document.queryCommandState(FORMAT_COMMANDS[action])) } catch (_) { active = false }
+    }
+    document.querySelectorAll('[data-a="' + action + '"]').forEach(function(button) {
+      button.classList.toggle('is-active', active)
+      button.setAttribute('aria-pressed', String(active))
+    })
+  })
+}
 
 function handleClick(e) {
   var phoneModuleCard = e.target.closest(".pm-inline-card")
@@ -767,6 +795,7 @@ function handleClick(e) {
   }
   // Navigate to target node via choice card
   if (a === "ch-go") {
+    if (b.dataset.choiceMode === 'interaction') return
     var target = b.dataset.target
     if (target && getNode(w, target)) {
       _nodeId = target
@@ -783,6 +812,19 @@ function handleClick(e) {
     if (chapterContent) chapterContent.hidden = !nextExpanded
     var arrow = b.querySelector(".arrow")
     if (arrow) arrow.classList.toggle("open", nextExpanded)
+    return
+  }
+  if (a === "chapter-add-node") {
+    var sid = b.dataset.sid
+    var chapterNode = addNode(w, undefined, sid)
+    if (chapterNode) {
+      var chapterNodeWork = getWork(w)
+      var defaultScene = (chapterNodeWork.scenes || [])[0]
+      if (defaultScene) updateNode(w, chapterNode.id, {scene: defaultScene.id})
+      _nodeId = chapterNode.id
+      prepareMobilePaneRefresh("editor", true)
+      refreshEditor(w)
+    }
     return
   }
   if (a === "chapter-delete") {
@@ -1001,7 +1043,7 @@ var PH_TUTORIAL = '' +
 '<p>占位符用于在导出 HTML 时替换正文中的特定文字，让每个读者获得个性化的阅读体验。</p>' +
 '<p><b>全文替换 (each)：</b>全文所有出现处统一替换为读者所填的同一个值。适合姓名、昵称等。</p>' +
 '<p><b>随机替换 (random)：</b>每次出现时从读者填写的值池中随机选一个。适合"喜欢的颜色"这类可能有多个答案的问题。</p>' +
-'<p><b>场景锁定 (scene)：</b>每个章节固定一个值，同章节内一致。适合"喜欢的食物"，避免同一场景串味。</p>' +
+'<p><b>场景锁定 (scene)：</b>每个“场景标签”固定一个值。节点顶部选择同一个场景时会保持一致；它与作品结构里的章节不是同一项。</p>' +
 '<p><b>标记 (key)：</b>正文中要被替换的文字。作者自定义，如"某某"、"1"等，在正文中写入这些标记即可。</p>' +
 '<p><b>问题 (prompt)：</b>对读者提出的问题。如"你的名字？"</p>' +
 '<p><b>违禁词：</b>设置后读者不可填写这些内容。</p>' +
@@ -1029,7 +1071,7 @@ function openPlaceholderPanel(wid) {
   body += '<button class="btn btn-sm btn-primary" data-ph-a="add">添加占位符</button>'
   body += '</div>'
   body += '<div class="ph-author-presets"><select class="ph-select" id="phAuthorPreset"><option value="">我的预设</option>'
-  body += '</select><button class="btn btn-sm btn-outline" data-ph-a="apply-author-preset">套用预设</button><button class="btn btn-sm btn-ghost" data-ph-a="save-author-preset">保存当前为预设</button><button class="btn btn-sm btn-ghost" data-ph-a="delete-author-preset">删除预设</button></div>'
+  body += '</select><button class="btn btn-sm btn-outline" data-ph-a="apply-author-preset">套用预设</button><button class="btn btn-sm btn-ghost" data-ph-a="save-author-preset">保存当前为预设</button><button class="btn btn-sm btn-ghost" data-ph-a="delete-author-preset">删除预设</button><button class="btn btn-sm btn-ghost" data-ph-a="export-author-presets">导出预设</button><button class="btn btn-sm btn-ghost" data-ph-a="import-author-presets">导入预设</button><input type="file" id="phAuthorPresetFile" accept=".json,application/json" hidden></div>'
 
   // List
   body += '<div class="ph-list">'
@@ -1075,6 +1117,7 @@ function openPlaceholderPanel(wid) {
         var forbidden = Array.isArray(ph.forbidden) ? ph.forbidden.slice() : []
         if (pendingForbidden) forbidden.push(pendingForbidden)
         return Object.assign({}, ph, {
+          label: document.getElementById('ph_label_' + ph.id)?.value?.trim() || ph.label || '占位符',
           key: document.getElementById('ph_key_' + ph.id)?.value?.trim() || ph.key || '',
           prompt: document.getElementById('ph_prompt_' + ph.id)?.value?.trim() || ph.prompt || '',
           mode: document.getElementById('ph_mode_' + ph.id)?.value || ph.mode || 'each',
@@ -1106,6 +1149,18 @@ function openPlaceholderPanel(wid) {
       if (act === 'add') {
         addPlaceholder(wid, uid().slice(0,6), '新占位符', '请填写')
         refreshPhList(wid, ov)
+        return
+      }
+      if (act === 'export-author-presets') {
+        var presets = readAuthorPlaceholderPresets()
+        if (!presets.length) { showToast('请先保存一套作者预设'); return }
+        var presetBundle = serializeAuthorPlaceholderPresetBundle(presets)
+        downloadBlob(new Blob([presetBundle], { type:'application/json;charset=utf-8' }), 'tuuru-placeholder-presets.json')
+        showToast('占位符预设已导出')
+        return
+      }
+      if (act === 'import-author-presets') {
+        panel.querySelector('#phAuthorPresetFile')?.click()
         return
       }
       if (act === 'save-author-preset') {
@@ -1178,6 +1233,20 @@ function openPlaceholderPanel(wid) {
         return
       }
     })
+
+    var authorPresetFileInput = panel.querySelector('#phAuthorPresetFile')
+    if (authorPresetFileInput) authorPresetFileInput.onchange = async function() {
+      var file = authorPresetFileInput.files?.[0]
+      authorPresetFileInput.value = ''
+      if (!file) return
+      try {
+        importAuthorPlaceholderPresetBundle(await file.text())
+        refreshAuthorPresetSelect('')
+        showToast('占位符预设已导入本机')
+      } catch (error) {
+        showToast(error?.message || '占位符预设文件无法读取')
+      }
+    }
   }
 
   // Click outside to close
@@ -1190,7 +1259,8 @@ function buildPhCard(ph) {
   var fw = ph.forbidden || []
   var h = '<div class="ph-card" data-ph-id="' + ph.id + '">'
   h += '<div class="ph-card-head">'
-  h += '<span class="ph-card-label">' + esc(ph.label || '占位符') + '</span>'
+  h += '<label class="sr-only" for="ph_label_' + ph.id + '">显示名称</label>'
+  h += '<input class="ph-card-label" id="ph_label_' + ph.id + '" value="' + esc(ph.label || '占位符') + '" placeholder="显示名称，例如：外号">'
   h += '<button class="ph-card-del" data-ph-a="delete" title="删除">\u2715</button>'
   h += '</div>'
   h += '<div class="ph-card-body">'
@@ -1229,10 +1299,12 @@ function buildPhCard(ph) {
 }
 
 function savePhCard(wid, pid) {
+  var labelEl = document.getElementById('ph_label_' + pid)
   var keyEl = document.getElementById('ph_key_' + pid)
   var promptEl = document.getElementById('ph_prompt_' + pid)
   var modeEl = document.getElementById('ph_mode_' + pid)
   updatePlaceholder(wid, pid, {
+    label: (labelEl?.value || '').trim() || '占位符',
     key: (keyEl?.value || '').trim(),
     prompt: (promptEl?.value || '').trim(),
     mode: modeEl?.value || 'each'
@@ -1264,9 +1336,10 @@ function openChoicePanel(wid, nid, options) {
     ? JSON.parse(JSON.stringify(options.draftChoices))
     : JSON.parse(JSON.stringify(node.choices || []))
   var allNodes = w.nodes || []
+  var choiceMode = choices.length > 0 && choices.every(function(choice) { return choice.mode === 'interaction' }) ? 'interaction' : 'branch'
 
   var body = '<div class="ch-panel" id="chPanel">'
-  body += '<div class="ch-header"><span class="ch-header-title">选项编辑 -- ' + esc(node.title || '节点') + '</span></div>'
+  body += '<div class="ch-header"><span class="ch-header-title">选项编辑 -- ' + esc(node.title || '节点') + '</span><label class="ch-mode-row"><span>选项类型</span><select id="chMode" class="form-select"><option value="branch"' + (choiceMode === 'branch' ? ' selected' : '') + '>剧情分支</option><option value="interaction"' + (choiceMode === 'interaction' ? ' selected' : '') + '>普通互动（不跳转）</option></select></label><small class="ch-mode-hint">普通互动只记录读者当次选择，不改变剧情路径。</small></div>'
   body += '<div class="ch-list" id="chList">'
 
   for (var i = 0; i < choices.length; i++) {
@@ -1287,6 +1360,18 @@ function openChoicePanel(wid, nid, options) {
 
   var panel = ov.querySelector('#chPanel')
   var listEl = ov.querySelector('#chList')
+
+  function applyChoiceMode(mode) {
+    var interaction = mode === 'interaction'
+    panel.dataset.choiceMode = interaction ? 'interaction' : 'branch'
+    listEl.querySelectorAll('.ch-target-pick,.ch-target-inspect').forEach(function(control) { control.hidden = interaction })
+    listEl.querySelectorAll('.ch-text').forEach(function(input) {
+      input.placeholder = interaction ? '选中后显示的简短文字' : '选项文字'
+    })
+  }
+  applyChoiceMode(choiceMode)
+  var modeSelect = panel.querySelector('#chMode')
+  if (modeSelect) modeSelect.onchange = function() { applyChoiceMode(modeSelect.value) }
 
   if (panel) {
     panel.addEventListener('click', function(ev) {
@@ -1335,6 +1420,7 @@ function openChoicePanel(wid, nid, options) {
         // DOM only: append empty row, no localStorage write
         var dummy = { id: '', text: '', targetId: '' }
         appendChRow(listEl, wid, nid, dummy, listEl.children.length)
+        applyChoiceMode(modeSelect?.value || choiceMode)
         return
       }
       if (act === 'del-choice') {
@@ -1376,11 +1462,13 @@ function openChoicePanel(wid, nid, options) {
 }
 
 function collectChoiceDrafts(listEl) {
+  var mode = listEl.closest('.ch-panel')?.querySelector('#chMode')?.value === 'interaction' ? 'interaction' : 'branch'
   return Array.from(listEl.querySelectorAll('.ch-item')).map(function(row) {
     return {
       id: row.dataset.choiceId || '',
       text: row.querySelector('.ch-text')?.value || '',
-      targetId: row.querySelector('.ch-target-pick')?.dataset.targetId || ''
+      targetId: row.querySelector('.ch-target-pick')?.dataset.targetId || '',
+      mode: mode
     }
   })
 }
@@ -1400,14 +1488,15 @@ function saveChoicesFromDOM(wid, nid, listEl) {
       showToast('选项 #' + (i + 1) + ' 未填写文字', 'error')
       return false
     }
-    if (!drafts[i].targetId) {
+    if (drafts[i].mode !== 'interaction' && !drafts[i].targetId) {
       showToast('选项 #' + (i + 1) + ' 未选择目标节点', 'error')
       return false
     }
-    if (!describeArticleTarget(work, drafts[i].targetId).ok) {
+    if (drafts[i].mode !== 'interaction' && !describeArticleTarget(work, drafts[i].targetId).ok) {
       showToast('选项 #' + (i + 1) + ' 的目标节点已不存在，请重新选择', 'error')
       return false
     }
+    if (drafts[i].mode === 'interaction') drafts[i].targetId = ''
   }
   var reconciled = reconcileArticleChoices(curNode.choices || [], drafts, uid)
   if (!reconciled.ok) {
@@ -1644,6 +1733,7 @@ function fmt(cmd, val) {
   } else {
     document.execCommand(cmd, false, null)
   }
+  syncEditorFormatButtons()
 }
 
 // Handle backspace/delete for hr elements

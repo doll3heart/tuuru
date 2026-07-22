@@ -12,9 +12,14 @@ import {
 } from "../phone-grid.js"
 import { showToast, renderHeader, modal } from "../app.js"
 import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
-import { contactDisplayName, resolveContactIdentity } from "../contact-identity.js"
+import { contactAvatar, contactDisplayName, listForumIdentities, resolveContactIdentity } from "../contact-identity.js"
+import { normalizeContactSortMode, orderedContacts, reorderContacts } from "../contact-order.js"
 import { buildTakeawaySearchUrl, safeMessageCardUrl } from "../message-card-links.js"
-import { deleteAuthorPlaceholderPreset, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset } from "../author-placeholder-presets.js"
+import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
+import { downloadBlob } from "../download.js"
+import { reorderForumCommentByOffset, reorderForumCommentTree } from "../forum-comment-reorder.js"
+import { splitMentionText } from "../mention-text.js"
+import { placeFixedMenuWithinViewport } from "../viewport-menu.js"
 
 var _workId = null
 var _dragState = null
@@ -44,6 +49,25 @@ function escAttr(s) {
     .replace(/>/g, '&gt;')
 }
 
+function renderAuthorMentionText(value, names) {
+  return splitMentionText(value, names).map(function(segment) {
+    return segment.mention
+      ? '<span class="mention-token">' + esc(segment.text) + '</span>'
+      : esc(segment.text)
+  }).join('')
+}
+
+function insertAtSelection(input, value) {
+  if (!input) return
+  var start = Number.isInteger(input.selectionStart) ? input.selectionStart : input.value.length
+  var end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start
+  input.value = input.value.slice(0, start) + value + input.value.slice(end)
+  var cursor = start + value.length
+  input.setSelectionRange?.(cursor, cursor)
+  input.dispatchEvent(new Event('input', { bubbles:true }))
+  input.focus()
+}
+
 function openThreadReplyChoiceEditor(owner, options) {
   if (!owner || typeof owner !== 'object') return null
   options = options || {}
@@ -53,12 +77,32 @@ function openThreadReplyChoiceEditor(owner, options) {
       id: choice.id || '',
       text: choice.text || '',
       replyText: choice.replyText || '',
-      followUpLines: Array.isArray(choice.followUpMessages)
-        ? choice.followUpMessages.map(function(message) { return message.text || message.content || '' }).join('\n')
-        : ''
+      followUps: Array.isArray(choice.followUpMessages)
+        ? choice.followUpMessages.map(function(message) {
+            var senderId = message.senderId || message.contactId || options.defaultFollowUpSenderId || owner.contactId || 'self'
+            return { id:message.id || '', actorKey:String(senderId) + '::' + String(message.aliasId || ''), text:message.text || message.content || '' }
+          })
+        : []
     }
   })
-  if (!groups.length) groups.push({id: '', text: '', replyText: '', followUpLines: ''})
+  if (!groups.length) groups.push({id: '', text: '', replyText: '', followUps: []})
+  var actors = Array.isArray(options.followUpActors) && options.followUpActors.length
+    ? options.followUpActors
+    : [{ id:options.defaultFollowUpSenderId || owner.contactId || 'self', aliasId:'', name:'角色' }]
+
+  actors = actors.map(function(actor) {
+    return Object.assign({}, actor, { key:String(actor.id) + '::' + String(actor.aliasId || '') })
+  })
+
+  function actorOptions(selectedKey) {
+    var source = actors.slice()
+    if (selectedKey && !source.some(function(actor) { return actor.key === selectedKey })) {
+      source.push({ key:selectedKey, id:selectedKey.split('::')[0], aliasId:selectedKey.split('::')[1] || '', name:'原角色' })
+    }
+    return source.map(function(actor) {
+      return '<option value="' + escapeHtmlAttribute(actor.key) + '"' + (actor.key === selectedKey ? ' selected' : '') + '>' + esc(actor.name || '角色') + '</option>'
+    }).join('')
+  }
 
   var body = '<div id="threadChoiceGroups"></div>'
   body += '<button type="button" id="threadChoiceAdd" class="btn btn-sm btn-outline" style="width:100%">+ 添加完整句子</button>'
@@ -72,17 +116,27 @@ function openThreadReplyChoiceEditor(owner, options) {
       if (!groups[index]) return
       groups[index].text = row.querySelector('.thread-choice-text')?.value || ''
       groups[index].replyText = row.querySelector('.thread-choice-reply')?.value || ''
-      groups[index].followUpLines = row.querySelector('.thread-choice-followups')?.value || ''
+      groups[index].followUps = Array.from(row.querySelectorAll('.thread-choice-followup-row')).map(function(followUpRow) {
+        return {
+          id:followUpRow.dataset.followupId || '',
+          actorKey:followUpRow.querySelector('.thread-choice-followup-sender')?.value || String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::',
+          text:followUpRow.querySelector('.thread-choice-followups')?.value || ''
+        }
+      })
     })
   }
 
   function render() {
-    collect()
     list.innerHTML = groups.map(function(group, index) {
       var html = '<div class="thread-choice-row" data-thread-choice-index="' + index + '" style="position:relative;margin-bottom:8px;padding:9px;border:1px solid var(--c-border)">'
       html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input" value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
       html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input" value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
-      html += '<label class="form-label" style="margin-top:6px">角色后续消息（每行一个气泡）</label><textarea class="thread-choice-followups form-textarea" style="min-height:54px">' + esc(group.followUpLines) + '</textarea>'
+      html += '<div class="thread-choice-followup-head"><span>角色后续消息</span><button type="button" data-thread-followup-add="' + index + '">＋ 添加</button></div>'
+      html += '<div class="thread-choice-followup-list">'
+      ;(group.followUps || []).forEach(function(followUp, followUpIndex) {
+        html += '<div class="thread-choice-followup-row" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input" value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容"><button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
+      })
+      html += '</div>'
       html += '<button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除这条回复" style="position:absolute;right:5px;top:5px;border:0;background:transparent;color:var(--c-text2);cursor:pointer">×</button></div>'
       return html
     }).join('')
@@ -90,7 +144,25 @@ function openThreadReplyChoiceEditor(owner, options) {
       button.onclick = function() {
         collect()
         groups.splice(Number(button.dataset.threadChoiceRemove), 1)
-        if (!groups.length) groups.push({id: '', text: '', replyText: '', followUpLines: ''})
+        if (!groups.length) groups.push({id: '', text: '', replyText: '', followUps: []})
+        render()
+      }
+    })
+    list.querySelectorAll('[data-thread-followup-add]').forEach(function(button) {
+      button.onclick = function() {
+        collect()
+        var group = groups[Number(button.dataset.threadFollowupAdd)]
+        if (!group) return
+        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'' })
+        render()
+      }
+    })
+    list.querySelectorAll('[data-thread-followup-remove]').forEach(function(button) {
+      button.onclick = function() {
+        var choiceRow = button.closest('.thread-choice-row')
+        var groupIndex = Number(choiceRow?.dataset.threadChoiceIndex)
+        collect()
+        groups[groupIndex]?.followUps.splice(Number(button.dataset.threadFollowupRemove), 1)
         render()
       }
     })
@@ -98,7 +170,7 @@ function openThreadReplyChoiceEditor(owner, options) {
 
   overlay.querySelector('#threadChoiceAdd').onclick = function() {
     collect()
-    groups.push({id: '', text: '', replyText: '', followUpLines: ''})
+    groups.push({id: '', text: '', replyText: '', followUps: []})
     render()
   }
   overlay.querySelector('#threadChoiceCancel').onclick = function() { overlay.remove() }
@@ -116,14 +188,17 @@ function openThreadReplyChoiceEditor(owner, options) {
       if (!text) return
       var previous = originalChoices.find(function(choice) { return group.id && choice.id === group.id })
       var previousFollowUps = Array.isArray(previous?.followUpMessages) ? previous.followUpMessages : []
-      var followUpLines = group.followUpLines.split('\n').map(function(line) { return line.trim() }).filter(Boolean)
-      var followUpMessages = followUpLines.map(function(line, index) {
-        var oldMessage = previousFollowUps[index]
+      var followUpMessages = (group.followUps || []).filter(function(followUp) { return followUp.text.trim() }).map(function(followUp, index) {
+        var oldMessage = previousFollowUps.find(function(message) { return followUp.id && message.id === followUp.id }) || previousFollowUps[index]
+        var actorParts = String(followUp.actorKey || '').split('::')
+        var senderId = actorParts[0] || options.defaultFollowUpSenderId || owner.contactId || 'self'
         return Object.assign({}, oldMessage || {}, {
           id: oldMessage?.id || uid(),
-          senderId: oldMessage?.senderId || options.defaultFollowUpSenderId || owner.contactId || 'self',
-          text: line,
-          content: line,
+          senderId: senderId,
+          contactId: senderId,
+          aliasId: actorParts[1] || '',
+          text: followUp.text.trim(),
+          content: followUp.text.trim(),
           type: oldMessage?.type || 'text'
         })
       })
@@ -262,7 +337,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   if (!w) { showToast('作品未找到'); return }
   if (!w.phoneData) {
     w.phoneData = {
-      contacts: [], chats: [], moments: [], forumPosts: [], forumNpcs: [],
+      contacts: [], contactSortMode:'custom', chats: [], moments: [], forumPosts: [], forumNpcs: [], forumSettings:{showIpLocation:false},
       memos: [], photos: [], albums: [], browserHistory: [], shoppingItems: [],
       skin: JSON.parse(JSON.stringify(DEFAULT_PHONE_SKIN)),
       apps: []
@@ -394,6 +469,7 @@ export function openPhoneAppModal(wid, appType, options = {}) {
 
 function renderContactsModal(frame, wid, pd) {
   var contacts = pd.contacts || []
+  pd.contactSortMode = normalizeContactSortMode(pd.contactSortMode)
 
   function persist() {
     pd.contacts = contacts
@@ -419,17 +495,35 @@ function renderContactsModal(frame, wid, pd) {
     collectField('note', 'note')
     collectField('msgid', 'msgId')
     collectField('forum', 'forumId')
+    collectField('message-avatar', 'messageAvatarUrl')
+    collectField('forum-avatar', 'forumAvatarUrl')
+    collectField('forum-ip', 'forumIpLocation')
     collectField('face', 'faceUrl')
+    frame.querySelectorAll('[data-ct-account-row]').forEach(function(row) {
+      var contactIndex = parseInt(row.dataset.ctIdx)
+      var accountIndex = parseInt(row.dataset.accountIdx)
+      if (contactIndex < 0 || contactIndex >= contacts.length || accountIndex < 0) return
+      if (!Array.isArray(contacts[contactIndex].aliases)) contacts[contactIndex].aliases = []
+      var previous = contacts[contactIndex].aliases[accountIndex] || {}
+      contacts[contactIndex].aliases[accountIndex] = Object.assign({}, previous, {
+        id: previous.id || uid(),
+        name: row.querySelector('[data-ct-account-name]')?.value?.trim() || '',
+        forumId: row.querySelector('[data-ct-account-forum]')?.value?.trim() || '',
+        avatarUrl: row.querySelector('[data-ct-account-avatar]')?.value?.trim() || '',
+        forumIpLocation: row.querySelector('[data-ct-account-ip]')?.value?.trim() || ''
+      })
+    })
     persist()
   }
 
   function renderList() {
+    contacts = orderedContacts(contacts, pd.contactSortMode)
     var h = '<div class="cu-panel" style="height:100%;position:relative;display:flex;flex-direction:column">'
     h += '<div class="cu-body" style="flex:1;overflow-y:auto">'
     if (contacts.length === 0) {
       h += '<div class="pf-empty">暂无联系人，点击下方按钮添加</div>'
     } else {
-      h += renderPfContacts(contacts)
+      h += renderPfContacts(contacts, pd.contactSortMode)
     }
     h += '</div>'
     h += '<div style="padding:8px 10px;border-top:1px solid var(--c-border);background:var(--c-surface);flex-shrink:0">'
@@ -437,6 +531,7 @@ function renderContactsModal(frame, wid, pd) {
     h += '</div>'
     h += '</div>'
     frame.innerHTML = h
+    bindContactListSearch(frame)
 
     // Bind add button
     var addBtn = frame.querySelector('#ctModalAddBtn')
@@ -451,7 +546,7 @@ function renderContactsModal(frame, wid, pd) {
           okBtn.onclick = function() {
             var name = inputEl.value.trim()
             if (!name) return
-            contacts.push({ id: uid(), name: name, alias: '', avatarUrl: '', note: '', faceUrl: '', msgId: '', forumId: '' })
+            contacts.push({ id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', note: '', faceUrl: '', msgId: '', forumId: '', pinned:false })
             saveAndRefresh()
             ov.remove()
           }
@@ -462,7 +557,7 @@ function renderContactsModal(frame, wid, pd) {
       }
     }
 
-    var cardInputs = frame.querySelectorAll('[data-ct-name], [data-ct-alias], [data-ct-note], [data-ct-msgid], [data-ct-forum], [data-ct-face]')
+    var cardInputs = frame.querySelectorAll('[data-ct-name], [data-ct-alias], [data-ct-note], [data-ct-msgid], [data-ct-forum], [data-ct-message-avatar], [data-ct-forum-avatar], [data-ct-forum-ip], [data-ct-face], [data-ct-account-name], [data-ct-account-forum], [data-ct-account-avatar], [data-ct-account-ip]')
     cardInputs.forEach(function(input) {
       input.addEventListener('change', flushFields)
       input.addEventListener('blur', flushFields)
@@ -480,6 +575,28 @@ function renderContactsModal(frame, wid, pd) {
           contacts.splice(idx, 1)
           saveAndRefresh()
         }
+      }
+    })
+
+    frame.querySelectorAll('[data-ct-account-add]').forEach(function(button) {
+      button.onclick = function() {
+        flushFields()
+        var contactIndex = parseInt(button.dataset.ctIdx)
+        if (contactIndex < 0 || contactIndex >= contacts.length) return
+        if (!Array.isArray(contacts[contactIndex].aliases)) contacts[contactIndex].aliases = []
+        contacts[contactIndex].aliases.push({ id:uid(), name:'新小号', forumId:'', avatarUrl:'', forumIpLocation:'' })
+        saveAndRefresh()
+      }
+    })
+    frame.querySelectorAll('[data-ct-account-del]').forEach(function(button) {
+      button.onclick = function() {
+        flushFields()
+        var contactIndex = parseInt(button.dataset.ctIdx)
+        var accountIndex = parseInt(button.dataset.accountIdx)
+        var accounts = contacts[contactIndex]?.aliases
+        if (!Array.isArray(accounts) || accountIndex < 0 || accountIndex >= accounts.length) return
+        accounts.splice(accountIndex, 1)
+        saveAndRefresh()
       }
     })
 
@@ -502,6 +619,90 @@ function renderContactsModal(frame, wid, pd) {
         }
         var cancelBtn = ov.querySelector('#ctAvatarCancel')
         if (cancelBtn) cancelBtn.onclick = function() { ov.remove() }
+      }
+    })
+
+    var sortSelect = frame.querySelector('[data-contact-sort]')
+    if (sortSelect) sortSelect.onchange = function() {
+      flushFields()
+      pd.contactSortMode = normalizeContactSortMode(sortSelect.value)
+      saveAndRefresh()
+    }
+
+    frame.querySelectorAll('[data-ct-pin]').forEach(function(button) {
+      button.onclick = function() {
+        flushFields()
+        var index = parseInt(button.dataset.ctIdx)
+        if (index < 0 || index >= contacts.length) return
+        contacts[index].pinned = contacts[index].pinned !== true
+        saveAndRefresh()
+      }
+    })
+
+    function applyContactReorder(result, focusId) {
+      if (!result?.ok || pd.contactSortMode !== 'custom') return false
+      contacts = result.contacts
+      persist()
+      renderList()
+      Array.from(frame.querySelectorAll('[data-ct-drag]')).find(function(item) {
+        return String(item.dataset.ctDrag) === String(focusId)
+      })?.focus()
+      return true
+    }
+
+    frame.querySelectorAll('[data-ct-drag]').forEach(function(handle) {
+      handle.disabled = pd.contactSortMode !== 'custom'
+      handle.onkeydown = function(event) {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+        event.preventDefault()
+        var index = contacts.findIndex(function(contact) { return String(contact.id) === String(handle.dataset.ctDrag) })
+        var target = contacts[index + (event.key === 'ArrowUp' ? -1 : 1)]
+        if (!target) return
+        applyContactReorder(reorderContacts(contacts, handle.dataset.ctDrag, target.id, event.key === 'ArrowUp' ? 'before' : 'after'), handle.dataset.ctDrag)
+      }
+      handle.onpointerdown = function(event) {
+        if (event.button !== 0 && event.pointerType !== 'touch') return
+        if (pd.contactSortMode !== 'custom') return
+        event.preventDefault()
+        var sourceId = handle.dataset.ctDrag
+        var sourceCard = handle.closest('.ct-card')
+        var startY = event.clientY
+        var targetId = ''
+        var targetPosition = 'before'
+        var targetCard = null
+        function clearTarget() {
+          targetCard?.classList.remove('ct-drop-before', 'ct-drop-after')
+          targetCard = null
+          targetId = ''
+        }
+        function move(moveEvent) {
+          if (moveEvent.pointerId !== event.pointerId || Math.abs(moveEvent.clientY - startY) < 6) return
+          sourceCard?.classList.add('is-ct-dragging')
+          var candidate = document.elementFromPoint?.(moveEvent.clientX, moveEvent.clientY)?.closest?.('.ct-card[data-contact-id]')
+          if (!candidate || candidate === sourceCard) { clearTarget(); return }
+          var position = moveEvent.clientY >= candidate.getBoundingClientRect().top + candidate.getBoundingClientRect().height / 2 ? 'after' : 'before'
+          if (!reorderContacts(contacts, sourceId, candidate.dataset.contactId, position).ok) { clearTarget(); return }
+          clearTarget()
+          targetCard = candidate
+          targetId = candidate.dataset.contactId
+          targetPosition = position
+          candidate.classList.add(position === 'after' ? 'ct-drop-after' : 'ct-drop-before')
+        }
+        function finish(commit) {
+          document.removeEventListener('pointermove', move)
+          document.removeEventListener('pointerup', up)
+          document.removeEventListener('pointercancel', cancel)
+          sourceCard?.classList.remove('is-ct-dragging')
+          var finalId = targetId
+          var finalPosition = targetPosition
+          clearTarget()
+          if (commit && finalId) applyContactReorder(reorderContacts(contacts, sourceId, finalId, finalPosition), sourceId)
+        }
+        function up(upEvent) { if (upEvent.pointerId === event.pointerId) finish(true) }
+        function cancel(cancelEvent) { if (cancelEvent.pointerId === event.pointerId) finish(false) }
+        document.addEventListener('pointermove', move)
+        document.addEventListener('pointerup', up)
+        document.addEventListener('pointercancel', cancel)
       }
     })
   }
@@ -1594,13 +1795,15 @@ function renderPfInfo(skin) {
   return h
 }
 
-function renderPfContacts(contacts) {
+function renderPfContacts(contacts, sortMode) {
   var h = '<div class="ct-list">'
-  h += '<div class="ct-head">联系人 <span class="ct-count">' + contacts.length + ' 人</span></div>'
+  h += '<div class="ct-head"><label class="ct-search"><span class="sr-only">搜索联系人</span><input type="search" class="form-input" data-contact-search autocomplete="off" placeholder="搜索联系人"><span class="ct-search-status" aria-live="polite"></span></label><select class="ct-sort" data-contact-sort aria-label="联系人排序"><option value="custom"' + (sortMode === 'custom' ? ' selected' : '') + '>自定义</option><option value="az"' + (sortMode === 'az' ? ' selected' : '') + '>A–Z</option></select><span class="ct-count">' + contacts.length + ' 人</span></div>'
   for (var i = 0; i < contacts.length; i++) {
     var c = contacts[i]
     var color = avatarColor(c.id || uid())
-    h += '<div class="ct-card">'
+    var aliases = Array.isArray(c.aliases) ? c.aliases : []
+    var searchKey = [c.name, c.alias, c.forumId, c.msgId].concat(aliases.flatMap(function(account) { return [account?.name, account?.forumId] })).filter(Boolean).join(' ').toLocaleLowerCase()
+    h += '<div class="ct-card" data-contact-id="' + escapeHtmlAttribute(c.id) + '" data-contact-search-key="' + escapeHtmlAttribute(searchKey) + '">'
     h += '<div class="ct-row" data-ct-idx="' + i + '">'
     h += '<div class="ct-avatar-wrap">'
     h += '<div class="ct-avatar" style="background:' + color + ';' + (c.avatarUrl ? 'background-image:url(' + esc(c.avatarUrl) + ');background-size:cover' : '') + '" data-ct-avatar data-ct-idx="' + i + '" title="点击上传头像">'
@@ -1609,6 +1812,8 @@ function renderPfContacts(contacts) {
     h += '<div class="ct-avatar-badge" data-ct-avatar data-ct-idx="' + i + '">+</div>'
     h += '</div>'
     h += '<input class="ct-name" data-ct-name data-ct-idx="' + i + '" value="' + esc(c.name || '') + '" placeholder="联系人姓名">'
+    h += '<button type="button" class="ct-pin' + (c.pinned === true ? ' active' : '') + '" data-ct-pin data-ct-idx="' + i + '" aria-pressed="' + (c.pinned === true ? 'true' : 'false') + '" aria-label="' + (c.pinned === true ? '取消置顶' : '置顶联系人') + '" title="置顶">⌃</button>'
+    h += '<button type="button" class="ct-drag" data-ct-drag="' + escapeHtmlAttribute(c.id) + '" aria-label="拖动调整联系人顺序" title="自定义排序">↕</button>'
     h += '<button class="ct-del" data-ct-del data-ct-idx="' + i + '" title="删除">\u2715</button>'
     h += '</div>'
     // Name card: row1 alias+note, row2 msgId+forumId
@@ -1624,14 +1829,46 @@ function renderPfContacts(contacts) {
     h += '<span class="ct-sub-label" style="margin-left:4px">论坛ID</span>'
     h += '<input class="ct-sub-input" data-ct-forum data-ct-idx="' + i + '" value="' + esc(c.forumId || '') + '" placeholder="论坛ID">'
     h += '</div>'
-    h += '<div class="ct-sub-row">'
-    h += '<span class="ct-sub-label">固定脸URL</span>'
-    h += '<input class="ct-sub-input" data-ct-face data-ct-idx="' + i + '" value="' + esc(c.faceUrl || '') + '" placeholder="图片链接">'
+    h += '<div class="ct-sub-row ct-call-bg-row">'
+    h += '<label class="ct-call-bg-field"><span class="ct-sub-label">视频通话背景图</span>'
+    h += '<input class="ct-sub-input" data-ct-face data-ct-idx="' + i + '" value="' + esc(c.faceUrl || '') + '" placeholder="粘贴图片链接"></label>'
+    h += '<span class="ct-field-hint">用于该角色发起视频通话时的画面背景；语音通话不会使用。</span>'
     h += '</div>'
+    h += '<div class="ct-sub-row ct-channel-row"><label><span class="ct-sub-label">消息头像</span><input class="ct-sub-input" data-ct-message-avatar data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.messageAvatarUrl || '') + '" placeholder="留空沿用名片头像"></label><label><span class="ct-sub-label">论坛头像</span><input class="ct-sub-input" data-ct-forum-avatar data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.forumAvatarUrl || '') + '" placeholder="留空沿用名片头像"></label><label><span class="ct-sub-label">论坛 IP 属地</span><input class="ct-sub-input" data-ct-forum-ip data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.forumIpLocation || '') + '" placeholder="例如：上海"></label></div>'
+    h += '<section class="ct-account-section"><div class="ct-account-head"><span class="ct-account-title">论坛身份 <small>' + aliases.length + ' 个小号</small></span><button type="button" class="btn btn-sm btn-outline ct-account-add" data-ct-account-add data-ct-idx="' + i + '">＋ 添加小号</button></div><p class="ct-account-guide">小号只用于论坛身份；论坛发帖与评论时可以选择主号或这里的小号。</p>'
+    aliases.forEach(function(account, accountIndex) {
+      var accountName = account.name || account.forumId || '小号'
+      h += '<div class="ct-account-row" data-ct-account-row data-ct-idx="' + i + '" data-account-idx="' + accountIndex + '">'
+      h += '<div class="ct-account-row-head"><span class="ct-account-avatar" style="background:' + avatarColor(account.id || c.id) + ';' + (account.avatarUrl ? 'background-image:url(' + esc(account.avatarUrl) + ');background-size:cover' : '') + '">' + (!account.avatarUrl ? esc(accountName.charAt(0)) : '') + '</span><strong>小号 ' + (accountIndex + 1) + '</strong><button type="button" class="ct-account-delete" data-ct-account-del data-ct-idx="' + i + '" data-account-idx="' + accountIndex + '" aria-label="删除小号">×</button></div>'
+      h += '<div class="ct-account-fields"><label><span>显示名称</span><input data-ct-account-name value="' + escapeHtmlAttribute(account.name || '') + '" placeholder="例如：匿名小号"></label><label><span>论坛 ID</span><input data-ct-account-forum value="' + escapeHtmlAttribute(account.forumId || '') + '" placeholder="帖子中显示的 ID"></label><label><span>头像链接</span><input data-ct-account-avatar value="' + escapeHtmlAttribute(account.avatarUrl || '') + '" placeholder="https://..."></label><label><span>IP 属地</span><input data-ct-account-ip value="' + escapeHtmlAttribute(account.forumIpLocation || '') + '" placeholder="例如：北京"></label></div>'
+      h += '</div>'
+    })
+    h += '</section>'
     h += '</div>'
   }
+  h += '<div class="ct-search-empty" data-contact-search-empty hidden>没有匹配的联系人</div>'
   h += '</div>'
   return h
+}
+
+function bindContactListSearch(root) {
+  var input = root && root.querySelector('[data-contact-search]')
+  if (!input) return
+  var status = root.querySelector('.ct-search-status')
+  var empty = root.querySelector('[data-contact-search-empty]')
+  function applyFilter() {
+    var query = input.value.trim().toLocaleLowerCase()
+    var visible = 0
+    root.querySelectorAll('.ct-card[data-contact-search-key]').forEach(function(card) {
+      var liveValues = Array.from(card.querySelectorAll('input')).map(function(field) { return field.value || '' }).join(' ').toLocaleLowerCase()
+      card.hidden = Boolean(query) && !(String(card.dataset.contactSearchKey || '') + ' ' + liveValues).includes(query)
+      if (!card.hidden) visible += 1
+    })
+    if (empty) empty.hidden = visible !== 0
+    if (status) status.textContent = query ? visible + ' 个结果' : ''
+  }
+  input.oninput = applyFilter
+  applyFilter()
 }
 
 function bindPfSimple(desktop, wid, skin) {
@@ -1712,18 +1949,20 @@ function openContactsPanel(wid) {
   var w = getWork(wid)
   if (!w || !w.phoneData) return
   var pd = w.phoneData
-  var contacts = JSON.parse(JSON.stringify(pd.contacts || []))
+  var sortMode = normalizeContactSortMode(pd.contactSortMode)
+  var contacts = orderedContacts(JSON.parse(JSON.stringify(pd.contacts || [])), sortMode)
 
   var frame = document.getElementById('phoneFrame')
   if (!frame) return
   var origHTML = frame.innerHTML
   frame.dataset._origHTML = origHTML
   frame.dataset._ctContacts = JSON.stringify(contacts)
+  frame.dataset._ctSortMode = sortMode
   frame.dataset._wid = wid
 
   var h = '<div class="cu-panel pf-panel cu-panel-embedded" id="ctPanel">'
   h += '<div class="cu-header"><span class="cu-title">联系人</span><button id="ctClose" class="cu-close-btn">&times;</button></div>'
-  h += '<div class="cu-body">' + renderPfContacts(contacts) + '</div>'
+  h += '<div class="cu-body">' + renderPfContacts(contacts, sortMode) + '</div>'
   h += '<div class="cu-footer"><button class="btn btn-sm btn-outline" id="ctAddBtn" style="margin-right:auto">+ 添加</button><button class="btn btn-sm btn-primary" id="ctSave">保存</button><button class="btn btn-sm btn-ghost" id="ctCancel">取消</button></div>'
   h += '</div>'
   frame.innerHTML = h
@@ -1733,14 +1972,18 @@ function openContactsPanel(wid) {
 function bindCtEvents(desktop, wid, contacts) {
   var panel = desktop.querySelector('#ctPanel')
   if (!panel) return
+  bindContactListSearch(panel)
 
   function getCtAt() { return desktop.dataset._ctContacts ? JSON.parse(desktop.dataset._ctContacts) : contacts }
   function setCtAt(v) { desktop.dataset._ctContacts = JSON.stringify(v) }
 
   function reloadCt() {
     contacts = getCtAt()
+    var sortMode = normalizeContactSortMode(desktop.dataset._ctSortMode)
+    contacts = orderedContacts(contacts, sortMode)
+    setCtAt(contacts)
     var body = panel.querySelector('.cu-body')
-    if (body) body.innerHTML = renderPfContacts(contacts)
+    if (body) body.innerHTML = renderPfContacts(contacts, sortMode)
     bindCtEvents(desktop, wid, contacts)
   }
 
@@ -1761,7 +2004,24 @@ function bindCtEvents(desktop, wid, contacts) {
     collectField('note', 'note')
     collectField('msgid', 'msgId')
     collectField('forum', 'forumId')
+    collectField('message-avatar', 'messageAvatarUrl')
+    collectField('forum-avatar', 'forumAvatarUrl')
+    collectField('forum-ip', 'forumIpLocation')
     collectField('face', 'faceUrl')
+    panel.querySelectorAll('[data-ct-account-row]').forEach(function(row) {
+      var contactIndex = parseInt(row.dataset.ctIdx)
+      var accountIndex = parseInt(row.dataset.accountIdx)
+      if (contactIndex < 0 || contactIndex >= contacts.length || accountIndex < 0) return
+      if (!Array.isArray(contacts[contactIndex].aliases)) contacts[contactIndex].aliases = []
+      var previous = contacts[contactIndex].aliases[accountIndex] || {}
+      contacts[contactIndex].aliases[accountIndex] = Object.assign({}, previous, {
+        id: previous.id || uid(),
+        name: row.querySelector('[data-ct-account-name]')?.value?.trim() || '',
+        forumId: row.querySelector('[data-ct-account-forum]')?.value?.trim() || '',
+        avatarUrl: row.querySelector('[data-ct-account-avatar]')?.value?.trim() || '',
+        forumIpLocation: row.querySelector('[data-ct-account-ip]')?.value?.trim() || ''
+      })
+    })
   }
 
   // Close / Cancel
@@ -1789,6 +2049,7 @@ function bindCtEvents(desktop, wid, contacts) {
       var w = getWork(wid)
       if (!w) return
       w.phoneData.contacts = contacts.slice()
+      w.phoneData.contactSortMode = normalizeContactSortMode(desktop.dataset._ctSortMode)
       updateWork(wid, { phoneData: w.phoneData })
       showToast('联系人已保存')
       restore()
@@ -1807,6 +2068,30 @@ function bindCtEvents(desktop, wid, contacts) {
       }
     }
   }
+
+  panel.querySelectorAll('[data-ct-account-add]').forEach(function(button) {
+    button.onclick = function() {
+      flushNames()
+      var contactIndex = parseInt(button.dataset.ctIdx)
+      if (contactIndex < 0 || contactIndex >= contacts.length) return
+      if (!Array.isArray(contacts[contactIndex].aliases)) contacts[contactIndex].aliases = []
+      contacts[contactIndex].aliases.push({ id:uid(), name:'新小号', forumId:'', avatarUrl:'', forumIpLocation:'' })
+      setCtAt(contacts)
+      reloadCt()
+    }
+  })
+  panel.querySelectorAll('[data-ct-account-del]').forEach(function(button) {
+    button.onclick = function() {
+      flushNames()
+      var contactIndex = parseInt(button.dataset.ctIdx)
+      var accountIndex = parseInt(button.dataset.accountIdx)
+      var accounts = contacts[contactIndex]?.aliases
+      if (!Array.isArray(accounts) || accountIndex < 0 || accountIndex >= accounts.length) return
+      accounts.splice(accountIndex, 1)
+      setCtAt(contacts)
+      reloadCt()
+    }
+  })
 
   // Avatar URL editor (click avatar to set URL)
   var avatars = panel.querySelectorAll('[data-ct-avatar]')
@@ -1832,6 +2117,78 @@ function bindCtEvents(desktop, wid, contacts) {
     }
   }
 
+  var sortSelect = panel.querySelector('[data-contact-sort]')
+  if (sortSelect) sortSelect.onchange = function() {
+    flushNames()
+    desktop.dataset._ctSortMode = normalizeContactSortMode(sortSelect.value)
+    contacts = orderedContacts(contacts, desktop.dataset._ctSortMode)
+    setCtAt(contacts)
+    reloadCt()
+  }
+
+  panel.querySelectorAll('[data-ct-pin]').forEach(function(button) {
+    button.onclick = function() {
+      flushNames()
+      var index = parseInt(button.dataset.ctIdx)
+      if (index < 0 || index >= contacts.length) return
+      contacts[index].pinned = contacts[index].pinned !== true
+      contacts = orderedContacts(contacts, normalizeContactSortMode(desktop.dataset._ctSortMode))
+      setCtAt(contacts)
+      reloadCt()
+    }
+  })
+
+  function applyStandaloneContactReorder(result, focusId) {
+    if (!result?.ok || normalizeContactSortMode(desktop.dataset._ctSortMode) !== 'custom') return false
+    contacts = result.contacts
+    setCtAt(contacts)
+    reloadCt()
+    Array.from(panel.querySelectorAll('[data-ct-drag]')).find(function(item) { return String(item.dataset.ctDrag) === String(focusId) })?.focus()
+    return true
+  }
+
+  panel.querySelectorAll('[data-ct-drag]').forEach(function(handle) {
+    handle.disabled = normalizeContactSortMode(desktop.dataset._ctSortMode) !== 'custom'
+    handle.onkeydown = function(event) {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+      event.preventDefault()
+      var index = contacts.findIndex(function(contact) { return String(contact.id) === String(handle.dataset.ctDrag) })
+      var target = contacts[index + (event.key === 'ArrowUp' ? -1 : 1)]
+      if (target) applyStandaloneContactReorder(reorderContacts(contacts, handle.dataset.ctDrag, target.id, event.key === 'ArrowUp' ? 'before' : 'after'), handle.dataset.ctDrag)
+    }
+    handle.onpointerdown = function(event) {
+      if ((event.button !== 0 && event.pointerType !== 'touch') || handle.disabled) return
+      event.preventDefault()
+      var sourceId = handle.dataset.ctDrag
+      var sourceCard = handle.closest('.ct-card')
+      var startY = event.clientY
+      var targetId = ''
+      var targetPosition = 'before'
+      var targetCard = null
+      function clearTarget() { targetCard?.classList.remove('ct-drop-before', 'ct-drop-after'); targetCard = null; targetId = '' }
+      function move(moveEvent) {
+        if (moveEvent.pointerId !== event.pointerId || Math.abs(moveEvent.clientY - startY) < 6) return
+        sourceCard?.classList.add('is-ct-dragging')
+        var candidate = document.elementFromPoint?.(moveEvent.clientX, moveEvent.clientY)?.closest?.('.ct-card[data-contact-id]')
+        if (!candidate || candidate === sourceCard) { clearTarget(); return }
+        var rect = candidate.getBoundingClientRect()
+        var position = moveEvent.clientY >= rect.top + rect.height / 2 ? 'after' : 'before'
+        if (!reorderContacts(contacts, sourceId, candidate.dataset.contactId, position).ok) { clearTarget(); return }
+        clearTarget(); targetCard = candidate; targetId = candidate.dataset.contactId; targetPosition = position
+        candidate.classList.add(position === 'after' ? 'ct-drop-after' : 'ct-drop-before')
+      }
+      function finish(commit) {
+        document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', cancel)
+        sourceCard?.classList.remove('is-ct-dragging')
+        var finalId = targetId; var finalPosition = targetPosition; clearTarget()
+        if (commit && finalId) applyStandaloneContactReorder(reorderContacts(contacts, sourceId, finalId, finalPosition), sourceId)
+      }
+      function up(upEvent) { if (upEvent.pointerId === event.pointerId) finish(true) }
+      function cancel(cancelEvent) { if (cancelEvent.pointerId === event.pointerId) finish(false) }
+      document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', cancel)
+    }
+  })
+
   // Add contact button (in footer) — custom modal, no browser prompt
   var addBtn = document.getElementById('ctAddBtn')
   if (addBtn) {
@@ -1845,7 +2202,7 @@ function bindCtEvents(desktop, wid, contacts) {
         okBtn.onclick = function() {
           var name = inputEl.value.trim()
           if (!name) return
-          contacts.push({ id: uid(), name: name, alias: '', avatarUrl: '', note: '', forumId: '' })
+          contacts.push({ id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', pinned:false, note: '', faceUrl:'', msgId:'', forumId: '' })
           setCtAt(contacts)
           reloadCt()
           ov.remove()
@@ -2010,11 +2367,12 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
       var id = row.dataset.browserId
       var titleEl = row.querySelector('.browser-title')
       var urlEl = row.querySelector('.browser-url')
+      var timeEl = row.querySelector('.browser-time-input')
       var existing = items.find(function(it) { return it.id === id })
       if (existing && titleEl) {
         existing.title = titleEl.value
         existing.url = urlEl ? urlEl.value : ''
-        existing.time = new Date().toLocaleString()
+        existing.time = timeEl ? timeEl.value.trim() : existing.time
         updated.push(existing)
       }
     })
@@ -2060,7 +2418,6 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
 
     for (var i = 0; i < sorted.length; i++) {
       var it = sorted[i]
-      var timeStr = (it.time || '').replace(/^(\d+\/\d+\/\d+)\s.*$/, '$1')
       h += '<div class="browser-row" data-browser-id="' + it.id + '">'
       h += '<div class="browser-dot" style="background:' + accent + '"></div>'
       h += '<div class="browser-info">'
@@ -2068,7 +2425,7 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
       h += '<input class="browser-url" value="' + esc(it.url || '') + '" placeholder="https://...">'
       h += '</div>'
       h += '<div class="browser-right">'
-      h += '<span class="browser-time">' + esc(timeStr) + '</span>'
+      h += '<input class="browser-time browser-time-input" value="' + escapeHtmlAttribute(it.time || '') + '" placeholder="日期 / 时间" aria-label="浏览记录日期与时间">'
       h += '<button class="browser-del" data-browser-del="' + it.id + '" title="删除">x</button>'
       h += '</div>'
       h += '</div>'
@@ -2078,8 +2435,10 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
     // Bind title/url blur to save
     var titleInputs = body.querySelectorAll('.browser-title')
     var urlInputs = body.querySelectorAll('.browser-url')
+    var timeInputs = body.querySelectorAll('.browser-time-input')
     titleInputs.forEach(function(inp) { inp.addEventListener('blur', function() { saveAll() }) })
     urlInputs.forEach(function(inp) { inp.addEventListener('blur', function() { saveAll() }) })
+    timeInputs.forEach(function(inp) { inp.addEventListener('blur', function() { saveAll() }) })
 
     // Bind delete buttons
     var delBtns = body.querySelectorAll('[data-browser-del]')
@@ -2694,6 +3053,8 @@ function openShoppingEditor(frame, wid, contact, pd) {
 function openForumEditor(frame, wid, contact, pd) {
   var posts = pd.forumPosts || []
   var npcs = pd.forumNpcs || []
+  if (!pd.forumSettings || typeof pd.forumSettings !== 'object') pd.forumSettings = {}
+  pd.forumSettings.showIpLocation = pd.forumSettings.showIpLocation === true
 
   // Initialize default npcs if empty
   if (npcs.length === 0) {
@@ -2721,21 +3082,32 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function fmtTime(t) { return t ? t.replace(/\s.*$/, '') : '' }
+  function forumMentionNames() {
+    return listForumIdentities(pd).map(function(identity) { return identity.name })
+      .concat(npcs.map(function(npc) { return npc.name }))
+      .concat([pd.skin?.readerId || '读者'])
+  }
+  function authorIpLabel(value) {
+    var location = String(value || '').trim()
+    return pd.forumSettings.showIpLocation && location
+      ? '<span class="forum-ip-label">IP 属地：' + esc(location) + '</span>'
+      : ''
+  }
 
-  function getIdInfo(id) {
+  function getIdInfo(id, aliasId) {
     // Check contacts first
     var contacts = pd.contacts || []
     var c = contacts.find(function(x) { return x.id === id })
     if (c) {
-      var contactIdentity = resolveContactIdentity(pd, id, { surface: 'forum', authoredName: c.name })
-      return { name: contactIdentity.name, avatar: contactIdentity.avatar, isContact: true }
+      var contactIdentity = resolveContactIdentity(pd, id, { surface: 'forum', aliasId:aliasId, authoredName: c.name })
+      return { name: contactIdentity.name, avatar: contactIdentity.avatar, ipLocation:contactIdentity.ipLocation, isContact: true }
     }
 
     // Check npcs
     var n = npcs.find(function(x) { return x.id === id })
-    if (n) return { name: n.name, avatar: n.avatarUrl || '', isNpc: true, npcType: n.type }
+    if (n) return { name: n.name, avatar: n.avatarUrl || '', ipLocation:n.ipLocation || '', isNpc: true, npcType: n.type }
 
-    return { name: '未知用户', avatar: '', isUnknown: true }
+    return { name: '未知用户', avatar: '', ipLocation:'', isUnknown: true }
   }
 
   function selectIdentity(callback, searchVal) {
@@ -2769,42 +3141,55 @@ function openForumEditor(frame, wid, contact, pd) {
     ov.querySelector('#idOk').onclick = function() {
       var sel = list.querySelector('[name="forumId"]:checked')
       if (!sel) { ov.remove(); return }
-      var parts = sel.value.split('|')
-      callback({ id: parts[0], name: parts[1], avatar: parts[2] || '' })
+      callback({
+        id: sel.dataset.identityContact || sel.dataset.identityNpc || '',
+        aliasId: sel.dataset.identityAlias || '',
+        name: sel.dataset.identityName || '',
+        avatar: sel.dataset.identityAvatar || '',
+        ipLocation: sel.dataset.identityIp || ''
+      })
       ov.remove()
     }
 
     setTimeout(function() { if (search) search.focus() }, 100)
   }
 
+  function bindForumMentionButton(overlay, buttonSelector, inputSelector) {
+    var button = overlay.querySelector(buttonSelector)
+    var input = overlay.querySelector(inputSelector)
+    if (!button || !input) return
+    button.onclick = function() {
+      selectIdentity(function(identity) { insertAtSelection(input, '@' + identity.name + ' ') })
+    }
+  }
+
   function renderIdOptions(contacts, npcs, filter) {
     var h = ''
     var f = (filter || '').toLowerCase()
-    // Contacts section
-    var filteredContacts = contacts.filter(function(c) {
-      var displayName = contactDisplayName(c, 'forum')
-      return !f || c.name.toLowerCase().indexOf(f) >= 0 || displayName.toLowerCase().indexOf(f) >= 0
+    var filteredIdentities = listForumIdentities({ contacts:orderedContacts(contacts, pd.contactSortMode) }).filter(function(identity) {
+      return !f || [identity.name, identity.parentName].some(function(value) { return String(value || '').toLowerCase().indexOf(f) >= 0 })
     })
-    if (filteredContacts.length > 0) {
-      h += '<div class="forum-id-section">联系人</div>'
-      filteredContacts.forEach(function(c, i) {
-        var displayName = contactDisplayName(c, 'forum')
+    var selected = false
+    if (filteredIdentities.length > 0) {
+      h += '<div class="forum-id-section">联系人身份</div>'
+      filteredIdentities.forEach(function(identity) {
         h += '<label class="forum-id-opt">'
-        h += '<input type="radio" name="forumId" value="' + c.id + '|' + esc(displayName) + '|' + esc(c.avatarUrl || '') + '"' + (i === 0 && !filter ? ' checked' : '') + '>'
-        h += '<span>' + esc(displayName) + (displayName !== c.name ? ' <small>' + esc(c.name) + '</small>' : '') + '</span>'
+        h += '<input type="radio" name="forumId" value="contact" data-identity-contact="' + escapeHtmlAttribute(identity.contactId) + '" data-identity-alias="' + escapeHtmlAttribute(identity.aliasId) + '" data-identity-name="' + escapeHtmlAttribute(identity.name) + '" data-identity-avatar="' + escapeHtmlAttribute(identity.avatar) + '" data-identity-ip="' + escapeHtmlAttribute(identity.ipLocation || '') + '"' + (!selected ? ' checked' : '') + '>'
+        h += '<span>' + esc(identity.name) + ' <small>' + (identity.aliasId ? '小号' : '主号') + ' · ' + esc(identity.parentName || '联系人') + '</small></span>'
         h += '</label>'
+        selected = true
       })
     }
     // NPCs section
     var filteredNpcs = npcs.filter(function(n) { return !f || n.name.toLowerCase().indexOf(f) >= 0 })
     if (filteredNpcs.length > 0) {
       h += '<div class="forum-id-section">NPC</div>'
-      filteredNpcs.forEach(function(n, i) {
+      filteredNpcs.forEach(function(n) {
         h += '<label class="forum-id-opt">'
-        var isFirst = !filter && filteredContacts.length === 0 && i === 0
-        h += '<input type="radio" name="forumId" value="' + n.id + '|' + esc(n.name) + '|' + esc(n.avatarUrl || '') + '"' + (isFirst ? ' checked' : '') + '>'
+        h += '<input type="radio" name="forumId" value="npc" data-identity-npc="' + escapeHtmlAttribute(n.id) + '" data-identity-name="' + escapeHtmlAttribute(n.name) + '" data-identity-avatar="' + escapeHtmlAttribute(n.avatarUrl || '') + '" data-identity-ip="' + escapeHtmlAttribute(n.ipLocation || '') + '"' + (!selected ? ' checked' : '') + '>'
         h += '<span>' + esc(n.name) + '</span>'
         h += '</label>'
+        selected = true
       })
     }
     return h
@@ -2815,7 +3200,8 @@ function openForumEditor(frame, wid, contact, pd) {
     var ov = modal('新建NPC',
       '<div class="form-group"><label class="form-label">类型</label><select id="npType" class="form-select"><option value="npc">普通NPC</option><option value="momo">momo</option><option value="userxx">用户xxxxx</option></select></div>' +
       '<div class="form-group"><label class="form-label">名称</label><input id="npName" class="form-input" placeholder="名称"></div>' +
-      '<div class="form-group"><label class="form-label">头像URL（可选）</label>' + IMGHOST_HINT.replace('推荐图床', '') + '<input id="npAvatar" class="form-input" placeholder="https://..."></div>',
+      '<div class="form-group"><label class="form-label">头像URL（可选）</label>' + IMGHOST_HINT.replace('推荐图床', '') + '<input id="npAvatar" class="form-input" placeholder="https://..."></div>' +
+      '<div class="form-group"><label class="form-label">IP 属地（可选）</label><input id="npIpLocation" class="form-input" placeholder="例如：广东"></div>',
       '<button id="npSave" class="btn btn-primary btn-sm">保存</button><button id="npCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     var typeSel = ov.querySelector('#npType')
@@ -2843,6 +3229,7 @@ function openForumEditor(frame, wid, contact, pd) {
       npcs.push({
         id: uid(), type: typeSel.value, name: name,
         avatarUrl: avatarEl.value.trim(),
+        ipLocation: ov.querySelector('#npIpLocation').value.trim(),
         time: new Date().toLocaleString()
       })
       saveData()
@@ -2858,13 +3245,15 @@ function openForumEditor(frame, wid, contact, pd) {
     var ov = modal('编辑NPC',
       '<div class="form-group"><label class="form-label">类型</label><select id="npType" class="form-select"><option value="npc"' + (n.type === 'npc' ? ' selected' : '') + '>普通NPC</option><option value="momo"' + (n.type === 'momo' ? ' selected' : '') + '>momo</option><option value="userxx"' + (n.type === 'userxx' ? ' selected' : '') + '>用户xxxxx</option></select></div>' +
       '<div class="form-group"><label class="form-label">名称</label><input id="npName" class="form-input" value="' + esc(n.name) + '"></div>' +
-      '<div class="form-group"><label class="form-label">头像URL</label>' + IMGHOST_HINT.replace('推荐图床', '') + '<input id="npAvatar" class="form-input" value="' + esc(n.avatarUrl || '') + '"></div>',
+      '<div class="form-group"><label class="form-label">头像URL</label>' + IMGHOST_HINT.replace('推荐图床', '') + '<input id="npAvatar" class="form-input" value="' + esc(n.avatarUrl || '') + '"></div>' +
+      '<div class="form-group"><label class="form-label">IP 属地（可选）</label><input id="npIpLocation" class="form-input" value="' + escAttr(n.ipLocation || '') + '" placeholder="例如：广东"></div>',
       '<button id="npSave" class="btn btn-primary btn-sm">保存</button><button id="npCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     ov.querySelector('#npSave').onclick = function() {
       n.type = ov.querySelector('#npType').value
       n.name = ov.querySelector('#npName').value.trim() || n.name
       n.avatarUrl = ov.querySelector('#npAvatar').value.trim()
+      n.ipLocation = ov.querySelector('#npIpLocation').value.trim()
       saveData()
       ov.remove()
       renderForum()
@@ -2883,11 +3272,13 @@ function openForumEditor(frame, wid, contact, pd) {
     selectIdentity(function(identity) {
       var ov = modal('发帖',
         '<div class="form-group"><label class="form-label">标题</label><input id="fpTitle" class="form-input" placeholder="帖子标题"></div>' +
-        '<div class="form-group"><label class="form-label">内容</label><textarea id="fpContent" class="form-textarea" placeholder="主楼内容" style="min-height:100px"></textarea></div>' +
+        '<div class="form-group"><div class="mention-field-head"><label class="form-label" for="fpContent">内容</label><button type="button" id="fpMention" class="mention-insert-btn">@ 提及</button></div><textarea id="fpContent" class="form-textarea" placeholder="主楼内容" style="min-height:100px"></textarea></div>' +
         '<div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fpImg" class="form-input" placeholder="https://..."></div>' +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">发帖身份：' + esc(identity.name) + '</span></div>',
         '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>')
+
+      bindForumMentionButton(ov, '#fpMention', '#fpContent')
 
       ov.querySelector('#fpSave').onclick = function() {
         var title = ov.querySelector('#fpTitle').value.trim()
@@ -2896,8 +3287,9 @@ function openForumEditor(frame, wid, contact, pd) {
         var imgUrl = ov.querySelector('#fpImg') ? ov.querySelector('#fpImg').value.trim() : ''
         if (!title) return
         posts.unshift({
-          id: uid(), contactId: identity.id, contactName: identity.name,
+          id: uid(), contactId: identity.id, aliasId: identity.aliasId || '', contactName: identity.name,
           contactAvatar: identity.avatar, title: title, content: content, imageUrl: imgUrl || '',
+          contactIpLocation: identity.ipLocation || '',
           time: time, likes: 0, bookmarks: 0, comments: []
         })
         saveData()
@@ -2906,6 +3298,30 @@ function openForumEditor(frame, wid, contact, pd) {
       }
       ov.querySelector('#fpCancel').onclick = function() { ov.remove() }
     })
+  }
+
+  function editPost(postId) {
+    var p = posts.find(function(x) { return x.id === postId })
+    if (!p) return
+    var ov = modal('编辑帖子',
+      '<div class="form-group"><label class="form-label" for="editPostTitle">标题</label><input id="editPostTitle" class="form-input" value="' + escAttr(p.title || '') + '"></div>' +
+      '<div class="form-group"><div class="mention-field-head"><label class="form-label" for="editPostContent">主楼内容</label><button type="button" id="editPostMention" class="mention-insert-btn">@ 提及</button></div><textarea id="editPostContent" class="form-textarea" style="min-height:140px" placeholder="可使用回车分段">' + esc(p.content || '') + '</textarea><div class="form-hint">回车分段会在作者预览和读者端原样保留。</div></div>' +
+      '<div class="form-group"><label class="form-label" for="editPostTime">发帖时间（可选）</label><input id="editPostTime" class="form-input" value="' + escAttr(p.time || '') + '" placeholder="留空则不显示"></div>' +
+      '<div class="form-group"><label class="form-label" for="editPostImg">图片 URL（可选）</label><input id="editPostImg" class="form-input" value="' + escAttr(p.imageUrl || '') + '" placeholder="https://..."></div>',
+      '<button id="editPostSave" class="btn btn-primary btn-sm">保存</button><button id="editPostCancel" class="btn btn-ghost btn-sm">取消</button>')
+    bindForumMentionButton(ov, '#editPostMention', '#editPostContent')
+    ov.querySelector('#editPostSave').onclick = function() {
+      var title = ov.querySelector('#editPostTitle').value.trim()
+      if (!title) return
+      p.title = title
+      p.content = ov.querySelector('#editPostContent').value.trim()
+      p.time = ov.querySelector('#editPostTime').value.trim()
+      p.imageUrl = ov.querySelector('#editPostImg').value.trim()
+      saveData()
+      ov.remove()
+      renderForum()
+    }
+    ov.querySelector('#editPostCancel').onclick = function() { ov.remove() }
   }
 
   function editLikes(postId) {
@@ -2933,19 +3349,29 @@ function openForumEditor(frame, wid, contact, pd) {
     if (!p) return
     selectIdentity(function(identity) {
       var ov = modal(replyToCommentId ? '回复' : '评论',
-        '<div class="form-group"><textarea id="fcContent" class="form-textarea" placeholder="内容" style="min-height:60px"></textarea></div>' +
+        '<div class="form-group"><div class="mention-field-head"><label class="form-label" for="fcContent">内容</label><button type="button" id="fcMention" class="mention-insert-btn">@ 提及</button></div><textarea id="fcContent" class="form-textarea" placeholder="内容" style="min-height:60px"></textarea></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fcImg" class="form-input" placeholder="https://..."></div>' +
+        '<button type="button" id="fcAddTime" class="btn btn-sm btn-ghost">＋ 添加时间</button>' +
+        '<div class="form-group" id="fcTimeField" hidden><label class="form-label">显示时间（可选）</label><input id="fcTime" class="form-input" placeholder="例如：2026/7/22 21:30"></div>' +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">身份：' + esc(identity.name) + '</span></div>',
         '<button id="fcSave" class="btn btn-primary btn-sm">发送</button><button id="fcCancel" class="btn btn-ghost btn-sm">取消</button>')
 
+      bindForumMentionButton(ov, '#fcMention', '#fcContent')
+
+      ov.querySelector('#fcAddTime').onclick = function() {
+        ov.querySelector('#fcTimeField').hidden = false
+        ov.querySelector('#fcAddTime').hidden = true
+        ov.querySelector('#fcTime').focus()
+      }
       ov.querySelector('#fcSave').onclick = function() {
         var content = ov.querySelector('#fcContent').value.trim()
         var imgUrl = ov.querySelector('#fcImg') ? ov.querySelector('#fcImg').value.trim() : ''
         if (!content && !imgUrl) return
         var comment = {
-          id: uid(), contactId: identity.id, contactName: identity.name,
+          id: uid(), contactId: identity.id, aliasId: identity.aliasId || '', contactName: identity.name,
           contactAvatar: identity.avatar, content: content, imageUrl: imgUrl || '',
-          time: new Date().toLocaleString(), replies: []
+          contactIpLocation: identity.ipLocation || '',
+          time: ov.querySelector('#fcTime')?.value?.trim() || '', createdAt: Date.now(), likes: 0, replies: []
         }
         if (replyToCommentId) {
           var parent = p.comments.find(function(c) { return c.id === replyToCommentId })
@@ -3000,7 +3426,7 @@ function openForumEditor(frame, wid, contact, pd) {
         h += '</div>'
         h += '<div class="forum-npc-info">'
         h += '<div class="forum-npc-name">' + esc(n.name) + '</div>'
-        h += '<div class="forum-npc-meta">' + typeLabel + '</div>'
+        h += '<div class="forum-npc-meta">' + typeLabel + authorIpLabel(n.ipLocation) + '</div>'
         h += '</div>'
         h += '<button class="btn btn-sm btn-ghost" data-npc-edit="' + n.id + '">编辑</button>'
         h += '<button class="btn btn-sm btn-ghost" data-npc-del="' + n.id + '" style="color:var(--c-accent3)">删除</button>'
@@ -3014,23 +3440,24 @@ function openForumEditor(frame, wid, contact, pd) {
       h += '<div class="forum-bar">'
       h += '<button class="btn btn-sm btn-ghost" id="fbBack">返回</button>'
       h += '<span class="forum-bar-title">帖子详情</span>'
+      h += '<button class="btn btn-sm btn-outline" id="fbEditPost">编辑</button>'
       h += '<button class="btn btn-sm btn-ghost" id="fbDelPost" style="color:var(--c-accent3)">删除</button>'
       h += '</div>'
 
       // Post header
-      var author = getIdInfo(post.contactId)
+      var author = getIdInfo(post.contactId, post.aliasId)
       h += '<div class="forum-post-full">'
       h += '<div class="forum-post-head">'
       h += '<div class="forum-post-avatar" style="' + (author.avatar ? 'background-image:url(' + esc(author.avatar) + ');background-size:cover' : 'background:' + avatarColor(post.contactId)) + '">'
       if (!author.avatar) h += '<span>' + esc((author.name || '?').charAt(0)) + '</span>'
       h += '</div>'
       h += '<div class="forum-post-by">'
-      h += '<div class="forum-post-author">' + esc(author.name || post.contactName) + ' <span class="forum-badge-op">楼主</span></div>'
+      h += '<div class="forum-post-author">' + esc(author.name || post.contactName) + ' <span class="forum-badge-op">楼主</span>' + authorIpLabel(author.ipLocation || post.contactIpLocation) + '</div>'
       h += '<input class="forum-post-time forum-post-time-edit" data-post-time="' + escAttr(post.id) + '" value="' + escAttr(post.time || '') + '" placeholder="未设置发帖时间">'
       h += '</div>'
       h += '</div>'
       h += '<div class="forum-post-title">' + esc(post.title) + '</div>'
-      h += '<div class="forum-post-content">' + esc(post.content) + '</div>'
+      h += '<div class="forum-post-content">' + renderAuthorMentionText(post.content, forumMentionNames()) + '</div>'
       h += '<div class="forum-post-actions">'
       h += '<span class="forum-action" data-like="' + post.id + '">赞 ' + (post.likes || 0) + '</span>'
       h += '<span class="forum-action" data-bookmark="' + post.id + '">收藏 ' + (post.bookmarks || 0) + '</span>'
@@ -3054,6 +3481,7 @@ function openForumEditor(frame, wid, contact, pd) {
       // List view
       h += '<div class="forum-bar">'
       h += '<span class="forum-bar-title">帖子列表</span>'
+      h += '<button class="btn btn-sm btn-ghost forum-ip-toggle" id="fbIpToggle" type="button" aria-pressed="' + (pd.forumSettings.showIpLocation ? 'true' : 'false') + '">IP ' + (pd.forumSettings.showIpLocation ? '开' : '关') + '</button>'
       h += '<button class="btn btn-sm btn-outline" id="fbAddPost">发帖</button>'
       h += '<button class="btn btn-sm btn-ghost" id="fbNpcs">NPC</button>'
       h += '</div>'
@@ -3063,7 +3491,7 @@ function openForumEditor(frame, wid, contact, pd) {
       }
       for (var pi = 0; pi < posts.length; pi++) {
         var p = posts[pi]
-        var a = getIdInfo(p.contactId)
+        var a = getIdInfo(p.contactId, p.aliasId)
         h += '<div class="forum-list-card" data-post-id="' + p.id + '">'
         h += '<div class="forum-list-avatar" style="' + (a.avatar ? 'background-image:url(' + esc(a.avatar) + ');background-size:cover' : 'background:' + avatarColor(p.contactId)) + '">'
         if (!a.avatar) h += '<span>' + esc((a.name || '?').charAt(0)) + '</span>'
@@ -3099,11 +3527,19 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function renderForumReply(reply, postId, depth) {
-    var h = '<div class="forum-reply-item" data-forum-comment-id="' + escAttr(reply.id) + '" style="margin-left:' + Math.min(depth * 10, 30) + 'px">'
-    h += '<span class="forum-reply-name">' + esc(reply.contactName || '用户') + '</span>：'
-    h += '<span>' + esc(reply.content) + '</span>'
-    h += ' <span class="forum-comment-time">' + fmtTime(reply.time) + '</span>'
-    h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(reply.id) + '" aria-label="编辑这条楼中楼回复的读者回复选项">＋ 回复选项</button>'
+    var replyIdentity = getIdInfo(reply.contactId, reply.aliasId)
+    var replyName = replyIdentity.isUnknown ? (reply.contactName || '用户') : replyIdentity.name
+    var replyAvatar = replyIdentity.isUnknown ? (reply.contactAvatar || '') : (replyIdentity.avatar || reply.contactAvatar || '')
+    var h = '<div class="forum-reply-item" data-forum-comment-id="' + escAttr(reply.id) + '">'
+    h += '<div class="forum-reply-line"><span class="forum-reply-avatar" style="' + (replyAvatar ? 'background-image:url(' + esc(replyAvatar) + ');background-size:cover' : 'background:' + avatarColor(reply.contactId)) + '">'
+    if (!replyAvatar) h += '<span>' + esc((replyName || '?').charAt(0)) + '</span>'
+    h += '</span><div class="forum-reply-copy"><div class="forum-reply-meta"><span class="forum-reply-name">' + esc(replyName) + '</span>'
+    if (reply.time) h += '<span class="forum-comment-time">' + fmtTime(reply.time) + '</span>'
+    h += authorIpLabel(replyIdentity.ipLocation || reply.contactIpLocation) + '</div><div class="forum-reply-content">' + renderAuthorMentionText(reply.content, forumMentionNames()) + '</div></div></div>'
+    h += '<div class="forum-reply-controls"><button type="button" class="forum-comment-like-author" data-forum-comment-likes="' + escAttr(reply.id) + '">赞 ' + (Number(reply.likes) || 0) + '</button>'
+    h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(reply.id) + '" aria-label="编辑这条楼中楼回复的读者回复选项">回复选项</button>'
+    h += '<button type="button" class="forum-comment-drag-handle is-reply" data-forum-comment-drag="' + escAttr(reply.id) + '" aria-label="拖动调整这条回复的顺序" title="拖动排序"><span aria-hidden="true">↕</span></button>'
+    h += '<button type="button" class="forum-delete-btn is-reply" data-forum-reply-delete="' + escAttr(reply.id) + '" aria-label="删除这条回复">×</button></div>'
     if (Array.isArray(reply.choices) && reply.choices.length) {
       h += '<div class="chat-choices forum-comment-choices">'
       reply.choices.forEach(function(choice, choiceIndex) {
@@ -3121,21 +3557,27 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function renderComment(comment, floor, postId) {
+    var commentIdentity = getIdInfo(comment.contactId, comment.aliasId)
+    var commentName = commentIdentity.isUnknown ? (comment.contactName || '用户') : commentIdentity.name
+    var commentAvatar = commentIdentity.isUnknown ? (comment.contactAvatar || '') : (commentIdentity.avatar || comment.contactAvatar || '')
     var h = '<div class="forum-comment" data-forum-comment-id="' + escAttr(comment.id) + '">'
     h += '<div class="forum-comment-head">'
-    h += '<div class="forum-comment-avatar" style="' + (comment.contactAvatar ? 'background-image:url(' + esc(comment.contactAvatar) + ');background-size:cover' : 'background:' + avatarColor(comment.contactId)) + '">'
-    if (!comment.contactAvatar) h += '<span>' + esc((comment.contactName || '?').charAt(0)) + '</span>'
+    h += '<div class="forum-comment-avatar" style="' + (commentAvatar ? 'background-image:url(' + esc(commentAvatar) + ');background-size:cover' : 'background:' + avatarColor(comment.contactId)) + '">'
+    if (!commentAvatar) h += '<span>' + esc((commentName || '?').charAt(0)) + '</span>'
     h += '</div>'
     h += '<div class="forum-comment-by">'
-    h += '<span class="forum-comment-name">' + esc(comment.contactName || '用户') + '</span>'
-    h += '<span class="forum-comment-floor">#' + floor + '</span>'
+    h += '<span class="forum-comment-name">' + esc(commentName) + '</span>'
+    h += '<span class="forum-comment-floor">' + floor + '楼</span>' + authorIpLabel(commentIdentity.ipLocation || comment.contactIpLocation)
     h += '</div>'
+    h += '<button type="button" class="forum-comment-drag-handle" data-forum-comment-drag="' + escAttr(comment.id) + '" aria-label="拖动调整这条评论的楼层" title="拖动排序"><span aria-hidden="true">↕</span></button>'
     h += '</div>'
-    h += '<div class="forum-comment-content">' + esc(comment.content) + '</div>'
+    h += '<div class="forum-comment-content">' + renderAuthorMentionText(comment.content, forumMentionNames()) + '</div>'
     h += '<div class="forum-comment-actions">'
-    h += '<span class="forum-action-sm" data-reply="' + comment.id + '_' + postId + '">回复</span>'
-    h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(comment.id) + '" aria-label="编辑这条评论的读者回复选项">＋ 回复选项</button>'
-    h += '<span class="forum-comment-time">' + fmtTime(comment.time) + '</span>'
+    h += '<button type="button" class="forum-action-sm" data-reply="' + comment.id + '_' + postId + '">回复</button>'
+    h += '<button type="button" class="forum-comment-like-author" data-forum-comment-likes="' + escAttr(comment.id) + '">赞 ' + (Number(comment.likes) || 0) + '</button>'
+    h += '<button type="button" class="forum-choice-edit-btn" data-forum-choice-edit="' + escAttr(comment.id) + '" aria-label="编辑这条评论的读者回复选项">回复选项</button>'
+    if (comment.time) h += '<span class="forum-comment-time">' + fmtTime(comment.time) + '</span>'
+    h += '<button type="button" class="forum-delete-btn" data-forum-comment-delete="' + escAttr(comment.id) + '" aria-label="删除这条评论">×</button>'
     h += '</div>'
 
     if (Array.isArray(comment.choices) && comment.choices.length) {
@@ -3159,6 +3601,108 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function bindForumEvents() {
+    function focusForumDragHandle(id) {
+      var handle = Array.from(frame.querySelectorAll('[data-forum-comment-drag]')).find(function(item) {
+        return String(item.dataset.forumCommentDrag) === String(id)
+      })
+      handle?.focus()
+    }
+
+    function applyForumReorder(result, focusId) {
+      if (!result?.ok) return false
+      var post = posts.find(function(item) { return item.id === currentPostId })
+      if (!post) return false
+      post.comments = result.comments
+      saveData()
+      renderForum()
+      focusForumDragHandle(focusId)
+      return true
+    }
+
+    frame.querySelectorAll('[data-forum-comment-drag]').forEach(function(handle) {
+      handle.onkeydown = function(event) {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+        event.preventDefault()
+        var post = posts.find(function(item) { return item.id === currentPostId })
+        if (!post) return
+        applyForumReorder(reorderForumCommentByOffset(post.comments, handle.dataset.forumCommentDrag, event.key === 'ArrowUp' ? -1 : 1), handle.dataset.forumCommentDrag)
+      }
+
+      handle.onpointerdown = function(event) {
+        if (event.button !== 0 && event.pointerType !== 'touch') return
+        event.preventDefault()
+        var post = posts.find(function(item) { return item.id === currentPostId })
+        if (!post) return
+        var sourceId = handle.dataset.forumCommentDrag
+        var sourceElement = handle.closest('[data-forum-comment-id]')
+        var startY = event.clientY
+        var dragging = false
+        var targetId = ''
+        var targetPosition = 'before'
+        var targetElement = null
+        try { handle.setPointerCapture(event.pointerId) } catch (_) {}
+
+        function clearTarget() {
+          targetElement?.classList.remove('forum-drop-before', 'forum-drop-after')
+          targetElement = null
+          targetId = ''
+        }
+        function finish(commit) {
+          document.removeEventListener('pointermove', move)
+          document.removeEventListener('pointerup', up)
+          document.removeEventListener('pointercancel', cancel)
+          sourceElement?.classList.remove('is-forum-dragging')
+          var finalTarget = targetId
+          var finalPosition = targetPosition
+          clearTarget()
+          if (commit && dragging && finalTarget) applyForumReorder(reorderForumCommentTree(post.comments, sourceId, finalTarget, finalPosition), sourceId)
+        }
+        function move(moveEvent) {
+          if (moveEvent.pointerId !== event.pointerId) return
+          if (!dragging && Math.abs(moveEvent.clientY - startY) < 6) return
+          dragging = true
+          sourceElement?.classList.add('is-forum-dragging')
+          var hit = document.elementFromPoint?.(moveEvent.clientX, moveEvent.clientY)
+          var candidate = hit?.closest?.('[data-forum-comment-id]')
+          if (!candidate || candidate === sourceElement) { clearTarget(); return }
+          var candidateId = candidate.dataset.forumCommentId
+          var rect = candidate.getBoundingClientRect()
+          var position = moveEvent.clientY >= rect.top + rect.height / 2 ? 'after' : 'before'
+          if (!reorderForumCommentTree(post.comments, sourceId, candidateId, position).ok) { clearTarget(); return }
+          if (targetElement !== candidate || targetPosition !== position) clearTarget()
+          targetElement = candidate
+          targetId = candidateId
+          targetPosition = position
+          candidate.classList.add(position === 'after' ? 'forum-drop-after' : 'forum-drop-before')
+        }
+        function up(upEvent) { if (upEvent.pointerId === event.pointerId) finish(true) }
+        function cancel(cancelEvent) { if (cancelEvent.pointerId === event.pointerId) finish(false) }
+        document.addEventListener('pointermove', move)
+        document.addEventListener('pointerup', up)
+        document.addEventListener('pointercancel', cancel)
+      }
+    })
+
+    function editForumCommentLikes(commentId) {
+      var post = posts.find(function(item) { return item.id === currentPostId })
+      var comment = findForumCommentById(post?.comments, commentId)
+      if (!comment) return
+      var ov = modal('编辑评论点赞数',
+        '<div class="form-group"><label class="form-label">点赞数</label><input id="forumCommentLikesInput" class="form-input" type="number" min="0" value="' + (Number(comment.likes) || 0) + '"></div>',
+        '<button id="forumCommentLikesSave" class="btn btn-primary btn-sm">保存</button><button id="forumCommentLikesCancel" class="btn btn-ghost btn-sm">取消</button>')
+      ov.querySelector('#forumCommentLikesSave').onclick = function() {
+        comment.likes = Math.max(0, parseInt(ov.querySelector('#forumCommentLikesInput').value) || 0)
+        saveData()
+        ov.remove()
+        renderForum()
+      }
+      ov.querySelector('#forumCommentLikesCancel').onclick = function() { ov.remove() }
+    }
+
+    frame.querySelectorAll('[data-forum-comment-likes]').forEach(function(button) {
+      button.onclick = function() { editForumCommentLikes(button.dataset.forumCommentLikes) }
+    })
+
     function editForumCommentChoices(commentId) {
       var post = posts.find(function(item) { return item.id === currentPostId })
       var comment = findForumCommentById(post?.comments, commentId)
@@ -3166,6 +3710,9 @@ function openForumEditor(frame, wid, contact, pd) {
       openThreadReplyChoiceEditor(comment, {
         title: '编辑论坛回复选项',
         defaultFollowUpSenderId: comment.contactId,
+        followUpActors: listForumIdentities(pd).map(function(identity) {
+          return { id:identity.contactId, aliasId:identity.aliasId, name:identity.name }
+        }).concat(npcs.map(function(npc) { return { id:npc.id, name:npc.name } })),
         onSave: function() {
           saveData()
           renderForum()
@@ -3204,6 +3751,13 @@ function openForumEditor(frame, wid, contact, pd) {
     var npcsBtn = frame.querySelector('#fbNpcs')
     if (npcsBtn) npcsBtn.onclick = function() { viewMode = 'npcs'; renderForum() }
 
+    var ipToggle = frame.querySelector('#fbIpToggle')
+    if (ipToggle) ipToggle.onclick = function() {
+      pd.forumSettings.showIpLocation = !pd.forumSettings.showIpLocation
+      saveData()
+      renderForum()
+    }
+
     // Add post
     var addPostBtn = frame.querySelector('#fbAddPost')
     if (addPostBtn) addPostBtn.onclick = function() { addPost() }
@@ -3211,6 +3765,9 @@ function openForumEditor(frame, wid, contact, pd) {
     // Delete post
     var delPostBtn = frame.querySelector('#fbDelPost')
     if (delPostBtn) delPostBtn.onclick = function() { deletePost(currentPostId) }
+
+    var editPostBtn = frame.querySelector('#fbEditPost')
+    if (editPostBtn) editPostBtn.onclick = function() { editPost(currentPostId) }
 
     // Like / Bookmark
     var likeBtns = frame.querySelectorAll('[data-like]')
@@ -3262,60 +3819,15 @@ function openForumEditor(frame, wid, contact, pd) {
     replyItems.forEach(function(el) {
       el.oncontextmenu = function(e) {
         e.preventDefault()
-        var commentEl = el.closest('.forum-comment')
-        var replyBtn = commentEl ? commentEl.querySelector('[data-reply]') : null
-        var dataReply = replyBtn ? replyBtn.dataset.reply.split('_')[0] : null
-        if (dataReply && currentPostId) {
-          var post = posts.find(function(p) { return p.id === currentPostId })
-          if (post) {
-            var parentComment = post.comments.find(function(c) { return c.id === dataReply })
-            if (parentComment && parentComment.replies) {
-              var replyIdx = Array.from(commentEl.querySelectorAll('.forum-reply-item')).indexOf(el)
-              if (replyIdx >= 0 && replyIdx < parentComment.replies.length) {
-                editReply(currentPostId, dataReply, replyIdx)
-              }
-            }
-          }
-        }
+        if (currentPostId) editReply(currentPostId, el.dataset.forumCommentId)
       }
     })
 
-    // Delete buttons on comments — inline at right of actions bar
-    var commentBlocks = frame.querySelectorAll('.forum-comment')
-    commentBlocks.forEach(function(block) {
-      var replyBtn = block.querySelector('[data-reply]')
-      if (!replyBtn) return
-      var dataReply = replyBtn.dataset.reply.split('_')[0]
-      var delBtn = document.createElement('button')
-      delBtn.className = 'browser-del'
-      delBtn.textContent = 'x'
-      delBtn.style.cssText = 'margin-left:auto'
-      delBtn.title = '删除评论'
-      delBtn.onclick = function() { deleteComment(currentPostId, dataReply) }
-      var actions = block.querySelector('.forum-comment-actions')
-      if (actions) actions.appendChild(delBtn)
+    frame.querySelectorAll('[data-forum-comment-delete]').forEach(function(button) {
+      button.onclick = function() { deleteComment(currentPostId, button.dataset.forumCommentDelete) }
     })
-
-    // Delete buttons on replies
-    var replyBlocks = frame.querySelectorAll('.forum-reply-item')
-    replyBlocks.forEach(function(el, ri) {
-      var delBtn = document.createElement('button')
-      delBtn.className = 'browser-del'
-      delBtn.textContent = 'x'
-      delBtn.style.cssText = 'margin-left:4px;font-size:.55rem'
-      delBtn.title = '删除回复'
-      delBtn.style.cssText = 'margin-left:4px;float:right;font-size:.55rem'
-      delBtn.onclick = function() {
-        var commentEl = el.closest('.forum-comment')
-        var replyBtn = commentEl ? commentEl.querySelector('[data-reply]') : null
-        var cid = replyBtn ? replyBtn.dataset.reply.split('_')[0] : null
-        if (cid) {
-          var allReplies = Array.from(commentEl.querySelectorAll('.forum-reply-item'))
-          var idx = allReplies.indexOf(el)
-          if (idx >= 0) deleteReply(currentPostId, cid, idx)
-        }
-      }
-      el.appendChild(delBtn)
+    frame.querySelectorAll('[data-forum-reply-delete]').forEach(function(button) {
+      button.onclick = function() { deleteReply(currentPostId, button.dataset.forumReplyDelete) }
     })
   }
 
@@ -3326,13 +3838,14 @@ function openForumEditor(frame, wid, contact, pd) {
     var isTextarea = field === 'content'
     var val = esc(p[field] || '')
     var inputHtml = isTextarea
-      ? '<textarea id="editField" class="form-textarea" style="min-height:80px">' + val + '</textarea>'
+      ? '<div class="mention-field-head"><span class="form-hint">可提及论坛身份</span><button type="button" id="editPostMention" class="mention-insert-btn">@ 提及</button></div><textarea id="editField" class="form-textarea" style="min-height:80px">' + val + '</textarea>'
       : '<input id="editField" class="form-input" value="' + val + '">'
 
     var ov = modal('编辑帖子' + label,
       '<div class="form-group"><label class="form-label">' + label + '</label>' + inputHtml + '</div>' +
       '<div class="form-group"><label class="form-label">图片URL</label><input id="editImg" class="form-input" value="' + esc(p.imageUrl || '') + '" placeholder="https://..."></div>',
       '<button id="efSave" class="btn btn-primary btn-sm">保存</button><button id="efCancel" class="btn btn-ghost btn-sm">取消</button>')
+    if (isTextarea) bindForumMentionButton(ov, '#editPostMention', '#editField')
     ov.querySelector('#efSave').onclick = function() {
       p[field] = ov.querySelector('#editField').value.trim()
       p.imageUrl = ov.querySelector('#editImg').value.trim()
@@ -3349,28 +3862,33 @@ function openForumEditor(frame, wid, contact, pd) {
     var c = p.comments.find(function(x) { return x.id === commentId })
     if (!c) return
     var ov = modal('编辑评论',
-      '<div class="form-group"><textarea id="ecText" class="form-textarea" style="min-height:60px">' + esc(c.content || '') + '</textarea></div>' +
-      '<div class="form-group"><label class="form-label">图片URL</label><input id="ecImg" class="form-input" value="' + esc(c.imageUrl || '') + '" placeholder="https://..."></div>',
+      '<div class="form-group"><div class="mention-field-head"><span class="form-label">内容</span><button type="button" id="editCommentMention" class="mention-insert-btn">@ 提及</button></div><textarea id="ecText" class="form-textarea" style="min-height:60px">' + esc(c.content || '') + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label">图片URL</label><input id="ecImg" class="form-input" value="' + esc(c.imageUrl || '') + '" placeholder="https://..."></div>' +
+      '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="ecTime" class="form-input" value="' + escAttr(c.time || '') + '" placeholder="留空则不显示"></div>',
       '<button id="ecSave" class="btn btn-primary btn-sm">保存</button><button id="ecCancel" class="btn btn-ghost btn-sm">取消</button>')
+    bindForumMentionButton(ov, '#editCommentMention', '#ecText')
     ov.querySelector('#ecSave').onclick = function() {
       c.content = ov.querySelector('#ecText').value.trim()
       c.imageUrl = ov.querySelector('#ecImg').value.trim()
+      c.time = ov.querySelector('#ecTime').value.trim()
       saveData(); ov.remove(); renderForum()
     }
     ov.querySelector('#ecCancel').onclick = function() { ov.remove() }
   }
 
-  function editReply(postId, commentId, replyIdx) {
+  function editReply(postId, replyId) {
     var p = posts.find(function(x) { return x.id === postId })
     if (!p) return
-    var c = p.comments.find(function(x) { return x.id === commentId })
-    if (!c || !c.replies || replyIdx >= c.replies.length) return
-    var r = c.replies[replyIdx]
+    var r = findForumCommentById(p.comments, replyId)
+    if (!r) return
     var ov = modal('编辑回复',
-      '<div class="form-group"><textarea id="erText" class="form-textarea" style="min-height:60px">' + esc(r.content || '') + '</textarea></div>',
+      '<div class="form-group"><div class="mention-field-head"><span class="form-label">内容</span><button type="button" id="editReplyMention" class="mention-insert-btn">@ 提及</button></div><textarea id="erText" class="form-textarea" style="min-height:60px">' + esc(r.content || '') + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="erTime" class="form-input" value="' + escAttr(r.time || '') + '" placeholder="留空则不显示"></div>',
       '<button id="erSave" class="btn btn-primary btn-sm">保存</button><button id="erCancel" class="btn btn-ghost btn-sm">取消</button>')
+    bindForumMentionButton(ov, '#editReplyMention', '#erText')
     ov.querySelector('#erSave').onclick = function() {
       r.content = ov.querySelector('#erText').value.trim()
+      r.time = ov.querySelector('#erTime').value.trim()
       saveData(); ov.remove(); renderForum()
     }
     ov.querySelector('#erCancel').onclick = function() { ov.remove() }
@@ -3384,12 +3902,18 @@ function openForumEditor(frame, wid, contact, pd) {
     renderForum()
   }
 
-  function deleteReply(postId, commentId, replyIdx) {
+  function deleteReply(postId, replyId) {
     var p = posts.find(function(x) { return x.id === postId })
     if (!p) return
-    var c = p.comments.find(function(x) { return x.id === commentId })
-    if (!c || !c.replies) return
-    c.replies.splice(replyIdx, 1)
+    function removeFrom(items) {
+      if (!Array.isArray(items)) return false
+      for (var i = 0; i < items.length; i++) {
+        if (String(items[i]?.id) === String(replyId)) { items.splice(i, 1); return true }
+        if (removeFrom(items[i]?.replies)) return true
+      }
+      return false
+    }
+    if (!removeFrom(p.comments)) return
     saveData()
     renderForum()
   }
@@ -3585,8 +4109,12 @@ function openMessagesEditor(frame, wid, pd) {
       if (moments.length === 0) h += '<div class="pf-empty">暂无动态</div>'
       moments.forEach(function(m) {
         var c = contacts.find(function(x) { return x.id === m.contactId })
+        var momentAvatar = contactAvatar(c, 'messages')
+        var momentAvatarStyle = momentAvatar
+          ? 'background-image:url(' + escapeHtmlAttribute(momentAvatar) + ');background-size:cover'
+          : 'background:' + avatarColor(m.contactId || '0')
         h += '<div class="moment-card" style="position:relative">'
-        h += '<div class="moment-header"><div class="moment-avatar" style="background:' + avatarColor(m.contactId || '0') + '">' + esc((c ? c.name : '?').charAt(0)) + '</div>'
+        h += '<div class="moment-header"><div class="moment-avatar" style="' + momentAvatarStyle + '">' + (momentAvatar ? '' : esc((c ? c.name : '?').charAt(0))) + '</div>'
         h += '<div><div class="moment-user">' + esc(c ? c.name : '未知') + '</div><input class="moment-time-edit" data-moment-time="' + m.id + '" value="' + esc(m.time || '') + '" style="font-size:.7rem;color:var(--c-text2);border:none;background:transparent;outline:none;width:100%"></div></div>'
         h += '<div class="moment-content">' + esc(m.content || '') + '</div>'
         if (m.images && m.images.length) {
@@ -4233,6 +4761,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     h += '<div class="chat-input-bar chat-composer">'
     h += '<button class="chat-btn-icon" id="chatPlusBtn" type="button" aria-label="添加剧情内容">＋</button>'
     h += '<input id="chatInput" aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
+    if (ch.type === 'group') h += '<button class="chat-mention-btn" id="chatMentionBtn" type="button" aria-label="提及群成员">@</button>'
     h += '<button class="chat-send-btn" id="chatSendBtn" type="button">添加</button>'
     h += '</div>'
     h += '</div>'
@@ -4249,7 +4778,7 @@ function openChatEditor(frame, wid, chatId, pd) {
 
   function renderMessageBubble(msg, mi, ri) {
     if (msg.type === 'time') {
-      return '<div class="chat-time-stamp">' + esc(msg.time || '') + '</div>'
+      return '<div class="chat-time-stamp" data-ri="' + ri + '" data-mi="' + mi + '">' + esc(msg.time || '') + '</div>'
     }
     var isSelf = msg.senderId === 'self'
     var showAsSelf = isSelf
@@ -4257,9 +4786,10 @@ function openChatEditor(frame, wid, chatId, pd) {
     var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative">'
     if (msg.senderId !== 'self') {
       var sc = contacts.find(function(c) { return c.id === msg.senderId })
-      var avatarBg = sc ? (sc.avatarUrl ? 'background-image:url(' + sc.avatarUrl + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:var(--c-border)'
+      var messageAvatar = contactAvatar(sc, 'messages')
+      var avatarBg = sc ? (messageAvatar ? 'background-image:url(' + escapeHtmlAttribute(messageAvatar) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:var(--c-border)'
       h += '<div class="chat-avatar" style="' + escapeHtmlAttribute(avatarBg) + '">'
-      if (!sc || !sc.avatarUrl) h += '<span>' + esc(senderName.charAt(0)) + '</span>'
+      if (!messageAvatar) h += '<span>' + esc(senderName.charAt(0)) + '</span>'
       h += '</div>'
     }
     h += '<div style="min-width:0;max-width:100%">'
@@ -4313,7 +4843,8 @@ function openChatEditor(frame, wid, chatId, pd) {
       if (msg.quoteId && msg.quoteText) {
         h += '<div style="font-size:.65rem;color:var(--c-text2);margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--c-border)"><span style="opacity:.6">引用：</span>' + esc(msg.quoteText.substring(0, 50)) + '</div>'
       }
-      h += esc(msg.text || '') + '</div>'
+      var groupMentionNames = ch.type === 'group' ? ['读者'].concat((ch.contactIds || []).map(getSpeakerName)) : []
+      h += renderAuthorMentionText(msg.text || '', groupMentionNames) + '</div>'
     }
     h += '</div>'
     if (msg.choices && msg.choices.length > 0) {
@@ -4380,6 +4911,22 @@ function openChatEditor(frame, wid, chatId, pd) {
     // Right add button — adds one complete authored message for the selected speaker.
     var sendBtn = frame.querySelector('#chatSendBtn')
     var chatInput = frame.querySelector('#chatInput')
+    var mentionBtn = frame.querySelector('#chatMentionBtn')
+    if (mentionBtn) mentionBtn.onclick = function() {
+      var mentionChoices = ['self'].concat(ch.contactIds || []).map(function(senderId) {
+        var name = getSpeakerName(senderId)
+        return '<button type="button" class="btn btn-sm btn-outline chat-mention-pick" data-mention-name="' + escapeHtmlAttribute(name) + '">@' + esc(name) + '</button>'
+      }).join('')
+      var mentionOverlay = modal('提及群成员', '<div class="mention-picker-list">' + mentionChoices + '</div>', '<button type="button" id="chatMentionCancel" class="btn btn-ghost btn-sm">取消</button>')
+      mentionOverlay.querySelectorAll('.chat-mention-pick').forEach(function(button) {
+        button.onclick = function() {
+          var name = button.dataset.mentionName || ''
+          mentionOverlay.remove()
+          insertAtSelection(chatInput, '@' + name + ' ')
+        }
+      })
+      mentionOverlay.querySelector('#chatMentionCancel').onclick = function() { mentionOverlay.remove() }
+    }
     function sendTextMessage() {
       if (!chatInput) return
       var text = chatInput.value.trim()
@@ -4425,7 +4972,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     var msgArea = frame.querySelector('#chatMsgArea')
     if (msgArea) {
       msgArea.addEventListener('contextmenu', function(e) {
-        var msgEl = e.target.closest('.chat-msg')
+        var msgEl = e.target.closest('.chat-msg, .chat-time-stamp')
         if (!msgEl) return
         e.preventDefault()
         var ri = parseInt(msgEl.dataset.ri)
@@ -4437,23 +4984,36 @@ function openChatEditor(frame, wid, chatId, pd) {
         if (!msg) return
 
         // Remove any existing popup
-        var existing = frame.querySelector('.chat-ctx-menu')
-        if (existing) existing.remove()
+        var existing = document.querySelector('.chat-ctx-menu')
+        if (existing) {
+          if (typeof existing._closeContextMenu === 'function') existing._closeContextMenu()
+          else existing.remove()
+        }
 
         var menu = document.createElement('div')
         menu.className = 'chat-ctx-menu'
-        menu.style.cssText = 'position:fixed;z-index:2000;background:var(--c-surface);border:1px solid var(--c-border);box-shadow:0 2px 8px rgba(0,0,0,.15);min-width:130px;padding:2px 0;font-size:.75rem'
-        menu.style.left = e.clientX + 'px'
-        menu.style.top = e.clientY + 'px'
+        menu.setAttribute('role', 'menu')
+
+        function closeContextMenu() {
+          document.removeEventListener('pointerdown', closeOnOutsidePointer)
+          window.removeEventListener('resize', closeContextMenu)
+          window.removeEventListener('scroll', closeContextMenu, true)
+          menu.remove()
+        }
+
+        function closeOnOutsidePointer(event) {
+          if (!menu.contains(event.target)) closeContextMenu()
+        }
+        menu._closeContextMenu = closeContextMenu
 
         function addItem(label, cb) {
-          var el = document.createElement('div')
+          var el = document.createElement('button')
+          el.type = 'button'
+          el.className = 'chat-ctx-menu-item'
+          el.setAttribute('role', 'menuitem')
           el.textContent = label
           if (label.indexOf('选项') >= 0) el.dataset.chatAction = 'choices'
-          el.style.cssText = 'padding:5px 14px;cursor:pointer;color:var(--c-text)'
-          el.onmouseenter = function() { el.style.background = 'var(--c-surface2)' }
-          el.onmouseleave = function() { el.style.background = '' }
-          el.onclick = function() { menu.remove(); cb() }
+          el.onclick = function() { closeContextMenu(); cb() }
           menu.appendChild(el)
           return el
         }
@@ -4626,10 +5186,11 @@ function openChatEditor(frame, wid, chatId, pd) {
         delItem.style.color = '#DC2626'
 
         document.body.appendChild(menu)
-        // Auto-remove on outside click
-        setTimeout(function() {
-          document.addEventListener('click', function dismiss() { menu.remove(); document.removeEventListener('click', dismiss) })
-        }, 0)
+        placeFixedMenuWithinViewport(menu, { x: e.clientX, y: e.clientY })
+        document.addEventListener('pointerdown', closeOnOutsidePointer)
+        window.addEventListener('resize', closeContextMenu)
+        window.addEventListener('scroll', closeContextMenu, true)
+        menu.querySelector('.chat-ctx-menu-item')?.focus()
       })
     }
 
@@ -4673,11 +5234,12 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
     var updated = []
     cards.forEach(function(card) {
       var editor = card.querySelector('.memo-editor')
+      var timeInput = card.querySelector('.memo-time-input')
       var id = card.dataset.memoId
       var existing = memos.find(function(m) { return m.id === id })
       if (editor && existing) {
         existing.content = editor.innerHTML
-        existing.time = new Date().toLocaleString()
+        existing.time = timeInput ? timeInput.value.trim() : existing.time
         updated.push(existing)
       }
     })
@@ -4777,7 +5339,8 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
       h += (m.content || '')
       h += '</div>'
       h += '<div class="memo-card-foot">'
-      h += '<span>' + esc(m.time || '') + '</span>'
+      h += '<label class="sr-only" for="memo_time_' + m.id + '">备忘录日期与时间</label>'
+      h += '<input class="memo-time-input" id="memo_time_' + m.id + '" value="' + escapeHtmlAttribute(m.time || '') + '" placeholder="日期 / 时间">'
       h += '<button data-memo-del="' + m.id + '">\u2715 \u5220\u9664</button>'
       h += '</div>'
       h += '</div>'
@@ -4803,6 +5366,9 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
     editors.forEach(function(ed) {
       ed.addEventListener('blur', function() { saveAll() })
       ed.addEventListener('focus', function() { _activeEditor = ed })
+    })
+    body.querySelectorAll('.memo-time-input').forEach(function(input) {
+      input.addEventListener('blur', function() { saveAll() })
     })
 
     // Backspace helper: delete empty check‑line / num‑line naturally
@@ -4945,10 +5511,10 @@ function openSettingsEditor(wid) {
     h += '<div class="cu-body">'
     h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">与互动文章一致：正文写入“标记”，读者会看到“问题”并填写替换内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
     authorPresets.forEach(function(preset) { h += '<option value="' + escapeHtmlAttribute(preset.id) + '">' + esc(preset.name) + '</option>' })
-    h += '</select><button type="button" class="btn btn-sm btn-outline" id="phoneAuthorPresetApply">套用预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetSave">保存当前为预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetDelete">删除预设</button></div><div id="phonePlaceholderList">'
+    h += '</select><button type="button" class="btn btn-sm btn-outline" id="phoneAuthorPresetApply">套用预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetSave">保存当前为预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetDelete">删除预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetExport">导出预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetImport">导入预设</button><input type="file" id="phoneAuthorPresetFile" accept=".json,application/json" hidden></div><div id="phonePlaceholderList">'
     placeholders.forEach(function(ph, index) {
       var currentMode = ph.mode || 'each'
-      h += '<div class="phone-placeholder-row" data-placeholder-index="' + index + '"><div class="phone-placeholder-head"><strong>' + esc(ph.label || '占位符') + '</strong><button type="button" class="ph-card-del" data-ph-remove="' + index + '" title="删除">×</button></div><div class="phone-placeholder-fields">'
+      h += '<div class="phone-placeholder-row" data-placeholder-index="' + index + '"><div class="phone-placeholder-head"><input class="phone-placeholder-label" data-ph-label aria-label="占位符显示名称" value="' + escapeHtmlAttribute(ph.label || '占位符') + '" placeholder="显示名称，例如：外号"><button type="button" class="ph-card-del" data-ph-remove="' + index + '" title="删除">×</button></div><div class="phone-placeholder-fields">'
       h += '<label><span>标记</span><input class="form-input" data-ph-key value="' + escapeHtmlAttribute(ph.key || '') + '" placeholder="正文中要替换的文字"></label>'
       h += '<label><span>问题</span><input class="form-input" data-ph-prompt value="' + escapeHtmlAttribute(ph.prompt || '') + '" placeholder="对读者的问题"></label>'
       h += '<label><span>模式</span><select class="form-select" data-ph-mode>'
@@ -5048,7 +5614,7 @@ function openSettingsEditor(wid) {
         var key = row.querySelector('[data-ph-key]').value.trim()
         return Object.assign({}, previous, {
           id: previous.id || uid(),
-          label: previous.label || key || '占位符',
+          label: row.querySelector('[data-ph-label]').value.trim() || previous.label || key || '占位符',
           key: key || previous.key || '新占位符',
           prompt: row.querySelector('[data-ph-prompt]').value.trim() || previous.prompt || '请填写',
           forbidden: row.querySelector('[data-ph-forbidden]').value.split(/[，,\n]/).map(function(value) { return value.trim() }).filter(Boolean),
@@ -5059,6 +5625,30 @@ function openSettingsEditor(wid) {
       })
     }
     var saveAuthorPresetBtn = frame.querySelector('#phoneAuthorPresetSave')
+    var authorPresetExportBtn = frame.querySelector('#phoneAuthorPresetExport')
+    if (authorPresetExportBtn) authorPresetExportBtn.onclick = function() {
+      var presets = readAuthorPlaceholderPresets()
+      if (!presets.length) { showToast('请先保存一套作者预设'); return }
+      var presetBundle = serializeAuthorPlaceholderPresetBundle(presets)
+      downloadBlob(new Blob([presetBundle], { type:'application/json;charset=utf-8' }), 'tuuru-placeholder-presets.json')
+      showToast('占位符预设已导出')
+    }
+    var authorPresetImportBtn = frame.querySelector('#phoneAuthorPresetImport')
+    var authorPresetFileInput = frame.querySelector('#phoneAuthorPresetFile')
+    if (authorPresetImportBtn && authorPresetFileInput) authorPresetImportBtn.onclick = function() { authorPresetFileInput.click() }
+    if (authorPresetFileInput) authorPresetFileInput.onchange = async function() {
+      var file = authorPresetFileInput.files?.[0]
+      authorPresetFileInput.value = ''
+      if (!file) return
+      try {
+        importAuthorPlaceholderPresetBundle(await file.text())
+        authorPresets = readAuthorPlaceholderPresets()
+        frame.innerHTML = buildPanel(); bindAll()
+        showToast('占位符预设已导入本机')
+      } catch (error) {
+        showToast(error?.message || '占位符预设文件无法读取')
+      }
+    }
     if (saveAuthorPresetBtn) saveAuthorPresetBtn.onclick = function() {
       collectPlaceholders()
       if (!placeholders.length) { showToast('请先添加占位符'); return }

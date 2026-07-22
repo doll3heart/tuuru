@@ -177,6 +177,8 @@ export function createWorkRecord(data, {
       moments:[],
       forumPosts:[],
       forumNpcs:[],
+      forumSettings:{showIpLocation:false},
+      contactSortMode:"custom",
       apps:makePhoneApps(phoneAppIds),
       skin:JSON.parse(JSON.stringify(DEFAULT_PHONE_SKIN)),
       memos:[],
@@ -240,9 +242,10 @@ export function updateWork(id,data){const db=rd();const i=db.works.findIndex(x=>
 export function deleteWork(id){const db=rd();db.works=db.works.filter(w=>w.id!==id);wr(db)}
 export function duplicateWork(id){const db=rd();const o=db.works.find(w=>w.id===id);if(!o)return null;const c=JSON.parse(JSON.stringify(o));c.id=uid();c.title=o.title+" (副本)";c.createdAt=Date.now();c.updatedAt=Date.now();db.works.push(c);wr(db);return c}
 
-export function addNode(workId,afterId){
+export function addNode(workId,afterId,chapterId){
   const db=rd();const w=db.works.find(x=>x.id===workId);if(!w||w.type!==WORK_TYPE.ARTICLE)return null
-  const n={id:uid(),title:"新节点",content:"",choices:[],scene:"",chapterId:w.chapters&&w.chapters[0]?w.chapters[0].id:""}
+  const targetChapterId=w.chapters&&w.chapters.some(ch=>ch.id===chapterId)?chapterId:(w.chapters&&w.chapters[0]?w.chapters[0].id:"")
+  const n={id:uid(),title:"新节点",content:"",choices:[],scene:"",chapterId:targetChapterId}
   if(afterId){const i=w.nodes.findIndex(x=>x.id===afterId);w.nodes.splice(i+1,0,n)}else w.nodes.push(n)
   if(!w.startNode||!w.nodes.some(x=>x.id===w.startNode))w.startNode=w.nodes[0]?.id||""
   w.updatedAt=Date.now();wr(db);return n
@@ -259,7 +262,7 @@ export function addPlaceholder(wid,key,label,prompt,preset,extra){const db=rd();
 export function updatePlaceholder(wid,pid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const p=w.placeholders.find(x=>x.id===pid);if(!p)return null;Object.assign(p,data);w.updatedAt=Date.now();wr(db);return p}
 export function deletePlaceholder(wid,pid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;w.placeholders=w.placeholders.filter(x=>x.id!==pid);w.updatedAt=Date.now();wr(db)}
 
-export function addContact(wid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c={id:uid(),name:data.name||"未命名",alias:data.alias||"",avatarUrl:data.avatarUrl||"",note:data.note||"",faceUrl:data.faceUrl||"",msgId:data.msgId||"",forumId:data.forumId||""};w.phoneData.contacts.push(c);w.updatedAt=Date.now();wr(db);return c}
+export function addContact(wid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c={id:uid(),name:data.name||"未命名",alias:data.alias||"",aliases:Array.isArray(data.aliases)?data.aliases:[],avatarUrl:data.avatarUrl||"",messageAvatarUrl:data.messageAvatarUrl||"",forumAvatarUrl:data.forumAvatarUrl||"",forumIpLocation:data.forumIpLocation||"",pinned:data.pinned===true,note:data.note||"",faceUrl:data.faceUrl||"",msgId:data.msgId||"",forumId:data.forumId||""};w.phoneData.contacts.push(c);w.updatedAt=Date.now();wr(db);return c}
 export function updateContact(wid,cid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c=w.phoneData.contacts.find(x=>x.id===cid);if(!c)return null;Object.assign(c,data);w.updatedAt=Date.now();wr(db);return c}
 export function deleteContact(wid,cid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return;w.phoneData.contacts=w.phoneData.contacts.filter(x=>x.id!==cid);w.updatedAt=Date.now();wr(db)}
 export function addChat(wid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w||!w.phoneData)return null;const c={id:uid(),type:data.group?"group":"single",contactIds:data.contactIds||[],groupName:data.groupName||"",groupAvatarUrl:data.groupAvatarUrl||"",groupOwnerId:data.groupOwnerId||"self",groupAdminIds:data.groupAdminIds||[],groupTitles:data.groupTitles||{},messages:data.messages||[]};w.phoneData.chats.push(c);w.updatedAt=Date.now();wr(db);return c}
@@ -343,9 +346,20 @@ export function exportWorkAsJSON(wid) {
   if (copy.phoneData) {
     // Remove author-only apps
     if (copy.phoneData.apps) {
-      copy.phoneData.apps = copy.phoneData.apps.filter(function(a) {
-        return a.type !== 'settings' && !PHONE_READER_OWNED_CONTROL_TYPES.includes(a.type)
-      })
+      copy.phoneData.apps = copy.phoneData.apps
+        .filter(function(a) {
+          return a.type !== 'settings' && !PHONE_READER_OWNED_CONTROL_TYPES.includes(a.type)
+        })
+        .sort(function(a, b) {
+          var aIndex = (Number(a.desktopY) || 0) * 4 + (Number(a.desktopX) || 0)
+          var bIndex = (Number(b.desktopY) || 0) * 4 + (Number(b.desktopX) || 0)
+          return aIndex - bIndex
+        })
+        .map(function(app, index) {
+          app.desktopX = index % 4
+          app.desktopY = Math.floor(index / 4)
+          return app
+        })
     }
   }
   return JSON.stringify(copy, null, 2)

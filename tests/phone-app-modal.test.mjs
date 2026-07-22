@@ -198,12 +198,17 @@ test("article contacts expose the full card and persist App identities and avata
   const overlay = openPhoneAppModal(draft.id, "contacts")
   assert.ok(overlay.querySelector(".ct-card"))
   assert.ok(overlay.querySelector("[data-ct-avatar]"))
+  assert.match(overlay.querySelector(".ct-call-bg-row").textContent, /视频通话背景图/)
+  assert.match(overlay.querySelector(".ct-field-hint").textContent, /该角色发起视频通话时的画面背景/)
 
   const expectedFields = {
     "[data-ct-alias]": "小雾",
     "[data-ct-note]": "主角联系人",
     "[data-ct-msgid]": "雾中来信",
     "[data-ct-forum]": "北岸观测员",
+    "[data-ct-message-avatar]": "https://example.invalid/message.png",
+    "[data-ct-forum-avatar]": "https://example.invalid/forum.png",
+    "[data-ct-forum-ip]": "上海",
     "[data-ct-face]": "https://example.invalid/face.png",
   }
   for (const [selector, value] of Object.entries(expectedFields)) {
@@ -224,10 +229,84 @@ test("article contacts expose the full card and persist App identities and avata
   assert.equal(saved.note, "主角联系人")
   assert.equal(saved.msgId, "雾中来信")
   assert.equal(saved.forumId, "北岸观测员")
+  assert.equal(saved.messageAvatarUrl, "https://example.invalid/message.png")
+  assert.equal(saved.forumAvatarUrl, "https://example.invalid/forum.png")
+  assert.equal(saved.forumIpLocation, "上海")
   assert.equal(saved.faceUrl, "https://example.invalid/face.png")
   assert.equal(saved.avatarUrl, "https://example.invalid/avatar.png")
 
   overlay.querySelector(".phone-app-modal-close").click()
+  draft.dispose()
+  dom.window.close()
+})
+
+test("contact editor creates, searches, and persists forum aliases", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", { url:"http://localhost/" })
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.localStorage = dom.window.localStorage
+  globalThis.Element = dom.window.Element
+  globalThis.HTMLElement = dom.window.HTMLElement
+  globalThis.Node = dom.window.Node
+  globalThis.Event = dom.window.Event
+  globalThis.MouseEvent = dom.window.MouseEvent
+  globalThis.MutationObserver = dom.window.MutationObserver
+
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({ id:"contact-alias-editor", type:"article", phoneData:{
+    contacts:[{ id:"contact-1", name:"林雾" }], chats:[], moments:[], forumPosts:[], forumNpcs:[], memos:[], photos:[], albums:[], browserHistory:[], shoppingItems:[], skin:{ readerId:"Reader" }, apps:[],
+  } })
+  const overlay = openPhoneAppModal(draft.id, "contacts")
+  const contactHead = overlay.querySelector('.ct-head')
+  assert.ok(contactHead.querySelector('[data-contact-search]'))
+  assert.doesNotMatch(contactHead.textContent, /^联系人\s/)
+  overlay.querySelector('[data-ct-account-add]').click()
+  const aliasNameInput = overlay.querySelector('[data-ct-account-name]')
+  assert.ok(aliasNameInput, overlay.querySelector('.ct-card')?.innerHTML)
+  assert.ok(overlay.querySelector('[data-ct-account-add]').classList.contains('btn'))
+  assert.match(overlay.querySelector('.ct-account-guide').textContent, /论坛发帖与评论/)
+  aliasNameInput.value = "匿名马甲"
+  overlay.querySelector('[data-ct-account-forum]').value = "无名路人"
+  const aliasAvatarInput = overlay.querySelector('[data-ct-account-avatar]')
+  aliasAvatarInput.value = "https://example.invalid/alias.png"
+  overlay.querySelector('[data-ct-account-ip]').value = "北京"
+  aliasAvatarInput.dispatchEvent(new Event("change", { bubbles:true }))
+
+  const search = overlay.querySelector('[data-contact-search]')
+  search.value = "无名路人"
+  search.dispatchEvent(new Event("input", { bubbles:true }))
+  assert.equal(overlay.querySelector('.ct-card').hidden, false)
+
+  const saved = draft.snapshot().phoneData.contacts[0].aliases[0]
+  assert.ok(saved.id)
+  assert.equal(saved.name, "匿名马甲")
+  assert.equal(saved.forumId, "无名路人")
+  assert.equal(saved.avatarUrl, "https://example.invalid/alias.png")
+  assert.equal(saved.forumIpLocation, "北京")
+  draft.dispose()
+  dom.window.close()
+})
+
+test("contact editor persists pinning, A-Z mode, and custom keyboard order", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", { url:"http://localhost/" })
+  Object.assign(globalThis, { window:dom.window, document:dom.window.document, localStorage:dom.window.localStorage, Element:dom.window.Element, HTMLElement:dom.window.HTMLElement, Node:dom.window.Node, Event:dom.window.Event, MouseEvent:dom.window.MouseEvent, MutationObserver:dom.window.MutationObserver })
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({ id:"contact-order-editor", type:"article", phoneData:{
+    contacts:[{ id:"z", name:"周周" }, { id:"a", name:"安安" }, { id:"b", name:"白白" }], chats:[], moments:[], forumPosts:[], forumNpcs:[], memos:[], photos:[], albums:[], browserHistory:[], shoppingItems:[], skin:{ readerId:"Reader" }, apps:[],
+  } })
+  const overlay = openPhoneAppModal(draft.id, "contacts")
+  assert.equal(overlay.querySelector('[data-contact-sort]').value, "custom")
+  overlay.querySelector('[data-ct-drag="z"]').dispatchEvent(new window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true }))
+  assert.deepEqual(draft.snapshot().phoneData.contacts.map(contact => contact.id), ["a", "z", "b"])
+  overlay.querySelector('.ct-card[data-contact-id="b"] [data-ct-pin]').click()
+  assert.equal(draft.snapshot().phoneData.contacts.find(contact => contact.id === "b").pinned, true)
+  assert.equal(overlay.querySelector('.ct-card').dataset.contactId, "b")
+  overlay.querySelector('[data-contact-sort]').value = "az"
+  overlay.querySelector('[data-contact-sort]').dispatchEvent(new Event("change", { bubbles:true }))
+  assert.equal(draft.snapshot().phoneData.contactSortMode, "az")
+  assert.equal(overlay.querySelector('[data-ct-drag]').disabled, true)
   draft.dispose()
   dom.window.close()
 })

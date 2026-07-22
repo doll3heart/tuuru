@@ -47,6 +47,10 @@ test("the author shell exposes an accessible product mode switch", () => {
   assert.match(app, />读者端</)
   assert.match(rule(".app-mode-link"), /min-height\s*:\s*44px/)
   assert.match(css, /\.app-mode-link:focus-visible[^}]*outline\s*:/s)
+  assert.match(app, /app-resources-link/)
+  assert.match(app, /aria-label="写作习惯与使用教程"/)
+  assert.match(rule(".app-resources-link"), /min-height\s*:\s*44px/)
+  assert.match(css, /\.app-resources-link:focus-visible[^}]*outline\s*:/s)
 })
 
 test("the article editor route can collapse secondary global navigation on phones", () => {
@@ -55,4 +59,9 @@ test("the article editor route can collapse secondary global navigation on phone
   assert.match(css, /\.app-header-editor\s+\.logo/)
   assert.match(css, /\.app-header-editor\s+\.theme-wrap/)
   assert.match(css, /\.app-header-editor\s+\.app-header-actions\s*>\s*nav:not\(\.app-mode-switch\)/)
+})
+
+test("the shared header compacts before a 500px viewport can overflow", () => {
+  assert.match(css, /@media\(max-width:600px\)[\s\S]*\.app-header \.logo span\{display:none\}/)
+  assert.match(css, /@media\(max-width:600px\)[\s\S]*\.app-header nav a\{white-space:nowrap\}/)
 })

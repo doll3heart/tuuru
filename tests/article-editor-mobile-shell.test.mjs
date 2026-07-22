@@ -668,6 +668,36 @@ test("article action rails expose named native controls and an unclipped margin 
   assert.equal(marginPanel.style.getPropertyValue("--margin-popover-left"), "372px")
 })
 
+test("rich text buttons expose a strong pressed state that follows the current selection", async () => {
+  const work = article("format-state-work", [{ id:"format-state-node" }])
+  work.nodes[0].content = "<p><strong>加粗内容</strong></p>"
+  seed(work)
+  const activeCommands = new Set(["bold", "justifyCenter"])
+  const originalQueryCommandState = document.queryCommandState
+  document.queryCommandState = command => activeCommands.has(command)
+  try {
+    const root = await render(work.id)
+    const editable = root.querySelector(".content-editable")
+    const range = document.createRange()
+    range.selectNodeContents(editable.querySelector("strong"))
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new window.Event("selectionchange"))
+
+    const boldButtons = [...root.querySelectorAll('[data-a="bold"]')]
+    assert.ok(boldButtons.length >= 2)
+    assert.ok(boldButtons.every(button => button.getAttribute("aria-pressed") === "true" && button.classList.contains("is-active")))
+    assert.ok([...root.querySelectorAll('[data-a="center"]')].every(button => button.getAttribute("aria-pressed") === "true"))
+
+    activeCommands.clear()
+    document.dispatchEvent(new window.Event("selectionchange"))
+    assert.ok(boldButtons.every(button => button.getAttribute("aria-pressed") === "false" && !button.classList.contains("is-active")))
+  } finally {
+    document.queryCommandState = originalQueryCommandState
+  }
+})
+
 test("bounded action rails scroll horizontally with touch-safe targets", () => {
   const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
   assert.ok(bounded)

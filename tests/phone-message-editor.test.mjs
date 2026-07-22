@@ -101,6 +101,30 @@ test("the author message page exposes the demo editor skeleton", async () => {
   }
 })
 
+test("system time messages open the same author menu and can be deleted", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({ id: "system-time", type: "time", time: "2026/7/22 10:30" })
+  const fixture = await openSingleChat("system-message-delete", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const timestamp = overlay.querySelector('.chat-time-stamp[data-ri="0"][data-mi="0"]')
+    assert.ok(timestamp)
+    timestamp.dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    }))
+    const items = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+    assert.ok(items.length > 0)
+    items.at(-1).click()
+    assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 0)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("group chats can update identity, membership, roles, and titles", async () => {
   const phoneData = makePhoneData()
   phoneData.contacts.push({ id: "contact-2", name: "周遥", avatarUrl: "" })
@@ -132,6 +156,28 @@ test("group chats can update identity, membership, roles, and titles", async () 
     assert.equal(group.groupOwnerId, "contact-2")
     assert.deepEqual(group.groupAdminIds, ["contact-1"])
     assert.deepEqual(group.groupTitles, { "contact-1": "记录员" })
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("group composer inserts a selected @ mention and saves readable text", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts.push({ id:"contact-2", name:"周遥", msgId:"遥遥", avatarUrl:"" })
+  Object.assign(phoneData.chats[0], { type:"group", groupName:"测试群", contactIds:["contact-1", "contact-2"] })
+  const fixture = await openSingleChat("group-chat-mention", phoneData)
+  const { draft, overlay } = fixture
+  try {
+    const input = overlay.querySelector('#chatInput')
+    input.value = "请 "
+    input.setSelectionRange(input.value.length, input.value.length)
+    overlay.querySelector('#chatMentionBtn').click()
+    document.querySelector('.chat-mention-pick[data-mention-name="遥遥"]').click()
+    input.value += "看看"
+    overlay.querySelector('#chatSendBtn').click()
+    const message = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(message.text, "请 @遥遥 看看")
+    assert.equal(overlay.querySelector('.mention-token').textContent, "@遥遥")
   } finally {
     closeFixture(fixture)
   }
@@ -535,6 +581,33 @@ test("single-chat list renders the current contact avatar", async () => {
     assert.equal(listAvatar.querySelector("span"), null)
   } finally {
     closeFixture(fixture)
+  }
+})
+
+test("contact editor filters a long contact list by name without losing the original indexes", async () => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const phoneData = makePhoneData()
+  phoneData.contacts.push(
+    { id:"contact-2", name:"周遥", alias:"小周", avatarUrl:"" },
+    { id:"contact-3", name:"顾声", alias:"", avatarUrl:"" },
+  )
+  const draft = createPhoneWorkDraft({ id:"contact-search", type:"article", phoneData })
+  const overlay = openPhoneAppModal(draft.id, "contacts")
+  try {
+    const search = overlay.querySelector("[data-contact-search]")
+    assert.ok(search)
+    assert.equal(overlay.querySelectorAll(".ct-card").length, 3)
+    search.value = "周遥"
+    search.dispatchEvent(new window.Event("input", { bubbles:true }))
+    const visible = [...overlay.querySelectorAll(".ct-card")].filter(card => !card.hidden)
+    assert.equal(visible.length, 1)
+    assert.equal(visible[0].querySelector("[data-ct-name]").value, "周遥")
+    assert.equal(visible[0].querySelector("[data-ct-name]").dataset.ctIdx, "1")
+  } finally {
+    draft.dispose()
+    dom.window.close()
   }
 })
 

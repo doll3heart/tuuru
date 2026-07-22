@@ -304,7 +304,7 @@ test("forum detail renders authored comments and keeps generated replies next to
     "这是作者排在后面的论坛评论。",
   ])
   assert.deepEqual(items.map(item => item.querySelector(':scope > .rd-forum-comment-meta .rd-thread-comment-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "沈岚"])
-  assert.equal(items[3].querySelector('.rd-forum-floor').textContent, "#4")
+  assert.equal(items[3].querySelector('.rd-forum-floor').textContent, "4楼")
 
   const reselect = document.querySelector('.rd-thread-choice-reselect[data-thread-scope="forum"]')
   assert.ok(reselect)
@@ -325,4 +325,118 @@ test("forum detail renders authored comments and keeps generated replies next to
   const persisted = JSON.parse(localStorage.getItem(`moirain_work_${authoredWork.id}`))
   assert.deepEqual(persisted.phoneData.forumPosts, forumBeforePlay)
   assert.equal(persisted.phoneData.forumPosts[0].comments[0].choices[0].used, undefined)
+})
+
+test("forum choices render consecutive follow-ups from different authored roles", async t => {
+  const work = socialChoiceWork()
+  work.id = "reader-forum-multi-actor-followups"
+  work.phoneData.contacts.push({ id:"contact-2", name:"白榆", forumId:"白榆小号", forumAvatarUrl:"data:image/png;base64,dHdv" })
+  work.phoneData.forumPosts[0].comments[0].choices[0].followUpMessages.push({
+    id:"forum-follow-b",
+    senderId:"contact-2",
+    contactId:"contact-2",
+    text:"我也会过去。",
+    type:"text",
+  })
+  await openSeededPhone(t, work)
+  document.querySelector('[data-app-type="forum"]').click()
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+  document.querySelector('.rd-thread-choice-option[data-thread-scope="forum"]').click()
+  const items = [...document.querySelectorAll('.rd-forum-thread [data-thread-item-id]')]
+  assert.deepEqual(items.slice(0, 4).map(item => item.querySelector(':scope > .rd-forum-comment-meta .rd-thread-comment-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "白榆小号"])
+  assert.equal(items[3].querySelector(':scope > .rd-thread-comment-content').textContent.trim(), "我也会过去。")
+  assert.match(items[3].querySelector('.rd-forum-comment-avatar img')?.getAttribute('src') || '', /^data:image\/png/)
+})
+
+test("reader forum applies the selected avatar shape and renders avatars for comments and nested replies", async t => {
+  const work = socialChoiceWork()
+  work.id = "reader-forum-avatar-shape"
+  work.phoneData.contacts[0].avatarUrl = "data:image/png;base64,contact"
+  work.phoneData.forumNpcs = [{ id:"npc-avatar", name:"路人甲", avatarUrl:"data:image/png;base64,npc" }]
+  work.phoneData.forumPosts[0].comments = [{
+    id:"npc-comment",
+    contactId:"npc-avatar",
+    contactName:"路人甲",
+    contactAvatar:"data:image/png;base64,npc",
+    content:"主评论",
+    replies:[{
+      id:"contact-reply",
+      contactId:"contact-1",
+      contactName:"沈岚",
+      contactAvatar:"data:image/png;base64,contact",
+      content:"楼中楼回复",
+      replies:[],
+    }],
+  }]
+  installDom(t)
+  seedPhoneWork(work)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    readerId:"小鱼",
+    appSettings:{ forum:{ avatarShape:"circle" } },
+  }))
+  await import(`../reader/reader.js?reader-forum-avatar=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="forum"]').click()
+
+  assert.match(document.querySelector(".rd-post-card").getAttribute("style"), /--rd-forum-avatar-radius:50%/)
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+  assert.match(document.querySelector(".rd-forum-detail").getAttribute("style"), /--rd-forum-avatar-radius:50%/)
+  const avatars = [...document.querySelectorAll(".rd-forum-comment-avatar img")]
+  assert.equal(avatars.length, 2)
+  assert.match(avatars[0].src, /^data:image\/png/)
+  assert.match(avatars[1].src, /^data:image\/png/)
+  assert.ok(document.querySelector(".rd-forum-comment.is-reply .rd-forum-comment-avatar"))
+})
+
+test("reader forum defaults to hot comments, keeps authored floors, and stores likes only in the reading session", async t => {
+  const work = socialChoiceWork()
+  work.id = "reader-forum-sort-like"
+  work.phoneData.forumPosts[0].comments = [
+    { id:"comment-old", contactId:"contact-1", contactName:"沈岚", content:"最早评论", createdAt:100, likes:1, replies:[] },
+    { id:"comment-hot", contactId:"contact-1", contactName:"沈岚", content:"热门评论", createdAt:200, likes:9, replies:[] },
+    { id:"comment-latest", contactId:"contact-1", contactName:"沈岚", content:"最新评论", createdAt:300, likes:0, replies:[] },
+  ]
+  await openSeededPhone(t, work)
+  const authoredComments = JSON.parse(localStorage.getItem(`moirain_work_${work.id}`)).phoneData.forumPosts[0].comments
+  document.querySelector('[data-app-type="forum"]').click()
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+
+  let comments = [...document.querySelectorAll('.rd-forum-thread > .rd-forum-comment')]
+  assert.equal(document.querySelector('[data-forum-sort="hot"]').getAttribute('aria-pressed'), 'true')
+  assert.equal(comments[0].dataset.threadItemId, 'comment-hot')
+  assert.equal(comments[0].querySelector('.rd-forum-floor').textContent, '2楼')
+
+  document.querySelector('[data-forum-sort="latest"]').click()
+  comments = [...document.querySelectorAll('.rd-forum-thread > .rd-forum-comment')]
+  assert.equal(comments[0].dataset.threadItemId, 'comment-latest')
+  assert.equal(comments[0].querySelector('.rd-forum-floor').textContent, '3楼')
+
+  const like = comments[0].querySelector('[data-forum-comment-like="comment-latest"]')
+  like.click()
+  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '赞 1')
+  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').getAttribute('aria-pressed'), 'true')
+
+  document.querySelector('.rd-forum-detail .rd-back-btn').click()
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+  assert.equal(document.querySelector('[data-forum-sort="latest"]').getAttribute('aria-pressed'), 'true')
+  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '赞 1')
+  assert.deepEqual(JSON.parse(localStorage.getItem(`moirain_work_${work.id}`)).phoneData.forumPosts[0].comments, authoredComments)
+})
+
+test("reader forum resolves contact aliases for posts and comments", async t => {
+  const work = socialChoiceWork()
+  work.id = "reader-forum-alias"
+  work.phoneData.contacts[0].aliases = [{ id:"alias-1", name:"匿名马甲", forumId:"雨夜路人", avatarUrl:"data:image/png;base64,alias" }]
+  const post = work.phoneData.forumPosts[0]
+  post.aliasId = "alias-1"
+  post.contactName = "旧小号名"
+  post.comments = [{ id:"alias-comment", contactId:"contact-1", aliasId:"alias-1", contactName:"旧小号名", content:"匿名评论", replies:[] }]
+  await openSeededPhone(t, work)
+  document.querySelector('[data-app-type="forum"]').click()
+  assert.match(document.querySelector('.rd-forum-meta').textContent, /雨夜路人/)
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+  assert.equal(document.querySelector('.rd-forum-post-author strong').textContent, "雨夜路人")
+  assert.equal(document.querySelector('.rd-thread-comment-name').textContent, "雨夜路人")
+  assert.match(document.querySelector('.rd-forum-comment-avatar img').src, /^data:image\/png/)
 })

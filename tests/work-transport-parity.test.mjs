@@ -57,10 +57,11 @@ test("current article and phone exports have identical JSON and PNG reader seman
         contacts: [{ id: "contact", name: "A" }],
         chats: [], moments: [], forumPosts: [], forumNpcs: [],
         apps: [
-          { id: "settings", type: "settings" },
-          { id: "customize", type: "customize" },
-          { id: "profile", type: "profile" },
-          { id: "messages", type: "messages", icon: "<svg></svg>" },
+          { id: "settings", type: "settings", desktopX: 0, desktopY: 0 },
+          { id: "customize", type: "customize", desktopX: 1, desktopY: 0 },
+          { id: "profile", type: "profile", desktopX: 2, desktopY: 0 },
+          { id: "messages", type: "messages", icon: "<svg></svg>", desktopX: 3, desktopY: 0 },
+          { id: "memo", type: "memo", icon: "<svg></svg>", desktopX: 0, desktopY: 1 },
         ],
         memos: [], photos: [], albums: [], browserHistory: [], shoppingItems: [],
         futurePhoneField: { preserved: true },
@@ -92,6 +93,10 @@ test("current article and phone exports have identical JSON and PNG reader seman
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "settings"), false)
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "customize"), false)
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "profile"), false)
+      assert.deepEqual(
+        jsonWork.phoneData.apps.map(app => [app.type, app.desktopX, app.desktopY]),
+        [["messages", 0, 0], ["memo", 1, 0]],
+      )
       assert.deepEqual(jsonWork.phoneData.futurePhoneField, { preserved: true })
     }
   }
