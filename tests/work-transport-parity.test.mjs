@@ -55,7 +55,10 @@ test("current article and phone exports have identical JSON and PNG reader seman
       scenes: [],
       phoneData: {
         contacts: [{ id: "contact", name: "A" }],
-        chats: [], moments: [], forumPosts: [], forumNpcs: [],
+        chats: [], moments: [], forumPosts: [{
+          id:"forum-pinned", contactId:"contact", title:"置顶精华帖", content:"正文",
+          pinned:true, featured:true, images:[], comments:[],
+        }], forumNpcs: [],
         apps: [
           { id: "settings", type: "settings", desktopX: 0, desktopY: 0 },
           { id: "customize", type: "customize", desktopX: 1, desktopY: 0 },
@@ -98,6 +101,10 @@ test("current article and phone exports have identical JSON and PNG reader seman
         [["messages", 0, 0], ["memo", 1, 0]],
       )
       assert.deepEqual(jsonWork.phoneData.futurePhoneField, { preserved: true })
+      assert.deepEqual(
+        jsonWork.phoneData.forumPosts.map(post => ({ id:post.id, pinned:post.pinned, featured:post.featured })),
+        [{ id:"forum-pinned", pinned:true, featured:true }],
+      )
     }
   }
 })

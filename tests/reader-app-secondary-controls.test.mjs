@@ -181,3 +181,31 @@ test("reader App secondary controls keep touch-sized focus contracts", () => {
   assert.match(shopTab, /appearance\s*:\s*none/)
   assert.match(shopFocus, /outline\s*:\s*2px solid var\(--c-primary-hover\)/)
 })
+
+test("reader forum keeps pinned posts first and shows authored post states", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-forum-post-states"
+  work.phoneData.forumPosts.push({
+    id:"post-pinned",
+    contactId:"contact-a",
+    contactName:"Alice",
+    title:"Pinned featured post",
+    content:"Important post body",
+    pinned:true,
+    featured:true,
+    comments:[],
+  })
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-forum-post-states=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="forum"]').click()
+
+  const cards = [...document.querySelectorAll(".rd-post-card")]
+  assert.deepEqual(cards.map(card => card.querySelector(".rd-forum-title").textContent), ["Pinned featured post", "First post"])
+  assert.equal(cards[0].querySelector(".rd-forum-post-pinned").textContent, "置顶")
+  assert.equal(cards[0].querySelector(".rd-forum-post-featured").textContent, "精华")
+  assert.equal(cards[1].querySelector(".rd-forum-post-state"), null)
+})

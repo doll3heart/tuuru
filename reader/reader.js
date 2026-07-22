@@ -14,6 +14,7 @@ import { appendArticleChoice, currentArticleChapterEntries, previousArticleChapt
 import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-links.js'
+import { orderedForumPosts } from '../js/forum-post-order.js'
 import {
   normalizePhoneReadingFlow,
   phoneReadingFlowAppType,
@@ -2178,7 +2179,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       renderMessagesHome('chats')
     }
   } else if (type === 'forum') {
-    var posts = pd.forumPosts || []
+    var posts = orderedForumPosts(pd.forumPosts)
     var forumVisual = appStyle('forum')
     var h = ''
     if (posts.length === 0) h += '<div class="rd-app-empty">暂无帖子</div>'
@@ -2190,7 +2191,10 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       if (forumIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(forumIdentity.avatar) + '" alt="">'
       else h += esc((forumIdentity.name || '?').charAt(0))
       h += '</span>'
-      h += '<span class="rd-forum-copy"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-meta">' + esc(forumIdentity.name) + (p.time ? ' / ' + esc(p.time) : '') + '</span></span>'
+      h += '<span class="rd-forum-copy"><span class="rd-forum-title-line"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-post-states">'
+      if (p.pinned === true) h += '<span class="rd-forum-post-state rd-forum-post-pinned">置顶</span>'
+      if (p.featured === true) h += '<span class="rd-forum-post-state rd-forum-post-featured">精华</span>'
+      h += '</span></span><span class="rd-forum-meta">' + esc(forumIdentity.name) + (p.time ? ' / ' + esc(p.time) : '') + '</span></span>'
       h += '</button>'
     })
     wrapPanel('论坛', h)

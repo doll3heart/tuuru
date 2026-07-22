@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "tuuru-web-"
-const CACHE_NAME = `${CACHE_PREFIX}v1`
+const CACHE_NAME = `${CACHE_PREFIX}v2`
 const APP_SHELL = [
   "/",
   "/reader/",
@@ -60,6 +60,18 @@ async function cachedAsset(request) {
   }
 }
 
+async function networkFirstAsset(request) {
+  const cache = await caches.open(CACHE_NAME)
+  try {
+    return await remember(cache, request, await fetch(request))
+  } catch {
+    return (
+      await cache.match(request, { ignoreSearch: true }) ||
+      new Response("", { status: 504, statusText: "Offline" })
+    )
+  }
+}
+
 self.addEventListener("fetch", event => {
   const { request } = event
   if (request.method !== "GET") return
@@ -69,6 +81,11 @@ self.addEventListener("fetch", event => {
 
   if (request.mode === "navigate") {
     event.respondWith(networkFirst(request))
+    return
+  }
+
+  if (request.destination === "style" || request.destination === "script") {
+    event.respondWith(networkFirstAsset(request))
     return
   }
 

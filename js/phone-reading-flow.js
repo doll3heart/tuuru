@@ -40,6 +40,16 @@ function prefixedLabel(prefix, label) {
   return [plainText(prefix), plainText(label)].filter(Boolean).join(" · ").slice(0, 80)
 }
 
+export function reorderPhoneReadingFlowSequence(sequence, fromIndex, toIndex) {
+  const reordered = items(sequence).map(step => ({ ...step }))
+  if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) return reordered
+  if (fromIndex < 0 || fromIndex >= reordered.length || toIndex < 0 || toIndex >= reordered.length) return reordered
+  if (fromIndex === toIndex) return reordered
+  const [moved] = reordered.splice(fromIndex, 1)
+  reordered.splice(toIndex, 0, moved)
+  return reordered
+}
+
 export function phoneReadingFlowAppType(step) {
   return step?.type === "moments" ? "messages" : String(step?.type || "")
 }

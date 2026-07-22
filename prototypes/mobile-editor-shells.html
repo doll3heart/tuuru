@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Tuuru 手机编辑器 · 五版操作壳</title>
+  <link rel="stylesheet" href="./mobile-editor-shells.css">
+</head>
+<body>
+  <main class="review-app">
+    <header class="review-header">
+      <div class="review-brand"><span aria-hidden="true"></span><strong>手机编辑器选型</strong></div>
+      <nav class="variant-picker" aria-label="选择界面版本">
+        <button type="button" data-select-variant="1" aria-pressed="true">1 沉浸</button>
+        <button type="button" data-select-variant="2" aria-pressed="false">2 侧屉</button>
+        <button type="button" data-select-variant="3" aria-pressed="false">3 章节台</button>
+        <button type="button" data-select-variant="4" aria-pressed="false">4 命令</button>
+        <button type="button" data-select-variant="5" aria-pressed="false">5 双页</button>
+      </nav>
+      <div class="width-picker" aria-label="预览宽度">
+        <button type="button" data-preview-width="320" aria-pressed="false">320</button>
+        <button type="button" data-preview-width="390" aria-pressed="true">390</button>
+      </div>
+    </header>
+
+    <div class="review-layout">
+      <aside class="review-notes" aria-live="polite">
+        <span class="review-kicker">当前方案</span>
+        <h1 id="variantTitle">1 · 沉浸写作</h1>
+        <p id="variantSummary">把正文放在第一位，所有低频功能按需从底部展开。</p>
+        <dl id="variantFacts">
+          <div><dt>适合</dt><dd>长时间连续码字</dd></div>
+          <div><dt>大纲</dt><dd>整页切换</dd></div>
+          <div><dt>工具</dt><dd>底部上下文面板</dd></div>
+        </dl>
+        <p class="review-tip">这只是隔离原型，不会修改线上编辑器。请实际点点“大纲、添加章节、拖拽柄、插入、格式”。</p>
+      </aside>
+
+      <section class="phone-stage" aria-label="手机编辑器候选界面">
+        <div class="phone-viewport" id="phoneViewport" style="--preview-width:390px">
+          <div id="prototypeMount"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="./mobile-editor-shells.js"></script>
+</body>
+</html>

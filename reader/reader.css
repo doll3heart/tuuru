@@ -1637,6 +1637,12 @@ body.rd-theme-gray .article-meta { color: #333; }
 .rd-contact-avatar img,
 .rd-message-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .rd-forum-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rd-forum-title-line { display: flex; min-width: 0; align-items: center; gap: 5px; }
+.rd-forum-title-line .rd-forum-title { flex: 1; min-width: 0; }
+.rd-forum-post-states { display: flex; flex: 0 0 auto; gap: 3px; }
+.rd-forum-post-state { padding: 1px 4px; border: 1px solid var(--phone-system-border); border-radius: 3px; color: var(--phone-system-muted); font-size: .52rem; font-weight: 600; line-height: 1.35; }
+.rd-forum-post-pinned { border-color: var(--phone-system-accent); color: var(--phone-system-accent); }
+.rd-forum-post-featured { background: color-mix(in srgb, var(--phone-system-accent) 14%, transparent); color: var(--phone-system-text); }
 .rd-forum-title {
   overflow: hidden; color: var(--rd-forum-title, var(--phone-system-text));
   font-size: var(--rd-forum-title-size, 13px); font-weight: 600;

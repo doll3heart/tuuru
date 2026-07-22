@@ -88,6 +88,14 @@ test("the article tutorial distinguishes scene tags from chapters with an action
   assert.match(source, /场景相同也不表示节点必须在同一章/)
 })
 
+test("the phone tutorial explains the combined forum post action and reorder button", () => {
+  assert.match(source, /我想置顶、加精或调整论坛帖子顺序/)
+  assert.match(source, /帖子卡片右下角粉色爱心省略按钮/)
+  assert.match(source, /轻点[^。]*置顶[^。]*加精/)
+  assert.match(source, /长按[^。]*拖动/)
+  assert.match(source, /上下方向键/)
+})
+
 test("tutorial directory switches the visible guide without a page reload", async t => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { url:"https://tuuru.local/#/resources/tutorial" })
   const previous = {

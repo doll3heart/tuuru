@@ -1,0 +1,424 @@
+{
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "screenshots": [
+    {
+      "file": "01-reader-library.png",
+      "feature": "读者端作品库与导入入口",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-recent-item",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "《Tuuru 全功能展示》互动文章 · 刚刚"
+      }
+    },
+    {
+      "file": "02-password-placeholders.png",
+      "feature": "阅读密码与三项占位符填写",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-landing-modal",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "《Tuuru 全功能展示》Tuuru 功能演示阅读密码：2026。建议将姓名填为“小桃”、昵称填为“桃桃”、网名填为“桃子汽水”，并按节点顺序打开所有手机模块。阅读密码密码错误占位符以下信息将替换作品中对应的占位文字姓名（某某）昵称（小某）网名（wm）从预设填入开始阅读"
+      }
+    },
+    {
+      "file": "03-placeholder-result-watermark.png",
+      "feature": "占位符替换、封面与全屏交叉水印",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-reader",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是节点1】占位符替换Tuuru 功能演示【这是章节1】文章基础Tuuru 灰粉功能展示封面【这是占位符替换结果】姓名=小桃；昵称=桃桃；网名=桃子汽水。只要读者在进入作品时填写内容，同一组占位文字会在正文中统一替换。【这是选项组1】请选择下一项展示。1.查看富文本排版2.跳到分支与汇流"
+      }
+    },
+    {
+      "file": "04-reader-appearance.png",
+      "feature": "读者字号、行距、页边距、主题与背景设置",
+      "width": 390,
+      "height": 844,
+      "selector": ".rs-sheet",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "文章阅读外观×阅读预览你可以按自己的习惯调整文字、留白与背景，作品内容不会改变。字号 18px行间距 1.9字间距 0px段间距 16px水平页边距 20px内容宽度 720px文字对齐左对齐两端对齐居中右对齐 段落首行缩进字体默认宋体黑体楷体圆体英文衬线上传字体 (.ttf/.woff)主题清亮暗夜护眼羊皮纸浅灰自定义颜色背景色文字色阅读背景图应用本地图片"
+      }
+    },
+    {
+      "file": "05-rich-text-formatting.png",
+      "feature": "标题、粗体、斜体、下划线、引用与对齐",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-content",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是二级标题】这是粗体、这是斜体、这是下划线，这一段用于展示正文格式。【这是引用块】读者可以调整字号、行距、页边距、背景和打字效果。【这是居中文字】【这是右对齐文字】"
+      }
+    },
+    {
+      "file": "06-inline-image-watermark.png",
+      "feature": "正文内嵌图片与文字层之间的作者水印",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-content",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是一张内嵌图片】【这是图片说明】图片保存在作品文件中；页面与文字之间可见作者设置的交叉斜排水印。"
+      }
+    },
+    {
+      "file": "07-article-phone-trigger.png",
+      "feature": "文章节点中的消息模块通知入口",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-pm-trigger[data-pm-type=\"messages\"]",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "查看消息"
+      }
+    },
+    {
+      "file": "08-messages-chat-list.png",
+      "feature": "消息模块聊天列表",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-phone-app-messages",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · Tuuru 功能展示纯代乙向禁止偷吃 · T"
+      }
+    },
+    {
+      "file": "09-chat-media-and-voice.png",
+      "feature": "文字、图片、语音与消息气泡",
+      "width": 390,
+      "height": 844,
+      "selector": "#chatMsgArea",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "今天 20:26【这是一条文字消息】你好，某某。6\"【这是一条语音消息】点击后显示语音文本。【这是消息选项】请选择一条完整回复。"
+      }
+    },
+    {
+      "file": "10-chat-reply-options.png",
+      "feature": "完整回复选项面板",
+      "width": 390,
+      "height": 844,
+      "selector": "#rdChoiceList",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "选择回复A选择回复B"
+      }
+    },
+    {
+      "file": "11-chat-choice-follow-up.png",
+      "feature": "读者回复、后续消息与重选",
+      "width": 390,
+      "height": 844,
+      "selector": "#chatMsgArea",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "今天 20:26【这是一条文字消息】你好，某某。6\"【这是一条语音消息】点击后显示语音文本。【这是消息选项】请选择一条完整回复。【这是读者回复A】重选【这是选择A的后续消息1】"
+      }
+    },
+    {
+      "file": "12-progressive-audio-call.png",
+      "feature": "逐句推进的语音通话场景",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-call-scene",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "VOICE CALL剧情进行中示例联系人A打来的语音通话示例联系人A正在通话2 / 3【这是语音通话台词1】【这是语音通话台词2】点击、按 Enter 或空格显示下一句挂断"
+      }
+    },
+    {
+      "file": "13-transfer-and-redpacket.png",
+      "feature": "统一尺寸的转账与红包卡片",
+      "width": 390,
+      "height": 844,
+      "selector": "#chatMsgArea",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是群聊文字消息】转账¥88.88请确认收款转账记录红包¥6.66【这是红包祝福语】微信红包"
+      }
+    },
+    {
+      "file": "14-forum-contacts-node.png",
+      "feature": "同一节点中的论坛与联系人模块入口",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-content",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是论坛模块说明】展示帖子、图片、点赞、评论、嵌套回复与评论选项。查看论坛【这是联系人模块说明】展示姓名、别名、备注与头像。查看联系人"
+      }
+    },
+    {
+      "file": "15-forum-post-comments.png",
+      "feature": "论坛帖子、图片、评论与嵌套回复",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-forum-post-body",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "示示例联系人A刚刚【这是论坛帖子标题】【这是论坛帖子正文】此处展示图片、点赞、评论和评论选项。"
+      }
+    },
+    {
+      "file": "16-contacts.png",
+      "feature": "联系人头像、姓名、别名与备注",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-contact-book",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "示示例联系人A示示例联系人B示示例联系人C"
+      }
+    },
+    {
+      "file": "17-memos.png",
+      "feature": "多条富文本备忘录",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-memo-stack",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是一段备忘录】支持粗体、换行与多条记录。第一项：章节。第二项：节点。第三项：选项跳转。"
+      }
+    },
+    {
+      "file": "18-gallery-albums.png",
+      "feature": "相册列表与照片数量",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-album-list",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是相册1】1 张【这是相册2】1 张"
+      }
+    },
+    {
+      "file": "19-gallery-album-detail.png",
+      "feature": "相册二级页面与照片说明",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-gallery-album-back",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "← 返回相册"
+      }
+    },
+    {
+      "file": "20-browser-history.png",
+      "feature": "带网址与时间的浏览记录",
+      "width": 390,
+      "height": 844,
+      "selector": ".rd-browser-history",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "⌕搜索或输入网址【这是浏览记录1】占位符功能说明demo.local/placeholders20:26【这是浏览记录2】分支跳转说明demo.local/choices20:27"
+      }
+    },
+    {
+      "file": "21-shopping-cart.png",
+      "feature": "购物车商品页",
+      "width": 390,
+      "height": 844,
+      "selector": "#rdShopCart",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是购物车商品】¥19.90"
+      }
+    },
+    {
+      "file": "22-shopping-orders.png",
+      "feature": "已购订单页与购物二级切换",
+      "width": 390,
+      "height": 844,
+      "selector": "#rdShopOrder",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是已购订单】¥88.80"
+      }
+    },
+    {
+      "file": "23-branch-options.png",
+      "feature": "双分支选项组",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-choices",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "1.进入分支A2.进入分支B"
+      }
+    },
+    {
+      "file": "24-branch-a-and-back.png",
+      "feature": "分支A内容与返回上一节按钮",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-reader",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是节点9A】分支ATuuru 功能演示【这是分支A图片】这是只在选择分支A后显示的内容。1.汇流到公共节点"
+      }
+    },
+    {
+      "file": "25-branch-merge.png",
+      "feature": "两条路线汇流到公共节点",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-reader",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "【这是节点10】公共汇流节点Tuuru 功能演示【这是汇流结果】无论选择分支A还是分支B，都会到达这里。左上角返回按钮会回到刚才访问的上一节，而不是退出阅读器。1.查看回环跳转2.直接进入结束页"
+      }
+    },
+    {
+      "file": "26-loop-and-ending-options.png",
+      "feature": "回到首节点或进入结束页的回环选项",
+      "width": 390,
+      "height": 844,
+      "selector": ".article-choices",
+      "audit": {
+        "title": "Moirain",
+        "viewport": [
+          390,
+          844
+        ],
+        "scrollWidth": 390,
+        "text": "1.回到第一个节点2.进入结束页"
+      }
+    }
+  ]
+}

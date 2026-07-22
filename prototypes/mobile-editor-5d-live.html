@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Tuuru 5D 正式编辑器验收</title>
+  <link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { renderHeader } from "/js/app.js"
+    import { renderEditor } from "/js/pages/editor.js"
+
+    const response = await fetch("/samples/acceptance/tuuru-article-acceptance.json")
+    const work = await response.json()
+    localStorage.setItem("tuuru_works", JSON.stringify({ works:[work], contacts:[], groups:[] }))
+    document.getElementById("app").innerHTML = renderHeader() + '<div id="editorMain">' + renderEditor(work.id) + "</div>"
+
+    const query = new URLSearchParams(location.search)
+    const pane = query.get("pane")
+    if (pane === "outline") document.querySelector('[data-a="mobile-pane"][data-pane="outline"]')?.click()
+    if (query.has("creator")) document.querySelector('[data-a="as"]')?.click()
+    document.documentElement.dataset.viewportWidth = String(window.innerWidth)
+    document.documentElement.dataset.editorReady = "true"
+  </script>
+</body>
+</html>

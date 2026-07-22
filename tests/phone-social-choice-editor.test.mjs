@@ -97,6 +97,24 @@ function makePhoneData() {
         time: "",
         replies: [],
       }],
+    }, {
+      id: "post-b",
+      contactId: "contact-2",
+      contactName: "白榆",
+      title: "第二个帖子",
+      content: "用于测试排序。",
+      time: "稍后",
+      images: [],
+      comments: [],
+    }, {
+      id: "post-c",
+      contactId: "contact-1",
+      contactName: "林澈",
+      title: "第三个帖子",
+      content: "继续测试排序。",
+      time: "最后",
+      images: [],
+      comments: [],
     }],
     forumNpcs: [{ id: "npc-a", type: "npc", name: "路人", avatarUrl: "" }],
     memos: [],
@@ -395,6 +413,65 @@ test("forum comment drag handles support keyboard floor reordering", async () =>
     assert.ok(handle)
     handle.dispatchEvent(new window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true }))
     assert.deepEqual(draft.snapshot().phoneData.forumPosts[0].comments.map(comment => comment.id), ["forum-comment-b", "forum-comment-a"])
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("forum posts can be featured, pinned, and reordered without opening the post", async () => {
+  const fixture = await openApp("forum-post-order-controls", "forum")
+  const { draft, overlay } = fixture
+  try {
+    const postBAction = overlay.querySelector('[data-post-actions="post-b"]')
+    assert.ok(postBAction)
+    const postBActionImage = postBAction.querySelector('img')
+    assert.equal(postBActionImage?.getAttribute('width'), '24')
+    assert.equal(postBActionImage?.getAttribute('height'), '12')
+    assert.equal(overlay.querySelectorAll('[data-post-actions]').length, 3)
+    assert.equal(overlay.querySelector('[data-post-feature], [data-post-pin], [data-post-drag]'), null)
+    postBAction.click()
+    const featureAction = document.querySelector('[data-forum-post-state="featured"]')
+    assert.ok(featureAction)
+    assert.ok(Number(featureAction.closest('.forum-post-action-menu')?.style.zIndex) > 1000)
+    assert.ok(document.querySelector('[data-forum-post-state="pinned"]'))
+    featureAction.click()
+    assert.equal(draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-b").featured, true)
+    assert.ok(overlay.querySelector('.forum-list-card[data-post-id="post-b"] .forum-post-state-featured'))
+    assert.ok(overlay.querySelector("#fbAddPost"), "state controls must not open post detail")
+
+    overlay.querySelector('[data-post-actions="post-b"]').click()
+    document.querySelector('[data-forum-post-state="pinned"]').click()
+    assert.equal(draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-b").pinned, true)
+    assert.deepEqual(
+      [...overlay.querySelectorAll(".forum-list-card")].map(card => card.dataset.postId),
+      ["post-b", "post-a", "post-c"],
+    )
+
+    const handle = overlay.querySelector('[data-post-actions="post-a"]')
+    handle.dispatchEvent(new window.KeyboardEvent("keydown", { key:"ArrowDown", bubbles:true }))
+    assert.deepEqual(
+      draft.snapshot().phoneData.forumPosts.map(post => post.id),
+      ["post-b", "post-c", "post-a"],
+    )
+
+    const dragHandle = overlay.querySelector('[data-post-actions="post-a"]')
+    const targetCard = overlay.querySelector('.forum-list-card[data-post-id="post-c"]')
+    targetCard.getBoundingClientRect = () => ({ top:40, height:40, bottom:80, left:0, right:300, width:300 })
+    document.elementFromPoint = () => targetCard
+    function pointer(type, clientY) {
+      const event = new window.MouseEvent(type, { bubbles:true, cancelable:true, button:0, clientX:20, clientY })
+      Object.defineProperty(event, "pointerId", { value:11 })
+      Object.defineProperty(event, "pointerType", { value:"touch" })
+      return event
+    }
+    dragHandle.dispatchEvent(pointer("pointerdown", 100))
+    await new Promise(resolve => setTimeout(resolve, 440))
+    document.dispatchEvent(pointer("pointermove", 48))
+    document.dispatchEvent(pointer("pointerup", 48))
+    assert.deepEqual(
+      draft.snapshot().phoneData.forumPosts.map(post => post.id),
+      ["post-b", "post-a", "post-c"],
+    )
   } finally {
     closeFixture(fixture)
   }

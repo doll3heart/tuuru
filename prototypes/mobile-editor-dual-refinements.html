@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Tuuru 手机编辑器 · 双页精修五版</title>
+  <link rel="stylesheet" href="./mobile-editor-dual-refinements.css">
+</head>
+<body>
+  <main class="review-app">
+    <header class="review-header">
+      <div class="review-brand"><span aria-hidden="true"></span><strong>双页精修</strong></div>
+      <nav class="variant-picker" aria-label="选择界面版本">
+        <button type="button" data-select-variant="1" aria-pressed="true">5A 线签</button>
+        <button type="button" data-select-variant="2" aria-pressed="false">5B 底切</button>
+        <button type="button" data-select-variant="3" aria-pressed="false">5C 索引</button>
+        <button type="button" data-select-variant="4" aria-pressed="false">5D 目录树</button>
+        <button type="button" data-select-variant="5" aria-pressed="false">5E 原生感</button>
+      </nav>
+      <div class="width-picker" aria-label="预览宽度">
+        <button type="button" data-preview-width="320" aria-pressed="false">320</button>
+        <button type="button" data-preview-width="390" aria-pressed="true">390</button>
+      </div>
+    </header>
+
+    <div class="review-layout">
+      <aside class="review-notes" aria-live="polite">
+        <span class="review-kicker">第二轮 · 基于第 5 版</span>
+        <h1 id="variantTitle">5A · 顶部线签</h1>
+        <p id="variantSummary">正文与结构保持一级关系，用文字和细线区分，不再画成两个大按钮。</p>
+        <dl id="variantFacts"></dl>
+        <p class="review-tip">按钮的可见部分控制在 28–32px，外层仍保留 44px 触控区。试试切页、内联添加章节和按住 ⠿ 拖动节点。</p>
+      </aside>
+
+      <section class="phone-stage" aria-label="手机编辑器候选界面">
+        <div class="phone-viewport" id="phoneViewport" style="--preview-width:390px">
+          <div id="prototypeMount"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="./mobile-editor-dual-refinements.js"></script>
+</body>
+</html>

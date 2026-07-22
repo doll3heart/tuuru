@@ -233,6 +233,52 @@ test("phone authors can save and reapply their local placeholder preset", async 
   }
 })
 
+test("reading-flow cards reorder from a touch pointer and explain message-card granularity", async () => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { renderPhoneEditor } = await import(`../js/pages/phone.js?flow-pointer=${Date.now()}-${Math.random()}`)
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages = [
+    { id:"message-a", type:"text", senderId:"contact-1", text:"第一句" },
+    { id:"message-b", type:"text", senderId:"contact-1", text:"第二句" },
+  ]
+  phoneData.readingFlow = {
+    enabled:true,
+    sequence:[
+      { type:"messages", itemId:"message-a", chatId:"chat-1", roundId:"round-1", label:"第一句" },
+      { type:"messages", itemId:"message-b", chatId:"chat-1", roundId:"round-1", label:"第二句" },
+    ],
+  }
+  const draft = createPhoneWorkDraft({ id:"flow-pointer-reorder", type:"article", phoneData })
+  document.getElementById("app").innerHTML = renderPhoneEditor(draft.id)
+  document.querySelector('[data-app-type="settings"]').click()
+  const frame = document.getElementById("phoneFrame")
+
+  function pointer(type, clientY) {
+    const event = new window.MouseEvent(type, { bubbles:true, cancelable:true, button:0, clientX:20, clientY })
+    Object.defineProperty(event, "pointerId", { value:7 })
+    Object.defineProperty(event, "pointerType", { value:"touch" })
+    return event
+  }
+
+  try {
+    assert.match(frame.textContent, /每个消息气泡是一张卡片/)
+    const handles = frame.querySelectorAll(".flow-handle")
+    assert.equal(handles.length, 2)
+    handles[0].dispatchEvent(pointer("pointerdown", 10))
+    document.dispatchEvent(pointer("pointermove", 80))
+    document.dispatchEvent(pointer("pointerup", 80))
+    frame.querySelector("#flowSave").click()
+    assert.deepEqual(
+      draft.snapshot().phoneData.readingFlow.sequence.map(step => step.itemId),
+      ["message-b", "message-a"],
+    )
+  } finally {
+    draft.dispose()
+    dom.window.close()
+  }
+})
+
 test("the selected speaker owns each complete sentence added by the author", async () => {
   const fixture = await openSingleChat("message-editor-speakers")
   const { draft, overlay } = fixture

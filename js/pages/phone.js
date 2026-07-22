@@ -11,13 +11,14 @@ import {
   phoneGridItemStyle,
 } from "../phone-grid.js"
 import { showToast, renderHeader, modal } from "../app.js"
-import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence } from "../phone-reading-flow.js"
+import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence, reorderPhoneReadingFlowSequence } from "../phone-reading-flow.js"
 import { contactAvatar, contactDisplayName, listForumIdentities, resolveContactIdentity } from "../contact-identity.js"
 import { normalizeContactSortMode, orderedContacts, reorderContacts } from "../contact-order.js"
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from "../message-card-links.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
 import { reorderForumCommentByOffset, reorderForumCommentTree } from "../forum-comment-reorder.js"
+import { orderedForumPosts, reorderForumPosts, toggleForumPostFlag } from "../forum-post-order.js"
 import { splitMentionText } from "../mention-text.js"
 import { placeFixedMenuWithinViewport } from "../viewport-menu.js"
 
@@ -25,12 +26,6 @@ var _workId = null
 var _dragState = null
 var _suppressedClickIcon = null
 var _phoneIconSnapTimers = new WeakMap()
-var _flowDragItem = null
-var _flowDragStartY = 0
-var _flowDragOrigIdx = -1
-var _flowFrame = null
-var _flowWid = null
-var _flowPd = null
 
 var PHONE_APP_TYPES_WITH_OWN_HEADER = new Set(['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping'])
 function esc(s) {
@@ -3051,7 +3046,7 @@ function openShoppingEditor(frame, wid, contact, pd) {
 
 /// ===== FORUM EDITOR (posts + comments + npcs) =====
 function openForumEditor(frame, wid, contact, pd) {
-  var posts = pd.forumPosts || []
+  var posts = orderedForumPosts(pd.forumPosts)
   var npcs = pd.forumNpcs || []
   if (!pd.forumSettings || typeof pd.forumSettings !== 'object') pd.forumSettings = {}
   pd.forumSettings.showIpLocation = pd.forumSettings.showIpLocation === true
@@ -3074,6 +3069,15 @@ function openForumEditor(frame, wid, contact, pd) {
 
   var currentPostId = null
   var viewMode = 'list' // list | detail | npcs
+  var forumPostActionMenu = null
+  var forumPostActionMenuCleanup = null
+
+  function closeForumPostActionMenu() {
+    if (forumPostActionMenuCleanup) forumPostActionMenuCleanup()
+    forumPostActionMenu?.remove()
+    forumPostActionMenu = null
+    forumPostActionMenuCleanup = null
+  }
 
   function saveData() {
     pd.forumPosts = posts
@@ -3290,7 +3294,7 @@ function openForumEditor(frame, wid, contact, pd) {
           id: uid(), contactId: identity.id, aliasId: identity.aliasId || '', contactName: identity.name,
           contactAvatar: identity.avatar, title: title, content: content, imageUrl: imgUrl || '',
           contactIpLocation: identity.ipLocation || '',
-          time: time, likes: 0, bookmarks: 0, comments: []
+          time: time, pinned:false, featured:false, likes: 0, bookmarks: 0, comments: []
         })
         saveData()
         ov.remove()
@@ -3403,6 +3407,7 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function renderForum() {
+    closeForumPostActionMenu()
     var body = frame.querySelector('#forumBody')
     if (!body) return
 
@@ -3492,17 +3497,25 @@ function openForumEditor(frame, wid, contact, pd) {
       for (var pi = 0; pi < posts.length; pi++) {
         var p = posts[pi]
         var a = getIdInfo(p.contactId, p.aliasId)
-        h += '<div class="forum-list-card" data-post-id="' + p.id + '">'
+        h += '<div class="forum-list-card' + (p.pinned === true ? ' is-pinned' : '') + '" data-post-id="' + p.id + '">'
         h += '<div class="forum-list-avatar" style="' + (a.avatar ? 'background-image:url(' + esc(a.avatar) + ');background-size:cover' : 'background:' + avatarColor(p.contactId)) + '">'
         if (!a.avatar) h += '<span>' + esc((a.name || '?').charAt(0)) + '</span>'
         h += '</div>'
         h += '<div class="forum-list-info">'
-        h += '<div class="forum-list-title">' + esc(p.title) + '</div>'
+        h += '<div class="forum-list-title-row"><div class="forum-list-title">' + esc(p.title) + '</div><div class="forum-post-states">'
+        if (p.pinned === true) h += '<span class="forum-post-state forum-post-state-pinned">置顶</span>'
+        if (p.featured === true) h += '<span class="forum-post-state forum-post-state-featured">精华</span>'
+        h += '</div></div>'
         h += '<div class="forum-list-meta">' + esc(a.name || p.contactName) + (p.time ? ' / ' + fmtTime(p.time) : '') + '</div>'
+        h += '<div class="forum-list-footer">'
         h += '<div class="forum-list-stats">'
         h += '<span>赞 ' + (p.likes || 0) + '</span>'
         h += '<span>收藏 ' + (p.bookmarks || 0) + '</span>'
         h += '<span>评论 ' + (p.comments ? p.comments.length : 0) + '</span>'
+        h += '</div>'
+        h += '<div class="forum-list-controls">'
+        h += '<button type="button" class="forum-post-action-button' + (p.pinned === true || p.featured === true ? ' active' : '') + '" data-post-actions="' + escAttr(p.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="轻点设置置顶或精华；长按拖动调整顺序；也可用上下方向键排序" title="轻点设置状态，长按拖动排序"><img src="./icons/forum-post-actions.png" width="24" height="12" alt=""></button>'
+        h += '</div>'
         h += '</div>'
         h += '</div>'
         h += '</div>'
@@ -3788,9 +3801,191 @@ function openForumEditor(frame, wid, contact, pd) {
       }
     })
 
+    function focusPostControl(attribute, postId) {
+      var control = Array.from(frame.querySelectorAll('[' + attribute + ']')).find(function(item) {
+        return String(item.getAttribute(attribute)) === String(postId)
+      })
+      control?.focus()
+    }
+
+    function applyPostOrder(result, focusId) {
+      if (!result?.ok) return false
+      posts = result.posts
+      saveData()
+      renderForum()
+      if (focusId) focusPostControl('data-post-actions', focusId)
+      return true
+    }
+
+    function openForumPostActionMenu(button) {
+      closeForumPostActionMenu()
+      var postId = button.dataset.postActions
+      var post = posts.find(function(item) { return String(item.id) === String(postId) })
+      if (!post) return
+      var menu = document.createElement('div')
+      menu.className = 'forum-post-action-menu'
+      menu.style.zIndex = '2001'
+      menu.setAttribute('role', 'menu')
+      menu.setAttribute('aria-label', '帖子状态')
+      menu.innerHTML = '<button type="button" role="menuitemcheckbox" data-forum-post-state="pinned" aria-checked="' + (post.pinned === true ? 'true' : 'false') + '">' + (post.pinned === true ? '取消置顶' : '置顶帖子') + '</button>'
+        + '<button type="button" role="menuitemcheckbox" data-forum-post-state="featured" aria-checked="' + (post.featured === true ? 'true' : 'false') + '">' + (post.featured === true ? '取消加精' : '设为精华') + '</button>'
+
+      function closeOnOutside(event) {
+        if (!menu.contains(event.target) && event.target !== button) closeForumPostActionMenu()
+      }
+      function closeOnKey(event) {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        closeForumPostActionMenu()
+        button.focus()
+      }
+      function cleanupMenuListeners() {
+        document.removeEventListener('pointerdown', closeOnOutside)
+        document.removeEventListener('keydown', closeOnKey)
+        window.removeEventListener('resize', closeForumPostActionMenu)
+        window.removeEventListener('scroll', closeForumPostActionMenu, true)
+        button.setAttribute('aria-expanded', 'false')
+      }
+
+      menu.onclick = function(event) {
+        var item = event.target.closest('[data-forum-post-state]')
+        if (!item) return
+        event.stopPropagation()
+        var result = toggleForumPostFlag(posts, postId, item.dataset.forumPostState)
+        if (!result.ok) return
+        closeForumPostActionMenu()
+        posts = result.posts
+        saveData()
+        renderForum()
+        focusPostControl('data-post-actions', postId)
+      }
+
+      document.body.appendChild(menu)
+      forumPostActionMenu = menu
+      forumPostActionMenuCleanup = cleanupMenuListeners
+      button.setAttribute('aria-expanded', 'true')
+      var rect = button.getBoundingClientRect()
+      placeFixedMenuWithinViewport(menu, { x:rect.right, y:rect.bottom + 4 })
+      document.addEventListener('pointerdown', closeOnOutside)
+      document.addEventListener('keydown', closeOnKey)
+      window.addEventListener('resize', closeForumPostActionMenu)
+      window.addEventListener('scroll', closeForumPostActionMenu, true)
+      menu.querySelector('button')?.focus()
+    }
+
+    frame.querySelectorAll('[data-post-actions]').forEach(function(handle) {
+      var suppressClick = false
+      handle.onclick = function(event) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (suppressClick) {
+          suppressClick = false
+          return
+        }
+        openForumPostActionMenu(handle)
+      }
+      handle.onkeydown = function(event) {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+        event.preventDefault()
+        event.stopPropagation()
+        var sourceIndex = posts.findIndex(function(post) { return String(post.id) === String(handle.dataset.postActions) })
+        if (sourceIndex < 0) return
+        var direction = event.key === 'ArrowUp' ? -1 : 1
+        var targetIndex = sourceIndex + direction
+        if (targetIndex < 0 || targetIndex >= posts.length) return
+        if ((posts[sourceIndex].pinned === true) !== (posts[targetIndex].pinned === true)) return
+        applyPostOrder(reorderForumPosts(posts, posts[sourceIndex].id, posts[targetIndex].id, direction < 0 ? 'before' : 'after'), posts[sourceIndex].id)
+      }
+
+      handle.onpointerdown = function(event) {
+        if (event.button !== 0 && event.pointerType !== 'touch' && event.pointerType !== 'pen') return
+        event.stopPropagation()
+        closeForumPostActionMenu()
+        var sourceId = handle.dataset.postActions
+        var sourceCard = handle.closest('.forum-list-card')
+        var startX = event.clientX
+        var startY = event.clientY
+        var holdTimer = null
+        var holdActive = false
+        var dragging = false
+        var targetId = ''
+        var targetPosition = 'before'
+        var targetCard = null
+        try { handle.setPointerCapture(event.pointerId) } catch (_) {}
+
+        holdTimer = setTimeout(function() {
+          holdTimer = null
+          holdActive = true
+          suppressClick = true
+          handle.classList.add('is-long-press')
+          sourceCard?.classList.add('is-forum-post-dragging')
+          try { navigator.vibrate?.(12) } catch (_) {}
+        }, 420)
+
+        function clearTarget() {
+          targetCard?.classList.remove('forum-post-drop-before', 'forum-post-drop-after')
+          targetCard = null
+          targetId = ''
+        }
+        function finish(commit) {
+          if (holdTimer) clearTimeout(holdTimer)
+          holdTimer = null
+          document.removeEventListener('pointermove', move)
+          document.removeEventListener('pointerup', up)
+          document.removeEventListener('pointercancel', cancel)
+          handle.classList.remove('is-long-press')
+          sourceCard?.classList.remove('is-forum-post-dragging')
+          var finalTarget = targetId
+          var finalPosition = targetPosition
+          clearTarget()
+          if (commit && dragging && finalTarget) applyPostOrder(reorderForumPosts(posts, sourceId, finalTarget, finalPosition), sourceId)
+        }
+        function move(moveEvent) {
+          if (moveEvent.pointerId !== event.pointerId) return
+          if (!holdActive) {
+            if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) > 8 && holdTimer) {
+              clearTimeout(holdTimer)
+              holdTimer = null
+            }
+            return
+          }
+          moveEvent.preventDefault()
+          if (!dragging && Math.abs(moveEvent.clientY - startY) < 6) return
+          dragging = true
+          var hit = document.elementFromPoint?.(moveEvent.clientX, moveEvent.clientY)
+          var candidate = hit?.closest?.('.forum-list-card')
+          if (!candidate || candidate === sourceCard) { clearTarget(); return }
+          var candidateId = candidate.dataset.postId
+          var rect = candidate.getBoundingClientRect()
+          var position = moveEvent.clientY >= rect.top + rect.height / 2 ? 'after' : 'before'
+          if (!reorderForumPosts(posts, sourceId, candidateId, position).ok) { clearTarget(); return }
+          if (targetCard !== candidate || targetPosition !== position) clearTarget()
+          targetCard = candidate
+          targetId = candidateId
+          targetPosition = position
+          candidate.classList.add(position === 'after' ? 'forum-post-drop-after' : 'forum-post-drop-before')
+        }
+        function up(upEvent) {
+          if (upEvent.pointerId !== event.pointerId) return
+          var wasHeld = holdActive
+          finish(true)
+          if (wasHeld) setTimeout(function() { suppressClick = false }, 0)
+        }
+        function cancel(cancelEvent) { if (cancelEvent.pointerId === event.pointerId) finish(false) }
+        document.addEventListener('pointermove', move, { passive:false })
+        document.addEventListener('pointerup', up)
+        document.addEventListener('pointercancel', cancel)
+      }
+    })
+
     // Post cards
     var cards = frame.querySelectorAll('.forum-list-card')
-    cards.forEach(function(c) { c.onclick = function() { viewPost(c.dataset.postId) } })
+    cards.forEach(function(c) {
+      c.onclick = function(event) {
+        if (event.target.closest('button')) return
+        viewPost(c.dataset.postId)
+      }
+    })
 
     // Right-click to edit post title/content
     var postTitle = frame.querySelector('.forum-post-title')
@@ -5525,7 +5720,7 @@ function openSettingsEditor(wid) {
     })
     if (placeholders.length === 0) h += '<div class="phone-placeholder-empty">暂无占位符</div>'
     h += '</div></section>'
-    h += '<div class="st-row"><div><div class="st-label">阅读节奏控制</div><div class="st-desc">启用后可拖拽排序卡片，导出后读者将按序浏览</div></div>'
+    h += '<div class="st-row"><div><div class="st-label">阅读节奏控制</div><div class="st-desc">启用后可拖拽排序。消息中每个消息气泡是一张卡片；旧版按整轮保存的记录会自动拆成多张。</div></div>'
     h += '<label class="tgl-switch"><input type="checkbox" id="flowToggle"' + (flow.enabled ? ' checked' : '') + '><span class="tgl-slider"></span></label></div>'
     h += '<div style="margin-top:12px"><div style="font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--c-text)">卡片序列 (' + seq.length + ')</div>'
     h += '<div class="flow-list" id="flowList">'
@@ -5536,11 +5731,11 @@ function openSettingsEditor(wid) {
         var item = seq[si]
         var color = typeColors[item.type] || '#64748b'
         var typeLabel = typeLabels[item.type] || item.type
-        h += '<div class="flow-item" data-flow-idx="' + si + '" draggable="true">'
+        h += '<div class="flow-item" data-flow-idx="' + si + '">'
         h += '<div class="flow-icon" style="background:' + color + '">' + typeLabel.charAt(0) + '</div>'
         h += '<div class="flow-label"><div class="flow-title">' + esc(item.label || '') + '</div>'
         h += '<div class="flow-meta">' + typeLabel + '</div></div>'
-        h += '<div class="flow-handle" draggable="true"></div></div>'
+        h += '<button type="button" class="flow-handle" data-flow-drag="' + si + '" aria-label="拖动调整这张卡片的顺序；也可用上下方向键" aria-disabled="' + (flow.enabled ? 'false' : 'true') + '"></button></div>'
       }
     }
     h += '</div></div>'
@@ -5586,7 +5781,9 @@ function openSettingsEditor(wid) {
   frame.innerHTML = buildPanel()
 
   // ---- Bind all events (reusable after DOM rebuild) ----
+  var cancelActiveFlowDrag = null
   var restore = function() {
+    if (cancelActiveFlowDrag) cancelActiveFlowDrag()
     if (document.activeElement) document.activeElement.blur()
     frame.style.pointerEvents = 'none'
     frame.style.display = 'none'
@@ -5601,11 +5798,6 @@ function openSettingsEditor(wid) {
       attachDrag(wid)
     })
   }
-
-  _flowFrame = frame
-  _flowWid = wid
-  _flowPd = pd
-  _flowDragItem = null
 
   function bindAll() {
     function collectPlaceholders() {
@@ -5715,7 +5907,12 @@ function openSettingsEditor(wid) {
       }
     })
     var toggle = frame.querySelector('#flowToggle')
-    if (toggle) toggle.onchange = function() { flow.enabled = this.checked }
+    if (toggle) toggle.onchange = function() {
+      flow.enabled = this.checked
+      frame.querySelectorAll('.flow-handle').forEach(function(handle) {
+        handle.setAttribute('aria-disabled', flow.enabled ? 'false' : 'true')
+      })
+    }
 
     var rebuildBtn = frame.querySelector('#flowRebuild')
     if (rebuildBtn) rebuildBtn.onclick = function() {
@@ -5738,90 +5935,82 @@ function openSettingsEditor(wid) {
       restore()
     }
 
-    // Drag handles
     var list = frame.querySelector('#flowList')
     if (list) {
-      var items = list.querySelectorAll('.flow-item')
-      items.forEach(function(item) {
-        item.onmousedown = function(e) {
-          if (e.button !== 0) return
+      function renderReorderedFlow(fromIndex, toIndex) {
+        flow.sequence = reorderPhoneReadingFlowSequence(flow.sequence, fromIndex, toIndex)
+        frame.innerHTML = buildPanel()
+        bindAll()
+        frame.querySelector('[data-flow-drag="' + toIndex + '"]')?.focus()
+      }
+
+      list.querySelectorAll('.flow-handle').forEach(function(handle) {
+        handle.onkeydown = function(event) {
+          if (!flow.enabled || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+          event.preventDefault()
+          var fromIndex = Number(handle.dataset.flowDrag)
+          var toIndex = Math.max(0, Math.min(flow.sequence.length - 1, fromIndex + (event.key === 'ArrowUp' ? -1 : 1)))
+          if (toIndex !== fromIndex) renderReorderedFlow(fromIndex, toIndex)
+        }
+
+        handle.onpointerdown = function(event) {
           if (!flow.enabled) return
-          e.preventDefault()
-          _flowDragItem = item
-          _flowDragStartY = e.clientY
-          _flowDragOrigIdx = parseInt(item.dataset.flowIdx)
-          item.classList.add('dragging')
-          item.style.zIndex = '10'
+          if (event.button !== 0 && event.pointerType !== 'touch' && event.pointerType !== 'pen') return
+          event.preventDefault()
+          if (cancelActiveFlowDrag) cancelActiveFlowDrag()
+          var item = handle.closest('.flow-item')
+          var fromIndex = Number(handle.dataset.flowDrag)
+          var startY = event.clientY
+          var targetIndex = fromIndex
+          var dragging = false
+          var itemHeight = (item?.getBoundingClientRect().height || item?.offsetHeight || 56) + 4
+          try { handle.setPointerCapture(event.pointerId) } catch (_) {}
+
+          function clearTransforms() {
+            list.querySelectorAll('.flow-item').forEach(function(candidate) {
+              candidate.style.transform = ''
+              candidate.style.transition = ''
+              candidate.classList.remove('dragging')
+              candidate.style.zIndex = ''
+            })
+          }
+          function finish(commit) {
+            document.removeEventListener('pointermove', move)
+            document.removeEventListener('pointerup', up)
+            document.removeEventListener('pointercancel', cancel)
+            clearTransforms()
+            cancelActiveFlowDrag = null
+            if (commit && dragging && targetIndex !== fromIndex) renderReorderedFlow(fromIndex, targetIndex)
+          }
+          function move(moveEvent) {
+            if (moveEvent.pointerId !== event.pointerId) return
+            var dy = moveEvent.clientY - startY
+            if (!dragging && Math.abs(dy) < 6) return
+            dragging = true
+            moveEvent.preventDefault()
+            item.classList.add('dragging')
+            item.style.zIndex = '10'
+            item.style.transform = 'translateY(' + dy + 'px)'
+            targetIndex = Math.max(0, Math.min(flow.sequence.length - 1, fromIndex + Math.round(dy / itemHeight)))
+            list.querySelectorAll('.flow-item').forEach(function(candidate, index) {
+              if (index === fromIndex) return
+              var shift = (targetIndex > fromIndex && index > fromIndex && index <= targetIndex)
+                || (targetIndex < fromIndex && index < fromIndex && index >= targetIndex)
+              candidate.style.transform = shift ? 'translateY(' + (targetIndex > fromIndex ? -itemHeight : itemHeight) + 'px)' : ''
+              candidate.style.transition = shift ? 'transform .15s' : ''
+            })
+          }
+          function up(upEvent) { if (upEvent.pointerId === event.pointerId) finish(true) }
+          function cancel(cancelEvent) { if (cancelEvent.pointerId === event.pointerId) finish(false) }
+          cancelActiveFlowDrag = function() { finish(false) }
+          document.addEventListener('pointermove', move, { passive:false })
+          document.addEventListener('pointerup', up)
+          document.addEventListener('pointercancel', cancel)
         }
       })
     }
   }
   bindAll()
-
-  // Global move/up handlers — only registered once
-  if (!window.__flowDragInit) {
-    window.__flowDragInit = true
-    document.addEventListener('mousemove', function(e) {
-      if (!_flowDragItem || !_flowFrame || !_flowPd) return
-      var dy = e.clientY - _flowDragStartY
-      if (Math.abs(dy) > 5) {
-        _flowDragItem.style.transform = 'translateY(' + dy + 'px)'
-        var list = _flowFrame.querySelector('#flowList')
-        if (!list) return
-        var itemHeight = _flowDragItem.offsetHeight + 4
-        var offset = Math.round(dy / itemHeight)
-        var fl = _flowPd.readingFlow
-        if (!fl) return
-        var targetIdx = Math.max(0, Math.min(fl.sequence.length - 1, _flowDragOrigIdx + offset))
-        var allItems = list.querySelectorAll('.flow-item')
-        allItems.forEach(function(it, i) {
-          if (i === _flowDragOrigIdx) return
-          var shift = false
-          if (dy > 0 && i > _flowDragOrigIdx && i <= targetIdx) shift = true
-          if (dy < 0 && i < _flowDragOrigIdx && i >= targetIdx) shift = true
-          if (shift) {
-            it.style.transform = 'translateY(' + (dy > 0 ? -itemHeight : itemHeight) + 'px)'
-            it.style.transition = 'transform .15s'
-          } else {
-            it.style.transform = ''
-            it.style.transition = ''
-          }
-        })
-      }
-    })
-    document.addEventListener('mouseup', function() {
-      if (!_flowDragItem || !_flowFrame || !_flowPd) return
-      var actualDy = 0
-      if (_flowDragItem.style.transform) {
-        var match = _flowDragItem.style.transform.match(/translateY\((-?\d+)px\)/)
-        if (match) actualDy = parseInt(match[1])
-      }
-      var list = _flowFrame.querySelector('#flowList')
-      if (list) {
-        var allItems = list.querySelectorAll('.flow-item')
-        allItems.forEach(function(it) {
-          it.style.transform = ''
-          it.style.transition = ''
-          it.classList.remove('dragging')
-          it.style.zIndex = ''
-        })
-      }
-      var fl = _flowPd.readingFlow
-      if (fl && Math.abs(actualDy) > 5 && _flowDragOrigIdx >= 0) {
-        var itemHeight = _flowDragItem.offsetHeight + 4
-        var targetIdx = Math.round(actualDy / itemHeight) + _flowDragOrigIdx
-        targetIdx = Math.max(0, Math.min(fl.sequence.length - 1, targetIdx))
-        if (targetIdx !== _flowDragOrigIdx) {
-          var moved = fl.sequence.splice(_flowDragOrigIdx, 1)[0]
-          fl.sequence.splice(targetIdx, 0, moved)
-        }
-        _flowFrame.innerHTML = buildPanel()
-        bindAll()
-      }
-      _flowDragItem = null
-      _flowDragOrigIdx = -1
-    })
-  }
 }
 
 

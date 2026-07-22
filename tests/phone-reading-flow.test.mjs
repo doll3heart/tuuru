@@ -4,6 +4,7 @@ import assert from "node:assert/strict"
 import {
   buildPhoneReadingFlowSequence,
   normalizePhoneReadingFlow,
+  reorderPhoneReadingFlowSequence,
   resolvePhoneReadingFlowStep,
 } from "../js/phone-reading-flow.js"
 
@@ -33,6 +34,21 @@ test("the author reading-flow builder keeps every chat field in authored order",
   assert.deepEqual(messageSteps.map(step => step.itemId), ["message-1", "call-1"])
   assert.deepEqual(messageSteps.map(step => step.roundId), ["round-1", "round-1"])
   assert.match(messageSteps[1].label, /语音通话/)
+})
+
+test("reading-flow sequence reorder is detached and rejects invalid indexes", () => {
+  const sequence = [
+    { type:"messages", itemId:"message-1" },
+    { type:"messages", itemId:"call-1" },
+    { type:"memo", itemId:"memo-1" },
+  ]
+  assert.deepEqual(
+    reorderPhoneReadingFlowSequence(sequence, 0, 2).map(step => step.itemId),
+    ["call-1", "memo-1", "message-1"],
+  )
+  assert.deepEqual(sequence.map(step => step.itemId), ["message-1", "call-1", "memo-1"])
+  assert.deepEqual(reorderPhoneReadingFlowSequence(sequence, -1, 2), sequence)
+  assert.notEqual(reorderPhoneReadingFlowSequence(sequence, -1, 2), sequence)
 })
 
 test("reader flow normalization expands a legacy round into its individual fields", () => {
