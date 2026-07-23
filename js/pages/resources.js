@@ -489,8 +489,8 @@ function renderTutorialFaq(sectionId) {
 
 function renderTutorialSupport() {
   return `<div class="tutorial-support" data-tutorial-search-item>
-    <div class="tutorial-support-copy" aria-label="支持任意打赏支持站长后续开发">
-      <strong class="tutorial-support-lead">支持任意打赏支持站长后续开发</strong>
+    <div class="tutorial-support-copy" aria-label="感谢投喂，助力站长继续开发">
+      <strong class="tutorial-support-lead">感谢投喂，助力站长继续开发</strong>
       <span class="tutorial-support-mascot" aria-hidden="true">
         <span class="tutorial-support-ears">(&#92;⑅(&#92;</span>
         <strong class="tutorial-support-face">໒꒰ྀི˶´˘&#96;˵꒱ྀི১</strong>

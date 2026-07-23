@@ -135,7 +135,7 @@ test("the final tutorial tab centers the support copy and image", async t => {
   assert.equal(document.querySelector(".tutorial-support-ears").textContent, "(\\⑅(\\")
   assert.equal(document.querySelector(".tutorial-support-ears").parentElement.className, "tutorial-support-mascot")
   assert.equal(document.querySelector(".tutorial-support-face").parentElement.className, "tutorial-support-mascot")
-  assert.match(document.querySelector(".tutorial-support-copy").textContent, /支持任意打赏支持站长后续开发/)
+  assert.match(document.querySelector(".tutorial-support-copy").textContent, /感谢投喂，助力站长继续开发/)
   assert.match(document.querySelector(".tutorial-support-face").textContent, /໒꒰ྀི˶´˘`˵꒱ྀི১/)
   assert.match(document.querySelector(".tutorial-support img").getAttribute("src"), /zsm\.png$/)
   assert.match(css, /\.tutorial-support-copy\s*\{[^}]*display\s*:\s*inline-flex[^}]*font-weight\s*:\s*700/s)
