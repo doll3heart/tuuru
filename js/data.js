@@ -3,6 +3,11 @@ import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
 import { CURRENT_WORK_SCHEMA_VERSION } from "./work-schema.js"
 import { substitutePlaceholders } from "./placeholders.js"
 import { assertSteganoPayloadSize, readSteganoPayload, writeSteganoPayload } from "./stegano.js"
+import {
+  createWorkCollectionRecord,
+  normalizeWorkCollection,
+  serializeWorkCollectionBundle,
+} from "./work-collections.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -239,8 +244,13 @@ export function createWork(data){
 }
 
 export function updateWork(id,data){const db=rd();const i=db.works.findIndex(x=>x.id===id);if(i<0)return null;db.works[i]={...db.works[i],...data,updatedAt:Date.now()};wr(db);return db.works[i]}
-export function deleteWork(id){const db=rd();db.works=db.works.filter(w=>w.id!==id);wr(db)}
+export function deleteWork(id){const db=rd();db.works=db.works.filter(w=>w.id!==id);if(Array.isArray(db.collections)){const now=Date.now();db.collections=db.collections.map(c=>(c.workIds||[]).includes(id)?{...c,workIds:c.workIds.filter(wid=>wid!==id),updatedAt:now}:c)}wr(db)}
 export function duplicateWork(id){const db=rd();const o=db.works.find(w=>w.id===id);if(!o)return null;const c=JSON.parse(JSON.stringify(o));c.id=uid();c.title=o.title+" (副本)";c.createdAt=Date.now();c.updatedAt=Date.now();db.works.push(c);wr(db);return c}
+
+export function getWorkCollections(){const db=rd();return Array.isArray(db.collections)?db.collections:[]}
+export function createWorkCollection(data){const db=rd();const existingIds=new Set(db.works.map(w=>w.id));const workIds=[...new Set((data.workIds||[]).filter(id=>existingIds.has(id)))];const record=createWorkCollectionRecord({...data,id:data.id||uid(),workIds,now:Date.now()});db.collections=[...(db.collections||[]),record];wr(db);return record}
+export function updateWorkCollection(id,data){const db=rd();const index=(db.collections||[]).findIndex(c=>c.id===id);if(index<0)return null;const existingIds=new Set(db.works.map(w=>w.id));const current=db.collections[index];const next=normalizeWorkCollection({...current,...data,id:current.id,createdAt:current.createdAt,updatedAt:Date.now(),workIds:(data.workIds||current.workIds||[]).filter(wid=>existingIds.has(wid))});db.collections=db.collections.slice();db.collections[index]=next;wr(db);return next}
+export function deleteWorkCollection(id){const db=rd();db.collections=(db.collections||[]).filter(c=>c.id!==id);wr(db);return true}
 
 export function addNode(workId,afterId,chapterId){
   const db=rd();const w=db.works.find(x=>x.id===workId);if(!w||w.type!==WORK_TYPE.ARTICLE)return null
@@ -455,6 +465,17 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback
   } else {
     drawAndEncode(function() { drawDefaultBg(ctx, size) })
   }
+}
+
+export function exportWorkCollectionAsJSON(collectionId) {
+  var db = rd()
+  var collection = (db.collections || []).find(function(candidate) { return candidate.id === collectionId })
+  if (!collection) return null
+  var shareableWorks = collection.workIds.map(function(workId) {
+    var json = exportWorkAsJSON(workId)
+    return json ? JSON.parse(json) : null
+  }).filter(Boolean)
+  return serializeWorkCollectionBundle(collection, shareableWorks, new Date())
 }
 
 function drawDefaultBg(ctx, size) {

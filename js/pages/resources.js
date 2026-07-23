@@ -77,7 +77,7 @@ function modeOptions(selected) {
 
 function renderPresetField(field = {}) {
   return `<div class="preset-field-row" data-preset-field>
-    <label><span>正文标记</span><input class="form-input" data-field-key value="${esc(field.key)}" placeholder="例如：某某"></label>
+    <label><span>正文标记</span><input class="form-input" data-field-key value="${esc(field.key)}" placeholder="例如：称呼标记"></label>
     <label><span>显示名称</span><input class="form-input" data-field-label value="${esc(field.label)}" placeholder="例如：姓名"></label>
     <label><span>提问文字</span><input class="form-input" data-field-prompt value="${esc(field.prompt)}" placeholder="例如：你的名字？"></label>
     <label><span>替换方式</span><select class="form-select" data-field-mode>${modeOptions(field.mode || "each")}</select></label>
@@ -149,24 +149,24 @@ function tutorialSteps(steps) {
 }
 
 function tutorialChecklist(items) {
-  return `<aside class="tutorial-checkpoint"><h3>完成后检查</h3><ul>${items.map(item => `<li>${item}</li>`).join("")}</ul></aside>`
+  return `<aside class="tutorial-checkpoint"><h3>检查一下</h3><ul>${items.map(item => `<li>${item}</li>`).join("")}</ul></aside>`
 }
 
 function tutorialFaq(items) {
-  return `<div class="tutorial-faq"><h3>我想要……该怎么做？</h3>${items.map(item => glossaryItem(item.title, item.body)).join("")}</div>`
+  return `<div class="tutorial-faq"><h3>按需求查找</h3>${items.map(item => glossaryItem(item.title, item.body)).join("")}</div>`
 }
 
 function tutorialGuide({ category, title, outcome, intro, steps, checklist, faq }) {
   return `<section class="tutorial-section tutorial-guide resource-prose" id="tutorial-${category}" role="tabpanel" data-tutorial-category="${category}"${category === "start" ? "" : " hidden"}>
     <header class="tutorial-guide-header"><h2>${title}</h2><p>${intro}</p></header>
-    <p class="tutorial-outcome"><strong>你会完成：</strong>${outcome}</p>
+    <p class="tutorial-outcome"><strong>本节目标：</strong>${outcome}</p>
     ${tutorialSteps(steps)}
     ${tutorialChecklist(checklist)}
     ${tutorialFaq(faq)}
   </section>`
 }
 
-function renderTutorialPage() {
+function renderLegacyTutorialPage() {
   return `<div class="resource-panel" data-resource-panel="tutorial">
     <div class="tutorial-layout">
       <nav class="tutorial-directory" aria-label="教程目录">
@@ -181,76 +181,76 @@ function renderTutorialPage() {
       <div class="tutorial-content">
     ${tutorialGuide({
       category:"start",
-      title:"第一次使用：从新建到交给读者",
-      outcome:"创建一篇最小可读作品，亲自走完预览，并导出一个能交给读者的文件。",
-      intro:"先跑通一次完整流程，再回头增加分支、社交内容和美化，最不容易迷路。",
+      title:"第一次使用",
+      outcome:"新建作品、完成预览并导出文件。",
+      intro:"先做一篇能读完的小作品，再添加复杂内容。",
       steps:[
-        { title:"选择作品类型", body:"<p>从首页点击「新建」，选择「互动文章」来写节点式分支故事；如果整部作品都发生在手机界面里，则选择「小手机」。第一次建议先建互动文章。</p>" },
-        { title:"填写最少信息", body:"<p>输入作品标题；描述和作者名可以稍后补。创建后会进入编辑器，第一章和第一个开始节点已经准备好。</p>" },
-        { title:"写出一段可读内容", body:"<p>选中开始节点，在正文区写一小段文字。观察顶部保存状态，等它显示「已保存」再离开页面。</p>" },
-        { title:"增加一次互动", body:"<p>打开「选项」，添加一条读者可点击的文字。暂时不做复杂分支也没关系，可以先让它指向现有节点或新建目标节点。</p>" },
-        { title:"用阅读视角检查", body:"<p>从作品页进入阅读预览，实际点击一次选项，确认正文、返回路径和手机内容符合预期。作者端看起来正确，不等于读者流程一定完整。</p>" },
-        { title:"导出并留一份备份", body:"<p>回到首页，在作品卡片的「更多」中导出 JSON 或 PNG；再使用「备份全部」保存当前创作库。作品文件用于分享，整库备份用于保护作者数据。</p>" },
+        { title:"选择类型", body:"<p>首页点「新建」。分支故事选「互动文章」；全程模拟手机选「小手机」。</p>" },
+        { title:"填写信息", body:"<p>先填标题。简介和作者名可以稍后补。</p>" },
+        { title:"写一段内容", body:"<p>选中开始节点并输入正文。看到「已保存」后再离开。</p>" },
+        { title:"添加互动", body:"<p>打开「选项」，添加一条选择并设置目标。</p>" },
+        { title:"实际预览", body:"<p>进入阅读预览，点击选项并检查返回路径。</p>" },
+        { title:"导出和备份", body:"<p>在作品卡片「更多」中导出 JSON 或 PNG，再点「备份全部」。作品文件用于分享，备份用于恢复。</p>" },
       ],
       checklist:["重新打开作品后正文仍在", "读者能从开头走到至少一个结果", "导出的文件保存在自己能找到的位置", "整库备份没有发送给不可信的人"],
       faq:[
-        { title:"我想新建一篇能选择不同剧情的作品", body:"<p><strong>入口：</strong>创作端首页 →「新建」→「互动文章」。创建后，在右侧「作品结构」添加节点，再到来源节点的「选项」里选择目标节点。整部内容都只发生在手机界面时，才选择「小手机」。</p>" },
-        { title:"我想先看看读者实际会看到什么", body:"<p><strong>入口：</strong>打开作品详情或编辑器中的阅读预览入口。预览时要真正点击选项、打开小手机和返回上一章；只在作者端切换节点不能代替读者流程检查。</p>" },
-        { title:"我想修改已经创建的作品信息", body:"<p><strong>入口：</strong>首页作品卡片 →「更多」或作品信息入口。标题、简介、作者署名和作品相关展示设置都应在作品自己的信息页修改，不需要重新新建作品。</p>" },
-        { title:"我想确认刚才写的内容有没有保存", body:"<p><strong>位置：</strong>文章编辑器顶部的保存状态。停止输入后等状态稳定为「已保存」再关闭页面；导出文件和备份不会因为自动保存而自动下载，仍需手动执行。</p>" },
-        { title:"为什么换了网址或端口后作品不见了？", body:"<p>作者数据主要保存在当前浏览器的站点存储中。不同域名、端口、浏览器或隐私模式会使用不同的本地空间；请回到原地址，或使用整库备份恢复。</p>" },
-        { title:"自动保存后还要手动点保存吗？", body:"<p>正文和大部分编辑操作会进入本地保存流程。离开前应确认保存状态已经稳定；导出文件和备份仍需要你主动操作。</p>" },
+        { title:"新建分支故事", body:"<p><strong>入口：</strong>首页 →「新建」→「互动文章」。在「作品结构」添加节点，再为选项设置目标。</p>" },
+        { title:"查看读者画面", body:"<p><strong>入口：</strong>作品的阅读预览。请实际点击选项、打开小手机并测试返回。</p>" },
+        { title:"修改作品信息", body:"<p><strong>入口：</strong>作品卡片 →「更多」→「作品信息」。可修改标题、简介和作者署名。</p>" },
+        { title:"确认内容已保存", body:"<p>查看编辑器顶部状态。显示「已保存」后再关闭页面。</p>" },
+        { title:"换网址后作品不见了", body:"<p>作品保存在当前浏览器和网址下。请回到原地址，或用备份恢复。</p>" },
+        { title:"自动保存后还要点保存吗？", body:"<p>正文会自动保存。导出作品和下载备份仍需手动操作。</p>" },
       ],
     })}
     ${tutorialGuide({
       category:"article",
       title:"制作一篇有分支的互动文章",
-      outcome:"建立章节与节点、连接选项目标，并在阅读预览中走通分支。",
-      intro:"互动文章的核心不是把正文切碎，而是让每个选项都能到达一个明确、可检查的目标。",
+      outcome:"建立节点、连接选项并走通分支。",
+      intro:"每个剧情选项都要有明确目标。",
       steps:[
-        { title:"先画最小路线", body:"<p>先写下“开始 → 选择 → 两个结果”这条最小路线。不要一开始建立几十个空节点，否则很难判断哪些分支没有接好。</p>" },
-        { title:"建立作品结构", body:"<p>在「作品结构」中先用「添加章节」整理大段剧情，再用「添加节点」建立每个可到达的阅读片段。节点标题写成事件名，比“节点 1”更容易找。</p>" },
-        { title:"分清“场景”和“第一章”", body:"<p>「作品结构 → 第一章」是章节容器，决定节点归类以及跨章节阅读跳转；选中节点后，标题旁的「场景」是占位符替换标签。使用“场景锁定”占位符时，选择同一场景的节点会沿用同一个替换结果。旧作品初始化时两边都可能显示“第一章”，只是默认名称相同，并不代表它们是同一项。</p><p>实际操作：先在右侧作品结构把节点放进章节；只有需要让随机占位符在几段剧情中保持一致时，才设置节点顶部的场景。</p>" },
-        { title:"填写节点正文", body:"<p>逐个选择节点，在正文区写内容；需要图片时使用「图片」，需要聊天或论坛片段时从「插入内容」选择对应的小手机模块。</p>" },
-        { title:"连接读者选项", body:"<p>在来源节点打开「选项」，填写按钮文字，再从作品结构中选择目标节点。普通互动可以不跳转；剧情分支必须确认目标没有空缺或同 ID 歧义。</p>" },
-        { title:"检查跨章节跳转", body:"<p>同章节目标会继续当前阅读页；跨章节目标会进入新的章节页。分别测试前进和返回，确认历史路径符合你的叙事设计。</p>" },
-        { title:"从读者端走每条主线", body:"<p>不要只看作者预览静态画面。至少走通每条主要分支一次，并测试重新选择较早选项时，旧的后续内容是否正确截断。</p>" },
+        { title:"画最小路线", body:"<p>先做“开始 → 选择 → 两个结果”，再扩展。</p>" },
+        { title:"建立结构", body:"<p>用章节整理剧情，用节点承载内容。节点标题要清楚且唯一。</p>" },
+        { title:"分清章节和场景", body:"<p>章节组织阅读路线；场景只控制「场景锁定」占位符。两者互不影响。</p>" },
+        { title:"填写正文", body:"<p>选中节点后写正文。图片和小手机内容从工具栏插入。</p>" },
+        { title:"连接选项", body:"<p>填写选项文字并选择目标。普通互动可以不跳转。</p>" },
+        { title:"检查跳转", body:"<p>分别测试同章、跨章和返回。</p>" },
+        { title:"走通主线", body:"<p>实际走完每条主要分支，并测试重新选择。</p>" },
       ],
       checklist:["开始节点指向正确", "所有剧情选项都有有效目标", "没有读者到不了的必要节点", "跨章节前进与返回都符合预期"],
       faq:[
-        { title:"我想直接在某个章节里添加节点", body:"<p><strong>入口：</strong>作品结构 → 找到目标章节 → 使用该章节旁的新增节点按钮。这样节点会直接进入这个章节；使用全局新增时，旧行为仍可能默认放进第一个章节。</p>" },
-        { title:"我想让两个选择走向不同结局", body:"<p><strong>入口：</strong>选中来源节点 →「选项」→ 添加两条剧情选项 → 分别点击目标选择器，从作品结构中选择两个不同节点。结果节点应先有清楚且唯一的标题，避免选错。</p>" },
-        { title:"我只想让读者点一下，不跳转剧情", body:"<p><strong>入口：</strong>节点「选项」→ 选择普通互动模式。填写选项文字和反馈即可，不必指定目标节点；剧情分支模式才承担节点跳转。</p>" },
-        { title:"我想调整节点属于哪一章或在章内的顺序", body:"<p><strong>入口：</strong>作品结构 → 节点操作菜单，或使用节点拖拽手柄。移动只改变结构位置，不需要删除重建；移动后仍建议在预览中检查原有选项连接。</p>" },
-        { title:"我想把聊天、论坛或小手机片段放进正文", body:"<p><strong>入口：</strong>选中节点 → 正文工具栏「插入内容」→ 选择小手机或对应模块。先在小手机编辑入口准备联系人和内容，再把模块插入需要出现的节点。</p>" },
-        { title:"我想撤回刚才的正文修改或换字体", body:"<p><strong>入口：</strong>正文工具栏中的撤销、重做和字体控件。撤销与重做针对当前编辑内容；保存的编辑器字体会在下次打开时继续使用。</p>" },
+        { title:"在指定章节添加节点", body:"<p><strong>入口：</strong>作品结构 → 目标章节 → 新增节点。</p>" },
+        { title:"让两个选择走向不同结局", body:"<p><strong>入口：</strong>节点 →「选项」。添加两条剧情选项，并分别选择目标节点。</p>" },
+        { title:"只互动，不跳转", body:"<p>选择「普通互动」，填写选项和反馈即可。</p>" },
+        { title:"移动节点", body:"<p>在作品结构中拖动节点，或使用节点菜单。移动后请重新预览。</p>" },
+        { title:"插入聊天或论坛", body:"<p><strong>入口：</strong>正文工具栏 →「插入内容」。先准备小手机内容，再选择模块。</p>" },
+        { title:"撤销修改或换字体", body:"<p>使用正文工具栏的撤销、重做和字体按钮。</p>" },
         { title:"选项一定要跳转吗？", body:"<p>不一定。普通互动模式可以只显示选择和反馈，不要求目标；只有承担剧情分支的选项才需要连接节点。</p>" },
-        { title:"节点标题会给读者看吗？", body:"<p>标题主要帮助作者整理结构。是否出现在阅读体验中取决于具体呈现；仍建议使用清楚、唯一的标题，方便选择目标和排查断路。</p>" },
-        { title:"场景和章节有什么区别？", body:"<p>章节组织阅读结构；场景控制“场景锁定”占位符在哪些节点之间共用替换结果。章节改变不会自动改变场景，场景相同也不表示节点必须在同一章。</p>" },
+        { title:"节点标题会给读者看吗？", body:"<p>标题主要用于整理结构。请保持清楚且唯一。</p>" },
+        { title:"场景和章节有什么区别？", body:"<p>章节组织阅读路线；场景控制「场景锁定」的替换结果。</p>" },
       ],
     })}
     ${tutorialGuide({
       category:"phone",
       title:"制作一部可阅读的小手机",
-      outcome:"配置联系人和常用 App 内容，安排读者浏览顺序，并完成一次文件交付测试。",
-      intro:"小手机作品更像一组互相关联的 App 数据。先确定人物，再填消息、论坛和其他内容，身份才不会混乱。",
+      outcome:"添加人物和 App 内容，并安排阅读顺序。",
+      intro:"先建人物，再写消息、论坛和其他内容。",
       steps:[
-        { title:"新建小手机作品", body:"<p>在新建页选择「小手机」。进入编辑器后，先确认桌面上的 App，再按故事需要调整启用状态、名称、图标和排列。</p>" },
-        { title:"先建立联系人", body:"<p>打开联系人 App 添加角色，填写主号姓名和通用头像。消息、论坛、朋友圈都依赖联系人身份，先做这一步可以减少后续返工。</p>" },
-        { title:"按剧情填充 App", body:"<p>在消息 App 建立单聊或群聊，在论坛 App 添加帖子和评论；备忘录、相册、浏览记录和购物清单用来补充线索。每个内容块都应服务于读者理解，而不是只填满桌面。</p>" },
-        { title:"设置角色接入", body:"<p>需要让某位联系人拥有自己的备忘录、相册、浏览器或购物内容时，使用角色接入设置，并检查无联系人、单联系人和多联系人时的入口是否清楚。</p>" },
-        { title:"编排阅读节奏", body:"<p>在设置 App 的「阅读节奏控制」中开启并拖拽卡片顺序。这个顺序决定导出后读者依次浏览哪些内容，不等于桌面图标的位置。</p>" },
-        { title:"用导出文件测试", body:"<p>导出作品后在读者端重新导入，逐个打开启用的 App，检查返回按钮、联系人切换、长内容滚动和图片是否都能使用。</p>" },
+        { title:"新建小手机", body:"<p>新建时选择「小手机」，再调整 App 的名称、图标和位置。</p>" },
+        { title:"建立联系人", body:"<p>先添加角色并填写姓名、头像。消息和论坛会使用这些身份。</p>" },
+        { title:"填写 App 内容", body:"<p>添加聊天、帖子、备忘录、相册等剧情内容。</p>" },
+        { title:"设置角色内容", body:"<p>需要角色专属内容时，使用「角色接入」。</p>" },
+        { title:"安排阅读顺序", body:"<p>在设置 App 打开「阅读节奏控制」，拖动内容排序。</p>" },
+        { title:"导入测试", body:"<p>导出后到读者端重新导入，逐个打开启用的 App。</p>" },
       ],
       checklist:["每个消息或论坛身份都能解析到角色", "阅读节奏顺序与剧情信息释放顺序一致", "所有启用 App 都有可读内容或明确空状态", "导出后仍能完整打开"],
       faq:[
-        { title:"我想调整小手机桌面上显示哪些 App", body:"<p><strong>入口：</strong>小手机编辑器 → 桌面或 App 管理。可以调整启用状态、名称、图标和桌面位置；关闭 App 不等于删除其中已经编辑的数据。</p>" },
-        { title:"我想做单聊或群聊", body:"<p><strong>入口：</strong>消息 App → 新建会话。单聊选择一个联系人；群聊选择多个联系人并设置群名称、群头像和成员身份。消息编辑时再选择发送者和消息类型。</p>" },
-        { title:"我想添加图片、链接、转账或红包消息", body:"<p><strong>入口：</strong>消息 App → 打开会话 → 添加消息 → 选择消息类型。链接可以指向外部网址，也可以选择作品内论坛帖子，让读者在聊天里打开帖子画中画。</p>" },
-        { title:"我想让角色打语音或视频电话", body:"<p><strong>入口：</strong>消息或通话相关编辑入口 → 添加通话事件。视频画面使用联系人资料里的「视频通话背景」；语音通话不会读取这张背景图。</p>" },
-        { title:"我想让论坛主楼分段，或者发布后再修改", body:"<p><strong>入口：</strong>论坛 App → 发帖时在正文按回车分段；发布后打开帖子详情 →「编辑」。可以重新修改标题、正文、发帖时间和图片，空行会在读者端保留。</p>" },
-        { title:"我想置顶、加精或调整论坛帖子顺序", body:"<p><strong>入口：</strong>论坛 App → 帖子列表 → 帖子卡片右下角粉色爱心省略按钮。轻点按钮可选择置顶或加精；长按约半秒后上下拖动可调整同组帖子顺序。使用键盘时，聚焦按钮后按上下方向键也能排序。置顶帖和普通帖分组排列；需要跨组移动时，请先切换帖子的置顶状态。</p>" },
-        { title:"我想让读者按我安排的顺序查看 App", body:"<p><strong>入口：</strong>设置 App →「阅读节奏控制」。开启后拖拽内容卡片排序；它控制读者流程提示，不会改变桌面图标的视觉位置。</p>" },
+        { title:"调整桌面 App", body:"<p><strong>入口：</strong>小手机编辑器 → App 管理。可修改开关、名称、图标和位置。关闭 App 不会删除内容。</p>" },
+        { title:"创建单聊或群聊", body:"<p><strong>入口：</strong>消息 App → 新建会话。单聊选一人，群聊选多人。</p>" },
+        { title:"添加特殊消息", body:"<p><strong>入口：</strong>会话 → 添加消息 → 选择类型。支持图片、链接、转账和红包。</p>" },
+        { title:"添加语音或视频通话", body:"<p>添加通话事件。视频会使用联系人的「视频通话背景」。</p>" },
+        { title:"编辑论坛帖子", body:"<p>正文按回车分段。发布后打开帖子并点「编辑」。</p>" },
+        { title:"置顶、加精或排序帖子", body:"<p>轻点帖子操作按钮可置顶或加精；长按按钮后拖动可排序。</p>" },
+        { title:"安排 App 阅读顺序", body:"<p><strong>入口：</strong>设置 App →「阅读节奏控制」。它不会改变桌面图标顺序。</p>" },
         { title:"桌面图标顺序就是阅读顺序吗？", body:"<p>不是。桌面排列控制手机外观；设置 App 里的阅读节奏控制决定作者安排的浏览流程，两者可以不同。</p>" },
         { title:"为什么某个角色没有自己的 App 内容？", body:"<p>先确认联系人已建立，再检查角色接入配置。未设置角色专属内容时，读者会看到作品的通用内容或相应兼容状态。</p>" },
       ],
@@ -258,27 +258,27 @@ function renderTutorialPage() {
     ${tutorialGuide({
       category:"social",
       title:"建立角色并编排社交互动",
-      outcome:"让同一角色在联系人、消息和论坛中使用正确身份，并为读者选择配置后续回复。",
-      intro:"联系人是人物底座；别名、小号、论坛 NPC 和分界面头像是在不同场景中使用的身份层。",
+      outcome:"正确使用联系人、论坛小号和 NPC。",
+      intro:"先建立联系人，再按场景选择身份。",
       steps:[
-        { title:"建立主号", body:"<p>先在联系人 App 填写姓名、备注、消息 ID 和论坛 ID。通用头像用于联系人名片，也是在消息头像或论坛头像留空时的兼容回退。</p>" },
-        { title:"区分昵称与论坛小号", body:"<p>别名只是同一联系人的常用称呼；需要独立论坛名称、头像或 IP 属地时，点击「添加小号」。小号只用于论坛身份，不会自动成为新的聊天联系人。</p>" },
-        { title:"分别设置可见身份", body:"<p>消息头像只出现在聊天，论坛头像只出现在帖子与评论。视频通话背景（旧称“固定脸”）用于视频通话画面，语音通话不会使用。</p>" },
-        { title:"编写消息与论坛内容", body:"<p>联系人 App 定义人物，消息 App 编排聊天，论坛 App 编排帖子、评论和楼中楼。发帖或回复时选择主号、小号或论坛 NPC，不要只靠显示文字猜身份。</p>" },
-        { title:"加入提及和读者续答", body:"<p>在小手机任意文本编辑框输入 @，联系人选择器会自动出现；可选择联系人、消息身份、联系人小号、论坛 NPC、读者称呼或作品占位符。系统保存的仍是纯文本，并在支持提及的预览中高亮。为读者选项添加多条角色后续回复时，可以逐条选择不同主号、小号或 NPC。</p>" },
-        { title:"跨作品复用联系人", body:"<p>进入「写作习惯」，选中来源作品导出联系人包；再选择目标作品和文件，确认「合并到所选作品」。ID 冲突会自动换新，目标作品原有联系人不会被整库覆盖。</p>" },
+        { title:"建立联系人", body:"<p>填写姓名、账号和通用头像。</p>" },
+        { title:"区分别名和小号", body:"<p>别名只是称呼。论坛小号可以有独立名称、头像和 IP。</p>" },
+        { title:"设置专用图片", body:"<p>消息头像用于聊天，论坛头像用于帖子，视频通话背景用于视频画面。</p>" },
+        { title:"选择发布身份", body:"<p>发帖或回复时，明确选择主号、小号或 NPC。</p>" },
+        { title:"添加 @ 和后续回复", body:"<p>在文本框输入 @ 选择身份。每条后续回复都能单独选择发送者。</p>" },
+        { title:"复用联系人", body:"<p>在「写作习惯」导出联系人包，再合并到目标作品。</p>" },
       ],
       checklist:["主号、小号和 NPC 的用途没有混用", "消息头像与论坛头像在各自界面正确", "开启论坛 IP 后只有配置过的作者角色显示属地", "读者本人回复没有被伪造 IP"],
       faq:[
-        { title:"我想让聊天和论坛显示不同头像", body:"<p><strong>入口：</strong>联系人 App → 编辑联系人 → 分别填写「消息头像」和「论坛头像」。通用头像仍用于联系人名片，并在专用头像留空时承担兼容回退。</p>" },
-        { title:"我想让同一个人在论坛使用另一个账号", body:"<p><strong>入口：</strong>联系人 App → 编辑联系人 →「添加小号」。为小号填写独立论坛名称、头像和 IP；之后在发帖、评论或回复的身份选择器中选这个小号。</p>" },
-        { title:"我想添加不属于联系人的论坛路人", body:"<p><strong>入口：</strong>论坛 App →「NPC」→ 新建。论坛 NPC 可以拥有名称、头像和 IP，适合一次性路人；如果人物还要参与聊天，应建立联系人而不是只建 NPC。</p>" },
-        { title:"我想置顶联系人或自己调整联系人顺序", body:"<p><strong>入口：</strong>联系人编辑入口 → 排序设置。可选择置顶、A–Z 或自定义；自定义模式支持拖拽，也支持聚焦手柄后用键盘上下移动。</p>" },
-        { title:"我想在小手机内容里 @ 角色或读者", body:"<p><strong>入口：</strong>任意小手机文本编辑框 → 直接输入 @ → 从自动弹出的列表选择联系人、NPC、读者称呼或占位符。占位符标记由作者自己定义，并没有固定格式。例如标记是「某某」时，作者写「@某某」，读者填写“读者”后，作品会显示并高亮「@读者」。不再需要单独寻找「@ 提及」按钮。</p>" },
-        { title:"我想让读者回复后，多个角色依次接话", body:"<p><strong>入口：</strong>消息、动态评论或论坛评论的「回复选项」→ 添加读者选项 → 在后续回复区继续添加多条消息。每一条都能单独选择联系人主号、小号或论坛 NPC。</p>" },
-        { title:"我想让论坛显示上千条评论，或自定义某条评论的楼层", body:"<p><strong>入口：</strong>论坛帖子详情 →「编辑」→「显示评论数」，可填写 0 或任意较大的整数；留空时按实际评论条数显示。编辑某条主评论时，可填写「显示楼层」；留空则继续按真实顺序自动编号。显示数和楼层只改变读者看到的数字，不会生成虚假的评论内容。</p>" },
-        { title:"我想修改动态评论的内容、@提及或日期时间", body:"<p><strong>入口：</strong>消息 App → 动态 → 评论旁「编辑」。可修改评论正文和显示日期时间；新建回复时也能直接填写时间。正文中输入 @ 会自动打开同一套联系人选择器。</p>" },
-        { title:"我想显示论坛 IP 属地", body:"<p><strong>入口：</strong>先在联系人主号、小号或论坛 NPC 资料中填写 IP，再到论坛帖子列表顶部打开「IP」开关。开关默认关闭，读者本人回复不会被伪造 IP。</p>" },
+        { title:"聊天和论坛使用不同头像", body:"<p>编辑联系人，分别填写「消息头像」和「论坛头像」。留空时使用通用头像。</p>" },
+        { title:"同一人在论坛使用小号", body:"<p>编辑联系人并点「添加小号」，再填写论坛名称、头像和 IP。</p>" },
+        { title:"添加论坛路人", body:"<p>论坛 App →「NPC」→ 新建。需要参与聊天的人物请创建联系人。</p>" },
+        { title:"置顶或排列联系人", body:"<p>打开联系人排序设置，选择置顶、A–Z 或自定义排序。</p>" },
+        { title:"在小手机里 @ 身份", body:"<p>在文本框输入 @，再选择联系人、NPC、读者称呼或作品占位符。</p>" },
+        { title:"让多个角色依次回复", body:"<p>在「回复选项」的后续回复区添加多条消息，并逐条选择发送者。</p>" },
+        { title:"修改评论数或楼层", body:"<p>编辑帖子填写「显示评论数」；编辑主评论填写「显示楼层」。留空时自动计算。</p>" },
+        { title:"修改动态评论", body:"<p>消息 App → 动态 → 评论旁「编辑」。可修改正文和显示时间。</p>" },
+        { title:"显示论坛 IP", body:"<p>先填写身份的 IP，再打开论坛顶部「IP」开关。读者回复不会显示伪造 IP。</p>" },
         { title:"别名和小号有什么区别？", body:"<p>别名是同一联系人的昵称或称呼，不是第二个独立角色；小号是该联系人名下可单独选择的论坛身份，可以有自己的论坛 ID、头像和 IP 属地。</p>" },
         { title:"通用头像、消息头像与论坛头像", body:"<p>通用头像用于联系人名片并承担旧数据回退；消息头像只用于聊天；论坛头像只用于帖子和评论。留空时会沿用通用头像。</p>" },
         { title:"视频通话背景（旧称“固定脸”）", body:"<p>原“固定脸 URL”现在表示视频通话时的画面背景，不是头像或角色面部模型；语音通话不会使用。</p>" },
@@ -287,55 +287,235 @@ function renderTutorialPage() {
     })}
     ${tutorialGuide({
       category:"placeholders",
-      title:"让读者填写并替换占位符",
-      outcome:"定义一个读者姓名占位符，把它写入正文或消息，并验证导出后的替换结果。",
-      intro:"占位符有两部分：作者写进内容的“标记”，以及读者开始阅读时看到的“问题”。两者必须对应。",
+      title:"使用占位符",
+      outcome:"创建一个占位符并测试替换结果。",
+      intro:"作者自定义标记和问题。系统没有固定标记，也不规定读者扮演谁。",
       steps:[
-        { title:"打开占位符管理", body:"<p>互动文章可从编辑器的「占位符」进入；小手机可从设置 App 的「占位符管理」进入。可以添加单项，也可以先用 NAME 预设建立姓名、昵称和网名。</p>" },
-        { title:"定义标记和问题", body:"<p>例如把正文标记设为“某某”，显示名称设为“姓名”，问题设为“你的名字？”。读者不会看到作者的全局习惯名称，只会看到作品内的问题。</p>" },
-        { title:"选择替换方式", body:"<p>全文替换适合姓名；随机替换会从读者提供的值池中变化；场景锁定让同一场景保持同一个结果。先用最简单的全文替换跑通，再使用复杂模式。</p>" },
-        { title:"把标记写进内容", body:"<p>在正文、消息或支持占位符的文本中输入完全相同的标记“某某”。多一个空格或换成别的写法都会被视为不同文字。</p>" },
-        { title:"设置禁用词并预览", body:"<p>需要限制输入时填写禁用词。进入读者预览，输入一个允许值和一个禁用值，确认提示、替换范围和场景一致性。</p>" },
-        { title:"保存为作者全局习惯", body:"<p>经常复用的配置可保存为“我的预设”，也可以在「写作习惯」统一编辑和导入导出。套用时会在当前作品创建独立副本，不会联动改写旧作品。</p>" },
+        { title:"打开管理", body:"<p>互动文章点「占位符」；小手机进入设置 App 的「占位符管理」。</p>" },
+        { title:"填写标记和问题", body:"<p>标记是作者写进内容的文字；问题是读者看到的提示。标记可自由命名。</p>" },
+        { title:"选择替换方式", body:"<p>全文替换使用同一个答案；随机替换会变化；场景锁定会在同一场景保持一致。</p>" },
+        { title:"写入标记", body:"<p>把标记原样写进正文、消息或其他支持的内容。</p>" },
+        { title:"预览测试", body:"<p>在读者预览中填写答案，检查替换范围和禁用词。</p>" },
+        { title:"保存作者预设", body:"<p>常用配置可保存为作者预设。套用后，各作品仍可单独修改。</p>" },
       ],
-      checklist:["正文标记与占位符 key 完全一致", "读者能理解问题文字", "禁用词有实际测试", "修改全局习惯不会改变已有作品"],
+      checklist:["内容中的标记完全一致", "问题文字容易理解", "禁用词已经测试", "修改作者预设不会改变旧作品"],
       faq:[
-        { title:"我想把“新占位符”改成“外号”或其他名称", body:"<p><strong>入口：</strong>作品编辑器 →「占位符」→ 找到该项 → 修改「显示名称」。显示名称用于作者识别和读者提问展示，不会强制改变正文里已经使用的标记。</p>" },
-        { title:"我想让读者输入一次姓名，正文和整部小手机都使用它", body:"<p><strong>入口：</strong>占位符管理 → 新增或编辑 → 替换方式选择「全文替换」。标记完全由作者决定，例如设为「某某」，就可以在正文写「某某」、把联系人命名为「某某全肯定bot」，或在动态评论里写「@某某」。读者填写“读者”后，整部作品中这些读者可见文字都会统一替换；标记不要求方括号，也没有系统规定的固定写法。ID、图片地址和链接地址不会被改写。</p>" },
-        { title:"我想让一个称呼随机变化", body:"<p><strong>入口：</strong>占位符管理 → 替换方式选择「随机替换」，再填写可用值。它适合变化称呼或网名；固定姓名通常更适合全文替换。</p>" },
-        { title:"我想让同一场景里随机结果保持一致", body:"<p><strong>入口：</strong>占位符管理 → 选择「场景锁定」；再到各节点顶部设置场景。场景相同的节点共用结果，章节是否相同不会影响这条规则。</p>" },
-        { title:"我想限制读者不能填写某些词", body:"<p><strong>入口：</strong>占位符编辑 →「禁用词」。使用逗号或换行分隔多个词；保存后应从读者预览实际输入一次禁用值，确认拦截提示符合预期。</p>" },
-        { title:"我想把常用占位符带到另一篇作品", body:"<p><strong>入口：</strong>当前作品的占位符设置 → 保存为作者预设；或顶部「教程」→「写作习惯」→ 作者占位符习惯。套用时会创建作品内副本，之后修改某一篇作品不会连带修改其他作品。</p>" },
-        { title:"为什么正文、联系人名或动态里的文字没有替换？", body:"<p>先检查作者写入内容的文字是否与占位符标记完全一致，再确认该占位符已经保存在当前作品中。假设作者把标记设为「某某」，联系人名可写「某某全肯定bot」，动态评论可写「@某某」；填写后会显示「读者全肯定bot」和高亮的「@读者」。这里的「某某」只是作者自定义示例，不是固定关键字。全局习惯本身不会自动写入每篇作品，必须先套用或创建作品内副本。</p>" },
-        { title:"导出作品会带走我的所有全局习惯吗？", body:"<p>不会。作品只携带该作品内部的占位符数据；作者的整套全局习惯仍只保存在当前浏览器的独立设置命名空间。</p>" },
+        { title:"修改显示名称", body:"<p><strong>入口：</strong>作品编辑器 →「占位符」→「显示名称」。这不会修改正文标记。</p>" },
+        { title:"让一个答案全文生效", body:"<p>选择「全文替换」，再把自定义标记写进需要替换的位置。</p>" },
+        { title:"让结果随机变化", body:"<p>选择「随机替换」，再填写可用值。</p>" },
+        { title:"让同一场景保持一致", body:"<p>选择「场景锁定」，再为节点设置场景。</p>" },
+        { title:"限制部分输入", body:"<p>在「禁用词」中用逗号或换行分隔，并到预览中测试。</p>" },
+        { title:"带到另一篇作品", body:"<p>保存为作者预设，再到目标作品中套用。</p>" },
+        { title:"内容没有替换", body:"<p>检查内容中的文字是否与标记完全一致，并确认占位符已保存到当前作品。</p>" },
+        { title:"导出会带走所有作者预设吗？", body:"<p>不会。作品文件只包含当前作品正在使用的占位符。</p>" },
       ],
     })}
     ${tutorialGuide({
       category:"files",
-      title:"导出、导入与保护本地作品",
-      outcome:"分清作品文件、联系人包、作者习惯和整库备份，并建立不会误删本地成果的保存习惯。",
-      intro:"Tuuru 没有业务后端替你保存账号云端副本。不同文件承担不同任务，不能互相替代。",
+      title:"文件与备份",
+      outcome:"正确分享作品，并保存可恢复的备份。",
+      intro:"作品保存在当前浏览器。分享文件和备份文件用途不同。",
       steps:[
-        { title:"等本地保存完成", body:"<p>编辑后先观察保存状态。关闭标签页、清站点数据、使用隐私模式或切换域名与端口，都可能影响你能否再次看到本地作品。</p>" },
-        { title:"导出单篇作品", body:"<p>在首页作品卡片的「更多」中选择「导出 JSON」或「导出 PNG」。两者携带同一篇作品的阅读语义；PNG 可以选择封面作为宿主图，更适合直接分享。</p>" },
-        { title:"让读者导入测试", body:"<p>在读者端导入刚导出的 JSON 或 PNG，重新完成解锁、占位符填写、分支选择和小手机浏览。作者浏览器里的草稿不会自动出现在读者端。</p>" },
-        { title:"备份整个创作库", body:"<p>首页的「备份全部」包含密码、私密内容、编辑设置和作者配置。使用「检查 / 恢复」可先查看备份摘要，再明确确认是否替换当前创作库。</p>" },
-        { title:"按用途保存辅助文件", body:"<p>联系人包用于在作品之间合并人物；作者占位符习惯文件用于迁移全局模板。它们都不是完整作品，也不能代替整库备份。</p>" },
-        { title:"建立版本习惯", body:"<p>重大修改前导出作品并备份全部，文件名保留日期。不要用清理 localStorage、IndexedDB 或浏览器站点数据来解决显示问题。</p>" },
+        { title:"等保存完成", body:"<p>看到「已保存」后再关闭页面。</p>" },
+        { title:"导出单篇作品", body:"<p>作品卡片 →「更多」→ 导出 JSON 或 PNG。两种格式内容相同。</p>" },
+        { title:"创建作品集", body:"<p>手机或 iPad 长按作品；电脑右键作品。选中至少两篇后创建作品集。</p>" },
+        { title:"导出作品集", body:"<p>作品集卡片 →「更多」→ 导出 JSON 或 PNG。读者导入后会看到作品目录。</p>" },
+        { title:"到读者端测试", body:"<p>重新导入文件，检查密码、占位符、分支和小手机内容。</p>" },
+        { title:"备份创作库", body:"<p>点「备份全部」。备份含密码和私密内容，请勿公开分享。</p>" },
+        { title:"定期留版本", body:"<p>重大修改前导出作品并备份，文件名保留日期。</p>" },
       ],
       checklist:["读者端成功导入并走通作品", "作品文件与整库备份分别保存", "包含密码和私密内容的备份没有公开分享", "知道原作品所在的浏览器、域名和端口"],
       faq:[
-        { title:"我想把单篇作品发给读者", body:"<p><strong>入口：</strong>创作端首页 → 作品卡片「更多」→ 导出 JSON 或 PNG。发给读者的是这份单篇作品文件，不是“备份全部”或“整机搬家”数据包。</p>" },
-        { title:"我想换浏览器，并把作者端和读者端本地信息一起带走", body:"<p><strong>入口：</strong>创作端首页标题旁 →「整机搬家」→ 导出本地信息；在新浏览器打开同一网址后，再进入「整机搬家」选择文件、检查摘要并确认导入。导入采用合并方式，不要求清空新浏览器。</p>" },
-        { title:"我只想备份自己的全部创作作品", body:"<p><strong>入口：</strong>创作端首页 →「备份全部」。这份文件用于保护作者创作库，可能包含私密内容和设置；它与给读者分享的单篇作品文件用途不同。</p>" },
-        { title:"我想把联系人从一篇作品复制到另一篇", body:"<p><strong>入口：</strong>顶部「教程」→「写作习惯」→ 联系人跨作品使用。先选择来源作品导出联系人包，再选择目标作品和文件执行合并；聊天、论坛和其他作品内容不会被覆盖。</p>" },
-        { title:"我想把作者占位符习惯带到另一台设备", body:"<p><strong>入口：</strong>顶部「教程」→「写作习惯」→ 作者占位符习惯 →「导出习惯」。新设备在同一区域导入；这只迁移作者模板，不会自动包含作品。</p>" },
-        { title:"我导入时遇到相同 ID，会覆盖哪一边？", body:"<p>联系人包和整机搬家都按合并规则处理。同 ID 且内容不同的记录会为导入项生成新的 ID，并同步调整相关引用；不会用整库覆盖来解决冲突。</p>" },
-        { title:"我想恢复以前的备份，应该先做什么？", body:"<p>先为当前浏览器再导出一份新备份，然后使用对应入口的「检查 / 恢复」阅读摘要。恢复创作库属于高影响操作；联系人包和整机搬家采用合并，不应拿清站点数据当作恢复步骤。</p>" },
-        { title:"JSON 和 PNG 哪个内容更完整？", body:"<p>当前导出流程要求两者保持相同作品语义。JSON 便于识别和管理；PNG 更适合作为带封面的传播文件。重要作品仍建议两种都保留。</p>" },
-        { title:"恢复备份会发生什么？", body:"<p>整库恢复是高影响操作，会在你确认后替换当前浏览器的创作库。先阅读检查结果，并另外备份当前库；联系人包导入则只合并到明确选择的作品。</p>" },
+        { title:"分享单篇作品", body:"<p>作品卡片 →「更多」→ 导出 JSON 或 PNG。不要发送整库备份。</p>" },
+        { title:"分享多篇作品", body:"<p>长按或右键作品进入多选，创建作品集后再导出。</p>" },
+        { title:"换浏览器或设备", body:"<p>在旧浏览器点「整机搬家」导出，再到新浏览器导入。</p>" },
+        { title:"备份全部创作", body:"<p>首页点「备份全部」。文件含私密内容，请妥善保管。</p>" },
+        { title:"复制联系人到另一篇作品", body:"<p>「写作习惯」→ 导出联系人包，再合并到目标作品。</p>" },
+        { title:"迁移作者占位符预设", body:"<p>「写作习惯」→「导出习惯」，再到新设备导入。</p>" },
+        { title:"导入时遇到相同 ID", body:"<p>系统会给导入项换新 ID，并保留两边内容。</p>" },
+        { title:"恢复旧备份前", body:"<p>先备份当前创作库，再点「检查 / 恢复」。</p>" },
+        { title:"JSON 和 PNG 有什么区别？", body:"<p>内容相同。JSON 便于管理；PNG 可以使用封面，更适合分享。</p>" },
+        { title:"恢复备份会发生什么？", body:"<p>确认后会替换当前创作库。恢复前请先备份。</p>" },
       ],
     })}
+      </div>
+    </div>
+  </div>`
+}
+
+const TUTORIAL_FEATURE_SECTIONS = [
+  {
+    id:"start", title:"作品与书架", features:[
+      { title:"新建作品", what:"创建互动文章或小手机作品。", where:"创作端首页 → 新建。", use:"选择作品类型，填写标题并创建。", effect:"书架新增一张作品卡片。" },
+      { title:"作品信息", what:"管理标题、简介、作者署名和展示设置。", where:"作品卡片 → 更多 → 作品信息。", use:"修改内容后保存。", effect:"阅读页和导出文件使用新信息。" },
+      { title:"自动保存", what:"把编辑内容保存到当前浏览器。", where:"编辑器顶部保存状态。", use:"编辑后等待状态显示“已保存”。", effect:"重新打开作品时保留最新内容。" },
+      { title:"阅读预览", what:"查看读者实际看到的作品。", where:"作品卡片 → 阅读，或编辑器预览入口。", use:"从开头阅读，点击选项并测试返回。", effect:"提前发现断开的分支和显示问题。" },
+      { title:"复制作品", what:"创建一份独立副本。", where:"作品卡片 → 更多 → 复制作品。", use:"点击后在副本中继续编辑。", effect:"原作保持不变。" },
+      { title:"删除作品", what:"移除一篇本地作品。", where:"作品卡片 → 删除。", use:"阅读提示后确认删除。", effect:"作品从书架和相关作品集目录中移除。" },
+      { title:"创建作品集", what:"把多篇作品组成一个可导出的目录。", where:"手机或 iPad 长按作品；电脑右键作品。", use:"选中至少两篇，点“创建作品集”，再填写信息。", effect:"书架新增作品集卡片，原作品继续保留。" },
+      { title:"管理作品集", what:"修改作品集信息、顺序和进入方式。", where:"作品集卡片 → 管理。", use:"增删作品、调整顺序并保存。", effect:"下一次导出使用最新目录和作品内容。" },
+      { title:"作品集进入方式", what:"控制读者进入作品集时填写信息的次数。", where:"作品集管理 → 进入方式。", use:"选择“各篇独立”或“作品集统一”。", effect:"各篇独立会保留每篇设置；作品集统一只填写一次。" },
+    ],
+  },
+  {
+    id:"article", title:"互动文章", features:[
+      { title:"章节", what:"整理一组剧情节点。", where:"互动文章编辑器 → 作品结构。", use:"添加章节，再把节点放入对应章节。", effect:"阅读时可以按章节前进和返回。" },
+      { title:"节点", what:"承载一段正文和互动内容。", where:"作品结构 → 添加节点。", use:"填写清楚且唯一的标题，再编辑正文。", effect:"选项可以跳转到这个节点。" },
+      { title:"剧情选项", what:"让选择跳转到另一个节点。", where:"节点编辑区 → 选项。", use:"填写选项文字，选择剧情分支和目标节点。", effect:"读者点击后进入指定剧情。" },
+      { title:"普通互动", what:"显示选择和反馈，不改变剧情节点。", where:"节点编辑区 → 选项。", use:"选择普通互动，填写选项和反馈。", effect:"读者可以互动并留在当前内容。" },
+      { title:"场景", what:"为场景锁定占位符划分共享范围。", where:"节点标题旁的场景选择器。", use:"给需要共享结果的节点选择同一场景。", effect:"这些节点使用相同的随机结果。" },
+      { title:"富文本与图片", what:"设置正文格式并插入图片。", where:"正文工具栏。", use:"选择文字后设置格式，或点击图片按钮。", effect:"阅读页显示排版后的内容。" },
+      { title:"插入小手机内容", what:"在文章节点中展示聊天、论坛等模块。", where:"正文工具栏 → 插入内容。", use:"先准备小手机数据，再选择需要插入的模块。", effect:"读者可在文章中打开对应内容。" },
+      { title:"移动节点", what:"调整节点所属章节和顺序。", where:"作品结构中的拖动手柄或节点菜单。", use:"拖到目标位置后重新预览分支。", effect:"结构顺序更新，节点 ID 和连接继续保留。" },
+      { title:"撤销、重做与字体", what:"恢复正文修改并设置编辑字体。", where:"正文工具栏。", use:"点击撤销、重做或字体按钮。", effect:"正文恢复到对应版本，字体设置会保存。" },
+    ],
+  },
+  {
+    id:"phone", title:"小手机", features:[
+      { title:"App 管理", what:"控制桌面 App 的开关、名称、图标和位置。", where:"小手机编辑器 → App 管理。", use:"调整开关和排列后保存。", effect:"读者桌面按设置显示。" },
+      { title:"联系人", what:"建立消息和论坛使用的人物资料。", where:"联系人 App。", use:"填写姓名、账号、头像和简介。", effect:"其他 App 可以选择并显示这个身份。" },
+      { title:"单聊与群聊", what:"创建聊天会话。", where:"消息 App → 新建会话。", use:"单聊选择一人；群聊选择多人并填写群资料。", effect:"读者可打开完整聊天记录。" },
+      { title:"消息发送者", what:"指定每条消息由读者、角色或系统发出。", where:"会话底部的发送者选择区。", use:"先选择发送者，再输入消息或添加剧情内容。", effect:"气泡方向、头像和身份按发送者显示。" },
+      { title:"文字与图片消息", what:"添加普通文字或图片气泡。", where:"会话输入框；会话 → ＋ → 图片。", use:"文字可直接输入；图片填写图片地址和说明。", effect:"读者按消息顺序看到文字或图片。" },
+      { title:"语音、位置、日期与系统消息", what:"添加语音气泡、地点、时间分隔和系统提示。", where:"会话 → ＋ 的第一页。", use:"选择类型并填写时长、地点、时间或提示文字。", effect:"聊天记录显示对应样式和剧情信息。" },
+      { title:"外部链接卡片", what:"把 HTTP 或 HTTPS 网页做成聊天卡片。", where:"会话 → ＋ → 下一页 → 链接 → 外部网址。", use:"填写卡片标题和完整网址。", effect:"读者点击后在外部页面打开；无效协议只显示文字。" },
+      { title:"作品内论坛链接", what:"把当前作品的一篇论坛帖子放进聊天。", where:"会话 → ＋ → 下一页 → 链接 → 链接内容。", use:"从列表选择已有帖子，卡片标题可单独填写。", effect:"读者点击后在聊天内用画中画查看帖子。" },
+      { title:"红包、转账与亲属卡", what:"添加带金额和备注的互动卡片。", where:"会话 → ＋ → 转账；下一页还有红包和亲属卡。", use:"选择卡片类型，填写金额、祝福语、备注或亲属关系。", effect:"接收方读者可以领取或收款，状态保存在本地阅读记录中。" },
+      { title:"外卖卡片", what:"添加商家、订单、金额和配送状态。", where:"会话 → ＋ → 下一页 → 外卖卡片。", use:"填写商家和订单内容后保存。", effect:"读者可领取卡片；点击卡片会打开外卖搜索，支持时会尝试打开对应 App。" },
+      { title:"消息编辑菜单", what:"修改消息并在指定位置补充剧情。", where:"手机或 iPad 长按消息；电脑右键消息。", use:"选择编辑、引用、在前插入时间、在前插入消息或添加选项。", effect:"可以修正文案、补充上下文和设置读者回复。" },
+      { title:"消息回复选项", what:"在一条消息后加入读者选择和角色接话。", where:"消息编辑菜单 → 添加选项。", use:"填写选项文本、读者回复和角色后续回复；每行后续文字生成一个气泡。", effect:"读者选择后会按顺序显示对应回复。" },
+      { title:"聊天轮次", what:"把聊天剧情分成依次开放的多轮内容。", where:"会话右上角菜单。", use:"结束当前轮并填写下一轮信息，再继续添加消息。", effect:"阅读节奏可以按轮次或单条消息推进。" },
+      { title:"语音与视频通话", what:"添加角色通话事件。", where:"消息或通话编辑入口。", use:"选择通话类型并填写内容。", effect:"读者可体验来电和通话流程。" },
+      { title:"群聊身份", what:"设置群主、管理员和成员头衔。", where:"群聊 → 右上角菜单 → 管理群聊。", use:"勾选成员并设置群主、管理员和头衔。", effect:"群聊消息旁显示对应身份。" },
+      { title:"动态", what:"制作角色动态、评论和读者回复。", where:"消息 App → 动态。", use:"添加动态内容、发布身份、评论和回复选项。", effect:"读者可以浏览动态并选择回复。" },
+      { title:"论坛", what:"创建帖子、评论和楼中楼。", where:"论坛 App。", use:"选择发布身份，填写内容并设置时间。", effect:"读者可浏览、排序和互动。" },
+      { title:"备忘录", what:"为角色添加带时间的备忘内容。", where:"备忘录 App 或角色接入。", use:"选择联系人并添加备忘内容和时间。", effect:"读者在该角色的备忘录中查看。" },
+      { title:"相册", what:"按相册整理角色照片和说明。", where:"相册 App 或角色接入。", use:"新建相册，再添加图片、说明和时间。", effect:"读者可进入相册逐张查看。" },
+      { title:"浏览记录", what:"添加角色浏览过的页面记录。", where:"浏览器 App 或角色接入。", use:"填写标题、网址和日期时间。", effect:"读者看到带时间的浏览历史。" },
+      { title:"购物", what:"制作购物车、订单和商品记录。", where:"购物 App 或角色接入。", use:"填写商品信息，并在购物车与订单状态之间调整。", effect:"读者可查看角色的购物清单和订单。" },
+      { title:"角色接入", what:"为不同联系人分配专属 App 内容。", where:"小手机设置 → 角色接入。", use:"选择联系人，再配置备忘录、相册、浏览器或购物内容。", effect:"切换角色时显示对应数据。" },
+      { title:"阅读节奏控制", what:"安排读者查看内容的顺序。", where:"设置 App → 阅读节奏控制。", use:"打开功能并拖动内容卡片排序。", effect:"读者会按顺序收到浏览提示。" },
+    ],
+  },
+  {
+    id:"social", title:"人物社交", features:[
+      { title:"别名", what:"同一联系人的其他称呼。", where:"联系人编辑页。", use:"添加一个或多个别名。", effect:"作品可在不同位置使用不同称呼。" },
+      { title:"论坛小号", what:"联系人名下的独立论坛身份。", where:"联系人编辑页 → 添加小号。", use:"填写论坛名称、头像、论坛 ID 和 IP。", effect:"发帖和回复时可以选择这个小号。" },
+      { title:"论坛 NPC", what:"只参加论坛内容的独立身份。", where:"论坛 App → NPC。", use:"新建 NPC 并填写资料。", effect:"帖子和评论可以使用该身份。" },
+      { title:"专用头像", what:"分别设置聊天头像和论坛头像。", where:"联系人编辑页。", use:"填写消息头像和论坛头像。", effect:"两个界面显示各自的头像。" },
+      { title:"视频通话背景", what:"设置视频通话画面。", where:"联系人编辑页。", use:"选择或填写背景图片。", effect:"视频通话使用该画面。" },
+      { title:"@ 提及", what:"在文本中插入可识别的身份或占位符。", where:"小手机文本输入框。", use:"输入 @，再从列表选择一项。", effect:"支持的预览和读者页面会高亮提及。" },
+      { title:"读者回复与后续消息", what:"让读者选择回复，并安排角色继续接话。", where:"消息、动态或论坛的回复选项。", use:"添加读者选项，再逐条添加后续回复和发送者。", effect:"读者选择后按顺序看到后续内容。" },
+      { title:"论坛显示数、楼层与 IP", what:"设置读者看到的论坛数字和属地。", where:"帖子编辑、评论编辑和论坛顶部 IP 开关。", use:"填写显示评论数或楼层；需要时打开 IP。", effect:"论坛按作者设置显示这些信息。" },
+    ],
+  },
+  {
+    id:"placeholders", title:"占位符", features:[
+      { title:"创建占位符", what:"用读者填写的内容替换作品文字。", where:"互动文章的占位符入口；小手机设置 App → 占位符管理。", use:"填写自定义标记、显示名称和问题。", effect:"阅读前会显示对应问题。" },
+      { title:"全文替换", what:"所有标记使用同一个答案。", where:"占位符的替换方式。", use:"选择“全文替换”，再把标记写进内容。", effect:"支持的文字位置统一替换。" },
+      { title:"随机替换", what:"从可用值中随机选择结果。", where:"占位符的替换方式。", use:"选择“随机替换”并填写可用值。", effect:"标记出现时可以得到不同结果。" },
+      { title:"场景锁定", what:"让同一场景使用同一个随机结果。", where:"占位符替换方式和节点场景。", use:"选择“场景锁定”，再为节点设置场景。", effect:"同场景节点保持一致。" },
+      { title:"禁用词", what:"限制读者提交部分内容。", where:"占位符编辑页。", use:"用逗号或换行填写禁用词。", effect:"命中禁用词时会提示修改。" },
+      { title:"作者占位符预设", what:"保存可跨作品复用的占位符配置。", where:"作品占位符设置或“写作习惯”。", use:"保存预设，再到其他作品套用。", effect:"目标作品获得一份可独立修改的配置。" },
+    ],
+  },
+  {
+    id:"files", title:"文件与备份", features:[
+      { title:"导出单篇作品", what:"生成可交给读者的作品文件。", where:"作品卡片 → 更多。", use:"选择“导出 JSON”或“导出 PNG”。", effect:"读者端可以导入并阅读。" },
+      { title:"导出作品集", what:"把多篇作品和目录放进一个文件。", where:"作品集卡片 → 更多。", use:"选择“导出 JSON”或“导出 PNG”。", effect:"读者导入后会看到作品集目录。" },
+      { title:"读者导入", what:"把作品或作品集加入读者端。", where:"读者端 → 导入。", use:"选择 JSON 或 PNG 文件并确认。", effect:"作品可在当前浏览器中打开。" },
+      { title:"备份全部", what:"保存完整创作库。", where:"创作端首页 → 备份。", use:"下载文件并妥善保管。", effect:"文件包含作品、密码、私密内容和设置。" },
+      { title:"检查与恢复", what:"查看备份内容并恢复创作库。", where:"创作端首页 → 恢复。", use:"选择备份，检查摘要后确认。", effect:"当前创作库会替换为备份内容。" },
+      { title:"整机搬家", what:"迁移作者端和读者端的本地数据。", where:"创作端首页 → 搬家。", use:"旧设备导出，新设备导入。", effect:"两端数据会合并到新浏览器。" },
+      { title:"联系人包", what:"在作品之间复用联系人。", where:"写作习惯 → 联系人跨作品使用。", use:"从来源作品导出，再合并到目标作品。", effect:"目标作品新增联系人资料。" },
+      { title:"作者预设文件", what:"迁移作者占位符预设。", where:"写作习惯 → 作者占位符预设。", use:"导出文件，再到另一浏览器导入。", effect:"作者预设会按名称合并。" },
+    ],
+  },
+  { id:"support", title:"打赏", features:[], support:true },
+]
+
+const TUTORIAL_FAQ_SECTIONS = {
+  start:[
+    { question:"编辑后可以直接关闭页面吗？", answer:"先看编辑器顶部的保存状态。显示“已保存”后再关闭页面。" },
+    { question:"换浏览器或换网址后找不到作品怎么办？", answer:"回到原浏览器和原网址查找；也可以使用完整备份或搬家文件恢复。" },
+    { question:"删除作品集会删除原作品吗？", answer:"不会。作品集保存的是作品引用，删除作品集后，书架里的原作品继续保留。" },
+  ],
+  article:[
+    { question:"选项点击后没有跳转怎么办？", answer:"打开该节点的选项设置，检查类型、目标章节和目标节点，再从阅读预览重新点击。" },
+    { question:"只想显示选择结果，不想换节点怎么设置？", answer:"把选项类型设为“普通互动”，填写选项文字和反馈内容。" },
+    { question:"章节和场景分别控制什么？", answer:"章节整理阅读路线；场景为“场景锁定”占位符提供共享范围。" },
+  ],
+  phone:[
+    { question:"链接怎样打开作品里的论坛帖子？", answer:"添加链接时，在“链接内容”中选择已有帖子。读者点击卡片后会在聊天内打开画中画。" },
+    { question:"链接怎样打开外部网页？", answer:"添加链接时保留“外部网址”，填写以 http:// 或 https:// 开头的完整地址。" },
+    { question:"外卖卡片点击后会去哪里？", answer:"卡片会按商家和订单内容打开外卖搜索；支持的 Android 环境会先尝试打开对应 App，并保留网页入口。" },
+    { question:"红包、转账和亲属卡会改变作者数据吗？", answer:"领取与收款状态只记录在读者当前设备的阅读进度中。" },
+    { question:"怎样修改已经添加的消息？", answer:"手机或 iPad 长按消息，电脑右键消息，再从菜单选择编辑、引用或插入内容。" },
+    { question:"角色后续回复怎样分成多个气泡？", answer:"在消息的“添加选项”中填写后续回复，每行文字会生成一个气泡。" },
+  ],
+  social:[
+    { question:"联系人小号和论坛 NPC 怎样选择？", answer:"发布帖子、评论或楼中楼时打开身份选择器，再选择联系人、小号或 NPC。" },
+    { question:"@ 提及没有高亮怎么办？", answer:"输入 @ 后从候选列表选择身份或占位符，保存后再到预览中检查。" },
+  ],
+  placeholders:[
+    { question:"正文里的标记需要固定格式吗？", answer:"不需要固定括号。作者填写什么标记，正文中就使用完全相同的文字。" },
+    { question:"修改作者预设会影响已套用的作品吗？", answer:"不会。套用时会在作品中建立独立副本，之后可以分别修改。" },
+    { question:"随机结果怎样在几个节点中保持一致？", answer:"选择“场景锁定”，再给这些节点设置同一个场景。" },
+  ],
+  files:[
+    { question:"分享作品应该使用哪种文件？", answer:"导出单篇作品或作品集的 JSON、PNG 文件，再交给读者导入。" },
+    { question:"完整备份适合发给读者吗？", answer:"不适合。完整备份包含创作库、密码、私密内容和设置，请只用于本人恢复。" },
+    { question:"恢复备份会发生什么？", answer:"确认恢复后，当前创作库会替换为备份内容。操作前先查看恢复摘要并保存现有备份。" },
+  ],
+}
+
+function renderTutorialFeature(feature, sectionId, index) {
+  return `<article class="tutorial-feature" data-tutorial-feature data-tutorial-search-item data-tutorial-feature-id="${sectionId}-${index}">
+    <h3>${feature.title}</h3>
+    <dl>
+      <div><dt>是什么</dt><dd>${feature.what}</dd></div>
+      <div><dt>在哪里</dt><dd>${feature.where}</dd></div>
+      <div><dt>怎么用</dt><dd>${feature.use}</dd></div>
+      <div><dt>使用效果</dt><dd>${feature.effect}</dd></div>
+    </dl>
+  </article>`
+}
+
+function renderTutorialFaq(sectionId) {
+  const items = TUTORIAL_FAQ_SECTIONS[sectionId] || []
+  if (!items.length) return ""
+  return `<div class="tutorial-faq" data-tutorial-faq-list><h3>答疑</h3>${items.map((item, index) => `<details class="glossary-item" data-tutorial-faq data-tutorial-search-item data-tutorial-faq-id="${sectionId}-${index}"><summary>${item.question}</summary><div class="resource-prose"><p>${item.answer}</p></div></details>`).join("")}</div>`
+}
+
+function renderTutorialSupport() {
+  return `<div class="tutorial-support" data-tutorial-search-item>
+    <div class="tutorial-support-copy" aria-label="支持任意打赏支持站长后续开发">
+      <strong class="tutorial-support-lead">支持任意打赏支持站长后续开发</strong>
+      <span class="tutorial-support-mascot" aria-hidden="true">
+        <span class="tutorial-support-ears">(&#92;⑅(&#92;</span>
+        <strong class="tutorial-support-face">໒꒰ྀི˶´˘&#96;˵꒱ྀི১</strong>
+      </span>
+    </div>
+    <img src="./zsm.png" alt="打赏收款码">
+  </div>`
+}
+
+function renderTutorialSection(section, index) {
+  const content = section.support
+    ? renderTutorialSupport()
+    : `<header class="tutorial-guide-header"><h2>${section.title}</h2><p>共 ${section.features.length} 项功能</p></header><div class="tutorial-feature-list">${section.features.map((feature, featureIndex) => renderTutorialFeature(feature, section.id, featureIndex)).join("")}</div>${renderTutorialFaq(section.id)}`
+  return `<section class="tutorial-section tutorial-guide resource-prose${section.support ? " tutorial-support-section" : ""}" id="tutorial-${section.id}" role="tabpanel" data-tutorial-category="${section.id}"${index === 0 ? "" : " hidden"}>${content}</section>`
+}
+
+function renderTutorialPage() {
+  return `<div class="resource-panel" data-resource-panel="tutorial">
+    <div class="tutorial-search"><label for="tutorialSearch">搜索教程</label><input class="form-input" id="tutorialSearch" data-tutorial-search type="search" placeholder="输入功能、位置或问题"><p data-tutorial-search-status role="status" aria-live="polite"></p></div>
+    <div class="tutorial-layout">
+      <nav class="tutorial-directory" aria-label="功能分类"><strong class="tutorial-directory-title">功能分类</strong>
+        ${TUTORIAL_FEATURE_SECTIONS.map((section, index) => `<button type="button" class="${index === 0 ? "active" : ""}" data-tutorial-nav="${section.id}" aria-controls="tutorial-${section.id}"${index === 0 ? ' aria-current="page"' : ""}>${section.title}</button>`).join("")}
+      </nav>
+      <div class="tutorial-content">
+        ${TUTORIAL_FEATURE_SECTIONS.map(renderTutorialSection).join("")}
       </div>
     </div>
   </div>`
@@ -553,11 +733,16 @@ function bindPlaceholderLibrary(root) {
 function bindTutorialDirectory(root) {
   const sections = Array.from(root.querySelectorAll("[data-tutorial-category]"))
   const navigation = Array.from(root.querySelectorAll("[data-tutorial-nav]"))
+  const search = root.querySelector("[data-tutorial-search]")
+  const searchStatus = root.querySelector("[data-tutorial-search-status]")
   if (!sections.length || !navigation.length) return
+  let activeCategory = navigation.find(button => button.classList.contains("active"))?.dataset.tutorialNav || "start"
 
   function showTutorial(category) {
+    activeCategory = category
     navigation.forEach(button => {
       const active = button.dataset.tutorialNav === category
+      button.hidden = false
       button.classList.toggle("active", active)
       if (active) button.setAttribute("aria-current", "page")
       else button.removeAttribute("aria-current")
@@ -565,15 +750,52 @@ function bindTutorialDirectory(root) {
     sections.forEach(section => {
       const active = section.dataset.tutorialCategory === category
       section.hidden = !active
+      section.querySelectorAll("[data-tutorial-search-item]").forEach(item => { item.hidden = false })
+      section.querySelector(".tutorial-feature-list")?.removeAttribute("hidden")
+      section.querySelector("[data-tutorial-faq-list]")?.removeAttribute("hidden")
     })
+    if (searchStatus) searchStatus.textContent = ""
+  }
+
+  function applySearch() {
+    const query = String(search?.value || "").trim().toLocaleLowerCase()
+    if (!query) {
+      showTutorial(activeCategory)
+      return
+    }
+    let matches = 0
+    sections.forEach(section => {
+      let sectionMatches = 0
+      section.querySelectorAll("[data-tutorial-search-item]").forEach(item => {
+        const matched = item.textContent.toLocaleLowerCase().includes(query)
+        item.hidden = !matched
+        if (matched && item.matches("details")) item.open = true
+        if (matched) sectionMatches += 1
+      })
+      const featureList = section.querySelector(".tutorial-feature-list")
+      const faqList = section.querySelector("[data-tutorial-faq-list]")
+      if (featureList) featureList.hidden = !featureList.querySelector("[data-tutorial-feature]:not([hidden])")
+      if (faqList) faqList.hidden = !faqList.querySelector("[data-tutorial-faq]:not([hidden])")
+      section.hidden = sectionMatches === 0
+      matches += sectionMatches
+      const button = navigation.find(item => item.dataset.tutorialNav === section.dataset.tutorialCategory)
+      if (button) {
+        button.hidden = sectionMatches === 0
+        button.classList.remove("active")
+        button.removeAttribute("aria-current")
+      }
+    })
+    if (searchStatus) searchStatus.textContent = matches ? `找到 ${matches} 项结果` : "没有找到相关内容"
   }
 
   navigation.forEach(button => {
     button.addEventListener("click", () => {
+      if (search) search.value = ""
       showTutorial(button.dataset.tutorialNav || "start")
     })
   })
-  showTutorial(navigation.find(button => button.classList.contains("active"))?.dataset.tutorialNav || "start")
+  search?.addEventListener("input", applySearch)
+  showTutorial(activeCategory)
 }
 
 export function bindResourcesPage() {

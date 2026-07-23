@@ -325,6 +325,9 @@ test("reader placeholder presets have an explicit local save action", async t =>
 
   const save = document.getElementById("rdPresetSave")
   assert.equal(save?.tagName, "BUTTON")
+  assert.equal(document.getElementById("ps_name").hasAttribute("placeholder"), false)
+  assert.equal(document.getElementById("ps_nickname").hasAttribute("placeholder"), false)
+  assert.equal(document.getElementById("ps_webname").hasAttribute("placeholder"), false)
   document.getElementById("ps_name").value = "阿雾"
   document.getElementById("ps_nickname").value = "小雾"
   document.getElementById("ps_webname").value = "mist"

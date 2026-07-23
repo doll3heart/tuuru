@@ -35,12 +35,12 @@ test("the writing-habits page keeps contact transfer explicit and placeholder pr
 })
 
 test("the tutorial explains the social identities and author placeholders that are easy to confuse", () => {
-  for (const term of ["别名", "小号", "消息头像", "论坛头像", "视频通话背景", "占位符", "@ 提及", "IP 属地"]) {
+  for (const term of ["别名", "小号", "消息头像", "论坛头像", "视频通话背景", "占位符", "IP 属地"]) {
     assert.match(source, new RegExp(term))
   }
   assert.match(source, /旧称“固定脸”/)
   assert.match(source, /语音通话不会使用/)
-  assert.match(source, /纯文本/)
+  assert.match(source, /标记可自由命名/)
   assert.match(source, /读者本人[^。]*IP/)
 })
 
@@ -48,7 +48,7 @@ test("the tutorial exposes a compact directory and one panel per complete route"
   assert.match(source, /class="tutorial-layout"/)
   assert.match(source, /class="tutorial-directory"/)
   assert.match(source, /class="tutorial-content"/)
-  assert.doesNotMatch(source, /data-tutorial-search/)
+  assert.match(source, /data-tutorial-search/)
   assert.doesNotMatch(source, /data-tutorial-filter/)
   assert.doesNotMatch(source, /共 6 个教程版块/)
   for (const category of ["start", "article", "phone", "social", "placeholders", "files"]) {
@@ -57,52 +57,90 @@ test("the tutorial exposes a compact directory and one panel per complete route"
   }
 })
 
-test("the tutorial explains routes by the effect a user wants", () => {
+test("the tutorial lists features by meaning, location, use, and effect", () => {
   for (const heading of [
-    "第一次使用：从新建到交给读者",
-    "制作一篇有分支的互动文章",
-    "制作一部可阅读的小手机",
-    "建立角色并编排社交互动",
-    "让读者填写并替换占位符",
-    "导出、导入与保护本地作品",
+    "作品与书架",
+    "互动文章",
+    "小手机",
+    "人物社交",
+    "占位符",
+    "文件与备份",
   ]) assert.match(source, new RegExp(heading))
-  assert.match(source, /class="tutorial-steps"/)
-  assert.match(source, /你会完成/)
-  assert.match(source, /完成后检查/)
-  assert.match(source, /我想要……该怎么做？/)
-  assert.doesNotMatch(source, /跟做练习|tutorial-practice|完成标志/)
-  assert.match(source, /首页[^。]*新建[^。]*互动文章/)
-  assert.match(source, /添加章节[^。]*添加节点/)
-  assert.match(source, /联系人 App[^。]*消息 App[^。]*论坛 App/)
-  assert.match(source, /导出 JSON[^。]*导出 PNG/)
-  assert.match(source, /我想让两个选择走向不同结局/)
-  assert.match(source, /我想让论坛主楼分段，或者发布后再修改/)
-  assert.match(source, /我想换浏览器，并把作者端和读者端本地信息一起带走/)
-  assert.match(source, /直接输入 @/)
-  assert.match(source, /显示评论数/)
-  assert.match(source, /显示楼层/)
-  assert.match(source, /修改动态评论的内容、@提及或日期时间/)
-  assert.match(source, /某某全肯定bot/)
-  assert.match(source, /读者全肯定bot/)
-  assert.match(source, /@读者/)
-  assert.match(source, /不要求方括号/)
-  assert.match(source, /<strong>入口：<\/strong>/)
+  for (const label of ["是什么", "在哪里", "怎么用", "使用效果"]) assert.match(source, new RegExp(`<dt>${label}</dt>`))
+  assert.match(source, /data-tutorial-feature/)
+  assert.match(source, /data-tutorial-search/)
+  assert.match(source, /输入功能、位置或问题/)
+  assert.doesNotMatch(source, /data-tutorial-search-clear/)
+  assert.match(source, /剧情选项/)
+  assert.match(source, /阅读节奏控制/)
+  assert.match(source, /论坛小号/)
+  assert.match(source, /作者占位符预设/)
+  assert.match(source, /创建作品集/)
+  assert.match(source, /整机搬家/)
 })
 
-test("the article tutorial distinguishes scene tags from chapters with an actionable route", () => {
-  assert.match(source, /分清“场景”和“第一章”/)
-  assert.match(source, /作品结构 → 第一章/)
+test("the article feature list distinguishes scene tags from chapters", () => {
+  assert.match(source, /章节组织阅读路线/)
   assert.match(source, /场景锁定/)
-  assert.match(source, /章节组织阅读结构/)
-  assert.match(source, /场景相同也不表示节点必须在同一章/)
+  assert.match(source, /节点标题旁的场景选择器/)
 })
 
-test("the phone tutorial explains the combined forum post action and reorder button", () => {
-  assert.match(source, /我想置顶、加精或调整论坛帖子顺序/)
-  assert.match(source, /帖子卡片右下角粉色爱心省略按钮/)
-  assert.match(source, /轻点[^。]*置顶[^。]*加精/)
-  assert.match(source, /长按[^。]*拖动/)
-  assert.match(source, /上下方向键/)
+test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {
+  for (const feature of [
+    "App 管理", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
+    "外卖卡片", "消息编辑菜单", "消息回复选项", "聊天轮次", "语音与视频通话",
+    "动态", "论坛", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
+  ]) {
+    assert.match(source, new RegExp(feature))
+  }
+})
+
+test("every tutorial category keeps a searchable FAQ", () => {
+  assert.match(source, /<h3>答疑<\/h3>/)
+  assert.match(source, /data-tutorial-faq/)
+  for (const question of [
+    "删除作品集会删除原作品吗",
+    "选项点击后没有跳转怎么办",
+    "链接怎样打开作品里的论坛帖子",
+    "外卖卡片点击后会去哪里",
+    "@ 提及没有高亮怎么办",
+    "随机结果怎样在几个节点中保持一致",
+    "完整备份适合发给读者吗",
+  ]) assert.match(source, new RegExp(question))
+})
+
+test("the final tutorial tab centers the support copy and image", async t => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url:"https://tuuru.local/#/resources/tutorial" })
+  const previous = { window:globalThis.window, document:globalThis.document, location:globalThis.location, localStorage:globalThis.localStorage }
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.location = dom.window.location
+  globalThis.localStorage = dom.window.localStorage
+  t.after(() => {
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.location = previous.location
+    globalThis.localStorage = previous.localStorage
+    dom.window.close()
+  })
+  const page = await import(`../js/pages/resources.js?support-tab=${Date.now()}`)
+  document.body.innerHTML = page.renderResourcesPage({ initialTab:"tutorial" })
+  page.bindResourcesPage()
+
+  const tabs = Array.from(document.querySelectorAll("[data-tutorial-nav]"))
+  assert.equal(tabs.at(-1)?.dataset.tutorialNav, "support")
+  assert.equal(tabs.at(-1)?.textContent, "打赏")
+  tabs.at(-1).click()
+  assert.equal(document.querySelector('[data-tutorial-category="support"]').hidden, false)
+  assert.equal(document.querySelector(".tutorial-support-ears").textContent, "(\\⑅(\\")
+  assert.equal(document.querySelector(".tutorial-support-ears").parentElement.className, "tutorial-support-mascot")
+  assert.equal(document.querySelector(".tutorial-support-face").parentElement.className, "tutorial-support-mascot")
+  assert.match(document.querySelector(".tutorial-support-copy").textContent, /支持任意打赏支持站长后续开发/)
+  assert.match(document.querySelector(".tutorial-support-face").textContent, /໒꒰ྀི˶´˘`˵꒱ྀི১/)
+  assert.match(document.querySelector(".tutorial-support img").getAttribute("src"), /zsm\.png$/)
+  assert.match(css, /\.tutorial-support-copy\s*\{[^}]*display\s*:\s*inline-flex[^}]*font-weight\s*:\s*700/s)
+  assert.match(css, /\.tutorial-support-mascot\s*\{[^}]*align-items\s*:\s*center[^}]*flex-direction\s*:\s*column/s)
+  assert.match(css, /\.tutorial-support img\s*\{[^}]*width\s*:\s*min\(100%,520px\)[^}]*object-fit\s*:\s*contain/s)
 })
 
 test("tutorial directory switches the visible guide without a page reload", async t => {
@@ -136,6 +174,49 @@ test("tutorial directory switches the visible guide without a page reload", asyn
   assert.equal(document.querySelector('[data-tutorial-category="article"]').hidden, false)
   assert.equal(document.querySelector('[data-tutorial-nav="article"]').getAttribute("aria-current"), "page")
   assert.equal(document.querySelector('[data-tutorial-nav="start"]').hasAttribute("aria-current"), false)
+
+  const search = document.querySelector('[data-tutorial-search]')
+  search.value = "视频通话背景"
+  search.dispatchEvent(new window.Event("input", { bubbles:true }))
+  const visibleFeatures = Array.from(document.querySelectorAll('[data-tutorial-feature]')).filter(feature => !feature.hidden)
+  assert.equal(visibleFeatures.length, 1)
+  assert.match(visibleFeatures[0].textContent, /视频通话背景/)
+  assert.equal(document.querySelector('[data-tutorial-search-status]').textContent, "找到 1 项结果")
+  assert.equal(document.querySelector('[data-tutorial-category="social"]').hidden, false)
+
+  search.value = "链接怎样打开作品里的论坛帖子"
+  search.dispatchEvent(new window.Event("input", { bubbles:true }))
+  const visibleFaqs = Array.from(document.querySelectorAll('[data-tutorial-faq]')).filter(item => !item.hidden)
+  assert.equal(visibleFaqs.length, 1)
+  assert.equal(visibleFaqs[0].open, true)
+  assert.equal(document.querySelector('[data-tutorial-category="phone"]').hidden, false)
+
+  search.value = ""
+  search.dispatchEvent(new window.Event("input", { bubbles:true }))
+  assert.equal(document.querySelector('[data-tutorial-category="article"]').hidden, false)
+  assert.equal(document.querySelector('[data-tutorial-category="phone"]').hidden, true)
+  assert.equal(document.querySelector('[data-tutorial-search-status]').textContent, "")
+})
+
+test("the rendered feature manual avoids task framing and contrast formulas", async t => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { url:"https://tuuru.local/#/resources/tutorial" })
+  const previous = { window:globalThis.window, document:globalThis.document, location:globalThis.location, localStorage:globalThis.localStorage }
+  globalThis.window = dom.window
+  globalThis.document = dom.window.document
+  globalThis.location = dom.window.location
+  globalThis.localStorage = dom.window.localStorage
+  t.after(() => {
+    globalThis.window = previous.window
+    globalThis.document = previous.document
+    globalThis.location = previous.location
+    globalThis.localStorage = previous.localStorage
+    dom.window.close()
+  })
+  const page = await import(`../js/pages/resources.js?feature-manual=${Date.now()}`)
+  document.body.innerHTML = page.renderResourcesPage({ initialTab:"tutorial" })
+  const text = document.body.textContent
+  assert.doesNotMatch(text, /你会完成|本节目标|完成后检查|我想要……该怎么做/)
+  assert.doesNotMatch(text, /不是[^。；]*而是|不等于/)
 })
 
 test("the resources layout reflows form rows and keeps readable tutorial prose on phones", () => {

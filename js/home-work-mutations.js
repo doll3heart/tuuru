@@ -394,10 +394,18 @@ export async function deleteHomeWork(args, dependencies = {}) {
         operationId,
         args.workId,
         args.expectedWorkToken,
-        database => ({
-          ...database,
-          works: database.works.filter(work => work.id !== args.workId),
-        }),
+        database => {
+          const updatedAt = resolved.now()
+          return {
+            ...database,
+            works: database.works.filter(work => work.id !== args.workId),
+            ...(Array.isArray(database.collections) ? {
+              collections: database.collections.map(collection => (collection.workIds || []).includes(args.workId)
+                ? { ...collection, workIds: collection.workIds.filter(workId => workId !== args.workId), updatedAt }
+                : collection),
+            } : {}),
+          }
+        },
       ),
       commitDependencies(session, resolved),
     ),

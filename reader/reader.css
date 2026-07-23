@@ -205,6 +205,24 @@ body {
   font-size: .75rem;
   color: var(--c-text2);
 }
+.rd-collection-item-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
+.rd-collection-summary{max-width:38ch;overflow:hidden;color:var(--c-text2);font-size:.72rem;text-overflow:ellipsis;white-space:nowrap}
+.rd-collection-directory{position:relative;width:min(720px,calc(100% - 32px));margin:0 auto;padding:clamp(56px,9vw,96px) 0 72px}
+.rd-collection-directory>.reader-back{position:absolute;top:20px;left:0}
+.rd-collection-cover{display:block;width:100%;max-height:300px;margin-bottom:28px;border:1px solid var(--c-border);object-fit:cover;box-shadow:var(--shadow-md)}
+.rd-collection-directory-head{max-width:600px;margin:0 auto 36px;text-align:center}
+.rd-collection-directory-head h1{margin:6px 0 8px;font-size:clamp(1.8rem,6vw,3.2rem);line-height:1.1}
+.rd-collection-directory-head p{margin:10px auto;color:var(--c-text2);line-height:1.75}
+.rd-collection-kicker{color:var(--c-primary-hover);font-size:.72rem;letter-spacing:.24em}
+.rd-collection-author{font-size:.84rem}
+.rd-collection-note{margin-top:18px;padding:14px 16px;border:1px solid var(--c-border);background:var(--c-surface2);font-size:.82rem;line-height:1.7;text-align:left}
+.rd-collection-directory-list{display:flex;flex-direction:column;border-top:1px solid var(--c-border)}
+.rd-collection-directory-item{display:grid;width:100%;padding:18px 10px;border:0;border-bottom:1px solid var(--c-border);grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:12px;background:transparent;color:var(--c-text);font:inherit;text-align:left;cursor:pointer;transition:.15s}
+.rd-collection-directory-item:hover{padding-right:4px;padding-left:16px;background:var(--c-surface2)}
+.rd-collection-directory-item:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:2px}
+.rd-collection-directory-item>span:nth-child(2){display:flex;min-width:0;flex-direction:column;gap:4px}
+.rd-collection-directory-item strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rd-collection-directory-item small,.rd-collection-number{color:var(--c-text2);font-size:.72rem}
 
 /* ====== Preset fields in personal page ====== */
 .rd-preset-section {

@@ -29,12 +29,17 @@ test("the empty library renders the designed empty-state ornament", () => {
 
 test("the library heading keeps compact backup actions beside its title", () => {
   assert.match(home, /class="library-heading mb-4"/)
+  assert.match(home, /class="library-heading-copy"/)
+  assert.match(home, /class="library-heading-hint">长按作品，可创建作品集/)
   assert.match(home, /class="library-heading-actions"/)
   assert.match(home, /class="library-action-label library-action-label-short"/)
   assert.doesNotMatch(home, /class="library-heading-actions"[\s\S]*navigate\('\/new'\)/)
   assert.match(home, /点击右上角「新建」开始创作/)
 
   assert.match(rule(".library-heading"), /display\s*:\s*flex/)
+  assert.match(rule(".library-heading-copy"), /align-items\s*:\s*baseline/)
+  assert.match(rule(".library-heading-hint"), /color\s*:\s*color-mix\(in srgb,var\(--c-bg\) 68%,var\(--c-text\) 32%\)/)
+  assert.match(rule(".library-heading-hint"), /font-size\s*:\s*\.6rem/)
   assert.match(rule(".library-heading-actions"), /display\s*:\s*flex/)
   assert.match(css, /@media\s*\(max-width:\s*480px\)[\s\S]*\.library-heading\s*\{[^}]*flex-direction\s*:\s*row/)
   assert.match(css, /@media\s*\(max-width:\s*480px\)[\s\S]*\.library-heading-actions\s+\.btn\s*\{[^}]*min-height\s*:\s*44px/)
@@ -86,14 +91,15 @@ test("the author home starts with the mode switch and keeps page actions roomy",
   assert.match(rule(".app-header .theme-wrap>button"), /min-width\s*:\s*44px/)
 })
 
-test("mobile work cards use a 2 by 2 article grid and a 3 by 1 phone row", () => {
+test("mobile work cards align their action dividers while keeping distinct button grids", () => {
   assert.match(rule(".work-card"), /display\s*:\s*flex/)
   assert.match(rule(".work-card"), /flex-direction\s*:\s*column/)
   assert.match(rule(".work-card-body"), /flex\s*:\s*1/)
   assert.match(home, /class="card work-card work-card-\$\{w\.type\}"/)
   assert.match(css, /\.work-card-actions\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\);grid-template-rows:repeat\(2,32px\)/)
   assert.match(css, /\.work-card-actions-left\{display:contents\}/)
-  assert.match(css, /\.work-card-phone \.work-card-actions\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\);grid-template-rows:32px\}/)
+  assert.match(css, /\.work-card-phone \.work-card-actions\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/)
+  assert.doesNotMatch(css, /\.work-card-phone \.work-card-actions\{[^}]*grid-template-rows:32px/)
   assert.match(css, /\.work-card-actions \.btn\{width:100%;min-width:0;height:32px/)
   assert.match(css, /\.work-card-more-wrap\{width:100%;height:32px/)
   assert.match(home, /class="work-card-more-wrap"/)

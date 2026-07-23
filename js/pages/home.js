@@ -1,5 +1,6 @@
 ﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, updateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
 import { navigate } from "../router.js"
+import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
@@ -19,12 +20,20 @@ import {
   hasRenderableWorkWatermark,
   normalizeWorkWatermark,
 } from "../work-watermark.js"
+import {
+  bindCollectionShelf,
+  renderCollectionCards,
+  renderCollectionSelectionBar,
+  renderWorkSelectionControl,
+  resetCollectionSelection,
+} from "./home-collections.js"
 
 const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请稍后刷新查看，不要重复操作。"
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
 
 export function renderHome(){
   const works = getWorks()
+  const collections = getWorkCollections()
   const articles = works.filter(w=>w.type===WORK_TYPE.ARTICLE)
   const phones = works.filter(w=>w.type===WORK_TYPE.PHONE)
   
@@ -40,14 +49,20 @@ export function renderHome(){
         var filter = t.dataset.tab
         var filtered = filter === 'all' ? getWorks()
           : getWorks().filter(function(w) { return w.type === (filter === 'phone' ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE) })
-        list.innerHTML = renderWorkList(filtered)
+        resetCollectionSelection()
+        list.innerHTML = renderWorkList(filtered, filter === 'all' ? getWorkCollections() : [])
+        bindCollectionShelf({ refresh: refreshHomeWorkList })
       }
     })
   }, 50)
+  setTimeout(() => bindCollectionShelf({ refresh: refreshHomeWorkList }), 60)
 
   return `
     <div class="library-heading mb-4">
-      <h2 class="library-heading-title">我的作品</h2>
+      <div class="library-heading-copy">
+        <h2 class="library-heading-title">我的作品</h2>
+        <span class="library-heading-hint">长按作品，可创建作品集</span>
+      </div>
       <div class="library-heading-actions">
         <button class="btn btn-sm btn-outline" onclick="backupLibrary()" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
         <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
@@ -61,17 +76,19 @@ export function renderHome(){
       <div class="tab" data-tab="phone">小手机 (${phones.length})</div>
     </div>
     
-    <div id="workList">${renderWorkList(works)}</div>
+    <div id="workList">${renderWorkList(works, collections)}</div>
+    ${renderCollectionSelectionBar()}
   `
 }
 
-function renderWorkList(works){
-  if(!works.length){
+function renderWorkList(works, collections = []){
+  if(!works.length && !collections.length){
     return `<div class="empty-state"><div class="empty-icon" aria-hidden="true"></div><h3>还没有作品</h3><p>点击右上角「新建」开始创作</p></div>`
   }
   
   return `<div class="work-grid">${works.map(w=>`
     <div class="card work-card work-card-${w.type}" data-id="${w.id}">
+      ${renderWorkSelectionControl(w)}
       <div class="work-card-body">
         <div class="work-card-title">${escHtml(w.title)}</div>
         <div class="work-card-desc">${escHtml(w.desc||"无描述")}</div>
@@ -99,7 +116,7 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
       </div>
       <div id="workWriteStatus-${w.id}" role="status" aria-live="polite" style="min-height:1em;margin-top:6px;color:var(--c-accent3);font-size:.75rem"></div>
     </div>
-  `).join("")}</div>`
+  `).join("")}${renderCollectionCards(collections, getWorks())}</div>`
 }
 
 function escHtml(s){
@@ -263,7 +280,9 @@ export function createHomeWriteController({
 
 function refreshHomeWorkList() {
   const list = document.getElementById("workList")
-  if (list) list.innerHTML = renderWorkList(getWorks())
+  if (list) {
+    list.innerHTML = renderWorkList(getWorks(), getWorkCollections())
+  }
 }
 
 function homeWriteElements(action, workId) {

@@ -200,6 +200,46 @@ test("moment comments can author and edit mentions with their display time", asy
   }
 })
 
+test("a newly published moment can reopen the same form and keep its attached data", async () => {
+  const fixture = await openApp("moment-reopen-editor", "messages")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector("#msgTabMoments").click()
+    overlay.querySelector("#msgAddMoment").click()
+    document.querySelector("#moContent").value = "刚发布的动态"
+    document.querySelector("#moImgs").value = "first.png\nsecond.png"
+    document.querySelector("#moSender").value = "contact-1"
+    document.querySelector("#moTime").value = "发布时刻"
+    document.querySelector("#moSave").click()
+
+    const created = draft.snapshot().phoneData.moments[0]
+    assert.equal(created.content, "刚发布的动态")
+    const editButton = overlay.querySelector(`[data-moment-edit="${created.id}"]`)
+    assert.ok(editButton)
+    editButton.click()
+    assert.equal(document.querySelector("#moContent").value, "刚发布的动态")
+    assert.equal(document.querySelector("#moImgs").value, "first.png\nsecond.png")
+    assert.equal(document.querySelector("#moSender").value, "contact-1")
+    assert.equal(document.querySelector("#moTime").value, "发布时刻")
+
+    document.querySelector("#moContent").value = "重新编辑后的动态"
+    document.querySelector("#moImgs").value = "updated.png"
+    document.querySelector("#moSender").value = "contact-2"
+    document.querySelector("#moTime").value = "修改时刻"
+    document.querySelector("#moSave").click()
+
+    const saved = draft.snapshot().phoneData.moments.find(moment => moment.id === created.id)
+    assert.equal(saved.content, "重新编辑后的动态")
+    assert.deepEqual(saved.images, ["updated.png"])
+    assert.equal(saved.contactId, "contact-2")
+    assert.equal(saved.time, "修改时刻")
+    assert.deepEqual(saved.likes, [])
+    assert.deepEqual(saved.comments, [])
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("author forum comments expose and edit reply choices without executing them", async () => {
   const fixture = await openApp("forum-choice-editor", "forum")
   const { draft, overlay } = fixture

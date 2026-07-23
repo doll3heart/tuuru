@@ -22,10 +22,11 @@ function parseDatabase(raw) {
   if (!isRecord(database)
     || !Array.isArray(database.works)
     || !Array.isArray(database.contacts)
-    || !Array.isArray(database.groups)) {
+    || !Array.isArray(database.groups)
+    || (Object.hasOwn(database, "collections") && !Array.isArray(database.collections))) {
     throw new TypeError("创作库结构无效")
   }
-  return database
+  return { ...database, collections: Array.isArray(database.collections) ? database.collections : [] }
 }
 
 function canonicalTimestamp(value) {
@@ -110,6 +111,7 @@ function uniqueId(base, used) {
 function mergeRecordList(current, incoming) {
   const result = current.map(clone)
   const used = new Set(result.map(item => String(item?.id || "")))
+  const idMap = new Map()
   let imported = 0
   incoming.forEach(source => {
     const item = clone(source)
@@ -118,16 +120,21 @@ function mergeRecordList(current, incoming) {
     if (!existing) {
       if (!id) item.id = uniqueId("item", used)
       else used.add(id)
+      if (id) idMap.set(id, item.id)
       result.push(item)
       imported += 1
       return
     }
-    if (sameJson(existing, item)) return
+    if (sameJson(existing, item)) {
+      if (id) idMap.set(id, id)
+      return
+    }
     item.id = uniqueId(id, used)
+    if (id) idMap.set(id, item.id)
     result.push(item)
     imported += 1
   })
-  return { records: result, imported }
+  return { records: result, imported, idMap }
 }
 
 function parseJsonOrNull(raw) {
@@ -157,6 +164,17 @@ function mergeReaderMapEntry(storage, key, raw, readerIdMap) {
     storage.setItem(key, JSON.stringify(merged))
     return { imported: 1, preserved: 0 }
   }
+  if (key === "moirain_collections" && Array.isArray(current) && Array.isArray(incoming)) {
+    const adjusted = incoming.map(collection => ({
+      ...clone(collection),
+      workIds: Array.isArray(collection?.workIds)
+        ? collection.workIds.map(id => readerIdMap.get(String(id)) || id)
+        : [],
+    }))
+    const merged = mergeRecordList(current, adjusted)
+    storage.setItem(key, JSON.stringify(merged.records))
+    return { imported: merged.imported ? 1 : 0, preserved: 0 }
+  }
   if ((key === "moirain_placeholders" || key === "moirain_readerPhValues")
     && isRecord(current) && isRecord(incoming)) {
     const merged = { ...current }
@@ -179,11 +197,19 @@ export function mergeLocalProfile(storage = localStorage, profile) {
   const workMerge = mergeRecordList(currentDatabase.works, incoming.database.works)
   const contactMerge = mergeRecordList(currentDatabase.contacts, incoming.database.contacts)
   const groupMerge = mergeRecordList(currentDatabase.groups, incoming.database.groups)
+  const incomingCollections = incoming.database.collections.map(collection => ({
+    ...clone(collection),
+    workIds: Array.isArray(collection?.workIds)
+      ? collection.workIds.map(id => workMerge.idMap.get(String(id)) || id)
+      : [],
+  }))
+  const collectionMerge = mergeRecordList(currentDatabase.collections, incomingCollections)
   const nextDatabase = {
     ...currentDatabase,
     works: workMerge.records,
     contacts: contactMerge.records,
     groups: groupMerge.records,
+    collections: collectionMerge.records,
   }
   storage.setItem(AUTHOR_DATABASE_KEY, JSON.stringify(nextDatabase))
 

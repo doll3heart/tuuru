@@ -17,8 +17,8 @@ class MemoryStorage {
   removeItem(key) { this.map.delete(String(key)) }
 }
 
-function database(works = []) {
-  return JSON.stringify({ version: 1, works, contacts: [], groups: [] })
+function database(works = [], collections) {
+  return JSON.stringify({ version: 1, works, contacts: [], groups: [], ...(collections ? { collections } : {}) })
 }
 
 test("local profile package round-trips author works, author settings, and reader data", () => {
@@ -77,4 +77,25 @@ test("local profile import preserves conflicts and remaps conflicting work ids",
   assert.equal(JSON.parse(target.getItem("moirain_profile")).readerId, "现有读者")
   assert.equal(result.preservedConflicts >= 2, true)
   assert.equal(Array.from(target.map.keys()).some(key => key.startsWith("moirain_work_same-imported-")), true)
+})
+
+test("local profile import remaps author and reader collection members with conflicting works", () => {
+  const target = new MemoryStorage({
+    tuuru_works: database([{ id: "same", type: "article", title: "现有", nodes: [], chapters: [] }]),
+    moirain_work_same: JSON.stringify({ id: "same", type: "article", title: "现有阅读作品" }),
+    moirain_collections: JSON.stringify([]),
+  })
+  const collection = { id: "c1", title: "导入集", workIds: ["same"] }
+  const source = new MemoryStorage({
+    tuuru_works: database([{ id: "same", type: "article", title: "导入", nodes: [], chapters: [] }], [collection]),
+    moirain_work_same: JSON.stringify({ id: "same", type: "article", title: "导入阅读作品" }),
+    moirain_collections: JSON.stringify([collection]),
+  })
+  const profile = inspectLocalProfile(serializeLocalProfile(source, new Date("2026-07-22T12:00:00.000Z"))).profile
+  mergeLocalProfile(target, profile)
+
+  const authorDatabase = JSON.parse(target.getItem("tuuru_works"))
+  assert.match(authorDatabase.collections[0].workIds[0], /^same-imported-/)
+  const readerCollections = JSON.parse(target.getItem("moirain_collections"))
+  assert.match(readerCollections[0].workIds[0], /^same-imported-/)
 })

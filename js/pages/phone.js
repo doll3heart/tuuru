@@ -4305,29 +4305,46 @@ function openMessagesEditor(frame, wid, pd) {
     renderMessages()
   }
 
-  function addMoment() {
-    var senderOptions = contacts.map(function(c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>' }).join('')
-    var ov = modal('发动\u6001',
-      '<div class="form-group"><textarea id="moContent" class="form-textarea" placeholder="内容"></textarea></div>' +
-      '<div class="form-group"><label class="form-label">图片URL（多个用换行分隔）</label><textarea id="moImgs" class="form-textarea" style="min-height:50px" placeholder="https://..."></textarea></div>' +
+  function openMomentEditor(moment) {
+    var editing = Boolean(moment)
+    var senderOptions = contacts.map(function(c) {
+      return '<option value="' + escapeHtmlAttribute(c.id) + '"' + (moment && String(moment.contactId) === String(c.id) ? ' selected' : '') + '>' + esc(c.name) + '</option>'
+    }).join('')
+    var contentValue = moment ? moment.content || '' : ''
+    var imageValue = moment && Array.isArray(moment.images) ? moment.images.join('\n') : ''
+    var timeValue = moment ? moment.time || '' : new Date().toLocaleString()
+    var ov = modal(editing ? '编辑动态' : '发动态',
+      '<div class="form-group"><textarea id="moContent" class="form-textarea" placeholder="内容">' + esc(contentValue) + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label">图片URL（多个用换行分隔）</label><textarea id="moImgs" class="form-textarea" style="min-height:50px" placeholder="https://...">' + esc(imageValue) + '</textarea></div>' +
       '<div class="form-group"><label class="form-label">发送者</label><select id="moSender" class="form-select">' + senderOptions + '</select></div>' +
-      '<div class="form-group"><label class="form-label">时间（可修改）</label><input id="moTime" class="form-input" value="' + esc(new Date().toLocaleString()) + '"></div>',
-      '<button id="moSave" class="btn btn-primary btn-sm">发布</button><button id="moCancel" class="btn btn-ghost btn-sm">取消</button>')
+      '<div class="form-group"><label class="form-label">时间（可修改）</label><input id="moTime" class="form-input" value="' + escapeHtmlAttribute(timeValue) + '"></div>',
+      '<button id="moSave" class="btn btn-primary btn-sm">' + (editing ? '保存' : '发布') + '</button><button id="moCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#moSave').onclick = function() {
       var content = ov.querySelector('#moContent').value.trim()
       if (!content) return
       var senderId = ov.querySelector('#moSender').value
-      var imgs = (ov.querySelector('#moImgs').value || '').split('\n').filter(function(l) { return l.trim() })
+      var imgs = (ov.querySelector('#moImgs').value || '').split('\n').map(function(line) { return line.trim() }).filter(Boolean)
       var timeVal = ov.querySelector('#moTime').value.trim() || new Date().toLocaleString()
-      moments.unshift({
-        id: uid(), contactId: senderId, content: content,
-        images: imgs, time: timeVal, likes: [], comments: []
-      })
+      if (moment) {
+        moment.contactId = senderId
+        moment.content = content
+        moment.images = imgs
+        moment.time = timeVal
+      } else {
+        moments.unshift({
+          id: uid(), contactId: senderId, content: content,
+          images: imgs, time: timeVal, likes: [], comments: []
+        })
+      }
       saveData()
       ov.remove()
       renderMessages()
     }
     ov.querySelector('#moCancel').onclick = function() { ov.remove() }
+  }
+
+  function addMoment() {
+    openMomentEditor(null)
   }
 
   function deleteMoment(mid) {
@@ -4451,6 +4468,7 @@ function openMessagesEditor(frame, wid, pd) {
         }
         h += '<div class="moment-actions" style="display:flex;gap:16px;font-size:.75rem;color:var(--c-text2);padding-top:6px;border-top:1px solid var(--c-border)">'
         h += '<span class="moment-reply-btn" data-moment-reply="' + m.id + '" style="cursor:pointer">回复</span>'
+        h += '<button type="button" class="moment-edit-btn" data-moment-edit="' + escapeHtmlAttribute(m.id) + '">编辑</button>'
         h += '</div>'
         h += '<button class="browser-del" style="position:absolute;top:4px;right:4px" data-moment-del="' + m.id + '">x</button>'
         h += '</div>'
@@ -4476,6 +4494,13 @@ function bindMsgEvents() {
 
     var moDelBtns = frame.querySelectorAll('[data-moment-del]')
     moDelBtns.forEach(function(b) { b.onclick = function(e) { e.stopPropagation(); deleteMoment(b.dataset.momentDel) } })
+
+    frame.querySelectorAll('[data-moment-edit]').forEach(function(button) {
+      button.onclick = function() {
+        var moment = moments.find(function(item) { return String(item.id) === String(button.dataset.momentEdit) })
+        if (moment) openMomentEditor(moment)
+      }
+    })
 
     // Moment reply buttons
     var replyBtns = frame.querySelectorAll('[data-moment-reply]')

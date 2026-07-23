@@ -73,6 +73,32 @@ function recordArray(value, path, { optional = false } = {}) {
   return { ok: true, value: value.map(item => ({ ...item })) }
 }
 
+function normalizeDatabaseCollection(input) {
+  const id = typeof input.id === "string" ? input.id.trim().slice(0, 200) : ""
+  const title = typeof input.title === "string" ? input.title.trim().slice(0, 120) : ""
+  if (!id || !title || !Array.isArray(input.workIds)) {
+    throw new TypeError("作品集缺少有效的 ID、名称或作品目录")
+  }
+  const workIds = []
+  const seen = new Set()
+  input.workIds.forEach(value => {
+    const workId = typeof value === "string" ? value.trim().slice(0, 200) : ""
+    if (!workId || seen.has(workId)) return
+    seen.add(workId)
+    workIds.push(workId)
+  })
+  if (workIds.length > 100) throw new TypeError("单个作品集最多收录 100 篇作品")
+  const accessMode = input.accessMode === "unified" ? "unified" : "separate"
+  return {
+    ...input,
+    id,
+    title,
+    workIds,
+    accessMode,
+    password: accessMode === "unified" && typeof input.password === "string" ? input.password.slice(0, 200) : "",
+  }
+}
+
 function validateDatabaseObject(data, { context = "local-database", raw = null } = {}) {
   if (!isRecord(data)) {
     return {
@@ -91,7 +117,10 @@ function validateDatabaseObject(data, { context = "local-database", raw = null }
   const groups = recordArray(data.groups, "$.groups", {
     optional: !Object.hasOwn(data, "groups"),
   })
-  const failed = [works, contacts, groups].find(result => !result.ok)
+  const collections = recordArray(data.collections, "$.collections", {
+    optional: !Object.hasOwn(data, "collections"),
+  })
+  const failed = [works, contacts, groups, collections].find(result => !result.ok)
   if (failed) {
     return {
       ok: false,
@@ -120,6 +149,21 @@ function validateDatabaseObject(data, { context = "local-database", raw = null }
     normalizedWorks.push(result.work)
   }
 
+  const normalizedCollections = []
+  try {
+    for (const collection of collections.value) {
+      normalizedCollections.push(normalizeDatabaseCollection(collection))
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      code: "invalid-structure",
+      raw,
+      issues: [{ code: "invalid-work-collection", path: "$.collections", message: error instanceof Error ? error.message : "作品集结构无效" }],
+      message: "本地作品集数据结构无效。",
+    }
+  }
+
   return {
     ok: true,
     raw,
@@ -128,6 +172,7 @@ function validateDatabaseObject(data, { context = "local-database", raw = null }
       works: normalizedWorks,
       contacts: contacts.value,
       groups: groups.value,
+      ...(Object.hasOwn(data, "collections") ? { collections: normalizedCollections } : {}),
     },
   }
 }

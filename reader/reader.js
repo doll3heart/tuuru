@@ -36,6 +36,8 @@ import { splitMentionText } from '../js/mention-text.js'
 import { forumDisplayCommentCount, forumDisplayFloor } from '../js/forum-display-metrics.js'
 import { substitutePhoneTextData } from '../js/phone-placeholder-text.js'
 import { showReleaseAnnouncementOnce } from '../js/release-announcement.js'
+import { WORK_COLLECTION_BUNDLE_TYPE } from '../js/work-collections.js'
+import { inspectReaderCollectionBundle, installReaderCollection } from './work-collection-import.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -204,6 +206,9 @@ var _visitedNodes = []
 var _articlePath = []
 var _articleInteractionSelections = Object.create(null)
 var _renderedRecentIds = []
+var _renderedCollectionIds = []
+var _activeReaderCollectionId = ''
+var _readerCollectionValues = Object.create(null)
 var _readerPhoneChoiceSession = null
 var _readerPhoneFlowSession = null
 var _editorPreviewMode = false
@@ -311,6 +316,10 @@ function getPlaceholders() {
 function getRecents() {
   return lsGet('recent') || []
 }
+function getReaderCollections() {
+  var collections = lsGet('collections')
+  return Array.isArray(collections) ? collections : []
+}
 function addRecent(work) {
   var recents = getRecents()
   recents = recents.filter(function(r) { return r.id !== work.id })
@@ -384,6 +393,30 @@ document.addEventListener('click', function(event) {
   var target = event.target && event.target.closest ? event.target : null
   if (!target) return
 
+  var libraryTrigger = target.closest('[data-reader-library]')
+  if (libraryTrigger) {
+    event.preventDefault()
+    _activeReaderCollectionId = ''
+    renderHome()
+    return
+  }
+
+  var collectionWorkTrigger = target.closest('[data-reader-collection-work]')
+  if (collectionWorkTrigger) {
+    event.preventDefault()
+    openReaderCollectionWork(collectionWorkTrigger.dataset.readerCollectionWork)
+    return
+  }
+
+  var collectionTrigger = target.closest('[data-reader-collection-index]')
+  if (collectionTrigger) {
+    var collectionIndex = Number(collectionTrigger.dataset.readerCollectionIndex)
+    if (!Number.isInteger(collectionIndex) || collectionIndex < 0 || collectionIndex >= _renderedCollectionIds.length) return
+    event.preventDefault()
+    openReaderCollection(_renderedCollectionIds[collectionIndex])
+    return
+  }
+
   var previousTrigger = target.closest('[data-reader-previous]')
   if (previousTrigger) {
     event.preventDefault()
@@ -420,7 +453,9 @@ document.addEventListener('click', function(event) {
 function renderPersonalPage() {
   var profile = getProfile()
   var recents = getRecents()
+  var collections = getReaderCollections()
   _renderedRecentIds = recents.map(function(r) { return r.id })
+  _renderedCollectionIds = collections.map(function(collection) { return collection.id })
   var h = '<div class="rd-personal">'
   // Profile card
   h += '<div class="rd-profile-card">'
@@ -438,10 +473,27 @@ function renderPersonalPage() {
   var placeholders = getPlaceholders()
   h += '<div class="rd-preset-section">'
   h += '<div class="rd-preset-title">占位符预设</div>'
-  h += '<div class="rd-preset-field"><label>姓名</label><input type="text" id="ps_name" value="' + esc(placeholders.name || '') + '" placeholder="对应「某某」"></div>'
-  h += '<div class="rd-preset-field"><label>昵称</label><input type="text" id="ps_nickname" value="' + esc(placeholders.nickname || '') + '" placeholder="对应「小某」"></div>'
-  h += '<div class="rd-preset-field"><label>网名</label><input type="text" id="ps_webname" value="' + esc(placeholders.webname || '') + '" placeholder="对应「wm」"></div>'
+  h += '<div class="rd-preset-field"><label>姓名</label><input type="text" id="ps_name" value="' + esc(placeholders.name || '') + '"></div>'
+  h += '<div class="rd-preset-field"><label>昵称</label><input type="text" id="ps_nickname" value="' + esc(placeholders.nickname || '') + '"></div>'
+  h += '<div class="rd-preset-field"><label>网名</label><input type="text" id="ps_webname" value="' + esc(placeholders.webname || '') + '"></div>'
   h += '<div class="rd-preset-actions"><button type="button" class="rd-preset-save" id="rdPresetSave">保存到本地</button><span class="rd-preset-status" id="rdPresetStatus" role="status" aria-live="polite"></span></div>'
+  h += '</div>'
+
+  // Imported collections
+  h += '<div class="rd-section rd-collection-section">'
+  h += '<div class="rd-section-title">我的作品集</div>'
+  if (collections.length === 0) {
+    h += '<div class="rd-empty">导入作品集后会显示在这里</div>'
+  } else {
+    collections.forEach(function(collection, collectionIndex) {
+      var count = Array.isArray(collection.workIds) ? collection.workIds.length : 0
+      h += '<button type="button" class="rd-recent-item rd-collection-item" data-reader-collection-index="' + collectionIndex + '">'
+      h += '<span class="rd-collection-item-copy"><span class="rd-recent-title">' + esc(collection.title || '未命名作品集') + '</span>'
+      h += '<span class="rd-collection-summary">' + esc(collection.description || collection.author || '作品集') + '</span></span>'
+      h += '<span class="rd-recent-meta">' + count + ' 篇 · ' + (collection.accessMode === 'unified' ? '统一进入' : '各篇独立') + '</span>'
+      h += '</button>'
+    })
+  }
   h += '</div>'
 
   // Recents
@@ -592,7 +644,7 @@ function setupImport() {
       if (ext === 'json') {
         try {
           var work = JSON.parse(reader.result)
-          importWork(work)
+          importPayload(work)
         } catch (e) {
           alert('JSON 解析失败：' + e.message)
         }
@@ -664,13 +716,46 @@ function decodeSteganoFromDataUrl(dataUrl) {
     try {
       var json = new TextDecoder().decode(bytes)
       var work = JSON.parse(json)
-      importWork(work)
+      importPayload(work)
     } catch(e) {
       alert('隐写数据解析失败：' + e.message)
     }
   }
   img.onerror = function() { alert('PNG 加载失败') }
   img.src = dataUrl
+}
+
+function importPayload(payload) {
+  if (payload && payload.type === WORK_COLLECTION_BUNDLE_TYPE) {
+    importWorkCollection(payload)
+    return
+  }
+  importWork(payload)
+}
+
+function importWorkCollection(payload) {
+  var inspected
+  try {
+    inspected = inspectReaderCollectionBundle(payload, localStorage, window)
+  } catch (error) {
+    alert(error instanceof Error ? error.message : '无法检查作品集')
+    return
+  }
+  if (!inspected.ok) {
+    alert(inspected.message)
+    return
+  }
+  var replacement = inspected.existingWorkCount
+    ? '\n其中 ' + inspected.existingWorkCount + ' 篇会更新同名本地缓存。'
+    : ''
+  var access = inspected.collection.accessMode === 'unified' ? '统一进入' : '各篇独立进入'
+  if (!confirm('导入作品集《' + inspected.collection.title + '》？\n共 ' + inspected.works.length + ' 篇，' + access + '。' + replacement)) return
+  try {
+    var installed = installReaderCollection(localStorage, inspected)
+    openReaderCollection(installed.collection.id)
+  } catch (error) {
+    alert('作品集导入失败：' + (error instanceof Error ? error.message : '本地存储不可用'))
+  }
 }
 
 function importWork(work) {
@@ -799,6 +884,101 @@ function showLandingPage(work, callback) {
   overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove() })
 }
 
+function readerCollectionById(id) {
+  return getReaderCollections().find(function(collection) { return collection && collection.id === id }) || null
+}
+
+function readerCollectionWork(id) {
+  try { return JSON.parse(localStorage.getItem('moirain_work_' + id)) } catch (_) { return null }
+}
+
+function collectionPlaceholders(collection) {
+  var seen = Object.create(null)
+  var placeholders = []
+  ;(collection.workIds || []).forEach(function(workId) {
+    var work = readerCollectionWork(workId)
+    ;(work && Array.isArray(work.placeholders) ? work.placeholders : []).forEach(function(placeholder) {
+      var key = String(placeholder.key || placeholder.label || placeholder.id || '').trim()
+      if (!key || seen[key]) return
+      seen[key] = true
+      placeholders.push(Object.assign({}, placeholder, { id: 'collection-placeholder-' + placeholders.length, key: key }))
+    })
+  })
+  return placeholders
+}
+
+function openReaderCollection(id) {
+  var collection = readerCollectionById(id)
+  if (!collection) {
+    alert('这个作品集已不在本地，请重新导入')
+    return
+  }
+  _activeReaderCollectionId = collection.id
+  if (collection.accessMode !== 'unified' || Object.hasOwn(_readerCollectionValues, collection.id)) {
+    renderReaderCollectionById(collection.id)
+    return
+  }
+  var placeholders = collectionPlaceholders(collection)
+  var gate = {
+    title: collection.title,
+    author: collection.author,
+    authorNote: collection.authorNote || collection.description,
+    password: collection.password || '',
+    placeholders: placeholders,
+  }
+  showLandingPage(gate, function() {
+    var values = Object.create(null)
+    placeholders.forEach(function(placeholder) {
+      values[placeholder.key] = gate.readerPhValues?.[placeholder.id] || ['']
+    })
+    _readerCollectionValues[collection.id] = values
+    renderReaderCollectionById(collection.id)
+  })
+}
+
+function renderReaderCollectionById(id) {
+  var collection = readerCollectionById(id)
+  if (!collection) {
+    _activeReaderCollectionId = ''
+    renderHome()
+    return
+  }
+  _activeReaderCollectionId = id
+  var available = 0
+  var h = '<main class="rd-collection-directory">'
+  h += '<button type="button" class="reader-back" data-reader-library title="返回个人主页" aria-label="返回个人主页">←</button>'
+  if (collection.coverImage && isSafeImageUrl(collection.coverImage)) h += '<img class="rd-collection-cover" src="' + escapeHtmlAttribute(collection.coverImage) + '" alt="">'
+  h += '<header class="rd-collection-directory-head"><span class="rd-collection-kicker">作品集</span><h1>' + esc(collection.title || '未命名作品集') + '</h1>'
+  if (collection.author) h += '<p class="rd-collection-author">' + esc(collection.author) + '</p>'
+  if (collection.description) h += '<p>' + esc(collection.description) + '</p>'
+  if (collection.authorNote) h += '<div class="rd-collection-note">' + esc(collection.authorNote) + '</div>'
+  h += '</header><section class="rd-collection-directory-list" aria-label="作品目录">'
+  ;(collection.workIds || []).forEach(function(workId, index) {
+    var work = readerCollectionWork(workId)
+    if (!work) return
+    available += 1
+    h += '<button type="button" class="rd-collection-directory-item" data-reader-collection-work="' + escapeHtmlAttribute(workId) + '"><span class="rd-collection-number">' + String(index + 1).padStart(2, '0') + '</span><span><strong>' + esc(work.title || '无标题作品') + '</strong><small>' + (work.type === 'phone' ? '小手机' : '互动文章') + '</small></span><span aria-hidden="true">→</span></button>'
+  })
+  if (!available) h += '<div class="rd-empty">作品内容不在本地，请重新导入这个作品集</div>'
+  h += '</section></main>'
+  render('app', h)
+}
+
+function openReaderCollectionWork(workId) {
+  var collection = readerCollectionById(_activeReaderCollectionId)
+  var work = readerCollectionWork(workId)
+  if (!collection || !work || !(collection.workIds || []).includes(workId)) return
+  if (collection.accessMode === 'unified') {
+    var valuesByKey = _readerCollectionValues[collection.id] || {}
+    work.readerPhValues = Object.create(null)
+    ;(work.placeholders || []).forEach(function(placeholder) {
+      var key = String(placeholder.key || placeholder.label || placeholder.id || '').trim()
+      work.readerPhValues[placeholder.id] = valuesByKey[key] || ['']
+    })
+    loadWork(work, { collectionId: collection.id, skipLanding: true })
+  } else loadWork(work, { collectionId: collection.id })
+}
+
 // ====== Load Work ======
 function loadWork(work, options) {
   if (!work.type) { alert('无效的作品文件'); return }
@@ -809,6 +989,7 @@ function loadWork(work, options) {
   _visitedNodes = []
   _articlePath = []
   _articleInteractionSelections = Object.create(null)
+  _activeReaderCollectionId = options && options.collectionId || ''
   var rememberWork = !options || options.remember !== false
   if (rememberWork) {
     var cached = tryReaderStorageWrite(function() {
@@ -818,13 +999,15 @@ function loadWork(work, options) {
       tryReaderStorageWrite(function() { addRecent(work) })
     }
   }
-  showLandingPage(work, function() {
+  function startReading() {
     if (_work.type === 'phone') {
       renderPhoneReader()
     } else {
       renderArticleReader()
     }
-  })
+  }
+  if (options && options.skipLanding) startReading()
+  else showLandingPage(work, startReading)
 }
 
 function timeAgo(ts) {
@@ -4842,7 +5025,8 @@ function startReader() {
   var preview = prepareEditorPreview()
   _editorPreviewMode = preview.preview
   if (!preview.preview) {
-    renderHome()
+    if (_activeReaderCollectionId) renderReaderCollectionById(_activeReaderCollectionId)
+    else renderHome()
     if (!_editorPreviewMode) showReleaseAnnouncementOnce()
     return
   }
