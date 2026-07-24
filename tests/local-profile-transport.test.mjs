@@ -26,6 +26,7 @@ test("local profile package round-trips author works, author settings, and reade
     tuuru_works: database([{ id: "author-1", type: "article", title: "作品", nodes: [], chapters: [] }]),
     tuuru_theme: "tuuru",
     tuuru_author_placeholder_presets: JSON.stringify({ version: 1, presets: [] }),
+    tuuru_author_npc_packs: JSON.stringify({ version: 1, packs: [{ id:"pack-a", name:"论坛路人", npcs:[] }] }),
     moirain_profile: JSON.stringify({ readerId: "小雨" }),
     moirain_work_reader1: JSON.stringify({ id: "reader1", type: "phone", title: "读者作品" }),
     unrelated_secret: "must-not-export",
@@ -45,6 +46,7 @@ test("local profile package round-trips author works, author settings, and reade
   assert.equal(result.importedReaderEntries, 2)
   assert.equal(JSON.parse(target.getItem("moirain_profile")).readerId, "小雨")
   assert.equal(JSON.parse(target.getItem("moirain_work_reader1")).title, "读者作品")
+  assert.equal(JSON.parse(target.getItem("tuuru_author_npc_packs")).packs[0].name, "论坛路人")
 })
 
 test("local profile inspection rejects malformed and unsupported packages", () => {

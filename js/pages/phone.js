@@ -31,6 +31,8 @@ import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js
 import { phoneTimestampsHidden, shouldShowPhoneTimestamp } from "../phone-timestamps.js"
 import { renderPhoneShoppingList, renderPhoneShoppingTabs } from "../phone-shopping-view.js"
 import { renderPhoneForumComment, renderPhoneForumPost } from "../phone-forum-view.js"
+import { mergeNpcPack, readNpcPacks, saveNpcPack } from "../npc-bundles.js"
+import { referencedMessageContactIds } from "../phone-module-draft.js"
 
 var _workId = null
 var _dragState = null
@@ -421,6 +423,23 @@ function restorePhoneAppModalFocus(target) {
   if (overlays.length > 0) focusFirstModalControl(overlays[overlays.length - 1])
 }
 
+function createStandalonePhoneAppFrame(content, pd, requestClose) {
+  var skin = Object.assign({}, DEFAULT_PHONE_SKIN, pd && pd.skin || {})
+  var frame = document.createElement('div')
+  var usesDefaultWallpaper = skin.wallpaper === DEFAULT_PHONE_SKIN.wallpaper
+    && skin.wallpaperType !== 'image'
+    && !skin.wallpaperImage
+  frame.className = 'phone-frame phone-app-modal-frame' + (usesDefaultWallpaper ? ' phone-default-wallpaper' : '')
+  frame.style.setProperty('--phone-bg', sanitizeCssColor(skin.wallpaper, { fallback: DEFAULT_PHONE_SKIN.wallpaper }))
+  frame.style.setProperty('--phone-radius', Number(skin.borderRadius) + 'px')
+  frame.style.setProperty('--phone-font', "'" + String(skin.fontFamily || '').replace(/'/g, '') + "', sans-serif")
+  frame.style.setProperty('--phone-fontsize', Number(skin.fontSize) + 'px')
+  frame.style.setProperty('--phone-frame', sanitizeCssColor(skin.frameColor, { fallback: DEFAULT_PHONE_SKIN.frameColor }))
+  frame._requestPhoneAppModalClose = requestClose
+  content.appendChild(frame)
+  return frame
+}
+
 export function openPhoneAppModal(wid, appType, options = {}) {
   releaseStandalonePhoneMention()
   var w = getWork(wid)
@@ -515,8 +534,13 @@ export function openPhoneAppModal(wid, appType, options = {}) {
     openPhoneMentionPicker(input, pd, w.placeholders)
   })
 
-  // Render the app inside
+  // Article phone modules use the same scoped phone host as the standalone editor.
+  // The close lifecycle stays modal-specific so only the selected module payload is committed.
   var frame = content
+  if (options.matchStandalonePhone === true) {
+    inner.classList.add('phone-app-modal-inner-framed')
+    frame = createStandalonePhoneAppFrame(content, pd, requestClose)
+  }
 
   try {
     switch (appType) {
@@ -3461,6 +3485,63 @@ function openForumEditor(frame, wid, contact, pd) {
     renderForum()
   }
 
+  function saveCurrentNpcPack() {
+    if (!npcs.length) {
+      showToast('当前作品还没有可保存的 NPC')
+      return
+    }
+    var ov = modal('保存到通用 NPC 包',
+      '<div class="form-group"><label class="form-label" for="npcPackName">NPC 包名称</label><input id="npcPackName" class="form-input" maxlength="80" placeholder="例如：校园论坛路人"></div>' +
+      '<p class="form-hint">会保存当前作品的 ' + npcs.length + ' 位 NPC。同名包会更新，其他作品中已导入的 NPC 不会自动变化。</p>',
+      '<button id="npcPackSave" class="btn btn-primary btn-sm">保存</button><button id="npcPackCancel" class="btn btn-ghost btn-sm">取消</button>')
+    var input = ov.querySelector('#npcPackName')
+    input.focus()
+    ov.querySelector('#npcPackSave').onclick = function() {
+      var name = input.value.trim()
+      if (!name) {
+        input.focus()
+        return
+      }
+      saveNpcPack({
+        name:name,
+        sourceWorkTitle:work.title || '',
+        npcs:npcs,
+      }, { idFactory:uid })
+      ov.remove()
+      showToast('NPC 包“' + name + '”已保存')
+    }
+    ov.querySelector('#npcPackCancel').onclick = function() { ov.remove() }
+  }
+
+  function importNpcPackIntoWork() {
+    var packs = readNpcPacks()
+    if (!packs.length) {
+      showToast('还没有通用 NPC 包，请先保存当前 NPC 或到“写作习惯”创建')
+      return
+    }
+    var options = packs.map(function(pack) {
+      return '<option value="' + escAttr(pack.id) + '">' + esc(pack.name) + ' · ' + pack.npcs.length + ' 位 NPC</option>'
+    }).join('')
+    var ov = modal('导入 NPC 包',
+      '<div class="form-group"><label class="form-label" for="npcPackSelect">选择通用包</label><select id="npcPackSelect" class="form-select">' + options + '</select></div>' +
+      '<p class="form-hint">导入会追加 NPC，不覆盖当前作品已有角色；相同 ID 会自动换新。</p>',
+      '<button id="npcPackImport" class="btn btn-primary btn-sm">导入</button><button id="npcPackCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.querySelector('#npcPackImport').onclick = function() {
+      var pack = readNpcPacks().find(function(candidate) {
+        return candidate.id === ov.querySelector('#npcPackSelect').value
+      })
+      if (!pack) return
+      var result = mergeNpcPack(npcs, pack, { idFactory:uid })
+      npcs = result.npcs
+      pd.forumNpcs = npcs
+      saveData()
+      ov.remove()
+      renderForum()
+      showToast('已导入 ' + result.added + ' 位 NPC' + (result.reassignedIds ? '，并处理 ' + result.reassignedIds + ' 个重复 ID' : ''))
+    }
+    ov.querySelector('#npcPackCancel').onclick = function() { ov.remove() }
+  }
+
   // Posts
   function addPost() {
     selectIdentity(function(identity) {
@@ -3665,6 +3746,10 @@ function openForumEditor(frame, wid, contact, pd) {
       h += '<button class="btn btn-sm btn-ghost" id="fbBack">返回</button>'
       h += '<span class="forum-bar-title">NPC管理</span>'
       h += '<button class="btn btn-sm btn-outline" id="fbAddNpc">+ 新建</button>'
+      h += '</div>'
+      h += '<div class="forum-npc-pack-tools">'
+      h += '<button class="btn btn-sm btn-ghost" id="fbNpcPackSave"' + (npcs.length ? '' : ' disabled') + '>保存到 NPC 包</button>'
+      h += '<button class="btn btn-sm btn-outline" id="fbNpcPackImport">导入 NPC 包</button>'
       h += '</div>'
 
       if (npcs.length === 0) {
@@ -4109,6 +4194,10 @@ function openForumEditor(frame, wid, contact, pd) {
     // NPC management
     var addNpcBtn = frame.querySelector('#fbAddNpc')
     if (addNpcBtn) addNpcBtn.onclick = function() { addNpc() }
+    var saveNpcPackBtn = frame.querySelector('#fbNpcPackSave')
+    if (saveNpcPackBtn) saveNpcPackBtn.onclick = function() { saveCurrentNpcPack() }
+    var importNpcPackBtn = frame.querySelector('#fbNpcPackImport')
+    if (importNpcPackBtn) importNpcPackBtn.onclick = function() { importNpcPackIntoWork() }
 
     var npcEditBtns = frame.querySelectorAll('[data-npc-edit]')
     npcEditBtns.forEach(function(b) { b.onclick = function() { editNpc(b.dataset.npcEdit) } })
@@ -4485,7 +4574,23 @@ function openMessagesEditor(frame, wid, pd) {
   var chats = pd.chats || []
   var contacts = pd.contacts || []
   var moments = pd.moments || []
+  var managesModuleContactVisibility = Array.isArray(pd.visibleContactIds)
   var activeTab = 'chats'
+
+  function messageContactVisibilityState() {
+    var contactIds = new Set(contacts.map(function(contact) { return String(contact.id) }))
+    var referencedIds = new Set(referencedMessageContactIds({ chats:chats, moments:moments }))
+    var visibleIds = new Set(
+      (Array.isArray(pd.visibleContactIds) ? pd.visibleContactIds : [])
+        .map(function(id) { return String(id) })
+        .filter(function(id) { return contactIds.has(id) }),
+    )
+    referencedIds.forEach(function(id) {
+      if (contactIds.has(id)) visibleIds.add(id)
+    })
+    if (managesModuleContactVisibility) pd.visibleContactIds = Array.from(visibleIds)
+    return { referencedIds:referencedIds, visibleIds:visibleIds }
+  }
 
   function saveData() {
     pd.chats = chats
@@ -4678,12 +4783,33 @@ function openMessagesEditor(frame, wid, pd) {
     } else if (activeTab === 'contacts') {
       h += '<div class="forum-bar"><span class="forum-bar-title">联系人</span><button class="btn btn-sm btn-outline" id="msgAddGroup">新建群聊</button></div>'
       if (contacts.length === 0) h += '<div class="pf-empty">暂无联系人，请先在联系人面板中添加</div>'
+      var visibilityState = messageContactVisibilityState()
+      if (managesModuleContactVisibility && contacts.length > 0) {
+        h += '<div class="message-contact-visibility-summary" role="status">'
+        h += '<strong>本模块可见 ' + visibilityState.visibleIds.size + ' / ' + contacts.length + '</strong>'
+        h += '<span>只影响当前文章里的消息卡片</span></div>'
+      }
       contacts.forEach(function(c) {
-        h += '<div class="forum-npc-row">'
+        var contactId = String(c.id)
+        var contactVisible = !managesModuleContactVisibility || visibilityState.visibleIds.has(contactId)
+        var contactReferenced = managesModuleContactVisibility && visibilityState.referencedIds.has(contactId)
+        h += '<div class="forum-npc-row message-contact-visibility-row' + (contactVisible ? '' : ' is-hidden') + '">'
         var contactAvatarStyle = c.avatarUrl ? 'background-image:url(' + c.avatarUrl + ');background-size:cover' : 'background:' + avatarColor(c.id)
         h += '<div class="forum-npc-avatar" style="' + escapeHtmlAttribute(contactAvatarStyle) + '">'
         if (!c.avatarUrl) h += '<span>' + esc(c.name.charAt(0)) + '</span>'
         h += '</div><div class="forum-npc-name">' + esc(c.name) + '</div>'
+        if (managesModuleContactVisibility) {
+          var visibilityLabel = contactReferenced ? '剧情使用中' : (contactVisible ? '读者可见' : '已隐藏')
+          var visibilityTitle = contactReferenced
+            ? '此联系人已被剧情使用，请先删除相关聊天或动态'
+            : (contactVisible ? '在当前消息模块中隐藏' : '在当前消息模块中显示')
+          h += '<button type="button" class="message-contact-visibility-toggle' + (contactVisible ? ' is-visible' : '') + '"'
+          h += ' data-contact-visibility="' + escapeHtmlAttribute(contactId) + '"'
+          h += ' aria-pressed="' + (contactVisible ? 'true' : 'false') + '"'
+          h += ' aria-label="' + escapeHtmlAttribute(visibilityTitle + '：' + (c.name || '未命名联系人')) + '"'
+          h += ' title="' + escapeHtmlAttribute(visibilityTitle) + '"' + (contactReferenced ? ' disabled' : '') + '>'
+          h += '<span aria-hidden="true">' + (contactVisible ? '◉' : '○') + '</span>' + visibilityLabel + '</button>'
+        }
         h += '</div>'
       })
     } else {
@@ -4743,6 +4869,24 @@ function openMessagesEditor(frame, wid, pd) {
   }
 
 function bindMsgEvents() {
+    var visibilityButtons = frame.querySelectorAll('[data-contact-visibility]')
+    visibilityButtons.forEach(function(button) {
+      button.onclick = function() {
+        if (!managesModuleContactVisibility || button.disabled) return
+        var id = String(button.dataset.contactVisibility || '')
+        var state = messageContactVisibilityState()
+        if (state.visibleIds.has(id)) state.visibleIds.delete(id)
+        else state.visibleIds.add(id)
+        pd.visibleContactIds = Array.from(state.visibleIds)
+        saveData()
+        renderMessages()
+        var nextButton = Array.from(frame.querySelectorAll('[data-contact-visibility]')).find(function(candidate) {
+          return candidate.dataset.contactVisibility === id
+        })
+        if (nextButton) nextButton.focus()
+      }
+    })
+
     var addGroupBtn = frame.querySelector('#msgAddGroup')
     if (addGroupBtn) addGroupBtn.onclick = function() { addGroupFromContacts() }
 

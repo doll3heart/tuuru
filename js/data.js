@@ -8,6 +8,11 @@ import {
   normalizeWorkCollection,
   serializeWorkCollectionBundle,
 } from "./work-collections.js"
+import {
+  moveWorkBefore as moveWorkBeforeRecords,
+  moveWorkByOffset as moveWorkByOffsetRecords,
+  toggleWorkPinnedRecord,
+} from "./work-order.js"
 export const WORK_TYPE = {ARTICLE:"article",PHONE:"phone"}
 export const PLACEHOLDER_MODE = {RANDOM_EACH:"each",FIXED_SCENE:"scene",LOCKED:"locked"}
 export const PLATFORM = {X:"x",WEIBO:"weibo",DOUBAN:"douban",TIEBA:"tieba"}
@@ -247,6 +252,9 @@ export function createWork(data){
 }
 
 export function updateWork(id,data){const db=rd();const i=db.works.findIndex(x=>x.id===id);if(i<0)return null;db.works[i]={...db.works[i],...data,updatedAt:Date.now()};wr(db);return db.works[i]}
+export function moveWorkBefore(id,targetId){const db=rd();const result=moveWorkBeforeRecords(db.works,id,targetId);if(!result.changed)return null;db.works=result.works;wr(db);return db.works.find(work=>work.id===id)||null}
+export function moveWorkByOffset(id,offset){const db=rd();const result=moveWorkByOffsetRecords(db.works,id,offset);if(!result.changed)return null;db.works=result.works;wr(db);return db.works.find(work=>work.id===id)||null}
+export function setWorkPinned(id,pinned){const db=rd();const result=toggleWorkPinnedRecord(db.works,id,pinned);if(!result.changed)return null;db.works=result.works;wr(db);return db.works.find(work=>work.id===id)||null}
 export function deleteWork(id){const db=rd();db.works=db.works.filter(w=>w.id!==id);if(Array.isArray(db.collections)){const now=Date.now();db.collections=db.collections.map(c=>(c.workIds||[]).includes(id)?{...c,workIds:c.workIds.filter(wid=>wid!==id),updatedAt:now}:c)}wr(db)}
 export function duplicateWork(id){const db=rd();const o=db.works.find(w=>w.id===id);if(!o)return null;const c=JSON.parse(JSON.stringify(o));c.id=uid();c.title=o.title+" (副本)";c.createdAt=Date.now();c.updatedAt=Date.now();db.works.push(c);wr(db);return c}
 

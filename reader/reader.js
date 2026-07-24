@@ -16,6 +16,7 @@ import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-links.js'
 import { orderedForumPosts } from '../js/forum-post-order.js'
 import { orderedChats } from '../js/chat-order.js'
+import { visiblePhoneModuleContacts } from '../js/phone-module-draft.js'
 import { effectiveForbiddenWords } from '../js/forbidden-words.js'
 import { shouldShowPhoneTimestamp } from '../js/phone-timestamps.js'
 import { normalizeDynamicIslandStyle } from '../js/phone-dynamic-island.js'
@@ -1965,10 +1966,7 @@ function renderArticleReader() {
       for (var i = 0; i < pms.length; i++) { if (pms[i].id === pmid) { pm = pms[i]; break } }
       if (!pm) return
       var d = pm.data || {}
-      var contacts = (_work.phoneData && Array.isArray(_work.phoneData.contacts))
-        ? _work.phoneData.contacts
-        : (d.contacts || [])
-      contacts = orderedContacts(contacts, d.contactSortMode)
+      var contacts = orderedContacts(visiblePhoneModuleContacts(d), d.contactSortMode)
       var photos = Array.isArray(d.photos) ? d.photos : []
       var albums = Array.isArray(d.albums) ? d.albums : []
 

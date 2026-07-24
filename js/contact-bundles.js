@@ -72,6 +72,7 @@ export function serializeContactBundle(contacts, options = {}) {
   return JSON.stringify({
     type: CONTACT_BUNDLE_TYPE,
     version: CONTACT_BUNDLE_VERSION,
+    name: cleanText(options.name),
     exportedAt: Number(now()),
     contacts: sanitizeContacts(contacts),
   }, null, 2)
@@ -93,6 +94,7 @@ export function parseContactBundle(input) {
   return {
     type: CONTACT_BUNDLE_TYPE,
     version: CONTACT_BUNDLE_VERSION,
+    name: cleanText(parsed.name),
     exportedAt: Number.isFinite(Number(parsed.exportedAt)) ? Number(parsed.exportedAt) : 0,
     contacts: sanitizeContacts(parsed.contacts),
   }

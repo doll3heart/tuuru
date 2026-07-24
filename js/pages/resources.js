@@ -8,6 +8,15 @@ import {
   serializeAuthorPlaceholderPresetBundle,
 } from "../author-placeholder-presets.js"
 import { mergeContactBundle, parseContactBundle, serializeContactBundle } from "../contact-bundles.js"
+import {
+  deleteNpcPack,
+  importNpcPackLibrary,
+  parseNpcPack,
+  readNpcPacks,
+  saveNpcPack,
+  serializeNpcPack,
+  serializeNpcPackLibrary,
+} from "../npc-bundles.js"
 import { parseForbiddenWords } from "../forbidden-words.js"
 
 function esc(value) {
@@ -52,6 +61,10 @@ function renderContactHabits(works) {
         <span class="form-label">联系人所在作品</span>
         <select class="form-select" data-contact-work${disabled}>${renderWorkOptions(works)}</select>
       </label>
+      <label class="form-group">
+        <span class="form-label">联系人包名称</span>
+        <input class="form-input" data-contact-bundle-name maxlength="80" placeholder="例如：校园主要角色">
+      </label>
       <p class="resource-status" data-contact-summary aria-live="polite"></p>
       <div class="resource-actions">
         <button type="button" class="btn btn-outline" data-contact-export${disabled}>导出联系人包</button>
@@ -62,6 +75,68 @@ function renderContactHabits(works) {
         <button type="button" class="btn btn-primary" data-contact-merge disabled>合并到所选作品</button>
       </div>
       <p class="resource-status" data-contact-status aria-live="polite">联系人包带版本号；遇到相同 ID 时会为导入项生成新 ID，保留两边联系人。</p>
+    </div>
+  </section>`
+}
+
+function npcCount(work) {
+  return Array.isArray(work?.phoneData?.forumNpcs) ? work.phoneData.forumNpcs.length : 0
+}
+
+function renderNpcWorkOptions(works) {
+  const phoneWorks = works.filter(work => work.type === "phone")
+  if (!phoneWorks.length) return '<option value="">还没有小手机作品</option>'
+  return phoneWorks.map(work =>
+    `<option value="${esc(work.id)}">${esc(work.title || "无标题作品")} · ${npcCount(work)} 位 NPC</option>`,
+  ).join("")
+}
+
+function renderNpcPack(pack) {
+  return `<article class="npc-pack-row" data-npc-pack-id="${esc(pack.id)}">
+    <div class="npc-pack-copy">
+      <strong>${esc(pack.name)}</strong>
+      <span>${pack.npcs.length} 位 NPC${pack.sourceWorkTitle ? ` · 来自《${esc(pack.sourceWorkTitle)}》` : ""}</span>
+    </div>
+    <div class="npc-pack-actions">
+      <button type="button" class="btn btn-sm btn-outline" data-npc-pack-export="${esc(pack.id)}">导出文件</button>
+      <button type="button" class="btn btn-sm btn-ghost btn-danger-text" data-npc-pack-delete="${esc(pack.id)}">删除</button>
+    </div>
+  </article>`
+}
+
+function renderNpcPackHabits(works, packs) {
+  const phoneWorks = works.filter(work => work.type === "phone")
+  const disabled = phoneWorks.length ? "" : " disabled"
+  return `<section class="habit-section" aria-labelledby="npcPackHabitTitle">
+    <div class="resource-section-heading">
+      <div>
+        <h2 id="npcPackHabitTitle">论坛 NPC 包</h2>
+        <p>把一篇作品里的论坛 NPC 保存为有名称的作者通用包，再到其他作品的论坛 NPC 管理页直接导入。</p>
+      </div>
+      <span class="resource-local-badge">作者全局资源</span>
+    </div>
+    <div class="resource-control-stack npc-pack-create">
+      <label class="form-group">
+        <span class="form-label">NPC 所在作品</span>
+        <select class="form-select" data-npc-pack-work${disabled}>${renderNpcWorkOptions(works)}</select>
+      </label>
+      <label class="form-group">
+        <span class="form-label">NPC 包名称</span>
+        <input class="form-input" data-npc-pack-name maxlength="80" placeholder="例如：校园论坛路人"${disabled}>
+      </label>
+      <p class="resource-status" data-npc-pack-summary aria-live="polite"></p>
+      <div class="resource-actions">
+        <button type="button" class="btn btn-primary" data-npc-pack-save${disabled}>保存到通用 NPC 包</button>
+        <button type="button" class="btn btn-outline" data-npc-library-export${packs.length ? "" : " disabled"}>导出全部 NPC 包</button>
+        <label class="btn btn-outline resource-file-button">
+          导入 NPC 包文件
+          <input type="file" accept="application/json,.json" data-npc-library-import>
+        </label>
+      </div>
+      <p class="resource-status" data-npc-pack-status aria-live="polite">同名 NPC 包会更新；作品里的 NPC 不会因通用包更新而自动变化。</p>
+    </div>
+    <div class="npc-pack-library" data-npc-pack-library>
+      ${packs.length ? packs.map(renderNpcPack).join("") : '<div class="resource-empty"><strong>还没有通用 NPC 包</strong><span>从上方选择小手机作品并命名，就能保存第一组论坛 NPC。</span></div>'}
     </div>
   </section>`
 }
@@ -132,9 +207,10 @@ function renderHabitsPage() {
   return `<div class="resource-panel" data-resource-panel="habits">
     <div class="resource-intro resource-prose">
       <h1>写作习惯</h1>
-      <p>把会跨作品复用的内容放在这里。联系人仍属于具体作品；占位符习惯属于当前浏览器里的作者设置。</p>
+      <p>把会跨作品复用的内容放在这里。联系人和论坛 NPC 仍属于具体作品；通用包与占位符习惯属于当前浏览器里的作者设置。</p>
     </div>
     ${renderContactHabits(getWorks())}
+    ${renderNpcPackHabits(getWorks(), readNpcPacks())}
     ${renderPlaceholderHabits(readAuthorPlaceholderPresets())}
   </div>`
 }
@@ -189,6 +265,7 @@ function renderLegacyTutorialPage() {
       steps:[
         { title:"选择类型", body:"<p>首页点「新建」。分支故事选「互动文章」；全程模拟手机选「小手机」。</p>" },
         { title:"填写信息", body:"<p>先填标题。简介和作者名可以稍后补。</p>" },
+        { title:"整理书架", body:"<p>电脑可拖动作品卡右上角抓手调整顺序；打开「更多」可选择置顶或取消置顶。</p>" },
         { title:"写一段内容", body:"<p>选中开始节点并输入正文。看到「已保存」后再离开。</p>" },
         { title:"添加互动", body:"<p>打开「选项」，添加一条选择并设置目标。</p>" },
         { title:"实际预览", body:"<p>进入阅读预览，点击选项并检查返回路径。</p>" },
@@ -199,6 +276,7 @@ function renderLegacyTutorialPage() {
         { title:"新建分支故事", body:"<p><strong>入口：</strong>首页 →「新建」→「互动文章」。在「作品结构」添加节点，再为选项设置目标。</p>" },
         { title:"查看读者画面", body:"<p><strong>入口：</strong>作品的阅读预览。请实际点击选项、打开小手机并测试返回。</p>" },
         { title:"修改作品信息", body:"<p><strong>入口：</strong>作品卡片 →「更多」→「作品信息」。可修改标题、简介和作者署名。</p>" },
+        { title:"移动或置顶作品", body:"<p>电脑拖动作品卡右上角抓手调整顺序；打开「更多」可选择置顶或取消置顶。置顶作品会排在普通作品之前。</p>" },
         { title:"确认内容已保存", body:"<p>查看编辑器顶部状态。显示「已保存」后再关闭页面。</p>" },
         { title:"换网址后作品不见了", body:"<p>作品保存在当前浏览器和网址下。请回到原地址，或用备份恢复。</p>" },
         { title:"自动保存后还要点保存吗？", body:"<p>正文会自动保存。导出作品和下载备份仍需手动操作。</p>" },
@@ -225,6 +303,7 @@ function renderLegacyTutorialPage() {
         { title:"只互动，不跳转", body:"<p>选择「普通互动」，填写选项和反馈即可。</p>" },
         { title:"移动节点", body:"<p>在作品结构中拖动节点，或使用节点菜单。移动后请重新预览。</p>" },
         { title:"插入聊天或论坛", body:"<p><strong>入口：</strong>正文工具栏 →「插入内容」。先准备小手机内容，再选择模块。</p>" },
+        { title:"文章手机卡片怎样打开？", body:"<p>每张文章手机卡片只对应一个 App。作者编辑和读者打开时都会使用独立小手机中同一个 App 的界面与内容交互；返回会退出当前卡片。</p>" },
         { title:"撤销修改或换字体", body:"<p>使用正文工具栏的撤销、重做和字体按钮。</p>" },
         { title:"选项一定要跳转吗？", body:"<p>不一定。普通互动模式可以只显示选择和反馈，不要求目标；只有承担剧情分支的选项才需要连接节点。</p>" },
         { title:"节点标题会给读者看吗？", body:"<p>标题主要用于整理结构。请保持清楚且唯一。</p>" },
@@ -268,13 +347,13 @@ function renderLegacyTutorialPage() {
         { title:"设置专用图片", body:"<p>消息头像用于聊天，论坛头像用于帖子，视频通话背景用于视频画面。</p>" },
         { title:"选择发布身份", body:"<p>发帖或回复时，明确选择主号、小号或 NPC。</p>" },
         { title:"添加 @ 和后续回复", body:"<p>在文本框输入 @ 选择身份。每条后续回复都能单独选择发送者。</p>" },
-        { title:"复用联系人", body:"<p>在「写作习惯」导出联系人包，再合并到目标作品。</p>" },
+        { title:"复用联系人和 NPC", body:"<p>联系人可在「写作习惯」填写联系人包名称后导出；论坛 NPC 可为 NPC 包命名并保存到通用包，再从目标作品的 NPC 管理页导入。导入只追加，不会覆盖目标作品已有内容。</p>" },
       ],
       checklist:["主号、小号和 NPC 的用途没有混用", "消息头像与论坛头像在各自界面正确", "开启论坛 IP 后只有配置过的作者角色显示属地", "读者本人回复没有被伪造 IP"],
       faq:[
         { title:"聊天和论坛使用不同头像", body:"<p>编辑联系人，分别填写「消息头像」和「论坛头像」。留空时使用通用头像。</p>" },
         { title:"同一人在论坛使用小号", body:"<p>编辑联系人并点「添加小号」，再填写论坛名称、头像和 IP。</p>" },
-        { title:"添加论坛路人", body:"<p>论坛 App →「NPC」→ 新建。需要参与聊天的人物请创建联系人。</p>" },
+        { title:"添加或复用论坛路人", body:"<p>论坛 App →「NPC」→ 新建；也可以导入通用 NPC 包。编辑好一组 NPC 后可保存到通用包供其他作品使用。需要参与聊天的人物请创建联系人。</p>" },
         { title:"置顶或排列联系人", body:"<p>打开联系人排序设置，选择置顶、A–Z 或自定义排序。</p>" },
         { title:"在小手机里 @ 身份", body:"<p>在文本框输入 @，再选择联系人、NPC、读者称呼或作品占位符。</p>" },
         { title:"让多个角色依次回复", body:"<p>在「回复选项」的后续回复区添加多条消息，并逐条选择发送者。</p>" },
@@ -333,7 +412,7 @@ function renderLegacyTutorialPage() {
         { title:"分享多篇作品", body:"<p>长按或右键作品进入多选，创建作品集后再导出。</p>" },
         { title:"换浏览器或设备", body:"<p>在旧浏览器点「整机搬家」导出，再到新浏览器导入。</p>" },
         { title:"备份全部创作", body:"<p>首页点「备份全部」。文件含私密内容，请妥善保管。</p>" },
-        { title:"复制联系人到另一篇作品", body:"<p>「写作习惯」→ 导出联系人包，再合并到目标作品。</p>" },
+        { title:"复制联系人或 NPC 到另一篇作品", body:"<p>联系人使用「写作习惯」里的有名称联系人包；论坛 NPC 可在作品的 NPC 管理页保存到通用包，再到目标作品导入。</p>" },
         { title:"迁移作者占位符预设", body:"<p>「写作习惯」→「导出习惯」，再到新设备导入。</p>" },
         { title:"导入时遇到相同 ID", body:"<p>系统会给导入项换新 ID，并保留两边内容。</p>" },
         { title:"恢复旧备份前", body:"<p>先备份当前创作库，再点「检查 / 恢复」。</p>" },
@@ -351,6 +430,7 @@ const TUTORIAL_FEATURE_SECTIONS = [
     id:"start", title:"作品与书架", features:[
       { title:"新建作品", what:"创建互动文章或小手机作品。", where:"创作端首页 → 新建。", use:"选择作品类型，填写标题并创建。", effect:"书架新增一张作品卡片。" },
       { title:"作品信息", what:"管理标题、简介、作者署名和展示设置。", where:"作品卡片 → 更多 → 作品信息。", use:"修改内容后保存。", effect:"阅读页和导出文件使用新信息。" },
+      { title:"作品排序与置顶", what:"调整作品在书架中的显示位置。", where:"作品卡右上角抓手；或作品卡 → 更多。", use:"电脑拖动抓手调整顺序；在「更多」中选择置顶或取消置顶。", effect:"置顶作品排在前面，同一分组内保存自定义顺序。" },
       { title:"自动保存", what:"把编辑内容保存到当前浏览器。", where:"编辑器顶部保存状态。", use:"编辑后等待状态显示“已保存”。", effect:"重新打开作品时保留最新内容。" },
       { title:"阅读预览", what:"查看读者实际看到的作品。", where:"作品卡片 → 阅读，或编辑器预览入口。", use:"从开头阅读，点击选项并测试返回。", effect:"提前发现断开的分支和显示问题。" },
       { title:"复制作品", what:"创建一份独立副本。", where:"作品卡片 → 更多 → 复制作品。", use:"点击后在副本中继续编辑。", effect:"原作保持不变。" },
@@ -368,7 +448,8 @@ const TUTORIAL_FEATURE_SECTIONS = [
       { title:"普通互动", what:"显示选择和反馈，不改变剧情节点。", where:"节点编辑区 → 选项。", use:"选择普通互动，填写选项和反馈。", effect:"读者可以互动并留在当前内容。" },
       { title:"场景", what:"为场景锁定占位符划分共享范围。", where:"节点标题旁的场景选择器。", use:"给需要共享结果的节点选择同一场景。", effect:"这些节点使用相同的随机结果。" },
       { title:"富文本与图片", what:"设置正文格式并插入图片。", where:"正文工具栏。", use:"选择文字后设置格式，或点击图片按钮。", effect:"阅读页显示排版后的内容。" },
-      { title:"插入小手机内容", what:"在文章节点中展示聊天、论坛等模块。", where:"正文工具栏 → 插入内容。", use:"先准备小手机数据，再选择需要插入的模块。", effect:"读者可在文章中打开对应内容。" },
+      { title:"插入小手机内容", what:"在文章节点中展示聊天、论坛等模块。", where:"正文工具栏 → 插入内容。", use:"先准备小手机数据，再选择需要插入的模块；每张文章手机卡片只对应一个 App。", effect:"作者和读者会打开与独立小手机一致的该 App 界面，返回时退出当前卡片。" },
+      { title:"消息模块联系人可见性", what:"避免尚未登场的联系人提前出现在文章消息卡片中。", where:"互动文章 → 打开消息卡片编辑器 → 联系人。", use:"查看“本模块可见”数量，点联系人右侧按钮切换读者可见或已隐藏；剧情已使用的联系人需先删除相关聊天或动态。", effect:"只影响当前文章里的消息卡片；后来新增的联系人默认不会进入已有模块，也不影响独立小手机或其他卡片。" },
       { title:"移动节点", what:"调整节点所属章节和顺序。", where:"作品结构中的拖动手柄或节点菜单。", use:"拖到目标位置后重新预览分支。", effect:"结构顺序更新，节点 ID 和连接继续保留。" },
       { title:"撤销、重做与字体", what:"恢复正文修改并设置编辑字体。", where:"正文工具栏。", use:"点击撤销、重做或字体按钮。", effect:"正文恢复到对应版本，字体设置会保存。" },
     ],
@@ -440,7 +521,8 @@ const TUTORIAL_FEATURE_SECTIONS = [
       { title:"备份全部", what:"保存完整创作库。", where:"创作端首页 → 备份。", use:"下载文件并妥善保管。", effect:"文件包含作品、密码、私密内容和设置。" },
       { title:"检查与恢复", what:"查看备份内容并恢复创作库。", where:"创作端首页 → 恢复。", use:"选择备份，检查摘要后确认。", effect:"当前创作库会替换为备份内容。" },
       { title:"整机搬家", what:"迁移作者端和读者端的本地数据。", where:"创作端首页 → 搬家。", use:"旧设备导出，新设备导入。", effect:"两端数据会合并到新浏览器。" },
-      { title:"联系人包", what:"在作品之间复用联系人。", where:"写作习惯 → 联系人跨作品使用。", use:"从来源作品导出，再合并到目标作品。", effect:"目标作品新增联系人资料。" },
+      { title:"联系人包", what:"在作品之间复用联系人。", where:"写作习惯 → 联系人跨作品使用。", use:"选择来源作品，填写联系人包名称并导出，再合并到目标作品。", effect:"导入只追加联系人，不覆盖目标作品已有内容。" },
+      { title:"论坛 NPC 包", what:"把论坛路人保存为作者通用资源。", where:"写作习惯 → 论坛 NPC 包；或作品论坛 → NPC 管理。", use:"为 NPC 包命名并保存，再到目标作品导入。", effect:"导入只追加 NPC；重复 ID 自动换新。" },
       { title:"作者预设文件", what:"迁移作者占位符预设。", where:"写作习惯 → 作者占位符预设。", use:"导出文件，再到另一浏览器导入。", effect:"作者预设会按名称合并。" },
     ],
   },
@@ -452,11 +534,14 @@ const TUTORIAL_FAQ_SECTIONS = {
     { question:"编辑后可以直接关闭页面吗？", answer:"先看编辑器顶部的保存状态。显示“已保存”后再关闭页面。" },
     { question:"换浏览器或换网址后找不到作品怎么办？", answer:"回到原浏览器和原网址查找；也可以使用完整备份或搬家文件恢复。" },
     { question:"删除作品集会删除原作品吗？", answer:"不会。作品集保存的是作品引用，删除作品集后，书架里的原作品继续保留。" },
+    { question:"作品怎样移动或置顶？", answer:"电脑拖动作品卡右上角抓手调整顺序；打开“更多”可选择置顶或取消置顶。" },
   ],
   article:[
     { question:"选项点击后没有跳转怎么办？", answer:"打开该节点的选项设置，检查类型、目标章节和目标节点，再从阅读预览重新点击。" },
     { question:"只想显示选择结果，不想换节点怎么设置？", answer:"把选项类型设为“普通互动”，填写选项文字和反馈内容。" },
     { question:"章节和场景分别控制什么？", answer:"章节整理阅读路线；场景为“场景锁定”占位符提供共享范围。" },
+    { question:"文章里的手机卡片为什么只打开一个 App？", answer:"文章手机模块是一张卡片对应一个 App。它复用独立小手机中该 App 的界面与交互，返回时直接退出当前卡片。" },
+    { question:"怎样避免新联系人提前在文章消息里剧透？", answer:"打开该文章的消息卡片，进入“联系人”，用右侧按钮设置本模块可见名单。后来新增的联系人会在已有模块中保持隐藏；这个设置只影响当前消息卡片。已经被聊天或动态使用的联系人不能直接隐藏，请先删除相关内容。" },
   ],
   phone:[
     { question:"链接怎样打开作品里的论坛帖子？", answer:"添加链接时，在“链接内容”中选择已有帖子。读者点击卡片后会在聊天内打开画中画。" },
@@ -476,6 +561,7 @@ const TUTORIAL_FAQ_SECTIONS = {
   ],
   social:[
     { question:"联系人小号和论坛 NPC 怎样选择？", answer:"发布帖子、评论或楼中楼时打开身份选择器，再选择联系人、小号或 NPC。" },
+    { question:"怎样把论坛 NPC 带到其他作品？", answer:"在论坛 NPC 管理页把当前 NPC 保存到有名称的通用包，或到“写作习惯”选择作品并为 NPC 包命名；再到目标作品导入。导入只追加，不会覆盖已有 NPC。" },
     { question:"@ 提及没有高亮怎么办？", answer:"输入 @ 后从候选列表选择身份或占位符，保存后再到预览中检查。" },
   ],
   placeholders:[
@@ -594,6 +680,7 @@ function bindContactTransfer(root) {
   const mergeButton = root.querySelector("[data-contact-merge]")
   const summary = root.querySelector("[data-contact-summary]")
   const status = root.querySelector("[data-contact-status]")
+  const bundleName = root.querySelector("[data-contact-bundle-name]")
   if (!selector) return
   let pendingBundle = null
 
@@ -615,8 +702,9 @@ function bindContactTransfer(root) {
     const work = selectedWork()
     const contacts = work?.phoneData?.contacts
     if (!work || !Array.isArray(contacts) || !contacts.length) return
-    const blob = new Blob([serializeContactBundle(contacts)], { type:"application/json;charset=utf-8" })
-    downloadBlob(blob, `${safeFilename(work.title)}-联系人包.json`)
+    const name = bundleName?.value?.trim() || `${work.title || "作品"}联系人`
+    const blob = new Blob([serializeContactBundle(contacts, { name })], { type:"application/json;charset=utf-8" })
+    downloadBlob(blob, `${safeFilename(name)}-联系人包.json`)
     if (status) status.textContent = `已准备导出 ${contacts.length} 位联系人。文件只包含联系人资料。`
     notify("联系人包已导出")
   })
@@ -628,7 +716,7 @@ function bindContactTransfer(root) {
     if (!file) return
     try {
       pendingBundle = parseContactBundle(await file.text())
-      if (status) status.textContent = `已读取“${file.name}”：${pendingBundle.contacts.length} 位联系人。请选择目标作品并确认合并。`
+      if (status) status.textContent = `已读取${pendingBundle.name ? `“${pendingBundle.name}”` : `“${file.name}”`}：${pendingBundle.contacts.length} 位联系人。请选择目标作品并确认合并。`
       if (mergeButton) mergeButton.disabled = pendingBundle.contacts.length === 0
     } catch (error) {
       if (status) status.textContent = error instanceof Error ? error.message : "联系人包读取失败"
@@ -654,6 +742,104 @@ function bindContactTransfer(root) {
     if (fileInput) fileInput.value = ""
     updateSummary()
     notify("联系人已合并到所选作品")
+  })
+}
+
+function bindNpcPackLibrary(root) {
+  const selector = root.querySelector("[data-npc-pack-work]")
+  const nameInput = root.querySelector("[data-npc-pack-name]")
+  const saveButton = root.querySelector("[data-npc-pack-save]")
+  const summary = root.querySelector("[data-npc-pack-summary]")
+  const status = root.querySelector("[data-npc-pack-status]")
+  const importInput = root.querySelector("[data-npc-library-import]")
+  if (!root.querySelector("[data-npc-pack-library]")) return
+
+  function selectedWork() {
+    return getWorks().find(work => work.id === selector?.value)
+  }
+
+  function refresh() {
+    const liveRoot = document.getElementById("resourcesRoot")
+    if (!liveRoot) return
+    liveRoot.outerHTML = renderResourcesPage({ initialTab:"habits" })
+    bindResourcesPage()
+  }
+
+  function updateSummary() {
+    const work = selectedWork()
+    const count = npcCount(work)
+    if (summary) summary.textContent = work ? `当前作品有 ${count} 位论坛 NPC。` : "请先创建小手机作品。"
+    if (saveButton) saveButton.disabled = !work || count === 0
+  }
+
+  selector?.addEventListener("change", updateSummary)
+  updateSummary()
+
+  saveButton?.addEventListener("click", () => {
+    const work = selectedWork()
+    const name = nameInput?.value?.trim() || ""
+    const npcs = work?.phoneData?.forumNpcs
+    if (!work || !Array.isArray(npcs) || !npcs.length) return
+    if (!name) {
+      if (status) status.textContent = "请先填写 NPC 包名称。"
+      nameInput?.focus()
+      return
+    }
+    saveNpcPack({ name, sourceWorkTitle:work.title || "", npcs }, { idFactory:uid })
+    notify(`NPC 包“${name}”已保存`)
+    refresh()
+  })
+
+  root.querySelector("[data-npc-library-export]")?.addEventListener("click", () => {
+    const packs = readNpcPacks()
+    if (!packs.length) return
+    downloadBlob(
+      new Blob([serializeNpcPackLibrary(packs)], { type:"application/json;charset=utf-8" }),
+      "tuuru-论坛NPC包合集.json",
+    )
+    notify("全部 NPC 包已导出")
+  })
+
+  importInput?.addEventListener("change", async () => {
+    const file = importInput.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      try {
+        const pack = parseNpcPack(text)
+        saveNpcPack(pack, { idFactory:uid })
+        notify(`NPC 包“${pack.name}”已导入`)
+      } catch {
+        const result = importNpcPackLibrary(text, { idFactory:uid })
+        notify(`NPC 包已导入：新增 ${result.added}，更新 ${result.updated}`)
+      }
+      refresh()
+    } catch (error) {
+      if (status) status.textContent = error instanceof Error ? error.message : "NPC 包导入失败"
+      notify("NPC 包导入失败", "error")
+    }
+  })
+
+  root.querySelectorAll("[data-npc-pack-export]").forEach(button => {
+    button.addEventListener("click", () => {
+      const pack = readNpcPacks().find(candidate => candidate.id === button.dataset.npcPackExport)
+      if (!pack) return
+      downloadBlob(
+        new Blob([serializeNpcPack(pack)], { type:"application/json;charset=utf-8" }),
+        `${safeFilename(pack.name)}-NPC包.json`,
+      )
+      notify(`NPC 包“${pack.name}”已导出`)
+    })
+  })
+
+  root.querySelectorAll("[data-npc-pack-delete]").forEach(button => {
+    button.addEventListener("click", () => {
+      const pack = readNpcPacks().find(candidate => candidate.id === button.dataset.npcPackDelete)
+      if (!pack || !confirm(`删除 NPC 包“${pack.name}”？各作品中已导入的 NPC 不会受影响。`)) return
+      deleteNpcPack(pack.id)
+      notify("NPC 包已删除", "info")
+      refresh()
+    })
   })
 }
 
@@ -823,6 +1009,7 @@ export function bindResourcesPage() {
   if (!root || root.dataset.resourceBound === "true") return
   root.dataset.resourceBound = "true"
   bindContactTransfer(root)
+  bindNpcPackLibrary(root)
   bindPlaceholderLibrary(root)
   bindTutorialDirectory(root)
 }

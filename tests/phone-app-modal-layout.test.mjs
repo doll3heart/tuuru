@@ -90,6 +90,7 @@ test("the phone App modal has a bounded single-scroll layout contract", () => {
   const header = ruleBodiesFor(cssWithoutComments, ".phone-app-modal-header")
   const close = ruleBodiesFor(cssWithoutComments, ".phone-app-modal-close")
   const content = ruleBodiesFor(cssWithoutComments, ".phone-app-modal-content")
+  const framedContent = ruleBodiesFor(cssWithoutComments, ".phone-app-modal-inner-framed .phone-app-modal-content")
   const embeddedClose = ruleBodiesFor(cssWithoutComments, ".phone-app-modal-inner .cu-close-btn")
 
   assert.match(overlay, /height\s*:\s*var\(--phone-app-viewport-height\s*,\s*var\(--app-viewport-height\)\)/)
@@ -107,6 +108,8 @@ test("the phone App modal has a bounded single-scroll layout contract", () => {
   assert.match(content, /min-height\s*:\s*0/)
   assert.match(content, /overflow\s*:\s*hidden/)
   assert.doesNotMatch(content, /overflow(?:-y)?\s*:\s*auto/)
+  assert.match(framedContent, /display\s*:\s*flex/)
+  assert.match(framedContent, /justify-content\s*:\s*center/)
 
   assert.match(phoneSource, /topBar\.className\s*=\s*['"]phone-app-modal-header['"]/)
   assert.match(phoneSource, /content\.className\s*=\s*['"]phone-app-modal-content['"]/)
@@ -152,6 +155,48 @@ test("each App modal exposes exactly one reachable header", async () => {
   contacts.querySelector(".phone-app-modal-close").click()
   assert.equal(contacts.isConnected, false)
 
+  draft.dispose()
+  dom.window.close()
+})
+
+test("article App editors mount inside the standalone author phone frame contract", async () => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({
+    id: "article-phone-frame",
+    type: "article",
+    phoneData: makePhoneData({
+      skin: {
+        readerId: "Reader",
+        wallpaper: "#f4edef",
+        wallpaperType: "color",
+        borderRadius: 22,
+        fontFamily: "Arial",
+        fontSize: 14,
+        frameColor: "#76545e",
+      },
+    }),
+  })
+
+  const overlay = openPhoneAppModal(draft.id, "forum", {
+    matchStandalonePhone: true,
+  })
+  const inner = overlay.querySelector(".phone-app-modal-inner")
+  const content = overlay.querySelector(".phone-app-modal-content")
+  const frame = content.querySelector(".phone-app-modal-frame.phone-frame")
+
+  assert.ok(frame)
+  assert.ok(inner.classList.contains("phone-app-modal-inner-framed"))
+  assert.equal(frame.style.getPropertyValue("--phone-bg"), "#f4edef")
+  assert.equal(frame.style.getPropertyValue("--phone-radius"), "22px")
+  assert.match(frame.style.getPropertyValue("--phone-font"), /Arial/)
+  assert.equal(frame.style.getPropertyValue("--phone-fontsize"), "14px")
+  assert.equal(frame.style.getPropertyValue("--phone-frame"), "#76545e")
+  assert.ok(frame.querySelector("#forumPanel"))
+
+  frame.querySelector("#forumBack").click()
+  assert.equal(overlay.isConnected, false)
   draft.dispose()
   dom.window.close()
 })

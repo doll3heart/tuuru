@@ -74,6 +74,7 @@
   line-height: 1.4;
 }
 .phone-frame .forum-post-content {
+  margin-top: 6px;
   overflow-wrap: anywhere;
   color: var(--phone-system-text, var(--c-text));
   font-size: .76rem;
@@ -100,7 +101,6 @@
   gap: 14px;
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid var(--phone-system-border, var(--c-border));
   color: var(--phone-system-muted, var(--c-text2));
   font-size: .66rem;
 }

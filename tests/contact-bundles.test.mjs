@@ -34,11 +34,12 @@ const contact = {
 }
 
 test("contact bundles round-trip the supported author fields with explicit metadata", () => {
-  const serialized = serializeContactBundle([contact], { now: () => 123 })
+  const serialized = serializeContactBundle([contact], { name:"校园联系人", now: () => 123 })
   const bundle = parseContactBundle(serialized)
 
   assert.equal(bundle.type, CONTACT_BUNDLE_TYPE)
   assert.equal(bundle.version, CONTACT_BUNDLE_VERSION)
+  assert.equal(bundle.name, "校园联系人")
   assert.equal(bundle.exportedAt, 123)
   assert.equal(bundle.contacts.length, 1)
   assert.deepEqual(bundle.contacts[0], {
@@ -62,6 +63,17 @@ test("contact bundles round-trip the supported author fields with explicit metad
     msgId: "mist-message",
     forumId: "mist-forum",
   })
+})
+
+test("contact bundle names are sanitized and old unnamed packets remain compatible", () => {
+  assert.equal(
+    parseContactBundle(serializeContactBundle([], { name:"  常用角色  " })).name,
+    "常用角色",
+  )
+  assert.equal(
+    parseContactBundle(`{"type":"${CONTACT_BUNDLE_TYPE}","version":1,"contacts":[]}`).name,
+    "",
+  )
 })
 
 test("contact bundle parsing rejects unrelated, unsupported, and malformed packets", () => {

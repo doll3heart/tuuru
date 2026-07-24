@@ -87,6 +87,8 @@ test("author and reader forum posts share the authored post structure", () => {
 })
 
 test("shared forum CSS removes recursive cards and restores width for deep replies", () => {
+  assert.match(sharedCss, /\.phone-frame \.forum-post-content\s*\{[^}]*margin-top:\s*6px/s)
+  assert.doesNotMatch(sharedCss, /\.phone-frame \.forum-post-actions\s*\{[^}]*border-top:/s)
   assert.match(sharedCss, /\.phone-frame \.forum-comment\s*\{[^}]*border-bottom:\s*1px solid/s)
   assert.doesNotMatch(sharedCss, /\.phone-frame \.forum-comment\s*\{[^}]*border:\s*1px solid/s)
   assert.match(sharedCss, /\.phone-frame \.forum-replies\s*\{[^}]*border:\s*0/s)

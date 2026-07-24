@@ -79,12 +79,25 @@ test("the tutorial lists features by meaning, location, use, and effect", () => 
   assert.match(source, /作者占位符预设/)
   assert.match(source, /创建作品集/)
   assert.match(source, /整机搬家/)
+  assert.match(source, /作品排序与置顶/)
+  assert.match(source, /每张文章手机卡片只对应一个 App/)
+  assert.match(source, /填写联系人包名称/)
+  assert.match(source, /为 NPC 包命名/)
+  assert.match(source, /导入只追加/)
 })
 
 test("the article feature list distinguishes scene tags from chapters", () => {
   assert.match(source, /章节组织阅读路线/)
   assert.match(source, /场景锁定/)
   assert.match(source, /节点标题旁的场景选择器/)
+})
+
+test("the tutorial explains article message contact visibility without reviving step movement", () => {
+  assert.match(source, /本模块可见/)
+  assert.match(source, /消息.*联系人/s)
+  assert.match(source, /后来新增的联系人/)
+  assert.match(source, /只影响当前.*消息卡片/s)
+  assert.doesNotMatch(source, /上移一位|下移一位/)
 })
 
 test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {

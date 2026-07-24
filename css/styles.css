@@ -129,6 +129,23 @@ ul,ol{list-style:none}
 .preset-field-remove{justify-self:end;grid-column:2}
 .resource-empty{display:flex;flex-direction:column;gap:3px;padding:22px 2px;color:var(--c-text2);font-size:.82rem}
 .resource-empty strong{color:var(--c-text)}
+.npc-pack-library{margin-top:14px;border-top:1px solid var(--c-border)}
+.npc-pack-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--c-border)}
+.npc-pack-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
+.npc-pack-copy strong{overflow:hidden;color:var(--c-text);font-size:.86rem;text-overflow:ellipsis;white-space:nowrap}
+.npc-pack-copy span{color:var(--c-text2);font-size:.73rem;overflow-wrap:anywhere}
+.npc-pack-actions{display:flex;flex:0 0 auto;gap:6px}
+
+@media (pointer:coarse){
+  .work-card-drag-handle{display:none}
+  .work-card-title{padding-left:0;padding-right:0}
+}
+
+@media (max-width:600px){
+  .npc-pack-row{align-items:flex-start;flex-direction:column;gap:9px}
+  .npc-pack-actions{width:100%}
+  .npc-pack-actions button{flex:1;min-height:40px;justify-content:center}
+}
 .tutorial-layout{display:grid;grid-template-columns:190px minmax(0,1fr);align-items:stretch;border:1px solid var(--c-border2);border-radius:5px;background:var(--c-surface);overflow:hidden}
 .tutorial-search{padding:14px 16px;border:1px solid var(--c-border2);border-radius:5px;background:var(--c-surface)}
 .tutorial-search>label{display:block;margin-bottom:6px;font-size:.8rem;font-weight:600;color:var(--c-text)}
@@ -236,12 +253,15 @@ ul,ol{list-style:none}
 .modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:2px double var(--c-border)}
 .phone-app-modal-overlay{top:var(--phone-app-viewport-offset-top,0px);right:0;bottom:auto;left:0;height:var(--phone-app-viewport-height,var(--app-viewport-height));overflow:hidden;overscroll-behavior:contain}
 .phone-app-modal-inner{width:min(360px,100%);height:min(640px,100%);min-height:0;background:var(--phone-system-bg,var(--c-surface));border:2px solid var(--phone-system-border,var(--c-border));border-radius:8px;overflow:hidden;display:flex;flex-direction:column;box-shadow:6px 7px 0 rgba(78,56,63,.2),0 18px 50px rgba(40,28,32,.18);position:relative}
+.phone-app-modal-inner-framed{height:min(680px,100%);background:transparent;border:0;border-radius:var(--phone-radius,18px);box-shadow:none}
 .phone-app-modal-header{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--phone-system-border,var(--c-border));background:var(--phone-system-surface,var(--c-surface));flex-shrink:0}
 .phone-app-modal-header::before{content:"";width:44px;height:44px}
 .phone-app-modal-title{font-size:.85rem;font-weight:600;text-align:center;color:var(--c-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .phone-app-modal-close{width:44px;height:44px;border:1px solid transparent;border-radius:4px;background:transparent;cursor:pointer;font-size:1.1rem;color:var(--c-text2);padding:0;display:flex;align-items:center;justify-content:center}
 .phone-app-modal-close:hover{background:var(--c-surface2);color:var(--c-text)}
 .phone-app-modal-content{flex:1;min-height:0;overflow:hidden}
+.phone-app-modal-inner-framed .phone-app-modal-content{display:flex;justify-content:center}
+.phone-app-modal-content>.phone-app-modal-frame{width:100%;height:100%;min-height:0;box-sizing:border-box}
 .phone-app-modal-inner .cu-close-btn{min-width:44px;min-height:44px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
@@ -264,6 +284,16 @@ ul,ol{list-style:none}
 .text-center{text-align:center}.text-sm{font-size:.85rem}.text-xs{font-size:.75rem}.text-muted{color:var(--c-text2)}.w-full{width:100%}.hidden{display:none!important}.flex-1{flex:1}
 .work-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px}
 .work-card{position:relative;display:flex;flex-direction:column;padding:0;overflow:visible;cursor:pointer;transition:.2s}
+.work-card[data-work-pinned="true"]{border-color:var(--c-primary-hover)}
+.work-card-drag-handle{position:absolute;z-index:4;top:11px;right:11px;left:auto;display:grid;width:28px;height:28px;padding:0;border:1px solid transparent;border-radius:3px;place-items:center;background:transparent;color:var(--c-text2);font:600 1rem/1 var(--font);cursor:grab;opacity:.48}
+.work-card:hover .work-card-drag-handle,.work-card-drag-handle:focus-visible{border-color:var(--c-border);background:var(--c-surface2);opacity:1}
+.work-card-drag-handle:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:2px}
+.work-card-drag-handle:active{cursor:grabbing}
+.collection-selection-active .work-card-drag-handle{visibility:hidden;pointer-events:none}
+.work-card.is-dragging{opacity:.52}
+.work-card.drag-before::after,.work-card.drag-after::after{content:"";position:absolute;z-index:6;right:-6px;left:-6px;height:3px;background:var(--c-primary-hover);pointer-events:none}
+.work-card.drag-before::after{top:-10px}
+.work-card.drag-after::after{bottom:-10px}
 .work-card-select{position:absolute;top:8px;right:8px;z-index:3;display:grid;width:34px;height:34px;padding:0;border:0;visibility:hidden;place-items:center;background:transparent;color:transparent;opacity:0;pointer-events:none;cursor:pointer;transition:opacity .16s}
 .work-card-select span{display:grid;width:20px;height:20px;border:1px solid var(--c-border);border-radius:50%;place-items:center;background:color-mix(in srgb,var(--c-surface) 94%,transparent);box-shadow:0 1px 3px rgba(111,74,85,.12);font-size:.7rem;line-height:1;transition:.16s}
 .collection-selection-active .work-card-select{visibility:visible;opacity:1;pointer-events:auto}
@@ -275,9 +305,10 @@ ul,ol{list-style:none}
 .work-card:hover{box-shadow:4px 5px 0 rgba(111,74,85,.2);transform:translate(-1px,-2px)}
 .work-card-cover{height:120px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.82);font-size:1rem;border-bottom:1px solid var(--c-border2);background-image:radial-gradient(rgba(255,255,255,.22) 1px,transparent 1.3px),radial-gradient(rgba(255,255,255,.22) 1px,transparent 1.3px);background-size:12px 12px;background-position:0 0,6px 6px}
 .work-card-body{flex:1;padding:16px}
-.work-card-title{font-weight:600;font-size:.95rem;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.work-card-title{font-weight:600;font-size:.95rem;margin-bottom:4px;padding-left:0;padding-right:30px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .work-card-desc{font-size:.85rem;color:var(--c-text2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .work-card-meta{display:flex;gap:8px;margin-top:8px;font-size:.75rem;color:var(--c-text2)}
+.work-card-pinned-badge{color:var(--c-primary-hover);font-weight:600}
 .work-card-actions{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-top:2px double var(--c-border);gap:8px}
 .work-card-actions-left{display:flex;gap:6px;align-items:center}
 .work-card-more-wrap{position:relative}
@@ -1374,6 +1405,8 @@ ul,ol{list-style:none}
 @media (prefers-reduced-motion:reduce){.forum-list-card,.forum-post-action-button{transition:none}}
 .forum-post-time-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.forum-post-time-edit{flex:1;min-width:112px;padding:1px 0;border:0;border-bottom:1px solid transparent;background:transparent;outline:none}.forum-post-time-edit::placeholder{color:var(--c-text2);opacity:.72}.forum-post-time-edit:hover,.forum-post-time-edit:focus{border-bottom-color:var(--c-border2)}.forum-reply-time-toggle{min-height:28px;padding:2px 7px;border:1px solid var(--c-border2);border-radius:4px;background:transparent;color:var(--c-text2);font:inherit;font-size:.62rem;line-height:1.2;cursor:pointer}.forum-reply-time-toggle:hover,.forum-reply-time-toggle:focus-visible{border-color:var(--c-primary);color:var(--c-primary-hover)}.forum-reply-time-toggle:focus-visible{outline:2px solid color-mix(in srgb,var(--c-primary) 48%,transparent);outline-offset:1px}.forum-reply-time-toggle[aria-pressed="true"]{border-color:var(--c-primary);background:color-mix(in srgb,var(--c-primary) 14%,transparent);color:var(--c-primary-hover)}
 .forum-npc-meta .forum-ip-label{margin-left:7px}
+.forum-npc-pack-tools{display:flex;justify-content:flex-end;gap:7px;padding:8px 10px;border-bottom:1px solid var(--c-border);background:var(--c-surface2)}
+@media (max-width:600px){.forum-npc-pack-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
 .forum-ip-toggle[aria-pressed="true"]{border-color:var(--c-primary-hover);background:var(--c-primary);color:var(--c-btn-text)}
 .forum-reader-choice-intro{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;color:var(--c-text)}.forum-reader-choice-intro span{color:var(--c-text2);font-size:.72rem;line-height:1.55}
 .forum-id-section{font-size:.7rem;font-weight:500;color:var(--c-text2);padding:6px 0 2px;border-bottom:1px solid var(--c-border);margin-bottom:2px}
@@ -1384,6 +1417,16 @@ ul,ol{list-style:none}
 .forum-npc-avatar span{pointer-events:none}
 .forum-npc-info{flex:1;min-width:0}
 .forum-npc-name{font-size:.78rem;font-weight:500;color:var(--c-text)}
+.message-contact-visibility-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 0;color:var(--c-text2);font-size:.68rem;line-height:1.4}
+.message-contact-visibility-summary strong{color:var(--c-text);font-size:.72rem}
+.message-contact-visibility-row .forum-npc-name{flex:1;min-width:0}
+.message-contact-visibility-row.is-hidden .forum-npc-avatar,.message-contact-visibility-row.is-hidden .forum-npc-name{opacity:.48}
+.message-contact-visibility-toggle{min-height:44px;min-width:86px;padding:0 8px;border:0;background:transparent;color:var(--c-text2);font:inherit;font-size:.68rem;cursor:pointer}
+.message-contact-visibility-toggle span{display:inline-block;width:16px;color:var(--c-text2)}
+.message-contact-visibility-toggle.is-visible{color:var(--c-primary-hover)}
+.message-contact-visibility-toggle.is-visible span{color:var(--c-primary)}
+.message-contact-visibility-toggle:disabled{cursor:not-allowed;color:var(--c-text2);opacity:.7}
+.message-contact-visibility-toggle:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:2px}
 .forum-npc-meta{font-size:.65rem;color:var(--c-text2)}
 
 /* ===== Phone simple Apps: tactile object language ===== */

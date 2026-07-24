@@ -5,6 +5,7 @@ const AUTHOR_DATABASE_KEY = "tuuru_works"
 const AUTHOR_SETTING_KEYS = new Set([
   "tuuru_theme",
   "tuuru_author_placeholder_presets",
+  "tuuru_author_npc_packs",
   "tuuru_editor_split",
 ])
 const READER_PREFIX = "moirain_"

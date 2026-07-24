@@ -7,6 +7,8 @@ import {
   createPhoneModuleDraftData,
   hasPhoneModuleContent,
   pickPhoneModuleData,
+  referencedMessageContactIds,
+  visiblePhoneModuleContacts,
 } from "../js/phone-module-draft.js"
 
 test("building a module draft does not add phoneData to the article", () => {
@@ -39,6 +41,58 @@ test("shared article contacts are copied into a module draft", () => {
   assert.equal(article.phoneData.contacts[0].profile.name, "A")
 })
 
+test("new message modules remember only the contacts that exist at creation", () => {
+  const article = {
+    phoneData: {
+      contacts: [
+        { id: "contact-1", name: "A" },
+        { id: "contact-2", name: "B" },
+      ],
+    },
+  }
+
+  const draft = createPhoneModuleDraftData(article, null)
+
+  assert.deepEqual(draft.visibleContactIds, ["contact-1", "contact-2"])
+})
+
+test("legacy message modules derive visibility from their saved contact snapshot", () => {
+  const article = {
+    phoneData: {
+      contacts: [
+        { id: "contact-1", name: "A" },
+        { id: "contact-secret", name: "Later contact" },
+      ],
+    },
+  }
+
+  const draft = createPhoneModuleDraftData(article, {
+    contacts: [{ id: "contact-1", name: "Old snapshot" }],
+    chats: [],
+  })
+
+  assert.deepEqual(draft.contacts.map(contact => contact.id), ["contact-1", "contact-secret"])
+  assert.deepEqual(draft.visibleContactIds, ["contact-1"])
+})
+
+test("explicit module visibility is preserved and stale ids are removed", () => {
+  const article = {
+    phoneData: {
+      contacts: [
+        { id: "contact-1", name: "A" },
+        { id: "contact-2", name: "B" },
+      ],
+    },
+  }
+
+  const draft = createPhoneModuleDraftData(article, {
+    contacts: [{ id: "contact-1" }, { id: "contact-2" }],
+    visibleContactIds: ["contact-2", "deleted-contact", "contact-2"],
+  })
+
+  assert.deepEqual(draft.visibleContactIds, ["contact-2"])
+})
+
 test("module payload projection follows the existing schema for every app", () => {
   const phoneData = {
     chats: [{ id: "chat-1" }],
@@ -62,6 +116,7 @@ test("module payload projection follows the existing schema for every app", () =
   assert.deepEqual(pickPhoneModuleData("messages", phoneData), {
     chats: phoneData.chats,
     contacts: phoneData.contacts,
+    visibleContactIds: ["contact-1"],
   })
   assert.deepEqual(pickPhoneModuleData("forum", phoneData), {
     forumPosts: phoneData.forumPosts,
@@ -92,6 +147,56 @@ test("module payload projection follows the existing schema for every app", () =
   assert.deepEqual(pickPhoneModuleData("contacts", phoneData), {
     contacts: phoneData.contacts,
   })
+})
+
+test("message payloads preserve the module contact allowlist", () => {
+  const phoneData = {
+    chats: [],
+    contacts: [{ id: "contact-1" }, { id: "contact-2" }],
+    visibleContactIds: ["contact-1"],
+  }
+
+  assert.deepEqual(pickPhoneModuleData("messages", phoneData), {
+    chats: [],
+    contacts: phoneData.contacts,
+    visibleContactIds: ["contact-1"],
+  })
+})
+
+test("message contact references include chat participants and moment actors", () => {
+  const ids = referencedMessageContactIds({
+    chats: [{
+      contactIds: ["chat-contact"],
+      groupOwnerId: "owner-contact",
+      groupAdminIds: ["admin-contact"],
+      rounds: [{
+        messages: [{ senderId: "message-contact" }],
+      }],
+    }],
+    moments: [{
+      contactId: "moment-contact",
+      comments: [{ contactId: "comment-contact" }],
+    }],
+  })
+
+  assert.deepEqual(ids, [
+    "chat-contact",
+    "owner-contact",
+    "admin-contact",
+    "message-contact",
+    "moment-contact",
+    "comment-contact",
+  ])
+})
+
+test("module contact filtering uses an allowlist while standalone data remains unfiltered", () => {
+  const contacts = [{ id: "contact-1" }, { id: "contact-secret" }]
+
+  assert.deepEqual(
+    visiblePhoneModuleContacts({ contacts, visibleContactIds: ["contact-1"] }),
+    [{ id: "contact-1" }],
+  )
+  assert.deepEqual(visiblePhoneModuleContacts({ contacts }), contacts)
 })
 
 test("projected payloads cannot mutate the live draft", () => {
@@ -141,7 +246,7 @@ test("a successful formal module commit disposes and reports the draft", () => {
   const result = handlers.beforeClose()
   handlers.afterClose(result)
 
-  assert.deepEqual(committed, [{ chats: [{ id: "chat-1" }], contacts: [] }])
+  assert.deepEqual(committed, [{ chats: [{ id: "chat-1" }], contacts: [], visibleContactIds: [] }])
   assert.equal(disposed, 1)
   assert.deepEqual(saved, [savedModule])
 })
@@ -230,7 +335,7 @@ test("an edited module commits its empty payload instead of restoring old conten
   const result = handlers.beforeClose()
   handlers.afterClose(result)
 
-  assert.deepEqual(committed, [{ chats: [], contacts: [] }])
+  assert.deepEqual(committed, [{ chats: [], contacts: [], visibleContactIds: [] }])
   assert.equal(disposed, 1)
   assert.deepEqual(saved, [savedModule])
   assert.equal(emptyCalls, 0)

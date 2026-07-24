@@ -813,6 +813,38 @@ test("single-chat list renders the current contact avatar", async () => {
   }
 })
 
+test("article message modules can hide unused contacts but keep referenced contacts visible", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts.push({ id:"contact-secret", name:"尚未登场", avatarUrl:"" })
+  phoneData.visibleContactIds = ["contact-1", "contact-secret"]
+  const fixture = await openMessageList("message-module-contact-visibility", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector("#msgTabContacts").click()
+
+    const referenced = overlay.querySelector('[data-contact-visibility="contact-1"]')
+    const unused = overlay.querySelector('[data-contact-visibility="contact-secret"]')
+    assert.ok(referenced)
+    assert.ok(unused)
+    assert.equal(referenced.disabled, true)
+    assert.match(referenced.getAttribute("title"), /剧情使用/)
+    assert.equal(unused.getAttribute("aria-pressed"), "true")
+    assert.match(overlay.querySelector(".message-contact-visibility-summary").textContent, /本模块可见 2 \/ 2/)
+
+    unused.click()
+
+    assert.deepEqual(draft.snapshot().phoneData.visibleContactIds, ["contact-1"])
+    assert.equal(
+      overlay.querySelector('[data-contact-visibility="contact-secret"]').getAttribute("aria-pressed"),
+      "false",
+    )
+    assert.match(overlay.querySelector(".message-contact-visibility-summary").textContent, /本模块可见 1 \/ 2/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("contact editor filters a long contact list by name without losing the original indexes", async () => {
   const dom = installDom()
   const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")

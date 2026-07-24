@@ -1,5 +1,7 @@
 ﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, updateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
 import { navigate } from "../router.js"
+import { moveWorkByOffset, setWorkPinned } from "../data.js"
+import { orderedWorks } from "../work-order.js"
 import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
@@ -33,7 +35,7 @@ const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请�
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
 
 export function renderHome(){
-  const works = getWorks()
+  const works = orderedWorks(getWorks())
   const collections = getWorkCollections()
   const articles = works.filter(w=>w.type===WORK_TYPE.ARTICLE)
   const phones = works.filter(w=>w.type===WORK_TYPE.PHONE)
@@ -48,15 +50,18 @@ export function renderHome(){
         tabs.forEach(function(x) { x.classList.remove('active') })
         t.classList.add('active')
         var filter = t.dataset.tab
-        var filtered = filter === 'all' ? getWorks()
-          : getWorks().filter(function(w) { return w.type === (filter === 'phone' ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE) })
+        var allWorks = orderedWorks(getWorks())
+        var filtered = filter === 'all' ? allWorks
+          : allWorks.filter(function(w) { return w.type === (filter === 'phone' ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE) })
         resetCollectionSelection()
         list.innerHTML = renderWorkList(filtered, filter === 'all' ? getWorkCollections() : [])
         bindCollectionShelf({ refresh: refreshHomeWorkList })
+        bindWorkShelfOrdering()
       }
     })
   }, 50)
   setTimeout(() => bindCollectionShelf({ refresh: refreshHomeWorkList }), 60)
+  setTimeout(() => bindWorkShelfOrdering(), 65)
 
   return `
     <div class="library-heading mb-4">
@@ -88,13 +93,15 @@ function renderWorkList(works, collections = []){
   }
   
   return `<div class="work-grid">${works.map(w=>`
-    <div class="card work-card work-card-${w.type}" data-id="${w.id}">
+    <div class="card work-card work-card-${w.type}" data-id="${w.id}" data-work-pinned="${w.pinned ? "true" : "false"}">
       ${renderWorkSelectionControl(w)}
+      <button type="button" class="work-card-drag-handle" draggable="true" aria-label="拖动作品《${escHtml(w.title || "无标题作品")}》调整位置" title="拖动排序"><span aria-hidden="true">⠿</span></button>
       <div class="work-card-body">
         <div class="work-card-title">${escHtml(w.title)}</div>
         <div class="work-card-desc">${escHtml(w.desc||"无描述")}</div>
         <div class="work-card-meta">
           <span>${w.type===WORK_TYPE.PHONE?"小手机":"互动文章"}</span>
+          ${w.pinned?`<span class="work-card-pinned-badge">置顶</span>`:""}
           <span>${timeAgo(w.updatedAt)}</span>
 ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> 需阅读密码</span>`:""}
         </div>
@@ -109,6 +116,7 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
           <button class="btn btn-sm btn-ghost work-card-more-btn" onclick="event.stopPropagation();toggleWorkMenu(event,'${w.id}')">更多</button>
           <div class="work-card-more-popover" id="workMenu-${w.id}">
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();editWorkInfo('${w.id}');closeWorkMenu('${w.id}')">作品信息</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();pinShelfWork('${w.id}',${w.pinned ? "false" : "true"});closeWorkMenu('${w.id}')">${w.pinned ? "取消置顶" : "置顶作品"}</button>
             <button class="btn btn-sm btn-ghost" data-work-preflight="${w.id}" onclick="event.stopPropagation();openWorkPreflight('${w.id}');closeWorkMenu('${w.id}')">发布前体检</button>
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出 JSON</button>
@@ -283,8 +291,78 @@ export function createHomeWriteController({
 function refreshHomeWorkList() {
   const list = document.getElementById("workList")
   if (list) {
-    list.innerHTML = renderWorkList(getWorks(), getWorkCollections())
+    const filter = document.querySelector("#workTabs .tab.active")?.dataset.tab || "all"
+    const allWorks = orderedWorks(getWorks())
+    const works = filter === "all"
+      ? allWorks
+      : allWorks.filter(work => work.type === (filter === "phone" ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE))
+    list.innerHTML = renderWorkList(works, filter === "all" ? getWorkCollections() : [])
   }
+}
+
+let shelfDrag = null
+
+function clearShelfDrag(list) {
+  shelfDrag = null
+  list.querySelectorAll(".work-card.is-dragging,.work-card.drag-before,.work-card.drag-after").forEach(card => {
+    card.classList.remove("is-dragging", "drag-before", "drag-after")
+  })
+}
+
+function bindWorkShelfOrdering() {
+  const list = document.getElementById("workList")
+  if (!list || list.dataset.workOrderBound === "true") return
+  list.dataset.workOrderBound = "true"
+
+  list.addEventListener("dragstart", event => {
+    const handle = event.target.closest(".work-card-drag-handle")
+    const card = handle?.closest(".work-card[data-id]")
+    if (!handle || !card) {
+      event.preventDefault()
+      return
+    }
+    shelfDrag = { id:card.dataset.id, pinned:card.dataset.workPinned === "true" }
+    card.classList.add("is-dragging")
+    event.dataTransfer.effectAllowed = "move"
+    event.dataTransfer.setData("text/plain", card.dataset.id)
+  })
+
+  list.addEventListener("dragover", event => {
+    const target = event.target.closest(".work-card[data-id]")
+    if (!shelfDrag || !target || target.dataset.id === shelfDrag.id || (target.dataset.workPinned === "true") !== shelfDrag.pinned) return
+    event.preventDefault()
+    list.querySelectorAll(".work-card.drag-before,.work-card.drag-after").forEach(card => {
+      if (card !== target) card.classList.remove("drag-before", "drag-after")
+    })
+    const after = event.clientY > target.getBoundingClientRect().top + target.getBoundingClientRect().height / 2
+    target.classList.toggle("drag-before", !after)
+    target.classList.toggle("drag-after", after)
+    event.dataTransfer.dropEffect = "move"
+  })
+
+  list.addEventListener("drop", event => {
+    const target = event.target.closest(".work-card[data-id]")
+    if (!shelfDrag || !target || target.dataset.id === shelfDrag.id || (target.dataset.workPinned === "true") !== shelfDrag.pinned) {
+      clearShelfDrag(list)
+      return
+    }
+    event.preventDefault()
+    const group = orderedWorks(getWorks()).filter(work => (work.pinned === true) === shelfDrag.pinned)
+    const from = group.findIndex(work => work.id === shelfDrag.id)
+    const targetIndex = group.findIndex(work => work.id === target.dataset.id)
+    const after = target.classList.contains("drag-after")
+    let desired = targetIndex + (after ? 1 : 0)
+    if (from < desired) desired -= 1
+    const offset = desired - from
+    const moved = offset ? moveWorkByOffset(shelfDrag.id, offset) : null
+    clearShelfDrag(list)
+    if (moved) {
+      refreshHomeWorkList()
+      showToast("作品顺序已更新", "success")
+    }
+  })
+
+  list.addEventListener("dragend", () => clearShelfDrag(list))
 }
 
 function homeWriteElements(action, workId) {
@@ -327,6 +405,20 @@ const homeWriteController = createHomeWriteController({
 })
 
 // Global handlers for inline onclick
+window.pinShelfWork = function(id, pinned) {
+  const changed = setWorkPinned(id, pinned === true)
+  if (!changed) return
+  refreshHomeWorkList()
+  showToast(pinned ? "作品已置顶" : "已取消置顶", "success")
+}
+
+window.moveShelfWork = function(id, offset) {
+  const changed = moveWorkByOffset(id, Number(offset))
+  if (!changed) return
+  refreshHomeWorkList()
+  showToast("作品顺序已更新", "success")
+}
+
 window.backupLibrary = function(){
   try {
     var exportedAt = new Date()

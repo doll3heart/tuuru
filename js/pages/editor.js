@@ -2040,6 +2040,7 @@ function openPhoneAppModalForCard(wid, nid, pmid, type, def, onClose) {
 
   try {
     var overlay = openPhoneAppModal(draft.id, type, {
+      matchStandalonePhone: true,
       beforeClose: handlers.beforeClose,
       afterClose: handlers.afterClose
     })
