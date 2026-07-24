@@ -1470,8 +1470,16 @@ body.rd-theme-gray .article-meta { color: #333; }
 }
 .phone-island { display: flex; justify-content: center; padding: 8px 0 3px; }
 .phone-island-pill {
-  width: 78px; height: 18px; background: var(--phone-system-text); border-radius: 4px;
+  background: var(--phone-system-text);
   box-shadow: inset 1px 1px rgba(255,255,255,.14);
+}
+.phone-island-pill[data-island-style="pill"] { width: 78px; height: 18px; border-radius: 999px; }
+.phone-island-pill[data-island-style="circle"] { width: 18px; height: 18px; border-radius: 50%; }
+.rs-local-font-row { display: grid; grid-template-columns: minmax(120px,1fr) auto auto auto; align-items: center; gap: 6px; padding: 5px 0; }
+.rs-local-font-row .rd-input { min-width: 0; }
+.rs-delete-font-btn { padding: 6px 10px; border: 1px solid var(--c-primary-hover); border-radius: 4px; background: transparent; color: var(--c-primary-hover); cursor: pointer; }
+@media (max-width: 620px) {
+  .rs-local-font-row { grid-template-columns: minmax(0,1fr) auto; }
 }
 .phone-profile {
   position: relative; height: 112px;

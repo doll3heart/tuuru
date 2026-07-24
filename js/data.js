@@ -82,6 +82,7 @@ export const DEFAULT_PHONE_SKIN = {
   readerId: '读者',
   readerAvatar: null,
   showDynamicIsland: true,
+  dynamicIslandStyle: 'pill',
   iconStyle: 'mixed',
   showIconShadow: true,
   iconBorderRadius: 6,

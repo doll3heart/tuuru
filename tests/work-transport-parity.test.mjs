@@ -38,7 +38,15 @@ test("current article and phone exports have identical JSON and PNG reader seman
       scenes: [],
       placeholders: [],
       phoneModules: [{ id: "module", type: "memo", data: { memos: [] } }],
-      editorSettings: { fontSize: 18 },
+      editorSettings: {
+        fontSize: 18,
+        customFonts: [{
+          id: "local-author-font",
+          name: "Author Device Only",
+          value: "'Author Device Only', sans-serif",
+          data: "data:font/ttf;base64,AUTHOR_LOCAL_ONLY",
+        }],
+      },
       futureField: { preserved: true },
       watermark: {
         enabled: true, kind: "text", text: "作者署名", image: null,
@@ -91,6 +99,7 @@ test("current article and phone exports have identical JSON and PNG reader seman
     assert.deepEqual(pngWork, jsonWork)
     assert.deepEqual(jsonWork.watermark, fixture.watermark)
     assert.equal(jsonWork.editorSettings, undefined)
+    assert.doesNotMatch(serialized, /Author Device Only|AUTHOR_LOCAL_ONLY/)
     if (fixture.type === "article") assert.deepEqual(jsonWork.futureField, { preserved: true })
     if (fixture.type === "phone") {
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "settings"), false)

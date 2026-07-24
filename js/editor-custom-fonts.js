@@ -31,6 +31,30 @@ export function upsertEditorCustomFont(fonts, nextFont) {
   return list
 }
 
+function cleanEditorFontName(value) {
+  return String(value || "").replace(/["'\\;{}<>]/g, "").trim().slice(0, 64)
+}
+
+export function renameEditorCustomFont(fonts, fontId, nextName) {
+  var list = Array.isArray(fonts) ? fonts.slice() : []
+  var index = list.findIndex(function(font) { return font?.id === fontId })
+  if (index < 0) return list
+  var name = cleanEditorFontName(nextName)
+  if (!name) throw new Error("请输入字体名称")
+  var duplicate = list.some(function(font, fontIndex) {
+    return fontIndex !== index && cleanEditorFontName(font?.name).toLocaleLowerCase() === name.toLocaleLowerCase()
+  })
+  if (duplicate) throw new Error("已存在同名字体")
+  list[index] = Object.assign({}, list[index], {name:name, value:editorFontValue(name)})
+  return list
+}
+
+export function removeEditorCustomFont(fonts, fontId) {
+  return (Array.isArray(fonts) ? fonts : []).filter(function(font) {
+    return font?.id !== fontId
+  })
+}
+
 export function installEditorCustomFonts(doc, fonts) {
   if (!doc?.head) return
   doc.getElementById(STYLE_ID)?.remove()

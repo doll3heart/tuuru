@@ -4,6 +4,7 @@
   "name": "Tuuru",
   "launcherName": "Tuuru",
   "display": "standalone",
+  "orientation": "fullUser",
   "themeColor": "#C7A1AA",
   "themeColorDark": "#40383B",
   "navigationColor": "#FFFAF9",

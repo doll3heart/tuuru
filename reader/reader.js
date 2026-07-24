@@ -18,6 +18,14 @@ import { orderedForumPosts } from '../js/forum-post-order.js'
 import { orderedChats } from '../js/chat-order.js'
 import { effectiveForbiddenWords } from '../js/forbidden-words.js'
 import { shouldShowPhoneTimestamp } from '../js/phone-timestamps.js'
+import { normalizeDynamicIslandStyle } from '../js/phone-dynamic-island.js'
+import {
+  addReaderLocalFont,
+  deleteReaderLocalFont,
+  readerLocalFontFamily,
+  renameReaderLocalFont,
+  replaceReaderLocalFont,
+} from './local-font-library.js'
 import { renderPhoneShoppingList, renderPhoneShoppingTabs } from '../js/phone-shopping-view.js'
 import { renderPhoneForumComment, renderPhoneForumPost } from '../js/phone-forum-view.js'
 import {
@@ -1322,7 +1330,7 @@ function openReaderSettingsPanel(triggerElement) {
   body += '<div style="padding:4px 0;margin-top:6px"><button class="rs-upload-font-btn" style="padding:5px 14px;font-size:.72rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer;border-radius:4px" id="rsUploadFont">上传字体 (.ttf/.woff)</button></div>'
   body += '<div id="rsFontList" style="padding:4px 0">'
   for (var cfi2 = 0; cfi2 < customFonts.length; cfi2++) {
-    body += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0"><span style="font-size:.7rem;color:#555;flex:1">' + esc(customFonts[cfi2].name) + '</span><button class="rs-delete-font-btn" style="padding:2px 8px;font-size:.65rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;border-radius:3px" data-rs-del-font="' + cfi2 + '">删除</button></div>'
+    body += '<div class="rs-local-font-row"><input class="rd-input" data-rs-font-name="' + cfi2 + '" value="' + escapeHtmlAttribute(customFonts[cfi2].name) + '" aria-label="字体名称"><button type="button" class="rs-action-btn subtle" data-rs-rename-font="' + cfi2 + '">保存名称</button><button type="button" class="rs-action-btn subtle" data-rs-replace-font="' + cfi2 + '">替换文件</button><button type="button" class="rs-delete-font-btn" data-rs-del-font="' + cfi2 + '">删除</button></div>'
   }
   body += '</div>'
   body += '</div>'
@@ -1663,34 +1671,74 @@ function openReaderSettingsPanel(triggerElement) {
     var inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.ttf,.otf,.woff,.woff2'
     inp.onchange = function() {
       var file = inp.files && inp.files[0]; if (!file) return
-      if (file.size > 2 * 1024 * 1024) {
-        showReaderToast('字体文件请控制在 2MB 以内，避免占满浏览器本地空间')
-        return
-      }
       var name = prompt('字体名称:', file.name.replace(/\.[^.]+$/, '') || '自定义字体')
-      if (!name) return
-      name = name.replace(/["'\\;{}<>]/g, '').trim().slice(0, 64)
       if (!name) return
       var r = new FileReader()
       r.onload = function() {
-        rs.customFonts = rs.customFonts || []
-        rs.customFonts.push({ name: name, data: r.result })
-        persistAndPreview()
-        closePanel({ restoreFocus: false })
-        openReaderSettingsPanel(activeTrigger)
+        try {
+          rs.customFonts = addReaderLocalFont(rs.customFonts, { name: name, data: r.result })
+          rs.fontFamily = readerLocalFontFamily(rs.customFonts[rs.customFonts.length - 1].name)
+          persistAndPreview()
+          closePanel({ restoreFocus: false })
+          openReaderSettingsPanel(activeTrigger)
+        } catch (error) {
+          showReaderToast(error.message || '字体保存失败')
+        }
       }
       r.readAsDataURL(file)
     }
     inp.click()
   }
+  ov.querySelectorAll('[data-rs-rename-font]').forEach(function(b) {
+    b.onclick = function() {
+      var idx = parseInt(b.dataset.rsRenameFont, 10)
+      var input = ov.querySelector('[data-rs-font-name="' + idx + '"]')
+      var previous = rs.customFonts && rs.customFonts[idx]
+      try {
+        rs.customFonts = renameReaderLocalFont(rs.customFonts, idx, input && input.value)
+        if (previous && rs.fontFamily === readerLocalFontFamily(previous.name)) {
+          rs.fontFamily = readerLocalFontFamily(rs.customFonts[idx].name)
+        }
+        persistAndPreview()
+        closePanel({ restoreFocus: false })
+        openReaderSettingsPanel(activeTrigger)
+      } catch (error) {
+        showReaderToast(error.message || '字体改名失败')
+      }
+    }
+  })
+  ov.querySelectorAll('[data-rs-replace-font]').forEach(function(b) {
+    b.onclick = function() {
+      var idx = parseInt(b.dataset.rsReplaceFont, 10)
+      var input = document.createElement('input')
+      input.type = 'file'
+      input.accept = '.ttf,.otf,.woff,.woff2'
+      input.onchange = function() {
+        var file = input.files && input.files[0]
+        if (!file) return
+        var reader = new FileReader()
+        reader.onload = function() {
+          try {
+            rs.customFonts = replaceReaderLocalFont(rs.customFonts, idx, reader.result)
+            persistAndPreview()
+            closePanel({ restoreFocus: false })
+            openReaderSettingsPanel(activeTrigger)
+          } catch (error) {
+            showReaderToast(error.message || '字体替换失败')
+          }
+        }
+        reader.readAsDataURL(file)
+      }
+      input.click()
+    }
+  })
   // Font delete buttons
   ov.querySelectorAll('[data-rs-del-font]').forEach(function(b) {
     b.onclick = function() {
       var idx = parseInt(b.dataset.rsDelFont)
-      rs.customFonts = rs.customFonts || []
       var removedFont = rs.customFonts[idx]
-      rs.customFonts.splice(idx, 1)
-      if (rs.fontFamily === '"' + (removedFont && removedFont.name) + '"') rs.fontFamily = READER_APPEARANCE_DEFAULTS.fontFamily
+      rs.customFonts = deleteReaderLocalFont(rs.customFonts, idx)
+      if (removedFont && rs.fontFamily === readerLocalFontFamily(removedFont.name)) rs.fontFamily = READER_APPEARANCE_DEFAULTS.fontFamily
       persistAndPreview()
       closePanel({ restoreFocus: false })
       openReaderSettingsPanel(activeTrigger)
@@ -2097,6 +2145,7 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   if (rc.readerAvatar) skin.readerAvatar = rc.readerAvatar
   if (rc.topBgImage) skin.topBgImage = rc.topBgImage
   if (rc.showDynamicIsland !== undefined) skin.showDynamicIsland = rc.showDynamicIsland
+  skin.dynamicIslandStyle = normalizeDynamicIslandStyle(rc.dynamicIslandStyle || skin.dynamicIslandStyle)
   if (rc.showHomeIndicator !== undefined) skin.showHomeIndicator = rc.showHomeIndicator
   if (rc.showAppLabels !== undefined) skin.showAppLabels = rc.showAppLabels
   if (rc.fontFamily) skin.fontFamily = rc.fontFamily
@@ -2126,7 +2175,7 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   h += renderWorkWatermark(watermark, 'phone')
 
   if (skin.showDynamicIsland !== false) {
-    h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
+    h += '<div class="phone-island"><div class="phone-island-pill" data-island-style="' + normalizeDynamicIslandStyle(skin.dynamicIslandStyle) + '"></div></div>'
   }
   h += readerPhoneFlowNotificationHtml(pd, flowStep)
 
@@ -3917,7 +3966,7 @@ function readerPhoneCustomDefaults() {
     wallpaper: '#eee6e7', wallpaperType: 'color', wallpaperImage: null,
     frameColor: '#8f7b81', borderRadius: 18, fontFamily: "'Noto Sans SC', sans-serif",
     fontSize: 12, readerId: '', readerAvatar: null, topBgImage: null,
-    showDynamicIsland: true, showHomeIndicator: true, showAppLabels: true,
+    showDynamicIsland: true, dynamicIslandStyle: 'pill', showHomeIndicator: true, showAppLabels: true,
     showIconShadow: true, iconBorderRadius: 6, iconColumns: 4, materialType: 'glass',
     materialOpacity: 65, timeColor: '#ffffff',
     customCss: '', appBgs: {}, appSettings: {}, customFonts: [], customIcons: {}
@@ -3943,6 +3992,7 @@ function normalizePhoneCustom(candidate) {
   custom.frameColor = sanitizeCssColor(custom.frameColor, { fallback: defaults.frameColor })
   custom.timeColor = sanitizeCssColor(custom.timeColor, { fallback: defaults.timeColor })
   custom.wallpaperType = custom.wallpaperType === 'image' ? 'image' : 'color'
+  custom.dynamicIslandStyle = normalizeDynamicIslandStyle(custom.dynamicIslandStyle)
   custom.wallpaperImage = typeof custom.wallpaperImage === 'string' && isSafeImageUrl(custom.wallpaperImage)
     ? custom.wallpaperImage.trim()
     : null
@@ -4025,7 +4075,7 @@ function renderPhonePreview(ct, options) {
   }
   h += '<div class="phone-frame ' + escapeHtmlAttribute(scopeClass) + ((ct.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && ct.wallpaperType !== 'image' ? ' phone-default-wallpaper' : '') + '" style="' + escapeHtmlAttribute(frameBgStyle) + '">'
   if (ct.showDynamicIsland !== false) {
-    h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
+    h += '<div class="phone-island"><div class="phone-island-pill" data-island-style="' + normalizeDynamicIslandStyle(ct.dynamicIslandStyle) + '"></div></div>'
   }
   var coverBg = ct.topBgImage || ct.wallpaperImage || ''
   h += '<div class="phone-profile"'
@@ -4287,6 +4337,7 @@ function openReaderCustomizePanel(triggerElement) {
   body += '<div class="phone-appearance-font-actions"><button type="button" class="rs-action-btn subtle" id="cuUploadFont">上传字体</button><div id="cuFontList"></div></div>'
   body += '<div class="phone-appearance-toggles">'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuIsland"' + (ct.showDynamicIsland ? ' checked' : '') + '> 灵动岛</label>'
+  body += '<label class="phone-appearance-select-label" for="cuIslandStyle">灵动岛形状<select class="rd-input" id="cuIslandStyle"><option value="pill"' + (normalizeDynamicIslandStyle(ct.dynamicIslandStyle) === 'pill' ? ' selected' : '') + '>苹果圆角胶囊</option><option value="circle"' + (normalizeDynamicIslandStyle(ct.dynamicIslandStyle) === 'circle' ? ' selected' : '') + '>小圆形开孔</option></select></label>'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuLabels"' + (ct.showAppLabels ? ' checked' : '') + '> App 名称</label>'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuHome"' + (ct.showHomeIndicator ? ' checked' : '') + '> Home 指示条</label>'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuShadow"' + (ct.showIconShadow ? ' checked' : '') + '> 图标阴影</label>'
@@ -4328,7 +4379,7 @@ function openReaderCustomizePanel(triggerElement) {
     var list = ov.querySelector('#cuFontList')
     if (!list) return
     list.innerHTML = (ct.customFonts || []).map(function(font, index) {
-      return '<span class="phone-appearance-font-chip"><span>' + esc(font.name) + '</span><button type="button" data-cu-del-font="' + index + '" aria-label="删除字体 ' + escapeHtmlAttribute(font.name) + '">×</button></span>'
+      return '<div class="rs-local-font-row phone-appearance-font-row"><input class="rd-input" data-cu-font-name="' + index + '" value="' + escapeHtmlAttribute(font.name) + '" aria-label="字体名称"><button type="button" class="rs-action-btn subtle" data-cu-rename-font="' + index + '">保存名称</button><button type="button" class="rs-action-btn subtle" data-cu-replace-font="' + index + '">替换文件</button><button type="button" class="rs-delete-font-btn" data-cu-del-font="' + index + '">删除</button></div>'
     }).join('')
   }
 
@@ -4449,6 +4500,10 @@ function openReaderCustomizePanel(triggerElement) {
   if (fontSelect) fontSelect.onchange = function() {
     updateDraft(function() { ct.fontFamily = fontSelect.value })
   }
+  var islandStyleSelect = ov.querySelector('#cuIslandStyle')
+  if (islandStyleSelect) islandStyleSelect.onchange = function() {
+    updateDraft(function() { ct.dynamicIslandStyle = normalizeDynamicIslandStyle(islandStyleSelect.value) })
+  }
   ;[
     ['cuIsland', 'showDynamicIsland'],
     ['cuLabels', 'showAppLabels'],
@@ -4526,20 +4581,18 @@ function openReaderCustomizePanel(triggerElement) {
     input.onchange = function() {
       var file = input.files && input.files[0]
       if (!file) return
-      if (file.size > 2 * 1024 * 1024) {
-        showReaderToast('字体文件请控制在 2MB 以内')
-        return
-      }
       var name = prompt('字体名称:', file.name.replace(/\.[^.]+$/, '') || '自定义字体')
-      if (!name) return
-      name = name.replace(/["'\\;{}<>]/g, '').trim().slice(0, 64)
       if (!name) return
       var reader = new FileReader()
       reader.onload = function() {
-        ct.customFonts = (ct.customFonts || []).concat([{ name:name, data:reader.result }])
-        ct.fontFamily = '"' + name + '"'
-        renderFontList()
-        renderDraftPreview()
+        try {
+          ct.customFonts = addReaderLocalFont(ct.customFonts, { name:name, data:reader.result })
+          ct.fontFamily = readerLocalFontFamily(ct.customFonts[ct.customFonts.length - 1].name)
+          renderFontList()
+          renderDraftPreview()
+        } catch (error) {
+          showReaderToast(error.message || '字体保存失败')
+        }
       }
       reader.readAsDataURL(file)
     }
@@ -4547,12 +4600,48 @@ function openReaderCustomizePanel(triggerElement) {
   }
   var fontList = ov.querySelector('#cuFontList')
   if (fontList) fontList.onclick = function(event) {
-    var button = event.target.closest('[data-cu-del-font]')
+    var button = event.target.closest('[data-cu-del-font],[data-cu-rename-font],[data-cu-replace-font]')
     if (!button) return
-    var index = parseInt(button.dataset.cuDelFont, 10)
-    var removed = ct.customFonts && ct.customFonts[index]
-    ct.customFonts = (ct.customFonts || []).filter(function(_, fontIndex) { return fontIndex !== index })
-    if (removed && ct.fontFamily === '"' + removed.name + '"') ct.fontFamily = readerPhoneCustomDefaults().fontFamily
+    var rawIndex = button.dataset.cuDelFont ?? button.dataset.cuRenameFont ?? button.dataset.cuReplaceFont
+    var index = parseInt(rawIndex, 10)
+    var current = ct.customFonts && ct.customFonts[index]
+    if (button.dataset.cuRenameFont !== undefined) {
+      var nameInput = fontList.querySelector('[data-cu-font-name="' + index + '"]')
+      try {
+        ct.customFonts = renameReaderLocalFont(ct.customFonts, index, nameInput && nameInput.value)
+        if (current && ct.fontFamily === readerLocalFontFamily(current.name)) {
+          ct.fontFamily = readerLocalFontFamily(ct.customFonts[index].name)
+        }
+        renderFontList()
+        renderDraftPreview()
+      } catch (error) {
+        showReaderToast(error.message || '字体改名失败')
+      }
+      return
+    }
+    if (button.dataset.cuReplaceFont !== undefined) {
+      var replacementInput = document.createElement('input')
+      replacementInput.type = 'file'
+      replacementInput.accept = '.ttf,.otf,.woff,.woff2'
+      replacementInput.onchange = function() {
+        var replacementFile = replacementInput.files && replacementInput.files[0]
+        if (!replacementFile) return
+        var replacementReader = new FileReader()
+        replacementReader.onload = function() {
+          try {
+            ct.customFonts = replaceReaderLocalFont(ct.customFonts, index, replacementReader.result)
+            renderDraftPreview()
+          } catch (error) {
+            showReaderToast(error.message || '字体替换失败')
+          }
+        }
+        replacementReader.readAsDataURL(replacementFile)
+      }
+      replacementInput.click()
+      return
+    }
+    ct.customFonts = deleteReaderLocalFont(ct.customFonts, index)
+    if (current && ct.fontFamily === readerLocalFontFamily(current.name)) ct.fontFamily = readerPhoneCustomDefaults().fontFamily
     renderFontList()
     renderDraftPreview()
   }
@@ -4582,6 +4671,7 @@ function openReaderCustomizePanel(triggerElement) {
       ov.querySelector('#' + item[0] + 'Val').textContent = item[1] + item[2]
     })
     ov.querySelector('#cuIsland').checked = ct.showDynamicIsland
+    ov.querySelector('#cuIslandStyle').value = normalizeDynamicIslandStyle(ct.dynamicIslandStyle)
     ov.querySelector('#cuLabels').checked = ct.showAppLabels
     ov.querySelector('#cuHome').checked = ct.showHomeIndicator
     ov.querySelector('#cuShadow').checked = ct.showIconShadow

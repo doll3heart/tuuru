@@ -17,6 +17,7 @@ test("the shared web manifest installs Tuuru and exposes author and reader short
   assert.equal(manifest.start_url, "/")
   assert.equal(manifest.scope, "/")
   assert.equal(manifest.display, "standalone")
+  assert.equal(manifest.orientation, "any")
   assert.equal(manifest.theme_color, "#C7A1AA")
   assert.equal(manifest.background_color, "#EEE6E7")
 
@@ -71,7 +72,7 @@ test("the service worker follows web deployments without forcing an editor reloa
   assert.match(headers, /\/manifest\.webmanifest\s*\n\s+Cache-Control:\s*public,\s*no-cache,\s*must-revalidate/i)
 })
 
-test("the TWA contract remains bound to tuuru.chat and excludes signing secrets", async () => {
+test("the TWA contract follows the device user rotation lock while unlocked browsers may rotate", async () => {
   const [config, gitignore, gradle, assetLinks] = await Promise.all([
     text("android/twa-manifest.json").then(JSON.parse),
     text(".gitignore"),
@@ -86,6 +87,7 @@ test("the TWA contract remains bound to tuuru.chat and excludes signing secrets"
   assert.equal(config.launcherName, "Tuuru")
   assert.equal(config.appVersionCode, 1)
   assert.equal(config.appVersion, "1.0.0")
+  assert.equal(config.orientation, "fullUser")
   assert.equal(config.iconUrl, "https://tuuru.chat/icons/tuuru-rabbit-v2-512.png")
   assert.equal(config.maskableIconUrl, "https://tuuru.chat/icons/tuuru-rabbit-v2-maskable-512.png")
   assert.equal(config.fingerprints.length, 1)
@@ -93,6 +95,7 @@ test("the TWA contract remains bound to tuuru.chat and excludes signing secrets"
   assert.match(gitignore, /android\/.*\.apk/)
   assert.match(gradle, /hostName:\s*'tuuru\.chat'/)
   assert.match(gradle, /webManifestUrl[^\n]*https:\/\/tuuru\.chat\/manifest\.webmanifest/)
+  assert.match(gradle, /orientation:\s*'fullUser'/)
   assert.doesNotMatch(gradle, /127\.0\.0\.1/)
   assert.equal(assetLinks[0].target.package_name, config.packageId)
   assert.deepEqual(assetLinks[0].target.sha256_cert_fingerprints, [config.fingerprints[0].value])

@@ -11,7 +11,7 @@ import { createEditorNodeDragController } from "../editor-node-drag.js"
 import { reorderArticleNode } from "../article-node-reorder.js"
 import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
 import { openPhoneAppModal } from "./phone.js"
-import { activateEditorCustomFonts, editorFontFormat, editorFontValue, installEditorCustomFonts, upsertEditorCustomFont } from "../editor-custom-fonts.js"
+import { activateEditorCustomFonts, editorFontFormat, editorFontValue, installEditorCustomFonts, removeEditorCustomFont, renameEditorCustomFont, upsertEditorCustomFont } from "../editor-custom-fonts.js"
 import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets } from "../editor-font-storage.js"
 import { compressEditorImage } from "../image-compression.js"
 import { searchArticleWork } from "../article-work-search.js"
@@ -73,6 +73,91 @@ function showConfirm(title, msg, cb, onCancel) {
   document.getElementById("cK").onclick = function() { cb(true); ov.remove() }
   document.getElementById("cN").onclick = function() { ov.remove(); onCancel?.() }
   document.getElementById("cN")?.focus()
+}
+
+function openEditorFontManager(workId) {
+  var settings = getSettings(workId)
+  var fonts = settings.customFonts || []
+  var body = '<div class="editor-font-manager"><p class="text-muted">字体文件只保存在当前设备，不会随作品导出或分享。</p>'
+  if (!fonts.length) body += '<p>还没有本地字体。</p>'
+  fonts.forEach(function(font) {
+    body += '<div class="editor-font-manager-row" data-editor-font-row="' + esc(font.id) + '">'
+    body += '<input class="input" data-editor-font-name value="' + esc(font.name) + '" aria-label="字体名称">'
+    body += '<button type="button" class="btn btn-ghost" data-editor-font-rename>保存名称</button>'
+    body += '<button type="button" class="btn btn-ghost" data-editor-font-replace>替换文件</button>'
+    body += '<button type="button" class="btn btn-danger" data-editor-font-delete>删除</button></div>'
+  })
+  body += '</div>'
+  var overlay = modal('管理本机字体', body, '<button type="button" class="btn btn-primary" id="editorFontManagerDone">完成</button>')
+  overlay.querySelector('#editorFontManagerDone').onclick = function() { overlay.remove() }
+
+  overlay.querySelector('.editor-font-manager').onclick = async function(event) {
+    var button = event.target.closest('[data-editor-font-rename],[data-editor-font-replace],[data-editor-font-delete]')
+    if (!button) return
+    var row = button.closest('[data-editor-font-row]')
+    var fontId = row && row.dataset.editorFontRow
+    var currentSettings = getSettings(workId)
+    var currentFont = (currentSettings.customFonts || []).find(function(font) { return font.id === fontId })
+    if (!currentFont) return
+
+    if (button.hasAttribute('data-editor-font-rename')) {
+      try {
+        var renamed = renameEditorCustomFont(currentSettings.customFonts, fontId, row.querySelector('[data-editor-font-name]').value)
+        var nextFont = renamed.find(function(font) { return font.id === fontId })
+        if (currentSettings.fontFamily === currentFont.value) currentSettings.fontFamily = nextFont.value
+        currentSettings.customFonts = renamed
+        updateWork(workId, {editorSettings:currentSettings})
+        overlay.remove()
+        refreshEditor(workId)
+        showToast('字体名称已保存')
+      } catch (error) {
+        showToast(error.message || '字体改名失败', 'error')
+      }
+      return
+    }
+
+    if (button.hasAttribute('data-editor-font-delete')) {
+      await deleteEditorFontAsset(workId, fontId).catch(function() {})
+      currentSettings.customFonts = removeEditorCustomFont(currentSettings.customFonts, fontId)
+      if (currentSettings.fontFamily === currentFont.value) currentSettings.fontFamily = DEFAULT_EDITOR_SETTINGS.fontFamily
+      updateWork(workId, {editorSettings:currentSettings})
+      overlay.remove()
+      refreshEditor(workId)
+      showToast('本机字体已删除')
+      return
+    }
+
+    var input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.ttf,.otf,.woff,.woff2'
+    input.onchange = async function() {
+      var file = input.files && input.files[0]
+      if (!file) return
+      try {
+        var replacement = await persistEditorFontAsset({
+          workId:workId,
+          fontId:fontId,
+          name:currentFont.name,
+          value:currentFont.value,
+          format:editorFontFormat(file.name),
+          blob:file,
+        })
+        var nextFonts = (currentSettings.customFonts || []).map(function(font) {
+          return font.id === fontId ? replacement : font
+        })
+        var resolved = await resolveEditorFontAssets(workId, nextFonts)
+        await activateEditorCustomFonts(document, resolved)
+        currentSettings.customFonts = nextFonts
+        updateWork(workId, {editorSettings:currentSettings})
+        overlay.remove()
+        refreshEditor(workId)
+        showToast('字体文件已替换')
+      } catch (error) {
+        showToast(error.message || '字体替换失败', 'error')
+      }
+    }
+    input.click()
+  }
 }
 
 
@@ -165,6 +250,7 @@ function buildMobileCommandbar(wid, nid) {
     var customFont = customFonts[cfi]
     h += '<option value="' + esc(customFont.value) + '"' + (es.fontFamily === customFont.value ? ' selected' : '') + '>' + esc(customFont.name) + '</option>'
   }
+  if (customFonts.length) h += '<option value="__manage__">管理本机字体…</option>'
   h += '<option value="__custom__">+ 导入字体…</option></select></label>'
   h += '<label class="editor-mobile-setting-field"><span>字号</span><select class="toolbar-setting" data-a="fs-size" aria-label="字号">'
   var sizes = [12,14,16,18,20,22,24,28,32]
@@ -335,6 +421,7 @@ function buildToolbar(nid) {
       h += '<option value="' + esc(cf.value) + '"' + (es.fontFamily === cf.value ? ' selected' : '') + '>' + esc(cf.name) + '</option>'
     }
   }
+  if (cfs.length) h += '<option value="__manage__">管理本机字体…</option>'
   h += '<option value="__custom__">+ 导入字体…</option>'
   h += '</select>'
 
@@ -934,6 +1021,10 @@ function handleChange(e) {
   // Layout settings
   if (a === "fs-font") {
     var val = b.value
+    if (val === "__manage__") {
+      openEditorFontManager(_workId)
+      return
+    }
     if (val === "__custom__") {
       // Open file picker for font
       var input = document.createElement("input")

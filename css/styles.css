@@ -635,7 +635,10 @@ ul,ol{list-style:none}
 
 /* Dynamic Island */
 .phone-island{display:flex;justify-content:center;padding:8px 0 3px}
-.phone-island-pill{width:78px;height:18px;background:#40383b;border-radius:4px;box-shadow:inset 1px 1px rgba(255,255,255,.14)}
+.phone-island-pill{background:#40383b;box-shadow:inset 1px 1px rgba(255,255,255,.14)}
+.phone-island-pill[data-island-style="pill"]{width:78px;height:18px;border-radius:999px}
+.phone-island-pill[data-island-style="circle"]{width:18px;height:18px;border-radius:50%}
+.editor-font-manager{display:grid;gap:10px}.editor-font-manager-row{display:grid;grid-template-columns:minmax(140px,1fr) auto auto auto;align-items:center;gap:8px}.editor-font-manager-row .input{min-width:0}@media(max-width:640px){.editor-font-manager-row{grid-template-columns:minmax(0,1fr) auto}.editor-font-manager-row .btn-danger{grid-column:2}}
 
 /* Profile section */
 .phone-profile{position:relative;height:112px;display:grid;grid-template-columns:minmax(0,1fr) 58px;align-items:center;gap:12px;overflow:hidden;background:var(--phone-system-surface);margin:10px 12px 0;padding:14px 16px;border:1px solid var(--phone-system-border);border-radius:var(--phone-system-radius-panel);box-shadow:2px 2px 0 rgba(112,78,88,.16),inset 2px 2px rgba(255,255,255,.52)}

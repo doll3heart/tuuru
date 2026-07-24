@@ -23,6 +23,9 @@ import { orderedChats, reorderChats, toggleChatPinned } from "../chat-order.js"
 import { forumDisplayCommentCount, forumDisplayFloor } from "../forum-display-metrics.js"
 import { splitMentionText } from "../mention-text.js"
 import { placeFixedMenuWithinViewport } from "../viewport-menu.js"
+import { normalizeDynamicIslandStyle } from "../phone-dynamic-island.js"
+import { activateEditorCustomFonts, editorFontFormat, editorFontValue, removeEditorCustomFont, renameEditorCustomFont, upsertEditorCustomFont } from "../editor-custom-fonts.js"
+import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets } from "../editor-font-storage.js"
 import { bindPhoneMentionTrigger, insertPhoneMention } from "../phone-mention-trigger.js"
 import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js"
 import { phoneTimestampsHidden, shouldShowPhoneTimestamp } from "../phone-timestamps.js"
@@ -804,6 +807,14 @@ function renderContactsModal(frame, wid, pd) {
   renderList()
 }
 
+function loadPhoneEditorCustomFonts(wid, fonts) {
+  return resolveEditorFontAssets(wid, fonts || []).then(function(resolved) {
+    return activateEditorCustomFonts(document, resolved)
+  }).catch(function() {
+    return []
+  })
+}
+
 export function renderPhoneEditor(wid) {
   releaseStandalonePhoneMention()
   _workId = wid
@@ -813,6 +824,7 @@ export function renderPhoneEditor(wid) {
   var pd = w.phoneData
   if (!pd.skin) pd.skin = JSON.parse(JSON.stringify(DEFAULT_PHONE_SKIN))
   var skin = pd.skin
+  loadPhoneEditorCustomFonts(wid, w.editorSettings?.customFonts)
   if (skin.readerId === '旅人' || skin.readerId === '12345678' || !skin.readerId) {
     skin.readerId = '读者'
     updateWork(wid, { phoneData: pd })
@@ -847,7 +859,7 @@ export function renderPhoneEditor(wid) {
   h += '</div>'
 
   if (skin.showDynamicIsland) {
-    h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
+    h += '<div class="phone-island"><div class="phone-island-pill" data-island-style="' + normalizeDynamicIslandStyle(skin.dynamicIslandStyle) + '"></div></div>'
   }
 
   var coverBg = skin.topBgImage || skin.wallpaperImage || ''
@@ -1500,7 +1512,7 @@ function openCustomizePanel(wid) {
       h += '<button class="cu-tab' + (frame.dataset._activeTab === tabs[ti].id ? ' active' : '') + '" data-cu-tab="' + tabs[ti].id + '">' + tabs[ti].label + '</button>'
     }
     h += '</div>'
-    h += '<div class="cu-body" id="cuBody">' + renderTabContent(skin, apps, frame.dataset._activeTab) + '</div>'
+    h += '<div class="cu-body" id="cuBody">' + renderTabContent(skin, apps, frame.dataset._activeTab, wid) + '</div>'
     h += '<div class="cu-footer"><button class="btn btn-sm btn-primary" id="cuSave">保存</button><button class="btn btn-sm btn-ghost" id="cuCancel">取消</button></div>'
     h += '</div>'
     return h
@@ -1510,11 +1522,11 @@ function openCustomizePanel(wid) {
   bindCuEmbedded(frame, wid, skin, apps)
 }
 
-function renderTabContent(skin, apps, activeTab) {
+function renderTabContent(skin, apps, activeTab, wid) {
   var h = ''
   if (activeTab === 'wallpaper') h = renderWallpaperTab(skin)
   else if (activeTab === 'appIcons') h = renderAppIconsTab(skin, apps)
-  else if (activeTab === 'font') h = renderFontTab(skin)
+  else if (activeTab === 'font') h = renderFontTab(skin, getWork(wid)?.editorSettings?.customFonts || [])
   else if (activeTab === 'frame') h = renderFrameTab(skin)
   else if (activeTab === 'style') h = renderStyleTab(skin)
   return h
@@ -1568,7 +1580,7 @@ function renderAppIconsTab(skin, apps) {
 }
 
 // Font tab
-function renderFontTab(skin) {
+function renderFontTab(skin, customFonts) {
   var fonts = [
     { name: '默认', family: "'Noto Sans SC', sans-serif" },
     { name: '圆体', family: "'PingFang SC', sans-serif" },
@@ -1583,14 +1595,81 @@ function renderFontTab(skin) {
     var f = fonts[i]
     h += '<button class="btn btn-sm' + (skin.fontFamily === f.family ? ' btn-primary' : ' btn-outline') + '" data-cu-font="' + esc(f.family) + '">' + f.name + '</button>'
   }
+  for (var cfi = 0; cfi < customFonts.length; cfi++) {
+    var customFont = customFonts[cfi]
+    h += '<button class="btn btn-sm' + (skin.fontFamily === customFont.value ? ' btn-primary' : ' btn-outline') + '" data-cu-font="' + esc(customFont.value) + '">' + esc(customFont.name) + '</button>'
+  }
   h += '</div>'
-  h += '<div class="cu-section-title" style="margin-top:16px">导入字体</div>'
+  h += '<div class="cu-section-title" style="margin-top:16px">本机字体</div>'
   h += '<button class="btn btn-sm btn-outline" data-cu-upload="font">选择 TTF/OTF 文件</button>'
-  if (skin.fontFamily && skin.fontFamily.indexOf("CustomFont_") === 0) {
-    h += '<span style="font-size:.75rem;color:var(--c-primary-hover);margin-left:8px">自定义字体已应用</span>'
+  h += '<p class="cu-hint">字体只保存在当前设备，不会随作品导出或分享。</p>'
+  for (var mfi = 0; mfi < customFonts.length; mfi++) {
+    var managedFont = customFonts[mfi]
+    h += '<div class="editor-font-manager-row" data-cu-local-font="' + esc(managedFont.id) + '"><input class="cu-input" data-cu-local-font-name value="' + escapeHtmlAttribute(managedFont.name) + '" aria-label="字体名称"><button type="button" class="btn btn-sm btn-ghost" data-cu-local-font-rename>保存名称</button><button type="button" class="btn btn-sm btn-ghost" data-cu-local-font-replace>替换文件</button><button type="button" class="btn btn-sm btn-ghost" data-cu-local-font-delete>删除</button></div>'
   }
   h += '</div>'
   return h
+}
+
+function bindCuLocalFontRows(panel, desktop, wid, skin, reloadPanel) {
+  var localFontRows = panel.querySelectorAll('[data-cu-local-font]')
+  for (var lfi = 0; lfi < localFontRows.length; lfi++) {
+    localFontRows[lfi].onclick = async function(event) {
+      var button = event.target.closest('[data-cu-local-font-rename],[data-cu-local-font-replace],[data-cu-local-font-delete]')
+      if (!button) return
+      var row = event.currentTarget
+      var fontId = row.dataset.cuLocalFont
+      var settings = Object.assign({}, getWork(wid)?.editorSettings || {}, {customFonts:(getWork(wid)?.editorSettings?.customFonts || []).slice()})
+      var current = settings.customFonts.find(function(font) { return font.id === fontId })
+      if (!current) return
+      if (button.hasAttribute('data-cu-local-font-rename')) {
+        try {
+          settings.customFonts = renameEditorCustomFont(settings.customFonts, fontId, row.querySelector('[data-cu-local-font-name]').value)
+          var renamed = settings.customFonts.find(function(font) { return font.id === fontId })
+          if (skin.fontFamily === current.value) skin.fontFamily = renamed.value
+          updateWork(wid, {editorSettings:settings})
+          desktop.dataset._skin = JSON.stringify(skin)
+          reloadPanel()
+          showToast('字体名称已保存')
+        } catch (error) {
+          showToast(error.message || '字体改名失败', 'error')
+        }
+        return
+      }
+      if (button.hasAttribute('data-cu-local-font-delete')) {
+        await deleteEditorFontAsset(wid, fontId).catch(function() {})
+        settings.customFonts = removeEditorCustomFont(settings.customFonts, fontId)
+        if (skin.fontFamily === current.value) skin.fontFamily = DEFAULT_PHONE_SKIN.fontFamily
+        updateWork(wid, {editorSettings:settings})
+        desktop.dataset._skin = JSON.stringify(skin)
+        reloadPanel()
+        showToast('本机字体已删除')
+        return
+      }
+      var replacementInput = document.createElement('input')
+      replacementInput.type = 'file'
+      replacementInput.accept = '.ttf,.otf,.woff,.woff2'
+      replacementInput.onchange = async function() {
+        var replacementFile = replacementInput.files && replacementInput.files[0]
+        if (!replacementFile) return
+        try {
+          var replacement = await persistEditorFontAsset({
+            workId:wid, fontId:fontId, name:current.name, value:current.value,
+            format:editorFontFormat(replacementFile.name), blob:replacementFile
+          })
+          settings.customFonts = settings.customFonts.map(function(font) { return font.id === fontId ? replacement : font })
+          var resolved = await resolveEditorFontAssets(wid, settings.customFonts)
+          await activateEditorCustomFonts(document, resolved)
+          updateWork(wid, {editorSettings:settings})
+          reloadPanel()
+          showToast('字体文件已替换')
+        } catch (error) {
+          showToast(error.message || '字体替换失败', 'error')
+        }
+      }
+      replacementInput.click()
+    }
+  }
 }
 
 // Frame tab
@@ -1618,6 +1697,7 @@ function renderStyleTab(skin) {
   var h = '<div class="cu-section">'
 
   h += '<label class="cu-checkbox"><input type="checkbox" data-cu-cb="showDynamicIsland"' + (skin.showDynamicIsland ? ' checked' : '') + '> 显示灵动岛</label>'
+  h += '<label class="cu-section-title" style="display:block;margin-top:10px">灵动岛形状<select class="cu-select" data-cu-select="dynamicIslandStyle"><option value="pill"' + (normalizeDynamicIslandStyle(skin.dynamicIslandStyle) === 'pill' ? ' selected' : '') + '>苹果圆角胶囊</option><option value="circle"' + (normalizeDynamicIslandStyle(skin.dynamicIslandStyle) === 'circle' ? ' selected' : '') + '>小圆形开孔</option></select></label>'
 
   h += '<div class="cu-section-title" style="margin-top:12px">图标列数: ' + (skin.iconColumns || 4) + '</div>'
   h += '<input class="cu-range" data-cu-range="iconColumns" type="range" min="2" max="4" value="' + (skin.iconColumns || 4) + '">'
@@ -1643,7 +1723,7 @@ function bindCuEmbedded(desktop, wid, skin, apps) {
     skin = JSON.parse(desktop.dataset._skin)
     apps = JSON.parse(desktop.dataset._apps)
     var body = panel.querySelector('#cuBody')
-    if (body) body.innerHTML = renderTabContent(skin, apps, getAt())
+    if (body) body.innerHTML = renderTabContent(skin, apps, getAt(), wid)
     bindCuEmbedded(desktop, wid, skin, apps)
   }
 
@@ -1740,6 +1820,16 @@ function bindCuEmbedded(desktop, wid, skin, apps) {
     }
   }
 
+  var selects = panel.querySelectorAll('[data-cu-select]')
+  for (var si = 0; si < selects.length; si++) {
+    selects[si].onchange = function() {
+      skin[this.dataset.cuSelect] = this.dataset.cuSelect === 'dynamicIslandStyle'
+        ? normalizeDynamicIslandStyle(this.value)
+        : this.value
+      desktop.dataset._skin = JSON.stringify(skin)
+    }
+  }
+
   // Range
   var ranges = panel.querySelectorAll('[data-cu-range]')
   for (var ri = 0; ri < ranges.length; ri++) {
@@ -1757,20 +1847,31 @@ function bindCuEmbedded(desktop, wid, skin, apps) {
       if (target === 'font') {
         var input = document.createElement('input')
         input.type = 'file'; input.accept = '.ttf,.otf,.woff,.woff2'
-        input.onchange = function() {
+        input.onchange = async function() {
           var file = input.files && input.files[0]
           if (!file) return
-          var reader = new FileReader()
-          reader.onload = function() {
-            var fontName = 'CustomFont_' + Date.now()
-            var styleEl = document.createElement('style')
-            styleEl.textContent = '@font-face{font-family:"' + fontName + '";src:url(' + reader.result + ') format("truetype");}'
-            document.head.appendChild(styleEl)
-            skin.fontFamily = '"' + fontName + '", sans-serif'
+          var settings = Object.assign({}, getWork(wid)?.editorSettings || {}, {customFonts:(getWork(wid)?.editorSettings?.customFonts || []).slice()})
+          var fontName = file.name.replace(/\.[^.]+$/, '') || '自定义字体'
+          var previous = settings.customFonts.find(function(font) { return font.name === fontName })
+          var fontId = uid()
+          try {
+            var metadata = await persistEditorFontAsset({
+              workId:wid, fontId:fontId, name:fontName,
+              value:editorFontValue(fontName), format:editorFontFormat(file.name), blob:file
+            })
+            settings.customFonts = upsertEditorCustomFont(settings.customFonts, metadata)
+            var resolved = await resolveEditorFontAssets(wid, settings.customFonts)
+            await activateEditorCustomFonts(document, resolved)
+            updateWork(wid, {editorSettings:settings})
+            if (previous?.id) await deleteEditorFontAsset(wid, previous.id).catch(function() {})
+            skin.fontFamily = metadata.value
             desktop.dataset._skin = JSON.stringify(skin)
             reloadPanel()
+            showToast('字体已保存到本机并应用')
+          } catch (error) {
+            await deleteEditorFontAsset(wid, fontId).catch(function() {})
+            showToast(error.message || '字体保存失败', 'error')
           }
-          reader.readAsDataURL(file)
         }
         input.click()
         return
@@ -1806,6 +1907,7 @@ function bindCuEmbedded(desktop, wid, skin, apps) {
       reloadPanel()
     }
   }
+  bindCuLocalFontRows(panel, desktop, wid, skin, reloadPanel)
 }
 
 function collectSkinData(skin, apps, ov) {
@@ -1941,6 +2043,7 @@ function renderPfContacts(contacts, sortMode) {
     h += '</section>'
     h += '</div>'
   }
+
   h += '<div class="ct-search-empty" data-contact-search-empty hidden>没有匹配的联系人</div>'
   h += '</div>'
   return h
