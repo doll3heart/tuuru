@@ -65,7 +65,19 @@ test("reader beauty hub opens a reader-owned article appearance dialog", async t
     "rsBgUrl",
     "rsBgOverlay",
     "rsIndent",
+    "rsTitleSize",
+    "rsTitleWeight600",
+    "rsTitleSpacing",
+    "rsMetaSpacing",
+    "rsSectionSpacing",
+    "rsImageRadius",
+    "rsChoiceGap",
+    "rsChoiceRadius",
+    "rsAccentColor",
+    "rsCustomCss",
   ]) assert.ok(document.getElementById(id), id)
+  assert.ok(document.querySelector(".rs-preview-copy.reader-article-css-preview-scope"))
+  assert.ok(document.querySelector(".rs-controls"))
 
   const fontSize = document.getElementById("rsFontSize")
   fontSize.value = "30"
@@ -80,6 +92,15 @@ test("reader beauty hub opens a reader-owned article appearance dialog", async t
   const indent = document.getElementById("rsIndent")
   indent.checked = true
   indent.dispatchEvent(new Event("change", { bubbles: true }))
+  const titleSize = document.getElementById("rsTitleSize")
+  titleSize.value = "32"
+  dispatchInput(titleSize)
+  const accent = document.getElementById("rsAccentColor")
+  accent.value = "#a06b7b"
+  dispatchInput(accent)
+  const customCss = document.getElementById("rsCustomCss")
+  customCss.value = ".article-title { letter-spacing: .08em; }"
+  dispatchInput(customCss)
 
   const stored = JSON.parse(localStorage.getItem("moirain_readerSettings"))
   assert.equal(stored.fontSize, 30)
@@ -88,10 +109,20 @@ test("reader beauty hub opens a reader-owned article appearance dialog", async t
   assert.equal(stored.textColor, "#fefefe")
   assert.equal(stored.textAlign, "justify")
   assert.equal(stored.indentFirstLine, true)
+  assert.equal(stored.titleSize, 32)
+  assert.equal(stored.accentColor, "#a06b7b")
+  assert.equal(stored.customCss, ".article-title { letter-spacing: .08em; }")
   assert.equal(document.querySelector(".rs-preview-copy").style.fontSize, "30px")
+  assert.match(document.getElementById("reader-article-preview-user-css").textContent, /\.reader-article-css-preview-scope \.article-title/)
+
+  customCss.value = ".article-title { position: fixed; }"
+  dispatchInput(customCss)
+  assert.equal(JSON.parse(localStorage.getItem("moirain_readerSettings")).customCss, ".article-title { letter-spacing: .08em; }")
+  assert.equal(document.getElementById("rsCssError").hidden, false)
 
   dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
   assert.equal(document.querySelector(".rs-overlay"), null)
+  assert.equal(document.getElementById("reader-article-preview-user-css"), null)
   assert.equal(document.activeElement, trigger)
 })
 
@@ -129,6 +160,16 @@ test("saved article appearance applies below content when a cached work opens", 
     backgroundImage: "/reader/backgrounds/night.png",
     backgroundFit: "contain",
     backgroundOverlay: 44,
+    titleSize: 31,
+    titleWeight: 700,
+    titleSpacing: 20,
+    metaSpacing: 52,
+    sectionSpacing: 58,
+    imageRadius: 14,
+    choiceGap: 18,
+    choiceRadius: 12,
+    accentColor: "#a06b7b",
+    customCss: ".article-title { text-transform: uppercase; }",
   }))
 
   await import(`../reader/reader.js?reader-article-appearance-apply=${Date.now()}`)
@@ -144,6 +185,16 @@ test("saved article appearance applies below content when a cached work opens", 
   assert.match(backdrop.style.backgroundImage, /night\.png/)
   assert.equal(backdrop.style.backgroundSize, "contain")
   assert.equal(reader.style.maxWidth, "840px")
+  assert.equal(reader.classList.contains("reader-article-css-scope"), true)
+  assert.equal(reader.style.getPropertyValue("--rd-title-size"), "31px")
+  assert.equal(reader.style.getPropertyValue("--rd-title-weight"), "700")
+  assert.equal(reader.style.getPropertyValue("--rd-title-spacing"), "20px")
+  assert.equal(reader.style.getPropertyValue("--rd-meta-spacing"), "52px")
+  assert.equal(reader.style.getPropertyValue("--rd-section-spacing"), "58px")
+  assert.equal(reader.style.getPropertyValue("--rd-image-radius"), "14px")
+  assert.equal(reader.style.getPropertyValue("--rd-choice-gap"), "18px")
+  assert.equal(reader.style.getPropertyValue("--rd-choice-radius"), "12px")
+  assert.equal(reader.style.getPropertyValue("--rd-reading-accent"), "#a06b7b")
   assert.equal(content.style.fontSize, "30px")
   assert.equal(content.style.lineHeight, "2.2")
   assert.equal(content.style.letterSpacing, "1.5px")
@@ -152,9 +203,18 @@ test("saved article appearance applies below content when a cached work opens", 
   assert.equal(paragraph.style.marginBottom, "24px")
   assert.equal(paragraph.style.textIndent, "2em")
   assert.equal(reader.style.getPropertyValue("--rd-reading-text"), "#fefefe")
+  assert.match(document.getElementById("reader-article-user-css").textContent, /\.reader-article-css-scope \.article-title/)
 
+  const secondContent = content.cloneNode(true)
+  reader.appendChild(secondContent)
   document.querySelector(".reader-settings-btn").click()
   assert.ok(document.querySelector(".rs-sheet"))
+  const liveFontSize = document.getElementById("rsFontSize")
+  liveFontSize.value = "27"
+  dispatchInput(liveFontSize)
+  document.querySelectorAll(".article-content").forEach(element => {
+    assert.equal(element.style.fontSize, "27px")
+  })
 })
 
 test("article appearance controls are touch-safe and keyboard-visible", () => {

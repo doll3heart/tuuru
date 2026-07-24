@@ -30,6 +30,14 @@ test("reader article appearance clamps numbers and rejects invalid enums", () =>
     theme: "author-theme",
     textAlign: "diagonal",
     backgroundFit: "stretch",
+    titleSize: 200,
+    titleWeight: 950,
+    titleSpacing: -10,
+    metaSpacing: 999,
+    sectionSpacing: 0,
+    imageRadius: 100,
+    choiceGap: -2,
+    choiceRadius: 100,
   })
 
   assert.equal(normalized.fontSize, 36)
@@ -43,6 +51,14 @@ test("reader article appearance clamps numbers and rejects invalid enums", () =>
   assert.equal(normalized.theme, "light")
   assert.equal(normalized.textAlign, "left")
   assert.equal(normalized.backgroundFit, "cover")
+  assert.equal(normalized.titleSize, 44)
+  assert.equal(normalized.titleWeight, READER_APPEARANCE_DEFAULTS.titleWeight)
+  assert.equal(normalized.titleSpacing, 0)
+  assert.equal(normalized.metaSpacing, 72)
+  assert.equal(normalized.sectionSpacing, 16)
+  assert.equal(normalized.imageRadius, 24)
+  assert.equal(normalized.choiceGap, 4)
+  assert.equal(normalized.choiceRadius, 20)
 })
 
 test("reader article appearance keeps safe custom surfaces and rejects unsafe images", () => {
@@ -54,6 +70,8 @@ test("reader article appearance keeps safe custom surfaces and rejects unsafe im
     backgroundFit: "contain",
     textAlign: "justify",
     indentFirstLine: true,
+    accentColor: "#a06b7b",
+    customCss: ".article-title { letter-spacing: .08em; }",
   })
   const unsafe = normalizeReaderAppearance({
     theme: "custom",
@@ -66,6 +84,8 @@ test("reader article appearance keeps safe custom surfaces and rejects unsafe im
   assert.equal(safe.backgroundFit, "contain")
   assert.equal(safe.textAlign, "justify")
   assert.equal(safe.indentFirstLine, true)
+  assert.equal(safe.accentColor, "#a06b7b")
+  assert.equal(safe.customCss, ".article-title { letter-spacing: .08em; }")
   assert.deepEqual(resolveReaderAppearanceTheme(safe), {
     backgroundColor: "#123456",
     textColor: "#fefefe",
@@ -73,6 +93,19 @@ test("reader article appearance keeps safe custom surfaces and rejects unsafe im
   assert.equal(unsafe.backgroundImage, null)
   assert.equal(unsafe.backgroundColor, READER_APPEARANCE_DEFAULTS.backgroundColor)
   assert.equal(unsafe.textColor, READER_APPEARANCE_DEFAULTS.textColor)
+})
+
+test("reader article appearance detaches and bounds custom CSS text", () => {
+  const source = {
+    customCss: ".article-title { color: #654; }",
+  }
+  const normalized = normalizeReaderAppearance(source)
+
+  assert.equal(normalized.customCss, source.customCss)
+  source.customCss = ".article-title { position: fixed; }"
+  assert.equal(normalized.customCss, ".article-title { color: #654; }")
+  assert.equal(normalizeReaderAppearance({ customCss: 42 }).customCss, "")
+  assert.equal(normalizeReaderAppearance({ customCss: "x".repeat(20_000) }).customCss.length <= 12_000, true)
 })
 
 test("reader article appearance detaches valid custom fonts and ignores hostile entries", () => {

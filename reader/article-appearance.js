@@ -1,4 +1,5 @@
 import { isSafeImageUrl, sanitizeCssColor } from "../js/sanitize.js"
+import { READER_CUSTOM_CSS_MAX_LENGTH } from "./custom-style.js"
 
 const DEFAULT_FONT_FAMILY = "'Noto Sans SC', sans-serif"
 const EMPTY_FONTS = Object.freeze([])
@@ -22,6 +23,16 @@ export const READER_APPEARANCE_DEFAULTS = Object.freeze({
   indentFirstLine: false,
   typingEffect: false,
   typingSpeed: 50,
+  titleSize: 22,
+  titleWeight: 600,
+  titleSpacing: 12,
+  metaSpacing: 40,
+  sectionSpacing: 42,
+  imageRadius: 4,
+  choiceGap: 10,
+  choiceRadius: 0,
+  accentColor: "#a06b7b",
+  customCss: "",
   customFonts: EMPTY_FONTS,
 })
 
@@ -39,6 +50,7 @@ const BACKGROUND_FITS = new Set(["cover", "contain", "tile"])
 const BACKGROUND_POSITIONS = new Set(["center", "top", "bottom", "left", "right"])
 const FONT_DATA_PATTERN = /^data:(?:font\/|application\/(?:font|x-font|octet-stream))/i
 const SAFE_FONT_NAME_PATTERN = /^[^"'\\;{}<>\u0000-\u001f\u007f]{1,64}$/
+const TITLE_WEIGHTS = new Set([400, 500, 600, 700])
 
 function plainRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {}
@@ -74,6 +86,11 @@ function normalizeCustomFonts(value) {
   return fonts
 }
 
+function normalizeCustomCss(value) {
+  if (typeof value !== "string") return ""
+  return value.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
+}
+
 export function normalizeReaderAppearance(candidate) {
   const source = plainRecord(candidate)
   const defaults = READER_APPEARANCE_DEFAULTS
@@ -101,6 +118,16 @@ export function normalizeReaderAppearance(candidate) {
     indentFirstLine: typeof source.indentFirstLine === "boolean" ? source.indentFirstLine : defaults.indentFirstLine,
     typingEffect: typeof source.typingEffect === "boolean" ? source.typingEffect : defaults.typingEffect,
     typingSpeed: boundedNumber(source.typingSpeed, defaults.typingSpeed, 10, 500),
+    titleSize: boundedNumber(source.titleSize, defaults.titleSize, 18, 44),
+    titleWeight: TITLE_WEIGHTS.has(source.titleWeight) ? source.titleWeight : defaults.titleWeight,
+    titleSpacing: boundedNumber(source.titleSpacing, defaults.titleSpacing, 0, 40),
+    metaSpacing: boundedNumber(source.metaSpacing, defaults.metaSpacing, 12, 72),
+    sectionSpacing: boundedNumber(source.sectionSpacing, defaults.sectionSpacing, 16, 96),
+    imageRadius: boundedNumber(source.imageRadius, defaults.imageRadius, 0, 24),
+    choiceGap: boundedNumber(source.choiceGap, defaults.choiceGap, 4, 28),
+    choiceRadius: boundedNumber(source.choiceRadius, defaults.choiceRadius, 0, 20),
+    accentColor: sanitizeCssColor(source.accentColor, { fallback: defaults.accentColor }),
+    customCss: normalizeCustomCss(source.customCss),
     customFonts: normalizeCustomFonts(source.customFonts),
   }
 }

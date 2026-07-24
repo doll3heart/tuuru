@@ -37,6 +37,7 @@ test("placeholder preset libraries round-trip and merge by preset name", () => {
   assert.equal(bundle.exportedAt, 123)
   assert.equal(bundle.presets[0].name, "常用称呼")
   assert.deepEqual(bundle.presets[0].fields[0].forbidden, ["偷吃", "代餐"])
+  assert.deepEqual(bundle.presets[0].globalForbidden, [])
 
   const target = memoryStorage()
   saveAuthorPlaceholderPreset("常用称呼", [{ key:"旧标记" }], { storage:target, now:() => 1, idFactory:() => "target-id" })
@@ -44,6 +45,23 @@ test("placeholder preset libraries round-trip and merge by preset name", () => {
   assert.equal(merged.length, 1)
   assert.equal(merged[0].id, "target-id")
   assert.equal(merged[0].fields[0].key, "某某")
+})
+
+test("author presets carry their global forbidden words through export and import", () => {
+  const storage = memoryStorage()
+  saveAuthorPlaceholderPreset("全局词库", [{ key:"某某" }], {
+    storage,
+    globalForbidden:["老公", "MOMO", "momo"],
+    now:() => 100,
+    idFactory:() => "preset-global",
+  })
+  const serialized = serializeAuthorPlaceholderPresetBundle(readAuthorPlaceholderPresets(storage))
+  const parsed = parseAuthorPlaceholderPresetBundle(serialized)
+  assert.deepEqual(parsed.presets[0].globalForbidden, ["老公", "MOMO"])
+
+  const target = memoryStorage()
+  importAuthorPlaceholderPresetBundle(serialized, { storage:target })
+  assert.deepEqual(readAuthorPlaceholderPresets(target)[0].globalForbidden, ["老公", "MOMO"])
 })
 
 test("placeholder preset import rejects unrelated or malformed files", () => {

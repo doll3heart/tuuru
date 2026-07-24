@@ -17,9 +17,7 @@ function sanitizeField(field) {
     label: cleanText(source.label) || cleanText(source.key) || "占位符",
     prompt: cleanText(source.prompt) || "请填写",
     mode: cleanText(source.mode) || "each",
-    forbidden: Array.isArray(source.forbidden)
-      ? source.forbidden.map(value => String(value ?? "").trim()).filter(Boolean)
-      : [],
+    forbidden: parseForbiddenWords(source.forbidden),
   }
 }
 
@@ -29,7 +27,13 @@ function sanitizePreset(preset) {
   const name = cleanText(preset.name)
   if (!id || !name || !Array.isArray(preset.fields)) return null
   const updatedAt = Number.isFinite(Number(preset.updatedAt)) ? Number(preset.updatedAt) : 0
-  return { id, name, fields: preset.fields.map(sanitizeField), updatedAt }
+  return {
+    id,
+    name,
+    fields:preset.fields.map(sanitizeField),
+    globalForbidden:parseForbiddenWords(preset.globalForbidden),
+    updatedAt,
+  }
 }
 
 function writePresets(storage, presets) {
@@ -65,6 +69,7 @@ export function saveAuthorPlaceholderPreset(name, placeholders, options = {}) {
     id: existing?.id || String(idFactory()),
     name: cleanName,
     fields: placeholders.map(sanitizeField),
+    globalForbidden:parseForbiddenWords(options.globalForbidden),
     updatedAt: Number(now()),
   }
   if (existingIndex >= 0) presets.splice(existingIndex, 1, next)
@@ -134,3 +139,4 @@ export function importAuthorPlaceholderPresetBundle(input, options = {}) {
   if (!writePresets(storage, result)) throw new Error("占位符预设导入失败，浏览器无法写入本地存储")
   return result
 }
+import { parseForbiddenWords } from "./forbidden-words.js"

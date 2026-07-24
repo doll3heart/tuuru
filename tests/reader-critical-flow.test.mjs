@@ -123,6 +123,23 @@ test("non-message flow cues do not use a side-tab accent border", () => {
   assert.doesNotMatch(cueRule, /border-left\s*:/)
 })
 
+test("reader desktop keeps authored App colors on the neutral default surface", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "reader-neutral-app-surfaces"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.apps[0].color = "#ff0000"
+  work.phoneData.apps[1].color = "#00ff00"
+
+  await startWork(work, "reader-neutral-app-surfaces")
+
+  const surfaces = [...document.querySelectorAll(".phone-app-icon .phone-icon-body")]
+  assert.equal(surfaces.length, 2)
+  surfaces.forEach(surface => {
+    assert.match(surface.getAttribute("style"), /background:#f0f0f0/)
+  })
+})
+
 test("article phone cards open their App directly and App back closes the overlay", async t => {
   installDom(t)
   await startWork(articleWork(), "article-module-direct")
@@ -248,13 +265,18 @@ test("phone flow notifications guide memo and shopping modules", async t => {
   assert.ok(notification, "memo must receive the same phone notification guide as Messages")
   assert.match(notification.textContent, /备忘录.*林澈/)
   notification.click()
+  assert.ok(document.querySelector('.rd-connection-gate[data-connection-state="choose"]'))
+  document.querySelector('[data-connection-action="confirm"]').click()
   assert.ok(document.querySelector(".rd-phone-app-memo"))
+  assert.ok(document.querySelector('[data-memo-id="memo-1"].is-flow-target'))
 
   document.querySelector(".rd-flow-next").click()
   notification = document.querySelector('.phone-flow-notification[data-flow-notification-app="shopping"]')
   assert.ok(notification, "shopping must receive the same phone notification guide as Messages")
   assert.match(notification.textContent, /购物.*手账胶带/)
   notification.click()
+  assert.ok(document.querySelector('.rd-connection-gate[data-connection-state="choose"]'))
+  document.querySelector('[data-connection-action="confirm"]').click()
   assert.ok(document.querySelector(".rd-phone-app-shopping"))
   assert.ok(document.querySelector('[data-shopping-id="shopping-1"].is-flow-target'))
 })
@@ -473,6 +495,34 @@ test("reader blocks forbidden placeholder values before entering a phone work", 
   input.value = "小雨"
   document.getElementById("rdStartBtn").click()
   assert.ok(document.querySelector(".phone-frame"), "valid input should enter the phone work")
+})
+
+test("reader applies one global forbidden word list to every placeholder", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "global-forbidden-phone-placeholder"
+  work.phoneData.readingFlow.enabled = false
+  work.placeholders = [
+    { id:"reader-name", label:"姓名", key:"{{reader}}", prompt:"填写名字", forbidden:[] },
+    { id:"reader-nickname", label:"昵称", key:"{{nickname}}", prompt:"填写昵称", forbidden:["专属词"] },
+  ]
+  work.globalForbidden = ["老公"]
+  seedWork(work)
+  await import(`../reader/reader.js?global-forbidden=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+
+  const name = document.querySelector('[data-ph-id="reader-name"]')
+  const nickname = document.querySelector('[data-ph-id="reader-nickname"]')
+  name.value = "叫我老公"
+  nickname.value = "普通昵称"
+  document.getElementById("rdStartBtn").click()
+  assert.match(name.parentElement.querySelector(".rd-placeholder-error").textContent, /违禁词/)
+
+  name.value = "小雨"
+  nickname.value = "专属词昵称"
+  document.getElementById("rdStartBtn").click()
+  assert.match(nickname.parentElement.querySelector(".rd-placeholder-error").textContent, /违禁词/)
+  assert.ok(document.querySelector(".rd-landing"))
 })
 
 test("reader message list and bubbles show group avatar and roles", async t => {

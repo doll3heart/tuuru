@@ -33,3 +33,9 @@ test("opening the author preview never overwrites a reader-customized App color"
   assert.doesNotMatch(editor, /if\s*\(app\.color\s*!==\s*def\.color\)\s*\{\s*app\.color\s*=\s*def\.color/)
   assert.match(editor, /app\.color\s*===\s*["']#f0f0f0["']/i)
 })
+
+test("reader desktop and appearance preview share one neutral icon surface", () => {
+  assert.match(reader, /READER_DEFAULT_APP_ICON_SURFACE\s*=\s*["']#f0f0f0["']/i)
+  assert.equal((reader.match(/READER_DEFAULT_APP_ICON_SURFACE/g) || []).length, 3)
+  assert.doesNotMatch(reader, /background:\s*['"]?\s*\+\s*sanitizeCssColor\(app\.color\)/)
+})

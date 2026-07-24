@@ -28,17 +28,19 @@ test("format buttons preserve the text selection before applying visibly active 
 })
 
 test("contact and forum author controls keep their visual hierarchy on narrow screens", async () => {
-  const [source, styles] = await Promise.all([
+  const [source, styles, forumView, forumStyles] = await Promise.all([
     readFile(new URL("../js/pages/phone.js", import.meta.url), "utf8"),
     readFile(new URL("../css/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../js/phone-forum-view.js", import.meta.url), "utf8"),
+    readFile(new URL("../css/phone-forum.css", import.meta.url), "utf8"),
   ])
 
   assert.match(styles, /\.sr-only\s*\{[^}]*clip-path\s*:\s*inset\(50%\)/s)
-  assert.match(source, /class=["']forum-reply-controls["']/)
-  assert.match(source, /data-forum-comment-delete=/)
-  assert.match(source, /data-forum-reply-delete=/)
+  assert.match(forumView, /class=["']forum-comment-footer["']/)
+  assert.match(forumView, /data-forum-comment-action=/)
+  assert.match(source, /data-forum-comment-menu-action=["']delete["']/)
   assert.doesNotMatch(source, /delBtn\.className\s*=\s*["']browser-del["']/)
-  assert.doesNotMatch(styles, /\.forum-replies\s*\{[^}]*margin\s*:\s*6px\s+0\s+0\s+36px/s)
+  assert.doesNotMatch(forumStyles, /\.phone-frame \.forum-replies\s*\{[^}]*margin\s*:\s*6px\s+0\s+0\s+36px/s)
   assert.match(styles, /@media\(max-width:520px\)[\s\S]*\.ct-account-row/s)
 })
 

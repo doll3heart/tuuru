@@ -166,7 +166,7 @@ export function renderHeader(){
   const activeTheme = getTheme()
   const readerHomeUrl = buildReaderHomeUrl(location.href)
   return `<header class="app-header${isEditorRoute ? " app-header-editor" : ""}${isResourcesRoute ? " app-header-resources" : ""}">
-    ${isEditorRoute ? `<a class="logo" href="#/" aria-label="返回作品库" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">moirain.com</span></a>` : ""}
+    ${isEditorRoute ? `<a class="logo" href="#/" aria-label="返回作品库" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">tuuru.chat</span></a>` : ""}
     <div class="app-header-actions">
       <nav class="app-mode-switch" aria-label="应用模式">
         <span class="app-mode-link active" aria-current="page">创作端</span>

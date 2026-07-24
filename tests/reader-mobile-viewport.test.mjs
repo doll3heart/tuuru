@@ -177,7 +177,7 @@ test("article phone overlay uses bounded classes and clears its runtime context"
   assert.match(overlay, /--reader-safe-bottom/)
   assert.match(overlay, /--reader-safe-left/)
 
-  assert.match(wrapper, /width\s*:\s*375px/)
+  assert.match(wrapper, /width\s*:\s*360px/)
   assert.match(wrapper, /max-width\s*:\s*100%/)
   assert.match(wrapper, /height\s*:\s*700px/)
   assert.match(wrapper, /max-height\s*:\s*100%/)

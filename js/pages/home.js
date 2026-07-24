@@ -27,6 +27,7 @@ import {
   renderWorkSelectionControl,
   resetCollectionSelection,
 } from "./home-collections.js"
+import { openWorkPreflight } from "./home-preflight.js"
 
 const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请稍后刷新查看，不要重复操作。"
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
@@ -108,6 +109,7 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
           <button class="btn btn-sm btn-ghost work-card-more-btn" onclick="event.stopPropagation();toggleWorkMenu(event,'${w.id}')">更多</button>
           <div class="work-card-more-popover" id="workMenu-${w.id}">
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();editWorkInfo('${w.id}');closeWorkMenu('${w.id}')">作品信息</button>
+            <button class="btn btn-sm btn-ghost" data-work-preflight="${w.id}" onclick="event.stopPropagation();openWorkPreflight('${w.id}');closeWorkMenu('${w.id}')">发布前体检</button>
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出 JSON</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出 PNG</button>
@@ -841,6 +843,7 @@ document.addEventListener('click', function(e) {
 })
 // Re-export for dynamic reload
 window.renderWorkList = renderWorkList
+window.openWorkPreflight = openWorkPreflight
 window.getWorks = getWorks
 window.WORK_TYPE = WORK_TYPE
 window.escHtml = escHtml

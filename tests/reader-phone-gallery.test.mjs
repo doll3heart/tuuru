@@ -133,8 +133,9 @@ test("gallery styling preserves zero radius through preview and save", async t =
   radius.value = "0"
   radius.dispatchEvent(new Event("input", { bubbles: true }))
 
-  const previewPhoto = document.querySelector('.cu-preview-gallery [style*="aspect-ratio"]')
-  assert.match(previewPhoto.getAttribute("style") ?? "", /border-radius:\s*0px/)
+  const previewGrid = document.querySelector(".reader-app-preview-scope .rd-gallery-grid")
+  assert.equal(previewGrid.style.getPropertyValue("--rd-gallery-radius"), "0px")
+  assert.ok(previewGrid.querySelector(".rd-gallery-photo"))
 
   document.getElementById("cuModalSave").click()
   const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
@@ -167,7 +168,7 @@ test("gallery settings normalize corrupted values before rendering controls", as
 
   document.getElementById("cuModalSave").click()
   const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
-  assert.deepEqual(saved.appSettings.gallery, { columns: 3, imageRadius: 4, gap: 6 })
+  assert.deepEqual(saved.appSettings.gallery, { columns: 3, imageRadius: 4, gap: 6, customCss: "" })
 })
 
 test("reader gallery CSS consumes runtime style variables", () => {
@@ -236,7 +237,8 @@ test("article gallery modules preserve their authored character connection in th
   assert.ok(album)
   assert.match(album.textContent, /Bob summer album/)
   assert.doesNotMatch(document.querySelector(".phone-frame").textContent, /Alice album/)
-  assert.match(document.querySelector(".rd-contact-source").textContent, /Bob/)
+  assert.match(document.querySelector(".rd-phone-app-header").textContent, /Bob ·/)
+  assert.equal(document.querySelector(".rd-contact-source"), null)
 })
 
 test("standalone gallery albums support drill-down, recovery, and focus continuity", async t => {
@@ -286,6 +288,7 @@ test("standalone gallery albums support drill-down, recovery, and focus continui
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="gallery"]').click()
+  document.querySelector('[data-connection-action="confirm"]').click()
 
   const album = document.querySelector(".rd-album")
   assert.equal(album.tagName, "BUTTON")
@@ -313,7 +316,7 @@ test("standalone gallery albums support drill-down, recovery, and focus continui
   assert.match(document.querySelector(".cu-body").textContent, /Empty album/)
 
   document.querySelector('.rd-album[data-album-index="1"]').click()
-  assert.match(document.querySelector(".cu-body").textContent, /暂无照片/)
+  assert.match(document.querySelector(".cu-body").textContent, /还没有照片/)
   assert.equal(document.activeElement, document.querySelector(".rd-gallery-album-back"))
 
   document.querySelector(".rd-back-btn").click()

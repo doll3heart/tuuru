@@ -36,6 +36,18 @@ test("both production entries share root-scoped install metadata and registratio
   }
 })
 
+test("the reader entry exposes the Tuuru reader name without the retired brand", async () => {
+  const [readerHtml, authorShell] = await Promise.all([
+    text("reader/index.html"),
+    text("js/app.js"),
+  ])
+
+  assert.match(readerHtml, /<title>Tuuru Works — 读者端<\/title>/)
+  assert.doesNotMatch(readerHtml, /Moirain/i)
+  assert.match(authorShell, />tuuru\.chat<\/span>/)
+  assert.doesNotMatch(authorShell, /moirain\.com/i)
+})
+
 test("the service worker follows web deployments without forcing an editor reload", async () => {
   const [registration, worker, headers] = await Promise.all([
     text("js/pwa-register.js"),

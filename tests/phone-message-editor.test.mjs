@@ -46,7 +46,7 @@ function makePhoneData(
   }
 }
 
-async function openSingleChat(id, phoneData = makePhoneData()) {
+async function openMessageList(id, phoneData = makePhoneData()) {
   const dom = installDom()
   const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
   const { openPhoneAppModal } = await import("../js/pages/phone.js")
@@ -56,11 +56,17 @@ async function openSingleChat(id, phoneData = makePhoneData()) {
     phoneData,
   })
   const overlay = openPhoneAppModal(draft.id, "messages")
+  return { dom, draft, overlay }
+}
+
+async function openSingleChat(id, phoneData = makePhoneData()) {
+  const fixture = await openMessageList(id, phoneData)
+  const { overlay } = fixture
   const chatCard = overlay.querySelector("[data-chat-id]")
   assert.ok(chatCard, "the seeded chat should be visible in the messages list")
   assert.equal(chatCard.dataset.chatId, phoneData.chats[0].id)
   chatCard.click()
-  return { dom, draft, overlay }
+  return fixture
 }
 
 function closeFixture({ dom, draft }) {
@@ -101,6 +107,35 @@ test("the author message page exposes the demo editor skeleton", async () => {
   }
 })
 
+test("single and group conversations can be pinned and reordered inside their section", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats = [
+    { ...phoneData.chats[0], id:"normal-a" },
+    { id:"pinned-a", type:"group", contactIds:["contact-1"], groupName:"置顶群聊", pinned:true, messages:[], rounds:[] },
+    { id:"normal-b", type:"group", contactIds:["contact-1"], groupName:"普通群聊", messages:[], rounds:[] },
+  ]
+  const fixture = await openMessageList("message-list-pin-order", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const ids = () => Array.from(overlay.querySelectorAll("[data-chat-id]")).map(card => card.dataset.chatId)
+    assert.deepEqual(ids(), ["pinned-a", "normal-a", "normal-b"])
+
+    overlay.querySelector('[data-chat-pin="normal-b"]').click()
+    assert.deepEqual(ids(), ["normal-b", "pinned-a", "normal-a"])
+    assert.equal(draft.snapshot().phoneData.chats[0].id, "normal-b")
+    assert.equal(draft.snapshot().phoneData.chats[0].pinned, true)
+
+    const handle = overlay.querySelector('[data-chat-drag="pinned-a"]')
+    handle.dispatchEvent(new window.KeyboardEvent("keydown", { key:"ArrowUp", bubbles:true }))
+    assert.deepEqual(ids(), ["pinned-a", "normal-b", "normal-a"])
+    assert.deepEqual(draft.snapshot().phoneData.chats.map(chat => chat.id), ["pinned-a", "normal-b", "normal-a"])
+    assert.equal(document.activeElement?.dataset.chatDrag, "pinned-a")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("system time messages open the same author menu and can be deleted", async () => {
   const phoneData = makePhoneData()
   phoneData.chats[0].rounds[0].messages.push({ id: "system-time", type: "time", time: "2026/7/22 10:30" })
@@ -120,6 +155,114 @@ test("system time messages open the same author menu and can be deleted", async 
     assert.ok(items.length > 0)
     items.at(-1).click()
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 0)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("special message cards reopen their typed editor and preserve message identity", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "takeaway-existing",
+    type: "takeaway",
+    senderId: "contact-1",
+    text: "",
+    time: "2026/7/23 08:10",
+    takeawayShop: "旧餐厅",
+    takeawayOrder: "旧订单",
+    takeawayAmount: 18,
+    takeawayStatus: "准备中",
+    choices: [{ text: "保留选项" }],
+    customMetadata: { keep: true },
+  })
+  const fixture = await openSingleChat("typed-message-reedit", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const messageCard = overlay.querySelector('.chat-msg[data-ri="0"][data-mi="0"]')
+    assert.ok(messageCard)
+    messageCard.dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    }))
+    document.querySelector(".chat-ctx-menu-item").click()
+
+    const editor = document.querySelector("#amSave").closest(".modal-overlay")
+    assert.equal(editor.querySelector("#amTkShop").value, "旧餐厅")
+    assert.equal(editor.querySelector("#amTkOrder").value, "旧订单")
+    assert.equal(editor.querySelector("#amTkAmt").value, "18")
+    assert.equal(editor.querySelector("#amTkStatus").value, "准备中")
+    assert.equal(editor.querySelector("#amSender").value, "contact-1")
+
+    editor.querySelector("#amTkShop").value = "春风小馆"
+    editor.querySelector("#amTkOrder").value = "番茄牛腩饭 × 1"
+    editor.querySelector("#amTkAmt").value = "28.5"
+    editor.querySelector("#amTkStatus").value = "骑手正在配送"
+    editor.querySelector("#amSave").click()
+
+    const messages = draft.snapshot().phoneData.chats[0].rounds[0].messages
+    assert.equal(messages.length, 1)
+    assert.deepEqual(messages[0], {
+      ...messages[0],
+      id: "takeaway-existing",
+      takeawayShop: "春风小馆",
+      takeawayOrder: "番茄牛腩饭 × 1",
+      takeawayAmount: 28.5,
+      takeawayStatus: "骑手正在配送",
+      choices: [{ text: "保留选项" }],
+      customMetadata: { keep: true },
+    })
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("authored calls reopen with their sender and script for editing", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "call-existing",
+    type: "call",
+    callMode: "video",
+    senderId: "self",
+    text: "视频通话",
+    time: "2026/7/23 08:20",
+    callLines: ["旧台词"],
+    allowHangup: false,
+    customMetadata: { keep: true },
+  })
+  const fixture = await openSingleChat("call-message-reedit", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const messageCard = overlay.querySelector('.chat-msg[data-ri="0"][data-mi="0"]')
+    assert.ok(messageCard)
+    messageCard.dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    }))
+    document.querySelector(".chat-ctx-menu-item").click()
+
+    assert.equal(overlay.querySelector("#chatCallSender").value, "self")
+    assert.equal(overlay.querySelector("#chatCallLines").value, "旧台词")
+    overlay.querySelector("#chatCallLines").value = "第一句\n第二句"
+    overlay.querySelector("#chatCallSave").click()
+
+    const messages = draft.snapshot().phoneData.chats[0].rounds[0].messages
+    assert.equal(messages.length, 1)
+    assert.deepEqual(messages[0], {
+      ...messages[0],
+      id: "call-existing",
+      type: "call",
+      callMode: "video",
+      senderId: "self",
+      callLines: ["第一句", "第二句"],
+      allowHangup: false,
+      customMetadata: { keep: true },
+    })
   } finally {
     closeFixture(fixture)
   }
@@ -198,7 +341,7 @@ test("the Settings App places editable placeholders and forbidden words before r
   assert.match(settings, /data-ph-forbidden/)
   assert.doesNotMatch(settings, /placeholder="显示名称"/)
   assert.doesNotMatch(settings, /placeholder="正文中的占位文字"/)
-  assert.match(settings, /updateWork\(wid, \{ phoneData: pd, placeholders: placeholders \}\)/)
+  assert.match(settings, /updateWork\(wid, \{ phoneData: pd, placeholders: placeholders, globalForbidden:globalForbidden \}\)/)
 })
 
 test("phone authors can save and reapply their local placeholder preset", async () => {
@@ -231,6 +374,43 @@ test("phone authors can save and reapply their local placeholder preset", async 
     assert.notEqual(placeholders[0].id, placeholders[1].id)
   } finally {
     localStorage.removeItem("tuuru_author_placeholder_presets")
+    draft.dispose()
+    dom.window.close()
+  }
+})
+
+test("phone placeholder cards reveal inherited global forbidden words after cleanup", async () => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { renderPhoneEditor } = await import(`../js/pages/phone.js?global-forbidden-summary=${Date.now()}-${Math.random()}`)
+  const draft = createPhoneWorkDraft({
+    id: "phone-global-forbidden-summary",
+    type: "article",
+    globalForbidden: ["老公"],
+    placeholders: [
+      { id:"placeholder-a", key:"姓名", label:"姓名", prompt:"名字？", mode:"each", forbidden:[], values:[], default:"" },
+      { id:"placeholder-b", key:"昵称", label:"昵称", prompt:"昵称？", mode:"each", forbidden:["坏蛋"], values:[], default:"" },
+    ],
+    phoneData: makePhoneData(),
+  })
+  document.getElementById("app").innerHTML = renderPhoneEditor(draft.id)
+  document.querySelector('[data-app-type="settings"]').click()
+  const frame = document.getElementById("phoneFrame")
+  try {
+    const initialSummaries = frame.querySelectorAll(".placeholder-inherited-forbidden")
+    assert.equal(initialSummaries.length, 2)
+    for (const summary of initialSummaries) assert.match(summary.textContent, /全局生效.*老公/)
+
+    frame.querySelector("#phoneGlobalForbidden").value = "老公，老婆/老公"
+    frame.querySelector("#phoneForbiddenCleanup").click()
+    const cleanedSummaries = frame.querySelectorAll(".placeholder-inherited-forbidden")
+    assert.equal(cleanedSummaries.length, 2)
+    for (const summary of cleanedSummaries) {
+      assert.match(summary.textContent, /全局生效.*老公.*老婆/)
+    }
+    frame.querySelector("#flowSave").click()
+    assert.deepEqual(draft.snapshot().globalForbidden, ["老公", "老婆"])
+  } finally {
     draft.dispose()
     dom.window.close()
   }

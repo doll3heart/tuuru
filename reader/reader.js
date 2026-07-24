@@ -15,6 +15,11 @@ import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-links.js'
 import { orderedForumPosts } from '../js/forum-post-order.js'
+import { orderedChats } from '../js/chat-order.js'
+import { effectiveForbiddenWords } from '../js/forbidden-words.js'
+import { shouldShowPhoneTimestamp } from '../js/phone-timestamps.js'
+import { renderPhoneShoppingList, renderPhoneShoppingTabs } from '../js/phone-shopping-view.js'
+import { renderPhoneForumComment, renderPhoneForumPost } from '../js/phone-forum-view.js'
 import {
   normalizePhoneReadingFlow,
   phoneReadingFlowAppType,
@@ -26,6 +31,10 @@ import {
   normalizeReaderAppearance,
   resolveReaderAppearanceTheme,
 } from './article-appearance.js'
+import {
+  READER_CUSTOM_CSS_MAX_LENGTH,
+  compileScopedReaderCss,
+} from './custom-style.js'
 import {
   hasRenderableWorkWatermark,
   normalizeWorkWatermark,
@@ -43,6 +52,8 @@ import { inspectReaderCollectionBundle, installReaderCollection } from './work-c
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
 
 // ---- helpers ----
+const READER_DEFAULT_APP_ICON_SURFACE = '#f0f0f0'
+
 function esc(s) {
   if (!s) return ''
   var d = document.createElement('div')
@@ -768,9 +779,9 @@ function importWork(work) {
 }
 
 // ====== Landing Page (work info + password + placeholders) ======
-function placeholderForbiddenWord(placeholder, value) {
+function placeholderForbiddenWord(placeholder, value, globalForbidden) {
   var normalized = String(value || '').toLocaleLowerCase()
-  return (placeholder && Array.isArray(placeholder.forbidden) ? placeholder.forbidden : []).find(function(word) {
+  return effectiveForbiddenWords(placeholder, globalForbidden).find(function(word) {
     var candidate = String(word || '').trim().toLocaleLowerCase()
     return candidate && normalized.includes(candidate)
   }) || ''
@@ -864,7 +875,7 @@ function showLandingPage(work, callback) {
     var forbiddenFound = false
     inputs.forEach(function(inp) {
       var placeholder = phs.find(function(ph) { return String(ph.id || '') === String(inp.dataset.phId || '') })
-      var forbidden = placeholderForbiddenWord(placeholder, inp.value)
+      var forbidden = placeholderForbiddenWord(placeholder, inp.value, work.globalForbidden)
       var error = inp.parentElement ? inp.parentElement.querySelector('.rd-placeholder-error') : null
       if (error) {
         error.hidden = !forbidden
@@ -1111,6 +1122,44 @@ function applyReaderCustomFonts(settings) {
   document.head.appendChild(style)
 }
 
+function applyCompiledReaderStyle(rawCss, scopeSelector, styleId) {
+  var result = compileScopedReaderCss(rawCss, scopeSelector)
+  var existing = document.getElementById(styleId)
+  if (!result.ok) return result
+  if (!result.css) {
+    if (existing) existing.remove()
+    return result
+  }
+  var style = existing || document.createElement('style')
+  style.id = styleId
+  style.textContent = result.css
+  if (!existing) document.head.appendChild(style)
+  return result
+}
+
+function setReaderAppearanceVariables(root, settings, theme) {
+  if (!root) return
+  root.style.setProperty('--rd-reading-bg', theme.backgroundColor)
+  root.style.setProperty('--rd-reading-text', theme.textColor)
+  root.style.setProperty('--rd-reading-accent', settings.accentColor)
+  root.style.setProperty('--rd-font-size', settings.fontSize + 'px')
+  root.style.setProperty('--rd-line-height', String(settings.lineHeight))
+  root.style.setProperty('--rd-letter-spacing', settings.letterSpacing + 'px')
+  root.style.setProperty('--rd-paragraph-spacing', settings.paragraphSpacing + 'px')
+  root.style.setProperty('--rd-content-gutter', settings.marginSize + 'px')
+  root.style.setProperty('--rd-content-width', settings.contentWidth + 'px')
+  root.style.setProperty('--rd-font-family', settings.fontFamily)
+  root.style.setProperty('--rd-first-line-indent', settings.indentFirstLine ? '2em' : '0')
+  root.style.setProperty('--rd-title-size', settings.titleSize + 'px')
+  root.style.setProperty('--rd-title-weight', String(settings.titleWeight))
+  root.style.setProperty('--rd-title-spacing', settings.titleSpacing + 'px')
+  root.style.setProperty('--rd-meta-spacing', settings.metaSpacing + 'px')
+  root.style.setProperty('--rd-section-spacing', settings.sectionSpacing + 'px')
+  root.style.setProperty('--rd-image-radius', settings.imageRadius + 'px')
+  root.style.setProperty('--rd-choice-gap', settings.choiceGap + 'px')
+  root.style.setProperty('--rd-choice-radius', settings.choiceRadius + 'px')
+}
+
 function applyReaderSettings(el, candidate) {
   if (!el) return
   var rs = normalizeReaderAppearance(candidate || getReaderSettings())
@@ -1119,6 +1168,7 @@ function applyReaderSettings(el, candidate) {
   var backdrop = document.querySelector('.article-reading-backdrop')
   var watermarkLayer = document.querySelector('.work-watermark-article')
   applyReaderCustomFonts(rs)
+  applyCompiledReaderStyle(rs.customCss, '.reader-article-css-scope', 'reader-article-user-css')
   el.style.fontSize = rs.fontSize + 'px'
   el.style.lineHeight = rs.lineHeight
   el.style.letterSpacing = rs.letterSpacing + 'px'
@@ -1128,12 +1178,12 @@ function applyReaderSettings(el, candidate) {
     p.style.marginBottom = rs.paragraphSpacing + 'px'
     p.style.textIndent = rs.indentFirstLine ? '2em' : ''
   })
-  el.style.fontFamily = rs.fontFamily === READER_APPEARANCE_DEFAULTS.fontFamily ? '' : rs.fontFamily
+  el.style.fontFamily = rs.fontFamily
 
   if (articleReader) {
+    articleReader.classList.add('reader-article-css-scope')
     articleReader.style.maxWidth = rs.contentWidth + 'px'
-    articleReader.style.setProperty('--rd-reading-bg', theme.backgroundColor)
-    articleReader.style.setProperty('--rd-reading-text', theme.textColor)
+    setReaderAppearanceVariables(articleReader, rs, theme)
   }
   if (watermarkLayer) watermarkLayer.style.setProperty('--work-watermark-ink', theme.textColor)
 
@@ -1164,6 +1214,9 @@ function applyReaderSettingsPreview(root, candidate) {
   var preview = root.querySelector('.rs-preview')
   var copy = root.querySelector('.rs-preview-copy')
   if (!preview || !copy) return
+  copy.classList.add('reader-article-css-preview-scope')
+  setReaderAppearanceVariables(copy, rs, theme)
+  applyCompiledReaderStyle(rs.customCss, '.reader-article-css-preview-scope', 'reader-article-preview-user-css')
   preview.style.setProperty('--rs-preview-bg', theme.backgroundColor)
   preview.style.setProperty('--rs-preview-text', theme.textColor)
   preview.style.setProperty('--rs-preview-overlay', String(rs.backgroundOverlay / 100))
@@ -1187,11 +1240,10 @@ function applyReaderSettingsPreview(root, candidate) {
   copy.style.maxWidth = Math.min(rs.contentWidth, 480) + 'px'
   copy.style.fontFamily = rs.fontFamily
   copy.style.textAlign = rs.textAlign
-  var paragraph = copy.querySelector('p')
-  if (paragraph) {
+  copy.querySelectorAll('p').forEach(function(paragraph) {
     paragraph.style.marginBottom = rs.paragraphSpacing + 'px'
     paragraph.style.textIndent = rs.indentFirstLine ? '2em' : ''
-  }
+  })
 }
 
 
@@ -1208,7 +1260,13 @@ function openReaderSettingsPanel(triggerElement) {
   var themes = READER_APPEARANCE_THEMES
 
   var body = '<div class="rs-panel-body">'
-  body += '<div class="rs-preview" aria-label="阅读外观预览"><div class="rs-preview-copy"><strong>阅读预览</strong><p>你可以按自己的习惯调整文字、留白与背景，作品内容不会改变。</p></div></div>'
+  body += '<aside class="rs-preview-pane"><div class="rs-preview" aria-label="阅读外观实时预览"><div class="rs-preview-copy reader-article-css-preview-scope">'
+  body += '<div class="article-progress" aria-hidden="true"><span class="dot visited"></span><span class="dot current"></span><span class="dot"></span></div>'
+  body += '<h3 class="article-title">雾色来信</h3><div class="article-meta">试读章节 · 刚刚</div>'
+  body += '<div class="article-content"><section class="article-node"><h4 class="article-node-title">窗边</h4><p>晨光落在纸页上，文字与留白会跟随右侧设置实时变化。</p><p>这里也会显示段距、首行缩进和对齐效果。</p>'
+  body += '<div class="article-choices"><button type="button" class="article-choice-btn" tabindex="-1"><span class="label">1.</span><span>继续阅读</span></button></div></section></div>'
+  body += '</div></div><p class="rs-live-status" id="rsLiveStatus" role="status" aria-live="polite">实时预览 · 修改后自动保存</p></aside>'
+  body += '<div class="rs-controls">'
 
   // Font size
   body += '<div class="rs-section"><div class="rs-section-title">字号 <span id="rsFontSizeVal">' + rs.fontSize + '</span>px</div>'
@@ -1231,6 +1289,18 @@ function openReaderSettingsPanel(triggerElement) {
   body += '<input type="range" id="rsMargin" class="rs-range" min="0" max="64" step="2" value="' + rs.marginSize + '"></div>'
   body += '<div class="rs-section"><div class="rs-section-title">内容宽度 <span id="rsContentWidthVal">' + rs.contentWidth + '</span>px</div>'
   body += '<input type="range" id="rsContentWidth" class="rs-range" min="420" max="1080" step="20" value="' + rs.contentWidth + '"></div>'
+
+  body += '<div class="rs-section"><div class="rs-group-heading"><span>标题与结构</span><small>控制标题、作者信息和章节之间的节奏</small></div><div class="rs-control-grid">'
+  body += '<label class="rs-range-field" for="rsTitleSize"><span>标题字号 <output id="rsTitleSizeVal">' + rs.titleSize + 'px</output></span><input type="range" id="rsTitleSize" class="rs-range" min="18" max="44" value="' + rs.titleSize + '"></label>'
+  body += '<label class="rs-range-field" for="rsTitleSpacing"><span>标题下方 <output id="rsTitleSpacingVal">' + rs.titleSpacing + 'px</output></span><input type="range" id="rsTitleSpacing" class="rs-range" min="0" max="40" step="2" value="' + rs.titleSpacing + '"></label>'
+  body += '<label class="rs-range-field" for="rsMetaSpacing"><span>信息下方 <output id="rsMetaSpacingVal">' + rs.metaSpacing + 'px</output></span><input type="range" id="rsMetaSpacing" class="rs-range" min="12" max="72" step="2" value="' + rs.metaSpacing + '"></label>'
+  body += '<label class="rs-range-field" for="rsSectionSpacing"><span>章节间距 <output id="rsSectionSpacingVal">' + rs.sectionSpacing + 'px</output></span><input type="range" id="rsSectionSpacing" class="rs-range" min="16" max="96" step="2" value="' + rs.sectionSpacing + '"></label>'
+  body += '</div><div class="rs-section-title rs-subtitle">标题粗细</div><div class="rs-segment" role="group" aria-label="标题粗细">'
+  ;[400,500,600,700].forEach(function(weight) {
+    body += '<button type="button" id="rsTitleWeight' + weight + '" class="rs-align-btn' + (rs.titleWeight === weight ? ' active' : '') + '" data-rs-title-weight="' + weight + '" aria-pressed="' + (rs.titleWeight === weight ? 'true' : 'false') + '">' + ({400:'常规',500:'中等',600:'半粗',700:'粗体'}[weight]) + '</button>'
+  })
+  body += '</div></div>'
+
   body += '<div class="rs-section"><div class="rs-section-title">文字对齐</div><div class="rs-segment" role="group" aria-label="文字对齐方式">'
   ;['left','justify','center','right'].forEach(function(alignment) { var label = {left:'左对齐',justify:'两端对齐',center:'居中',right:'右对齐'}[alignment]; body += '<button type="button" class="rs-align-btn' + (rs.textAlign === alignment ? ' active' : '') + '" data-rs-align="' + alignment + '" aria-pressed="' + (rs.textAlign === alignment ? 'true' : 'false') + '">' + label + '</button>' })
   body += '</div><label class="rd-checkbox"><input type="checkbox" id="rsIndent"' + (rs.indentFirstLine ? ' checked' : '') + '> 段落首行缩进</label></div>'
@@ -1257,6 +1327,12 @@ function openReaderSettingsPanel(triggerElement) {
   body += '</div>'
   body += '</div>'
 
+  body += '<div class="rs-section"><div class="rs-group-heading"><span>选项与图片</span><small>让互动按钮和插图融入正文排版</small></div><div class="rs-control-grid">'
+  body += '<label class="rs-range-field" for="rsImageRadius"><span>图片圆角 <output id="rsImageRadiusVal">' + rs.imageRadius + 'px</output></span><input type="range" id="rsImageRadius" class="rs-range" min="0" max="24" value="' + rs.imageRadius + '"></label>'
+  body += '<label class="rs-range-field" for="rsChoiceGap"><span>选项间距 <output id="rsChoiceGapVal">' + rs.choiceGap + 'px</output></span><input type="range" id="rsChoiceGap" class="rs-range" min="4" max="28" step="2" value="' + rs.choiceGap + '"></label>'
+  body += '<label class="rs-range-field" for="rsChoiceRadius"><span>选项圆角 <output id="rsChoiceRadiusVal">' + rs.choiceRadius + 'px</output></span><input type="range" id="rsChoiceRadius" class="rs-range" min="0" max="20" value="' + rs.choiceRadius + '"></label>'
+  body += '</div></div>'
+
   // Theme
   body += '<div class="rs-section"><div class="rs-section-title">主题</div>'
   body += '<div class="rs-theme-grid">'
@@ -1268,6 +1344,7 @@ function openReaderSettingsPanel(triggerElement) {
   body += '<div class="rs-section"><div class="rs-section-title">自定义颜色</div><div class="rs-color-controls">'
   body += '<label class="rs-color-control">背景色<input type="color" class="rs-color-input" id="rsBgColor" value="' + escapeHtmlAttribute(rs.backgroundColor) + '"></label>'
   body += '<label class="rs-color-control">文字色<input type="color" class="rs-color-input" id="rsTextColor" value="' + escapeHtmlAttribute(rs.textColor) + '"></label>'
+  body += '<label class="rs-color-control">强调色<input type="color" class="rs-color-input" id="rsAccentColor" value="' + escapeHtmlAttribute(rs.accentColor) + '"></label>'
   body += '</div></div>'
   var backgroundUrlValue = rs.backgroundImage && !/^data:/i.test(rs.backgroundImage) ? rs.backgroundImage : ''
   body += '<div class="rs-section"><div class="rs-section-title">阅读背景图</div>'
@@ -1276,6 +1353,9 @@ function openReaderSettingsPanel(triggerElement) {
   body += '<p class="rs-field-error" id="rsBgError" role="alert" hidden></p>'
   body += '<div class="rs-section-title">铺放方式</div><div class="rs-segment" role="group" aria-label="背景图铺放方式">'
   ;['cover','contain','tile'].forEach(function(fit) { var label = {cover:'铺满',contain:'完整显示',tile:'平铺'}[fit]; body += '<button type="button" class="rs-align-btn' + (rs.backgroundFit === fit ? ' active' : '') + '" data-rs-fit="' + fit + '" aria-pressed="' + (rs.backgroundFit === fit ? 'true' : 'false') + '">' + label + '</button>' })
+  body += '</div>'
+  body += '<div class="rs-section-title rs-subtitle">背景位置</div><div class="rs-segment" role="group" aria-label="背景图位置">'
+  ;['center','top','bottom','left','right'].forEach(function(position) { var label = {center:'居中',top:'顶部',bottom:'底部',left:'靠左',right:'靠右'}[position]; body += '<button type="button" class="rs-align-btn' + (rs.backgroundPosition === position ? ' active' : '') + '" data-rs-position="' + position + '" aria-pressed="' + (rs.backgroundPosition === position ? 'true' : 'false') + '">' + label + '</button>' })
   body += '</div>'
   body += '<div class="rs-section-title rs-subtitle">背景遮罩 <span id="rsBgOverlayVal">' + rs.backgroundOverlay + '</span>%</div>'
   body += '<input type="range" id="rsBgOverlay" class="rs-range" min="0" max="90" step="5" value="' + rs.backgroundOverlay + '">'
@@ -1287,8 +1367,13 @@ function openReaderSettingsPanel(triggerElement) {
   body += '<div class="rs-section-title" style="margin-top:8px">速度: <span id="rsTypingSpeedVal">' + (rs.typingSpeed || 50) + '</span>ms</div>'
   body += '<input type="range" id="rsTypingSpeed" class="rs-range" min="10" max="500" step="5" value="' + (rs.typingSpeed || 50) + '"></div>'
 
+  body += '<div class="rs-section rs-css-section"><div class="rs-group-heading"><span>高级 CSS</span><small>只作用于文章区域，输入时即时校验</small></div>'
+  body += '<textarea id="rsCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="rsCssHint rsCssError" placeholder=".article-title { letter-spacing: .08em; }">' + esc(rs.customCss || '') + '</textarea>'
+  body += '<div class="rs-css-meta"><p class="rs-field-hint" id="rsCssHint">支持普通选择器与属性；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="rsCssCount">' + String((rs.customCss || '').length) + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>'
+  body += '<p class="rs-field-error" id="rsCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="rsCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="rsClearCss">清空 CSS</button></div></div>'
+
   body += '<div class="rs-reset-wrap"><button class="rs-reset-btn" id="rsReset">恢复默认</button></div>'
-  body += '</div>'
+  body += '</div></div>'
 
   // Build overlay + bottom sheet
   var ov = document.createElement('div')
@@ -1307,6 +1392,8 @@ function openReaderSettingsPanel(triggerElement) {
   var closeButton = ov.querySelector('#rsClose')
   function closePanel(options) {
     var restoreFocus = !options || options.restoreFocus !== false
+    var previewStyle = document.getElementById('reader-article-preview-user-css')
+    if (previewStyle) previewStyle.remove()
     ov.remove()
     if (restoreFocus && activeTrigger && activeTrigger.isConnected && activeTrigger.focus) activeTrigger.focus()
   }
@@ -1319,7 +1406,7 @@ function openReaderSettingsPanel(triggerElement) {
       return
     }
     if (e.key !== 'Tab') return
-    var focusable = Array.prototype.slice.call(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+    var focusable = Array.prototype.slice.call(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'))
     if (!focusable.length) return
     var first = focusable[0]
     var last = focusable[focusable.length - 1]
@@ -1337,9 +1424,12 @@ function openReaderSettingsPanel(triggerElement) {
   // Slider binds
   function persistAndPreview() {
     rs = saveReaderSettings(rs)
-    var content = document.querySelector('.article-content')
-    if (content) applyReaderSettings(content, rs)
+    document.querySelectorAll('.article-content').forEach(function(content) {
+      applyReaderSettings(content, rs)
+    })
     applyReaderSettingsPreview(ov, rs)
+    var liveStatus = ov.querySelector('#rsLiveStatus')
+    if (liveStatus) liveStatus.textContent = '实时预览 · 已自动保存'
     return rs
   }
 
@@ -1374,6 +1464,13 @@ function openReaderSettingsPanel(triggerElement) {
   bindSlider('#rsParaS', 'paragraphSpacing', '#rsParaSVal', function(v){return v})
   bindSlider('#rsMargin', 'marginSize', '#rsMarginVal', function(v){return v})
   bindSlider('#rsContentWidth', 'contentWidth', '#rsContentWidthVal', function(v){return v})
+  bindSlider('#rsTitleSize', 'titleSize', '#rsTitleSizeVal', function(v){return v + 'px'})
+  bindSlider('#rsTitleSpacing', 'titleSpacing', '#rsTitleSpacingVal', function(v){return v + 'px'})
+  bindSlider('#rsMetaSpacing', 'metaSpacing', '#rsMetaSpacingVal', function(v){return v + 'px'})
+  bindSlider('#rsSectionSpacing', 'sectionSpacing', '#rsSectionSpacingVal', function(v){return v + 'px'})
+  bindSlider('#rsImageRadius', 'imageRadius', '#rsImageRadiusVal', function(v){return v + 'px'})
+  bindSlider('#rsChoiceGap', 'choiceGap', '#rsChoiceGapVal', function(v){return v + 'px'})
+  bindSlider('#rsChoiceRadius', 'choiceRadius', '#rsChoiceRadiusVal', function(v){return v + 'px'})
   bindSlider('#rsBgOverlay', 'backgroundOverlay', '#rsBgOverlayVal', function(v){return v})
   bindSlider('#rsTypingSpeed', 'typingSpeed', '#rsTypingSpeedVal', function(v){return v})
 
@@ -1391,6 +1488,13 @@ function openReaderSettingsPanel(triggerElement) {
     b.onclick = function() {
       rs.textAlign = b.dataset.rsAlign
       syncPressedButtons('[data-rs-align]', 'rsAlign', rs.textAlign)
+      persistAndPreview()
+    }
+  })
+  ov.querySelectorAll('[data-rs-title-weight]').forEach(function(b) {
+    b.onclick = function() {
+      rs.titleWeight = parseInt(b.dataset.rsTitleWeight, 10)
+      syncPressedButtons('[data-rs-title-weight]', 'rsTitleWeight', String(rs.titleWeight))
       persistAndPreview()
     }
   })
@@ -1439,11 +1543,23 @@ function openReaderSettingsPanel(triggerElement) {
     syncPressedButtons('[data-rs-theme]', 'rsTheme', rs.theme)
     persistAndPreview()
   }
+  var accentColorInput = ov.querySelector('#rsAccentColor')
+  if (accentColorInput) accentColorInput.oninput = function() {
+    rs.accentColor = sanitizeCssColor(this.value, { fallback: rs.accentColor })
+    persistAndPreview()
+  }
 
   ov.querySelectorAll('[data-rs-fit]').forEach(function(b) {
     b.onclick = function() {
       rs.backgroundFit = b.dataset.rsFit
       syncPressedButtons('[data-rs-fit]', 'rsFit', rs.backgroundFit)
+      persistAndPreview()
+    }
+  })
+  ov.querySelectorAll('[data-rs-position]').forEach(function(b) {
+    b.onclick = function() {
+      rs.backgroundPosition = b.dataset.rsPosition
+      syncPressedButtons('[data-rs-position]', 'rsPosition', rs.backgroundPosition)
       persistAndPreview()
     }
   })
@@ -1491,6 +1607,54 @@ function openReaderSettingsPanel(triggerElement) {
       })
     }
     input.click()
+  }
+
+  function setCssFeedback(result) {
+    var error = ov.querySelector('#rsCssError')
+    var status = ov.querySelector('#rsLiveStatus')
+    if (error) {
+      error.textContent = result && !result.ok ? result.error : ''
+      error.hidden = !result || result.ok
+    }
+    if (status) {
+      status.textContent = result && !result.ok
+        ? 'CSS 暂未应用 · 请按提示修改'
+        : '实时预览 · 已自动保存'
+    }
+  }
+
+  function updateCustomCss(rawCss) {
+    var count = ov.querySelector('#rsCssCount')
+    if (count) count.textContent = String(rawCss.length) + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH
+    var previewResult = compileScopedReaderCss(rawCss, '.reader-article-css-preview-scope')
+    var actualResult = compileScopedReaderCss(rawCss, '.reader-article-css-scope')
+    if (!previewResult.ok || !actualResult.ok) {
+      setCssFeedback(!previewResult.ok ? previewResult : actualResult)
+      return false
+    }
+    rs.customCss = rawCss
+    persistAndPreview()
+    setCssFeedback(previewResult)
+    return true
+  }
+
+  var customCssInput = ov.querySelector('#rsCustomCss')
+  if (customCssInput) customCssInput.oninput = function() {
+    updateCustomCss(this.value)
+  }
+  var cssExampleButton = ov.querySelector('#rsCssExample')
+  if (cssExampleButton) cssExampleButton.onclick = function() {
+    if (!customCssInput) return
+    customCssInput.value = ':scope { --rd-reading-accent: #a06b7b; }\n.article-title { letter-spacing: .08em; }\n.article-choice-btn { border-style: solid; }'
+    updateCustomCss(customCssInput.value)
+    customCssInput.focus()
+  }
+  var clearCssButton = ov.querySelector('#rsClearCss')
+  if (clearCssButton) clearCssButton.onclick = function() {
+    if (!customCssInput) return
+    customCssInput.value = ''
+    updateCustomCss('')
+    customCssInput.focus()
   }
 
   // Font upload button
@@ -1586,7 +1750,7 @@ function renderArticleReader() {
     h += '<button type="button" class="reader-back" data-reader-home title="返回首页" aria-label="返回首页">←</button>'
   }
   h += '<button type="button" class="reader-settings-btn" title="文章阅读外观" aria-label="打开文章阅读外观">⚙</button>'
-  h += '<div class="article-reader">'
+  h += '<div class="article-reader reader-article-css-scope">'
   h += '<div class="article-progress">'
   for (var ni = 0; ni < chapterDots.length; ni++) {
     var dotChapterId = String(chapterDots[ni].id || '')
@@ -1790,6 +1954,7 @@ function renderArticleReader() {
 
       var rc = getPhoneCustom()
       var pd = {
+        displaySettings: (_work.phoneData && _work.phoneData.displaySettings) || d.displaySettings || {},
         contacts: contacts,
         chats: d.chats || [],
         moments: [],
@@ -1922,8 +2087,8 @@ function readerPhoneFlowNotificationHtml(phoneData, step) {
 
 // ====== Build Phone HTML (shared by article overlay and standalone phone) ======
 function buildPhoneHTML(pd, custom, watermark, flowStep) {
-  var skin = pd.skin || {}
-  var rc = custom || getPhoneCustom()
+  var skin = readerOwnDataRecord(pd.skin)
+  var rc = normalizePhoneCustom(custom || getPhoneCustom())
   if (rc.wallpaper) skin.wallpaper = rc.wallpaper
   if (rc.wallpaperType === 'image' && rc.wallpaperImage) { skin.wallpaperImage = rc.wallpaperImage; skin.wallpaperType = rc.wallpaperType }
   if (rc.frameColor) skin.frameColor = rc.frameColor
@@ -1936,20 +2101,28 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   if (rc.showAppLabels !== undefined) skin.showAppLabels = rc.showAppLabels
   if (rc.fontFamily) skin.fontFamily = rc.fontFamily
   if (rc.fontSize) skin.fontSize = rc.fontSize
+  skin.showIconShadow = rc.showIconShadow
+  skin.iconBorderRadius = rc.iconBorderRadius
+  skin.materialOpacity = rc.materialOpacity
+  skin.timeColor = rc.timeColor
+  applyPhoneCustomCss(rc)
   var apps = pd.apps || []
 
   var h = ''
   var usesDefaultWallpaper = (skin.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && skin.wallpaperType !== 'image' && !skin.wallpaperImage
   var readerBgStyle = '--phone-bg:' + sanitizeCssColor(skin.wallpaper || '#eee6e7') + ';'
   readerBgStyle += '--phone-radius:' + (skin.borderRadius ?? 18) + 'px;'
-  readerBgStyle += '--phone-font:\'' + (skin.fontFamily || 'Noto Sans SC').replace(/'/g, '') + '\', sans-serif;'
+  readerBgStyle += '--phone-font:' + safePhoneCustomFontFamily(skin.fontFamily, readerPhoneCustomDefaults().fontFamily) + ';'
   readerBgStyle += '--phone-fontsize:' + (skin.fontSize || 12) + 'px;'
   readerBgStyle += '--phone-frame:' + (skin.frameColor || '#8f7b81')
+  readerBgStyle += ';--phone-icon-radius:' + (skin.iconBorderRadius ?? 6) + 'px'
+  readerBgStyle += ';--phone-material-opacity:' + (skin.materialOpacity ?? 65) + '%'
+  readerBgStyle += ';--phone-time-color:' + sanitizeCssColor(skin.timeColor || '#ffffff')
   readerBgStyle += ';--phone-notification-top:' + (skin.showDynamicIsland === false ? 10 : 36) + 'px'
   if (skin.wallpaperType === 'image' && skin.wallpaperImage) {
     readerBgStyle += ';background-image:url(' + esc(skin.wallpaperImage) + ');background-size:cover;background-position:center'
   }
-  h += '<div class="phone-frame' + (usesDefaultWallpaper ? ' phone-default-wallpaper' : '') + '" style="' + readerBgStyle + '">'
+  h += '<div class="phone-frame reader-phone-css-scope' + (usesDefaultWallpaper ? ' phone-default-wallpaper' : '') + '" style="' + escapeHtmlAttribute(readerBgStyle) + '">'
   h += renderWorkWatermark(watermark, 'phone')
 
   if (skin.showDynamicIsland !== false) {
@@ -1982,10 +2155,10 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
     var isFlowApp = !!flowStep && phoneReadingFlowAppType(flowStep) === app.type
     h += '<button type="button" class="phone-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;border:none!important;box-shadow:none!important">'
     var customIcon = readerCustomIconUrl(rc.customIcons && rc.customIcons[app.type])
-    h += '<span class="phone-icon-body icon-shadow" style="background:' + sanitizeCssColor(app.color) + ';position:relative">'
+    h += '<span class="phone-icon-body' + (skin.showIconShadow === false ? '' : ' icon-shadow') + '" style="background:' + READER_DEFAULT_APP_ICON_SURFACE + ';position:relative">'
     var safeAppIcon = sanitizeIconHtml(app.icon || '?') || '?'
     if (customIcon) {
-      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:54px;height:54px;object-fit:cover;border-radius:6px" onerror="this.style.display=\'none\'">'
+      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:54px;height:54px;object-fit:cover;border-radius:var(--phone-icon-radius,6px)" onerror="this.style.display=\'none\'">'
       h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
     } else {
       h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
@@ -2051,11 +2224,27 @@ function bindOverlayApps(wrapper) {
   })
 }
 
+function readerCharacterAppItemCount(pd, type, contactId) {
+  var collection = []
+  if (type === 'memo') collection = pd.memos || []
+  else if (type === 'gallery') collection = (pd.photos || []).concat(pd.albums || [])
+  else if (type === 'browser') collection = pd.browserHistory || []
+  else if (type === 'shopping') collection = pd.shoppingItems || []
+  return collection.filter(function(item) { return item && item.contactId === contactId }).length
+}
+
+function readerRichTextHasContent(value) {
+  var shell = document.createElement('div')
+  shell.innerHTML = String(value || '')
+  return shell.textContent.replace(/\u00a0/g, ' ').trim().length > 0
+}
+
 // ---- Reader App Panels ----
 function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
+  applyReaderAppCustomCss(type, getAppSettings(type))
   var pd = readerPhoneData(_work.phoneData)
   var flowTarget = flowStep ? resolvePhoneReadingFlowStep(pd, flowStep) : null
   var contacts = pd.contacts || []
@@ -2112,12 +2301,12 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var panelType = String(type || '').replace(/[^a-z0-9_-]/gi, '')
     var h = '<div class="cu-panel cu-panel-embedded rd-phone-app-panel rd-phone-app-' + panelType + '" style="z-index:10">'
     h += renderWorkWatermark(_work && _work.watermark, 'phone')
-    h += '<div class="cu-header" style="justify-content:flex-start;gap:8px">'
+    h += '<div class="cu-header rd-phone-app-header">'
     h += '<button type="button" class="rd-back-btn" aria-label="返回手机桌面" style="color:var(--c-text2)">←</button>'
     h += '<span class="cu-title" style="flex:1;text-align:center">' + esc(title) + '</span>'
     h += '<span class="rd-back-spacer" aria-hidden="true"></span>'
     h += '</div>'
-    h += '<div class="cu-body rd-phone-app-body" style="padding:8px 10px">' + readerPhoneFlowCueHtml(w, flowStep) + bodyHtml + '</div>'
+    h += '<div class="cu-body rd-phone-app-body">' + readerPhoneFlowCueHtml(w, flowStep) + bodyHtml + '</div>'
     h += '</div>'
     phoneFrame.innerHTML = h
     var backBtn = phoneFrame.querySelector('.rd-back-btn')
@@ -2144,6 +2333,10 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
   }
 
   function wrapContactPanel(title, bodyHtml) {
+    if (lockedApp && activeContact) {
+      wrapPanel((activeContact.name || '未命名') + ' · ' + title, bodyHtml)
+      return
+    }
     wrapPanel(title, contactContextHtml() + bodyHtml)
     var select = phoneFrame.querySelector('.rd-contact-select')
     if (!select) return
@@ -2190,6 +2383,55 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     }
   }
 
+  function showConnectionPicker() {
+    if (!lockedApp || contacts.length === 0) return
+    var appLabels = { memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单' }
+    var appLabel = appLabels[type] || '角色记录'
+    var selectedIndex = activeContactIndex >= 0 ? activeContactIndex : 0
+    var h = '<section class="rd-connection-gate" data-connection-state="choose" aria-label="' + escapeHtmlAttribute('选择' + appLabel + '的接入来源') + '">'
+    h += '<div class="rd-connection-status"><span>DEVICE LINKS</span><span>' + esc(appLabel) + ' / SELECT</span></div>'
+    h += '<div class="rd-connection-picker">'
+    h += '<div class="rd-connection-picker-intro"><strong>选择要接入的手机</strong><p>选中角色后确认接入，再查看对应内容。</p></div>'
+    h += '<div class="rd-connection-source-list" role="group" aria-label="选择接入角色">'
+    contacts.forEach(function(contact, index) {
+      var selected = index === selectedIndex
+      var count = readerCharacterAppItemCount(pd, type, contact.id)
+      h += '<button type="button" class="rd-connection-source' + (selected ? ' selected' : '') + '" data-connection-source-index="' + index + '" aria-pressed="' + (selected ? 'true' : 'false') + '">'
+      h += '<span class="rd-connection-source-avatar">'
+      if (contact.avatarUrl) h += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
+      else h += '<span>' + esc((contact.name || '?').charAt(0)) + '</span>'
+      h += '</span><span class="rd-connection-source-copy"><strong>' + esc(contact.name || '未命名') + '</strong><small>' + count + ' 条内容</small></span>'
+      h += '<span class="rd-connection-source-check" aria-hidden="true">' + (selected ? '✓' : '→') + '</span></button>'
+    })
+    h += '</div>'
+    h += '<div class="rd-connection-actions"><button type="button" class="rd-connection-action" data-connection-action="cancel">暂时不要</button><button type="button" class="rd-connection-action primary" data-connection-action="confirm">接入看看</button></div>'
+    h += '</div><div class="rd-connection-footer"><span>× DISCONNECT</span><span>✓ CONNECT</span></div></section>'
+    phoneFrame.innerHTML = h
+
+    var sourceButtons = phoneFrame.querySelectorAll('[data-connection-source-index]')
+    sourceButtons.forEach(function(button) {
+      button.onclick = function() {
+        var nextIndex = Number(button.dataset.connectionSourceIndex)
+        if (!Number.isInteger(nextIndex) || !contacts[nextIndex]) return
+        selectedIndex = nextIndex
+        sourceButtons.forEach(function(item) {
+          var selected = item === button
+          item.classList.toggle('selected', selected)
+          item.setAttribute('aria-pressed', selected ? 'true' : 'false')
+          var check = item.querySelector('.rd-connection-source-check')
+          if (check) check.textContent = selected ? '✓' : '→'
+        })
+      }
+    })
+
+    var cancel = phoneFrame.querySelector('[data-connection-action="cancel"]')
+    var confirm = phoneFrame.querySelector('[data-connection-action="confirm"]')
+    if (cancel) cancel.onclick = backToDesktop
+    if (confirm) confirm.onclick = function() { openReaderApp(type, selectedIndex, true, flowStep) }
+    var selectedSource = phoneFrame.querySelector('.rd-connection-source.selected')
+    if (selectedSource) selectedSource.focus()
+  }
+
   function showUnavailableConnection() {
     var appLabels = { memo: '备忘录', gallery: '相册', browser: '浏览记录', shopping: '购物清单' }
     var appLabel = appLabels[type] || '角色记录'
@@ -2215,8 +2457,9 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     return
   }
 
-  if (hasAuthoredConnection && connectionConfirmed !== true) {
-    showConnectionGate()
+  if (lockedApp && contacts.length > 0 && connectionConfirmed !== true) {
+    if (hasAuthoredConnection) showConnectionGate()
+    else showConnectionPicker()
     return
   }
 
@@ -2239,7 +2482,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       var content = String(comment && (comment.content != null ? comment.content : comment.text) || '')
       var h = '<div class="rd-thread-comment' + (isReader ? ' is-reader' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '">'
       h += '<div class="rd-thread-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
-      if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
+      if (shouldShowPhoneTimestamp(pd, comment.time)) h += '<time>' + esc(comment.time) + '</time>'
       h += '</div>'
       h += '<div class="rd-thread-comment-content">' + renderReaderMentionText(content, momentMentionNames) + '</div>'
       h += renderReaderThreadReselect(comment, 'moment', containerKey, momentChoiceRuns)
@@ -2258,7 +2501,8 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       if (activeSection === 'chats') {
         h += '<div id="rdMessageChats" class="rd-message-section" role="tabpanel">'
         if (chats.length === 0) h += '<div class="rd-app-empty">暂无对话</div>'
-        chats.forEach(function(ch, chatIndex) {
+        orderedChats(chats).forEach(function(ch) {
+          var chatIndex = chats.indexOf(ch)
           var name = ''
           var chatIdentity = null
           if (ch.type === 'group') name = ch.groupName || '群聊'
@@ -2273,7 +2517,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
           else if (chatIdentity && chatIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(chatIdentity.avatar) + '" alt="">'
           else h += esc(name.charAt(0))
           h += '</span>'
-          h += '<span class="rd-message-card-copy"><strong>' + esc(name) + '</strong><small>打开聊天</small></span>'
+          h += '<span class="rd-message-card-copy"><strong>' + esc(name) + '</strong><small>' + (ch.pinned === true ? '置顶 · ' : '') + '打开聊天</small></span>'
           h += '</button>'
         })
         h += '</div>'
@@ -2288,7 +2532,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
           if (momentIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(momentIdentity.avatar) + '" alt="">'
           else h += esc(momentName.charAt(0))
           h += '</span>'
-          h += '<span><strong>' + esc(momentName) + '</strong><time>' + esc(moment.time || '') + '</time></span></header>'
+          h += '<span><strong>' + esc(momentName) + '</strong>' + (shouldShowPhoneTimestamp(pd, moment.time) ? '<time>' + esc(moment.time) + '</time>' : '') + '</span></header>'
           h += '<div class="rd-moment-content">' + renderReaderMentionText(moment.content || '', momentMentionNames) + '</div>'
           if (Array.isArray(moment.images) && moment.images.length > 0) {
             h += '<div class="rd-moment-images">'
@@ -2398,7 +2642,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       h += '<span class="rd-forum-copy"><span class="rd-forum-title-line"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-post-states">'
       if (p.pinned === true) h += '<span class="rd-forum-post-state rd-forum-post-pinned">置顶</span>'
       if (p.featured === true) h += '<span class="rd-forum-post-state rd-forum-post-featured">精华</span>'
-      h += '</span></span><span class="rd-forum-meta">' + esc(forumIdentity.name) + (p.time ? ' / ' + esc(p.time) : '') + '</span></span>'
+      h += '</span></span><span class="rd-forum-meta">' + esc(forumIdentity.name) + (shouldShowPhoneTimestamp(pd, p.time) ? ' / ' + esc(p.time) : '') + '</span></span>'
       h += '</button>'
     })
     wrapPanel('论坛', h)
@@ -2411,7 +2655,9 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       }
     })
   } else if (type === 'memo') {
-    var memos = (pd.memos || []).filter(belongsToActiveContact)
+    var memos = (pd.memos || []).filter(belongsToActiveContact).filter(function(memo) {
+      return readerRichTextHasContent(memo && memo.content) || String(memo && memo.time || '').trim()
+    })
     var memoSettings = getAppSettings('memo')
     var memoVisual = appStyle('memo')
     var memoStyleName = ['plain', 'sticky', 'vintage'].includes(memoVisual.cardStyle) ? memoVisual.cardStyle : 'plain'
@@ -2419,10 +2665,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var memoBorder = memoStyleName === 'sticky' ? '#e8d5a0' : (memoStyleName === 'vintage' ? '#d4c4a0' : memoVisual.cardBorder)
     var memoRadius = memoStyleName === 'vintage' ? 2 : boundedReaderSetting(memoSettings.cardRadius, 4, 0, 16)
     var memoVars = '--rd-memo-bg:' + sanitizeCssColor(memoBg) + ';--rd-memo-border:' + sanitizeCssColor(memoBorder) + ';--rd-memo-radius:' + memoRadius + 'px;--rd-memo-text:' + sanitizeCssColor(memoVisual.textColor) + ';--rd-memo-font-size:' + boundedReaderSetting(memoSettings.fontSize, 12, 10, 16) + 'px;--rd-memo-line-height:' + boundedReaderSetting(memoSettings.lineHeight, 1.6, 1.2, 2.4)
+    var memoAccent = sanitizeCssColor(activeContact ? avatarColor(activeContact.id) : memoVisual.cardBorder)
     var h = '<div class="rd-memo-stack rd-memo-style-' + memoStyleName + '" style="' + memoVars + '">'
-    if (memos.length === 0) h += '<div class="rd-app-empty">暂无备忘</div>'
+    if (memos.length === 0) h += '<div class="rd-app-empty rd-scoped-empty"><strong>还没有备忘</strong><small>这台设备里暂时没有留下记录</small></div>'
     memos.forEach(function(m) {
-      h += '<article class="rd-memo-note' + (flowStep && String(m.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-memo-id="' + escapeHtmlAttribute(m.id) + '">' + (m.content || '') + '</article>'
+      h += '<article class="memo-card rd-memo-note' + (flowStep && String(m.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-memo-id="' + escapeHtmlAttribute(m.id) + '" style="--memo-accent:' + memoAccent + '">'
+      h += '<div class="memo-card-inner"><div class="memo-editor" contenteditable="false">' + (m.content || '') + '</div>'
+      if (shouldShowPhoneTimestamp(pd, m.time)) h += '<div class="memo-card-foot"><time class="memo-time-reader">' + esc(m.time) + '</time></div>'
+      h += '</div></article>'
     })
     h += '</div>'
     wrapContactPanel('备忘录', h)
@@ -2438,19 +2688,30 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var albumIds = new Set(albums.map(function(a) { return a.id }))
 
     function renderGalleryPhotoGrid(items) {
-      var grid = '<div class="rd-gallery-film"><div class="rd-gallery-grid" style="' + galleryStyle + '">'
-      if (items.length === 0) grid += '<div class="rd-gallery-empty rd-app-empty">暂无照片</div>'
+      var grid = '<div class="gallery-bar"><span class="gallery-bar-title">最近项目 (' + items.length + ')</span></div><div class="gallery-grid rd-gallery-grid" style="' + galleryStyle + '">'
+      if (items.length === 0) grid += '<div class="rd-gallery-empty rd-app-empty rd-scoped-empty"><strong>还没有照片</strong><small>这台设备的相册暂时为空</small></div>'
       items.forEach(function(p) {
-        grid += '<div class="rd-gallery-photo' + (flowStep && String(p.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-photo-id="' + escapeHtmlAttribute(p.id) + '">'
+        grid += '<button type="button" class="gallery-photo-card rd-gallery-photo' + (flowStep && String(p.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-photo-id="' + escapeHtmlAttribute(p.id) + '" aria-pressed="false">'
         if (p.imageUrl) {
           grid += '<img src="' + escapeHtmlAttribute(p.imageUrl) + '" alt="' + escapeHtmlAttribute(p.caption || '') + '" onerror="this.style.display=\'none\'">'
         } else {
-          grid += '<div class="rd-gallery-photo-placeholder">' + esc(p.caption || '') + '</div>'
+          grid += '<span class="gallery-photo-placeholder rd-gallery-photo-placeholder"><span class="gallery-photo-text">' + esc(p.caption || '照片') + '</span></span>'
         }
-        grid += '</div>'
+        if (shouldShowPhoneTimestamp(pd, p.time)) grid += '<span class="gallery-photo-cap">' + esc(String(p.time).replace(/\s.*$/, '')) + '</span>'
+        grid += '</button>'
       })
-      grid += '</div></div>'
+      grid += '</div>'
       return grid
+    }
+
+    function bindGalleryPhotoButtons() {
+      phoneFrame.querySelectorAll('.gallery-photo-card').forEach(function(photoButton) {
+        photoButton.onclick = function() {
+          var selected = photoButton.getAttribute('aria-pressed') === 'true'
+          photoButton.setAttribute('aria-pressed', selected ? 'false' : 'true')
+          photoButton.classList.toggle('is-reader-selected', !selected)
+        }
+      })
     }
 
     function renderGalleryAlbum(albumIndex) {
@@ -2465,20 +2726,23 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
         albumBack.onclick = function() { renderGalleryMain(albumIndex) }
         albumBack.focus()
       }
+      bindGalleryPhotoButtons()
     }
 
     function renderGalleryMain(restoreAlbumIndex) {
       var body = ''
       if (albums.length > 0) {
-        body += '<div class="rd-album-list">'
+        body += '<div class="gallery-bar"><span class="gallery-bar-title">相册 (' + albums.length + ')</span></div>'
+        body += '<div class="gallery-albums rd-album-list">'
         albums.forEach(function(a, albumIndex) {
           var count = photos.filter(function(p) { return p.albumId === a.id }).length
+          var cover = photos.find(function(p) { return p.albumId === a.id && p.imageUrl })
           var name = a.name || '相册'
           var accessibleName = '打开相册 ' + name + '，' + count + ' 张'
-          body += '<button type="button" class="rd-album" data-album-index="' + albumIndex + '" aria-label="' + escapeHtmlAttribute(accessibleName) + '">'
-          body += '<span class="rd-album-cover" aria-hidden="true"></span>'
-          body += '<span class="rd-album-name">' + esc(name) + '</span>'
-          body += '<span class="rd-album-count">' + count + ' 张</span>'
+          body += '<button type="button" class="gallery-album-card rd-album" data-album-index="' + albumIndex + '" aria-label="' + escapeHtmlAttribute(accessibleName) + '">'
+          body += '<span class="gallery-album-cover rd-album-cover" aria-hidden="true"' + (cover ? ' style="background-image:url(' + escapeHtmlAttribute(cover.imageUrl) + ');background-size:cover;background-position:center"' : ' style="--gallery-album-accent:' + sanitizeCssColor(activeContact ? avatarColor(activeContact.id) : '#c7a1aa') + '"') + '></span>'
+          body += '<span class="gallery-album-name rd-album-name">' + esc(name) + '</span>'
+          body += '<span class="gallery-album-count rd-album-count">' + count + ' 张</span>'
           body += '</button>'
         })
         body += '</div>'
@@ -2497,6 +2761,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       if (Number.isInteger(restoreAlbumIndex) && albumButtons[restoreAlbumIndex]) {
         albumButtons[restoreAlbumIndex].focus()
       }
+      bindGalleryPhotoButtons()
     }
 
     var flowPhoto = flowTarget && flowTarget.kind === 'gallery' ? flowTarget.item : null
@@ -2510,14 +2775,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var browserSettings = getAppSettings('browser')
     var browserVisual = appStyle('browser')
     var browserVars = '--rd-browser-entry:' + sanitizeCssColor(browserSettings.entryBg) + ';--rd-browser-radius:' + boundedReaderSetting(browserSettings.entryRadius, 0, 0, 12) + 'px;--rd-browser-title:' + sanitizeCssColor(browserVisual.titleColor) + ';--rd-browser-title-size:' + boundedReaderSetting(browserSettings.titleSize, 12, 10, 16) + 'px;--rd-browser-url:' + sanitizeCssColor(browserVisual.urlColor) + ';--rd-browser-time:' + sanitizeCssColor(browserVisual.timeColor)
-    var h = '<div class="rd-browser-history" style="' + browserVars + '">'
-    h += '<div class="rd-browser-address"><span class="rd-browser-search" aria-hidden="true">⌕</span><span>搜索或输入网址</span></div>'
-    if (history.length === 0) h += '<div class="rd-app-empty">暂无记录</div>'
+    var h = '<div class="browser-search-bar rd-browser-address"><span class="browser-search-icon rd-browser-search" aria-hidden="true">⌕</span><span class="browser-search-placeholder">搜索或输入网址</span></div>'
+    h += '<div class="browser-demo-body rd-browser-history" style="' + browserVars + '">'
+    if (history.length === 0) h += '<div class="rd-app-empty rd-scoped-empty"><strong>暂无浏览记录</strong><small>这台设备还没有留下访问痕迹</small></div>'
     history.forEach(function(it) {
-      h += '<div class="rd-browser-entry' + (flowStep && String(it.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-history-id="' + escapeHtmlAttribute(it.id) + '">'
-      h += '<span class="rd-browser-marker" style="--rd-marker:' + sanitizeCssColor(avatarColor(it.contactId)) + '"></span>'
-      h += '<span class="rd-browser-copy"><span class="rd-browser-title">' + esc(it.title || '') + '</span><span class="rd-browser-url">' + esc(it.url || '') + '</span></span>'
-      h += '<time class="rd-browser-time">' + esc((it.time || '').replace(/\s.*$/, '')) + '</time>'
+      h += '<div class="browser-row rd-browser-entry' + (flowStep && String(it.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-history-id="' + escapeHtmlAttribute(it.id) + '">'
+      h += '<span class="browser-dot rd-browser-marker" style="--rd-marker:' + sanitizeCssColor(avatarColor(it.contactId)) + '"></span>'
+      h += '<span class="browser-info rd-browser-copy"><span class="browser-title rd-browser-title">' + esc(it.title || '') + '</span><span class="browser-url rd-browser-url">' + esc(it.url || '') + '</span></span>'
+      if (shouldShowPhoneTimestamp(pd, it.time)) h += '<span class="browser-right"><time class="browser-time rd-browser-time">' + esc(it.time.replace(/\s.*$/, '')) + '</time></span>'
       h += '</div>'
     })
     h += '</div>'
@@ -2529,25 +2794,31 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var shopVars = '--rd-shop-card:' + sanitizeCssColor(shopVisual.cardBg) + ';--rd-shop-radius:' + boundedReaderSetting(shopSettings.cardRadius, 0, 0, 16) + 'px;--rd-shop-name:' + sanitizeCssColor(shopVisual.nameColor) + ';--rd-shop-name-size:' + boundedReaderSetting(shopSettings.nameSize, 12, 10, 16) + 'px;--rd-shop-price:' + sanitizeCssColor(shopVisual.priceColor)
     var cartItems = items.filter(function(s) { return s.status !== 'order' })
     var orderItems = items.filter(function(s) { return s.status === 'order' })
-    var h = '<div class="rd-shop-tabs" role="tablist" aria-label="购物内容">'
-    h += '<button type="button" class="rd-shop-tab active" id="rdShopCartTab" role="tab" aria-controls="rdShopCart" aria-selected="true" tabindex="0" data-tab="cart">购物车</button>'
-    h += '<button type="button" class="rd-shop-tab" id="rdShopOrderTab" role="tab" aria-controls="rdShopOrder" aria-selected="false" tabindex="-1" data-tab="order">订单</button>'
-    h += '</div>'
-    function shopList(list) {
-      var r = '<div class="rd-shop-receipt" style="' + shopVars + '">'
-      if (list.length === 0) r += '<div class="rd-app-empty">暂无</div>'
-      list.forEach(function(s) {
-        r += '<div class="rd-shop-item' + (flowStep && String(s.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-shopping-id="' + escapeHtmlAttribute(s.id) + '">'
-        r += '<div class="rd-shop-thumb">'
-        if (s.imageUrl) r += '<img src="' + esc(s.imageUrl) + '" alt="" loading="lazy">'
-        r += '</div>'
-        r += '<div class="rd-shop-copy"><div class="rd-shop-name">' + esc(s.name) + '</div><div class="rd-shop-price">¥' + (s.price || 0).toFixed(2) + '</div></div>'
-        r += '</div>'
-      })
-      return r + '</div>'
-    }
-    h += '<div class="rd-shop-panel" id="rdShopCart" role="tabpanel" aria-labelledby="rdShopCartTab">' + shopList(cartItems) + '</div>'
-    h += '<div class="rd-shop-panel" id="rdShopOrder" role="tabpanel" aria-labelledby="rdShopOrderTab" style="display:none" hidden>' + shopList(orderItems) + '</div>'
+    var h = renderPhoneShoppingTabs({
+      activeTab: 'cart',
+      idPrefix: 'rdShop',
+      cartTabId: 'rdShopCartTab',
+      orderTabId: 'rdShopOrderTab',
+      cartPanelId: 'rdShopCart',
+      orderPanelId: 'rdShopOrder',
+      tabListClass: 'rd-shop-tabs',
+      tabClass: 'rd-shop-tab'
+    })
+    var flowShopItemId = flowStep && flowStep.itemId
+    h += '<div class="shop-body-inner"><div class="rd-shop-panel" id="rdShopCart" role="tabpanel" aria-labelledby="rdShopCartTab">' + renderPhoneShoppingList(cartItems, {
+      mode: 'cart',
+      surface: 'reader',
+      style: shopVars,
+      flowItemId: flowShopItemId,
+      showTimestamp: function(value) { return shouldShowPhoneTimestamp(pd, value) }
+    }) + '</div>'
+    h += '<div class="rd-shop-panel" id="rdShopOrder" role="tabpanel" aria-labelledby="rdShopOrderTab" style="display:none" hidden>' + renderPhoneShoppingList(orderItems, {
+      mode: 'order',
+      surface: 'reader',
+      style: shopVars,
+      flowItemId: flowShopItemId,
+      showTimestamp: function(value) { return shouldShowPhoneTimestamp(pd, value) }
+    }) + '</div></div>'
     wrapContactPanel('购物清单', h)
 
     var tabs = phoneFrame.querySelectorAll('.rd-shop-tab')
@@ -2576,6 +2847,17 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
         if (nextIndex === null) return
         event.preventDefault()
         activateShopTab(tabs[nextIndex], true)
+      }
+    })
+    phoneFrame.querySelectorAll('[data-logistics-view]').forEach(function(button) {
+      button.onclick = function() {
+        var content = Array.from(phoneFrame.querySelectorAll('[data-logistics-content]')).find(function(item) {
+          return String(item.dataset.logisticsContent) === String(button.dataset.logisticsView)
+        })
+        if (!content) return
+        var expanded = button.getAttribute('aria-expanded') === 'true'
+        button.setAttribute('aria-expanded', expanded ? 'false' : 'true')
+        content.hidden = expanded
       }
     })
     if (flowTarget && flowTarget.kind === 'shopping' && flowTarget.item && flowTarget.item.status === 'order') {
@@ -2616,8 +2898,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
 // ---- Chat reader ----
 function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   var contacts = pd.contacts || []
+  var readerCustom = getPhoneCustom()
+  var readerChatName = readerThreadDisplayName(pd, readerCustom)
+  var authoredReaderAvatar = pd.skin && typeof pd.skin.readerAvatar === 'string' && isSafeImageUrl(pd.skin.readerAvatar)
+    ? pd.skin.readerAvatar.trim()
+    : ''
+  var readerChatAvatar = readerCustom.readerAvatar || authoredReaderAvatar
   var chatMentionNames = ch.type === 'group'
-    ? [readerThreadDisplayName(pd, getPhoneCustom())].concat((ch.contactIds || []).map(function(contactId) {
+    ? [readerChatName].concat((ch.contactIds || []).map(function(contactId) {
         var contact = contacts.find(function(candidate) { return candidate.id === contactId })
         return contactDisplayName(contact, 'messages', contact?.name || '')
       })).concat(readerPlaceholderMentionNames()).filter(Boolean)
@@ -2669,7 +2957,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     h += '<div class="rd-inline-forum-pip-scroll"><div class="rd-inline-forum-author"><span class="rd-inline-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
     if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
     else h += esc((postIdentity.name || '?').charAt(0))
-    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + (pd.forumSettings?.showIpLocation === true && postIdentity.ipLocation ? '<small class="rd-forum-ip">IP 属地：' + esc(postIdentity.ipLocation) + '</small>' : '') + '</span></div>'
+    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (shouldShowPhoneTimestamp(pd, post.time) ? '<time>' + esc(post.time) + '</time>' : '') + (pd.forumSettings?.showIpLocation === true && postIdentity.ipLocation ? '<small class="rd-forum-ip">IP 属地：' + esc(postIdentity.ipLocation) + '</small>' : '') + '</span></div>'
     var inlineMentionNames = listForumIdentities(pd).map(function(identity) { return identity.name }).concat((pd.forumNpcs || []).map(function(npc) { return npc.name })).concat(readerPlaceholderMentionNames())
     h += '<h3>' + esc(post.title || '未命名帖子') + '</h3><div class="rd-inline-forum-content">' + renderReaderMentionText(post.content || '', inlineMentionNames) + '</div>'
     if (postImages.length) {
@@ -3002,17 +3290,17 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     var autoCall = null
 
     // ---- BUILD HTML ----
-    var h = '<div style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;color:#333;background:#f0f0f0">'
+    var h = '<div class="rd-phone-app-panel rd-phone-app-messages chat-author-shell chat-reader-shell" style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px">'
 
     // Top bar
-    h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#fff;border-bottom:1px solid #ddd;flex-shrink:0">'
-    h += '<button id="chatBack" style="border:none;background:#eee;color:#555;cursor:pointer;font-size:.75rem;padding:5px 10px;border-radius:6px">← 返回</button>'
-    h += '<span style="flex:1;text-align:center;font-size:.8rem;font-weight:500;color:#555">' + esc(chatName) + '</span>'
-    h += '<span style="width:56px"></span>'
+    h += '<div class="chat-round-header">'
+    h += '<button id="chatBack" class="chat-round-control" type="button" aria-label="返回消息列表">‹</button>'
+    h += '<div class="chat-round-title"><strong>' + esc(chatName) + '</strong></div>'
+    h += '<span class="chat-round-control" aria-hidden="true"></span>'
     h += '</div>'
 
     // Message area
-    h += '<div id="chatMsgArea" style="flex:1;overflow-y:auto;padding:6px 10px">'
+    h += '<div id="chatMsgArea" class="chat-msg-area">'
     var renderedVisibleCount = 0
     for (var ri = 0; ri < rounds.length; ri++) {
       var round = rounds[ri]
@@ -3022,6 +3310,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         if (!isMessageVisible(msg, visibleMessageIds)) continue
         renderedVisibleCount++
         if (msg.type === 'time') {
+          if (!shouldShowPhoneTimestamp(pd, msg.time)) continue
           h += '<div class="rd-chat-time' + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" style="text-align:center;padding:6px 0;font-size:.62rem;color:#b0b8c4">' + esc(msg.time || '') + '</div>'
           continue
         }
@@ -3038,14 +3327,18 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         }
         var isSelf = msg.senderId === 'self'
         var reselectRunKey = reselectRunsByReply.get(messageLocationKey(ri, msg.id)) || ''
-        h += '<div class="rd-chat-message ' + (isSelf ? 'is-self' : 'is-other') + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '">'
-        // Avatar for others
-        if (!isSelf) {
+        h += '<div class="chat-msg rd-chat-message ' + (isSelf ? 'self is-self' : 'other is-other') + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '">'
+        if (isSelf) {
+          h += '<div class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerChatName) + '" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerChatName)) + '">'
+          if (readerChatAvatar) h += '<img src="' + escapeHtmlAttribute(readerChatAvatar) + '" alt="">'
+          else h += '<span>' + esc((readerChatName || '我').charAt(0)) + '</span>'
+          h += '</div>'
+        } else {
           var sc = contacts.find(function(c) { return c.id === msg.senderId })
           var messageIdentity = resolveContactIdentity(pd, msg.senderId, { surface:'messages', authoredName:sc?.name || '?' })
           var messageAvatar = messageIdentity.avatar || ''
           var avBg = sc ? (messageAvatar ? 'background-image:url(' + escapeHtmlAttribute(messageAvatar) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:#ccc'
-          h += '<div style="width:' + avSz + ';height:' + avSz + ';flex-shrink:0;border-radius:' + ast.avatarRadius + ';display:flex;align-items:center;justify-content:center;color:#fff;font-size:.65rem;font-weight:600;' + avBg + '">'
+          h += '<div class="chat-avatar" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';' + avBg + '">'
           if (!messageAvatar) h += '<span>' + esc((messageIdentity.name || '?').charAt(0)) + '</span>'
           h += '</div>'
         }
@@ -3062,7 +3355,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
           : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
         if (msg.type === 'image') {
-          h += '<div style="' + bubbleStyle + '">'
+          h += '<div class="chat-bubble" style="' + bubbleStyle + '">'
           h += '<img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
           h += '</div>'
         } else if (msg.type === 'link') {
@@ -3097,13 +3390,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
             var bh = 4 + Math.abs(Math.sin(bi * 0.7 + 1.5)) * 14
             bars += '<rect x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
           }
-          h += '<div style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
+          h += '<div class="chat-bubble" style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
           h += '<svg width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
           h += '<span style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
           h += '<span class="cv-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(resolvedMessageText) + '</span>'
           h += '</div>'
         } else {
-          h += '<div style="' + bubbleStyle + '">'
+          h += '<div class="chat-bubble" style="' + bubbleStyle + '">'
           if (msg.quoteId && msg.quoteText) {
             h += '<div style="font-size:.6rem;opacity:.7;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid rgba(0,0,0,.1)">引用：' + esc(msg.quoteText.substring(0, 40)) + '</div>'
           }
@@ -3138,9 +3431,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     }
 
     // Bottom input bar
-    h += '<div class="rd-chat-composer' + (allChoices.length > 0 ? ' has-choices' : '') + '">'
+    h += '<div class="chat-input-bar chat-composer rd-chat-composer' + (allChoices.length > 0 ? ' has-choices' : '') + '">'
     h += '<input id="chatInput" class="rd-chat-choice-trigger" readonly aria-label="' + (allChoices.length > 0 ? '选择一条完整回复' : '暂无可用回复') + '" aria-haspopup="listbox" aria-expanded="false"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList"' : ' disabled') + ' placeholder="' + (allChoices.length > 0 ? '点击选择回复...' : '暂无可用选项') + '" value="">'
-    h += '<button type="button" id="chatSendBtn" class="rd-chat-choice-toggle" aria-label="打开回复选项"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList" aria-expanded="false"' : ' disabled') + '>▶</button>'
+    h += '<button type="button" id="chatSendBtn" class="chat-send-btn rd-chat-choice-toggle" aria-label="打开回复选项"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList" aria-expanded="false"' : ' disabled') + '>▶</button>'
     h += '</div>'
 
     h += '</div>'
@@ -3444,42 +3737,50 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
     return { items: parent.replies, set: function(items) { parent.replies = items } }
   }
 
-  function renderForumComment(comment, floor, depth, containerKey) {
+  function renderForumComment(comment, floor, depth, containerKey, parentComment) {
     var generated = readerThreadGeneratedItem(forumChoiceRuns, containerKey, comment.id)
-    var isReader = comment.contactId === 'self' || comment.senderId === 'self'
-    var commentIdentity = isReader
-      ? null
-      : resolveContactIdentity(pd, comment.contactId || comment.senderId, { surface: 'forum', aliasId:comment.aliasId, authoredName: comment.contactName, authoredAvatar: comment.contactAvatar, authoredIpLocation:comment.contactIpLocation })
-    var name = String(isReader ? readerThreadDisplayName(pd, custom) : (commentIdentity.name || '角色')).trim() || (isReader ? '我' : '角色')
-    var avatar = isReader ? (custom.readerAvatar || pd.skin?.readerAvatar || '') : (commentIdentity.avatar || '')
-    var content = String(comment.content != null ? comment.content : (comment.text != null ? comment.text : ''))
-    var h = '<article class="rd-forum-comment' + (isReader ? ' is-reader' : '') + (generated ? ' is-generated' : '') + (depth > 0 ? ' is-reply' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '" style="--rd-thread-depth:' + depth + '">'
-    h += '<span class="rd-forum-comment-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(comment.contactId || comment.senderId || 'self')) + '">'
-    if (avatar) h += '<img src="' + escapeHtmlAttribute(avatar) + '" alt="">'
-    else h += esc((name || '?').charAt(0))
-    h += '</span>'
-    h += '<div class="rd-forum-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
-    if (!generated) h += '<span class="rd-forum-floor">' + (depth > 0 ? '回复' : forumDisplayFloor(comment, floor) + '楼') + '</span>'
-    if (comment.time) h += '<time>' + esc(comment.time) + '</time>'
-    if (!isReader) h += forumIpLabel(commentIdentity, comment.contactIpLocation)
-    h += '</div>'
-    h += '<div class="rd-thread-comment-content">' + renderReaderMentionText(content, forumMentionNames) + '</div>'
-    if (comment.imageUrl) h += '<img class="rd-forum-comment-image" src="' + escapeHtmlAttribute(comment.imageUrl) + '" alt="" onerror="this.style.display=\'none\'">'
-    var commentLikeId = String(comment.id)
-    var commentLikeCount = Math.max(0, Number(comment.likes) || 0) + (forumLikedCommentIds.has(commentLikeId) ? 1 : 0)
-    h += '<div class="rd-forum-comment-actions"><button type="button" class="rd-forum-comment-like' + (forumLikedCommentIds.has(commentLikeId) ? ' is-liked' : '') + '" data-forum-comment-like="' + escapeHtmlAttribute(commentLikeId) + '" aria-pressed="' + (forumLikedCommentIds.has(commentLikeId) ? 'true' : 'false') + '">赞 ' + commentLikeCount + '</button></div>'
-    h += renderReaderThreadReselect(comment, 'forum', containerKey, forumChoiceRuns)
-    h += renderReaderThreadChoiceControls(comment, 'forum', containerKey, forumChoiceRuns)
-    if (Array.isArray(comment.replies) && comment.replies.length > 0) {
-      var childContainerKey = 'replies::' + String(comment.id)
-      h += '<div class="rd-forum-replies">'
-      comment.replies.forEach(function(reply, replyIndex) {
-        h += renderForumComment(reply, replyIndex + 1, depth + 1, childContainerKey)
-      })
-      h += '</div>'
-    }
-    h += '</article>'
-    return h
+    return renderPhoneForumComment(comment, {
+      floor:floor,
+      depth:depth,
+      containerKey:containerKey,
+      parentComment:parentComment,
+      generated:generated,
+    }, {
+      resolveIdentity:function(item) {
+        var isReader = item.contactId === 'self' || item.senderId === 'self'
+        if (isReader) {
+          return {
+            name:readerThreadDisplayName(pd, custom),
+            avatar:custom.readerAvatar || pd.skin?.readerAvatar || '',
+            isReader:true,
+          }
+        }
+        var identity = resolveContactIdentity(pd, item.contactId || item.senderId, {
+          surface:'forum',
+          aliasId:item.aliasId,
+          authoredName:item.contactName,
+          authoredAvatar:item.contactAvatar,
+          authoredIpLocation:item.contactIpLocation,
+        })
+        return {
+          name:identity.name || item.contactName || '角色',
+          avatar:identity.avatar || item.contactAvatar || '',
+          ipLocation:identity.ipLocation || item.contactIpLocation || '',
+        }
+      },
+      avatarColor:function(item) { return sanitizeCssColor(avatarColor(item.contactId || item.senderId || 'self')) },
+      renderText:function(value) { return renderReaderMentionText(value, forumMentionNames) },
+      renderIp:function(identity) { return identity.isReader ? '' : forumIpLabel(identity, identity.ipLocation) },
+      displayFloor:forumDisplayFloor,
+      formatTime:function(value) { return value },
+      showTimestamp:function(item) { return shouldShowPhoneTimestamp(pd, item.time, post.hideReplyTimes === true) },
+      isLiked:function(item) { return forumLikedCommentIds.has(String(item.id)) },
+      isGenerated:function(item, childContainerKey) { return readerThreadGeneratedItem(forumChoiceRuns, childContainerKey, item.id) },
+      renderChoices:function(item, context) {
+        return renderReaderThreadReselect(item, 'forum', context.containerKey, forumChoiceRuns) +
+          renderReaderThreadChoiceControls(item, 'forum', context.containerKey, forumChoiceRuns)
+      },
+    })
   }
 
   function focusForumThreadControl(selector, datasetName, value) {
@@ -3496,23 +3797,25 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
     var h = '<div class="rd-forum-detail" style="--rd-forum-avatar-radius:' + forumVisual.avatarRadius + '">'
     h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><span class="rd-back-spacer" aria-hidden="true"></span></header>'
     h += '<div class="rd-forum-detail-scroll">'
-    h += '<article class="rd-forum-post-body">'
-    h += '<header class="rd-forum-post-author"><span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(post.contactId)) + '">'
-    if (postIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(postIdentity.avatar) + '" alt="">'
-    else h += esc((postIdentity.name || '?').charAt(0))
-    h += '</span><span><strong>' + esc(postIdentity.name || '匿名') + '</strong>' + (post.time ? '<time>' + esc(post.time) + '</time>' : '') + forumIpLabel(postIdentity, post.contactIpLocation) + '</span></header>'
-    h += '<h3>' + esc(post.title || '') + '</h3><div class="rd-forum-post-content">' + renderReaderMentionText(post.content || '', forumMentionNames) + '</div>'
-    var postImages = Array.isArray(post.images) ? post.images.slice() : []
-    if (post.imageUrl) postImages.unshift(post.imageUrl)
-    if (postImages.length > 0) {
-      h += '<div class="rd-forum-post-images">'
-      postImages.forEach(function(image) {
-        var src = typeof image === 'string' ? image : (image && (image.url || image.src) || '')
-        if (src) h += '<img src="' + escapeHtmlAttribute(src) + '" alt="" onerror="this.style.display=\'none\'">'
-      })
-      h += '</div>'
-    }
-    h += '</article>'
+    h += renderPhoneForumPost(post, {
+      resolveIdentity:function() {
+        return {
+          name:postIdentity.name || post.contactName || '匿名',
+          avatar:postIdentity.avatar || post.contactAvatar || '',
+          ipLocation:postIdentity.ipLocation || post.contactIpLocation || '',
+        }
+      },
+      avatarColor:function(item) { return sanitizeCssColor(avatarColor(item.contactId)) },
+      renderText:function(value) { return renderReaderMentionText(value, forumMentionNames) },
+      renderIp:function(identity) { return forumIpLabel(identity, identity.ipLocation) },
+      showTimestamp:function(item) { return shouldShowPhoneTimestamp(pd, item.time) },
+      formatTime:function(value) { return value },
+      renderActions:function(item) {
+        return '<span class="forum-action">赞 ' + (item.likes || 0) + '</span>' +
+          '<span class="forum-action">收藏 ' + (item.bookmarks || 0) + '</span>' +
+          '<span class="forum-action">评论 ' + forumDisplayCommentCount(item) + '</span>'
+      },
+    })
     h += '<section class="rd-forum-thread" aria-label="帖子评论"><div class="rd-forum-thread-head"><h4>评论 <span>' + forumDisplayCommentCount(post) + '</span></h4><div class="rd-forum-sort" role="group" aria-label="评论排序"><button type="button" data-forum-sort="hot" aria-pressed="' + (forumSession.sort === 'hot' ? 'true' : 'false') + '">热门</button><button type="button" data-forum-sort="latest" aria-pressed="' + (forumSession.sort === 'latest' ? 'true' : 'false') + '">最新</button></div></div>'
     var comments = Array.isArray(post.comments) ? post.comments : []
     if (comments.length === 0) h += '<div class="rd-app-empty">暂无评论</div>'
@@ -3609,18 +3912,58 @@ function readerOwnDataRecord() {
   return record
 }
 
-function getPhoneCustom() {
-  var defaults = {
+function readerPhoneCustomDefaults() {
+  return {
     wallpaper: '#eee6e7', wallpaperType: 'color', wallpaperImage: null,
     frameColor: '#8f7b81', borderRadius: 18, fontFamily: "'Noto Sans SC', sans-serif",
     fontSize: 12, readerId: '', readerAvatar: null, topBgImage: null,
     showDynamicIsland: true, showHomeIndicator: true, showAppLabels: true,
     showIconShadow: true, iconBorderRadius: 6, iconColumns: 4, materialType: 'glass',
     materialOpacity: 65, timeColor: '#ffffff',
-    appBgs: {}, appSettings: {}, customFonts: [], customIcons: {}
+    customCss: '', appBgs: {}, appSettings: {}, customFonts: [], customIcons: {}
   }
-  var stored = readerOwnDataRecord(lsGet('phoneCustom'))
+}
+
+function boundedPhoneCustomNumber(value, fallback, min, max) {
+  var number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
+function safePhoneCustomFontFamily(value, fallback) {
+  if (typeof value !== 'string') return fallback
+  var family = value.trim()
+  return family && family.length <= 200 && !/[{};]/.test(family) ? family : fallback
+}
+
+function normalizePhoneCustom(candidate) {
+  var defaults = readerPhoneCustomDefaults()
+  var stored = readerOwnDataRecord(candidate)
   var custom = readerOwnDataRecord(defaults, stored)
+  custom.wallpaper = sanitizeCssColor(custom.wallpaper, { fallback: defaults.wallpaper })
+  custom.frameColor = sanitizeCssColor(custom.frameColor, { fallback: defaults.frameColor })
+  custom.timeColor = sanitizeCssColor(custom.timeColor, { fallback: defaults.timeColor })
+  custom.wallpaperType = custom.wallpaperType === 'image' ? 'image' : 'color'
+  custom.wallpaperImage = typeof custom.wallpaperImage === 'string' && isSafeImageUrl(custom.wallpaperImage)
+    ? custom.wallpaperImage.trim()
+    : null
+  custom.readerAvatar = typeof custom.readerAvatar === 'string' && isSafeImageUrl(custom.readerAvatar)
+    ? custom.readerAvatar.trim()
+    : null
+  custom.topBgImage = typeof custom.topBgImage === 'string' && isSafeImageUrl(custom.topBgImage)
+    ? custom.topBgImage.trim()
+    : null
+  custom.borderRadius = boundedPhoneCustomNumber(custom.borderRadius, defaults.borderRadius, 0, 40)
+  custom.fontSize = boundedPhoneCustomNumber(custom.fontSize, defaults.fontSize, 9, 20)
+  custom.iconBorderRadius = boundedPhoneCustomNumber(custom.iconBorderRadius, defaults.iconBorderRadius, 0, 27)
+  custom.materialOpacity = boundedPhoneCustomNumber(custom.materialOpacity, defaults.materialOpacity, 20, 100)
+  custom.fontFamily = safePhoneCustomFontFamily(custom.fontFamily, defaults.fontFamily)
+  custom.readerId = typeof custom.readerId === 'string' ? custom.readerId.slice(0, 80) : ''
+  ;['showDynamicIsland', 'showHomeIndicator', 'showAppLabels', 'showIconShadow'].forEach(function(key) {
+    custom[key] = typeof custom[key] === 'boolean' ? custom[key] : defaults[key]
+  })
+  custom.customCss = typeof custom.customCss === 'string'
+    ? custom.customCss.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
+    : ''
   custom.appBgs = readerOwnDataRecord(stored.appBgs)
   custom.appSettings = readerOwnDataRecord(stored.appSettings)
   custom.customIcons = readerOwnDataRecord(stored.customIcons)
@@ -3628,22 +3971,59 @@ function getPhoneCustom() {
   return custom
 }
 
+function getPhoneCustom() {
+  return normalizePhoneCustom(lsGet('phoneCustom'))
+}
+
 function savePhoneCustom(data) {
   var cur = getPhoneCustom()
   for (var k in data) {
     if (Object.prototype.hasOwnProperty.call(data, k)) readerSetOwnData(cur, k, data[k])
   }
+  cur = normalizePhoneCustom(cur)
   lsSet('phoneCustom', cur)
+  return cur
+}
+
+function applyPhoneCustomCss(candidate) {
+  var custom = normalizePhoneCustom(candidate)
+  return applyCompiledReaderStyle(custom.customCss, '.reader-phone-css-scope', 'reader-phone-user-css')
+}
+
+function readerAppCssType(type) {
+  var safeType = String(type || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')
+  return ['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping', 'contacts'].includes(safeType)
+    ? safeType
+    : ''
+}
+
+function applyReaderAppCustomCss(type, settings, options) {
+  var safeType = readerAppCssType(type)
+  if (!safeType) return { ok: true, css: '', ruleCount: 0 }
+  var appSettings = readerPlainRecord(settings)
+  var rawCss = typeof appSettings.customCss === 'string'
+    ? appSettings.customCss.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
+    : ''
+  var styleOptions = readerPlainRecord(options)
+  var preview = styleOptions.preview === true
+  var scope = preview ? '.reader-app-preview-scope' : '.rd-phone-app-' + safeType
+  var styleId = preview ? 'reader-app-preview-user-css' : 'reader-app-' + safeType + '-user-css'
+  return applyCompiledReaderStyle(rawCss, scope, styleId)
 }
 
 // ====== Phone Preview ======
-function renderPhonePreview(ct) {
+function renderPhonePreview(ct, options) {
+  ct = normalizePhoneCustom(ct)
+  var previewOptions = readerPlainRecord(options)
+  var scopeClass = previewOptions.scopeClass || 'reader-phone-css-scope'
+  if (previewOptions.applyGlobalCss !== false) applyPhoneCustomCss(ct)
   var h = '<div class="rd-phone-preview" style="display:flex;justify-content:center;align-items:flex-start">'
-  var frameBgStyle = 'width:360px;--phone-bg:' + esc(ct.wallpaper || '#eee6e7') + ';--phone-radius:' + (ct.borderRadius ?? 18) + 'px;--phone-font:\'' + (ct.fontFamily || 'Noto Sans SC').replace(/'/g,'') + '\', sans-serif;--phone-fontsize:' + (ct.fontSize || 12) + 'px;--phone-frame:' + esc(ct.frameColor || '#8f7b81')
+  var frameBgStyle = 'width:360px;--phone-bg:' + sanitizeCssColor(ct.wallpaper || '#eee6e7') + ';--phone-radius:' + (ct.borderRadius ?? 18) + 'px;--phone-font:' + ct.fontFamily + ';--phone-fontsize:' + (ct.fontSize || 12) + 'px;--phone-frame:' + sanitizeCssColor(ct.frameColor || '#8f7b81')
+  frameBgStyle += ';--phone-icon-radius:' + (ct.iconBorderRadius ?? 6) + 'px;--phone-material-opacity:' + (ct.materialOpacity ?? 65) + '%;--phone-time-color:' + sanitizeCssColor(ct.timeColor || '#ffffff')
   if (ct.wallpaperType === 'image' && ct.wallpaperImage) {
     frameBgStyle += ';background-image:url(' + esc(ct.wallpaperImage) + ');background-size:cover;background-position:center'
   }
-  h += '<div class="phone-frame' + ((ct.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && ct.wallpaperType !== 'image' ? ' phone-default-wallpaper' : '') + '" style="' + frameBgStyle + '">'
+  h += '<div class="phone-frame ' + escapeHtmlAttribute(scopeClass) + ((ct.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && ct.wallpaperType !== 'image' ? ' phone-default-wallpaper' : '') + '" style="' + escapeHtmlAttribute(frameBgStyle) + '">'
   if (ct.showDynamicIsland !== false) {
     h += '<div class="phone-island"><div class="phone-island-pill"></div></div>'
   }
@@ -3669,7 +4049,8 @@ function renderPhonePreview(ct) {
     { type: 'memo',     name: '备忘',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' },
     { type: 'gallery',  name: '相册',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>' },
     { type: 'browser',  name: '浏览',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>' },
-    { type: 'shopping', name: '购物',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>' }
+    { type: 'shopping', name: '购物',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>' },
+    { type: 'contacts', name: '联系人', color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>' }
   ]
   for (var i = 0; i < apps.length; i++) {
     var app = apps[i]
@@ -3677,9 +4058,9 @@ function renderPhonePreview(ct) {
     var appName = readerAppName(app)
     h += '<button type="button" class="phone-app-icon rd-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
     h += ' style="' + phoneGridItemStyle(i % 4, Math.floor(i / 4)) + 'border:none!important;box-shadow:none!important">'
-    h += '<span class="phone-icon-body icon-shadow" style="background:' + (app.color || '#f0f0f0') + ';">'
+    h += '<span class="phone-icon-body' + (ct.showIconShadow === false ? '' : ' icon-shadow') + '" style="background:' + READER_DEFAULT_APP_ICON_SURFACE + ';">'
     if (customIcon) {
-      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:36px;height:36px;object-fit:contain" onerror="this.style.display=\'none\'">'
+      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:36px;height:36px;object-fit:contain;border-radius:var(--phone-icon-radius,6px)" onerror="this.style.display=\'none\'">'
       h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:none;align-items:center;justify-content:center">' + app.icon + '</span>'
     } else {
       h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:flex;align-items:center;justify-content:center">' + app.icon + '</span>'
@@ -3725,7 +4106,7 @@ function applyCustomFonts() {
 }
 
 // ====== Beautification Panel ======
-function openReaderCustomizePanel() {
+function openReaderCustomizePanelLegacy() {
   var ct = getPhoneCustom()
   var colors = [
     { name:'极昼白', color:'#f5f0e8' }, { name:'水色', color:'#d0e8f5' }, { name:'樱粉', color:'#f5e8f0' },
@@ -3850,16 +4231,377 @@ ov.innerHTML = '<div style="background:#fff;max-width:420px;max-width:min(420px,
   }
 }
 
+function phoneAppearanceFontOptions(custom) {
+  var fonts = [
+    { label: '默认黑体', value: "'Noto Sans SC', sans-serif" },
+    { label: '系统黑体', value: "'PingFang SC', 'Microsoft YaHei', sans-serif" },
+    { label: '正文宋体', value: "'Noto Serif SC', serif" },
+    { label: '手写楷体', value: "'KaiTi', serif" },
+    { label: '英文衬线', value: "'Georgia', serif" }
+  ]
+  ;(custom.customFonts || []).forEach(function(font) {
+    fonts.push({ label: font.name, value: '"' + font.name + '"' })
+  })
+  return fonts.map(function(font) {
+    return '<option value="' + escapeHtmlAttribute(font.value) + '"' + (custom.fontFamily === font.value ? ' selected' : '') + '>' + esc(font.label) + '</option>'
+  }).join('')
+}
+
+function phoneAppearanceRange(label, id, min, max, step, value, unit) {
+  return '<label class="phone-appearance-range" for="' + id + '"><span>' + esc(label) + '<output id="' + id + 'Val">' + value + esc(unit || '') + '</output></span><input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + value + '"></label>'
+}
+
+function openReaderCustomizePanel(triggerElement) {
+  var ct = getPhoneCustom()
+  var wallpaperPresets = [
+    { name:'极昼白', color:'#f5f0e8' }, { name:'水色', color:'#d0e8f5' },
+    { name:'樱粉', color:'#f5e8f0' }, { name:'薄荷', color:'#e8f5f0' },
+    { name:'奶油', color:'#faf5ed' }, { name:'薰衣草', color:'#ede8f5' },
+    { name:'浅灰', color:'#e8e8e8' }, { name:'暗夜', color:'#1a1a2e' }
+  ]
+  var body = '<div class="phone-appearance-layout">'
+  body += '<aside class="phone-appearance-preview-pane"><div id="phoneAppearancePreview"></div><p class="phone-appearance-status" id="cuLiveStatus" role="status" aria-live="polite">实时预览 · 保存后保留</p></aside>'
+  body += '<div class="phone-appearance-controls">'
+
+  body += '<section class="phone-appearance-group"><div class="rs-group-heading"><span>壁纸与边框</span><small>颜色会即时映射到左侧手机</small></div>'
+  body += '<div class="phone-appearance-swatches" role="group" aria-label="壁纸预设">'
+  wallpaperPresets.forEach(function(preset) {
+    body += '<button type="button" class="phone-appearance-swatch' + (ct.wallpaper === preset.color && ct.wallpaperType !== 'image' ? ' active' : '') + '" data-cu-color="' + preset.color + '" aria-label="' + preset.name + '" aria-pressed="' + (ct.wallpaper === preset.color && ct.wallpaperType !== 'image' ? 'true' : 'false') + '"><span style="background:' + preset.color + '"></span></button>'
+  })
+  body += '</div><div class="rs-color-controls phone-appearance-colors">'
+  body += '<label class="rs-color-control">壁纸色<input type="color" class="rs-color-input" id="cuWallpaperColor" value="' + escapeHtmlAttribute(ct.wallpaper) + '"></label>'
+  body += '<label class="rs-color-control">边框色<input type="color" class="rs-color-input" id="cuFrameColor" value="' + escapeHtmlAttribute(ct.frameColor) + '"></label>'
+  body += '<label class="rs-color-control">系统标记<input type="color" class="rs-color-input" id="cuTimeColor" value="' + escapeHtmlAttribute(ct.timeColor) + '"></label></div>'
+  body += '<div class="phone-appearance-image-row"><input type="url" class="rd-input" id="cuWpUrl" value="' + escapeHtmlAttribute(ct.wallpaperType === 'image' && ct.wallpaperImage && !/^data:/i.test(ct.wallpaperImage) ? ct.wallpaperImage : '') + '" placeholder="背景图片地址"><button type="button" class="rs-action-btn" id="cuApplyBg">应用</button><button type="button" class="rs-action-btn" id="cuUploadBg">本地图片</button><button type="button" class="rs-action-btn subtle" id="cuClearBg">清除</button></div>'
+  body += '<p class="rs-field-error" id="cuBgError" role="alert" hidden></p></section>'
+
+  body += '<section class="phone-appearance-group"><div class="rs-group-heading"><span>尺寸与材质</span><small>边框圆角在宽屏手机框和预览中显示</small></div><div class="phone-appearance-range-grid">'
+  body += phoneAppearanceRange('机身圆角', 'cuRadius', 0, 40, 1, ct.borderRadius, 'px')
+  body += phoneAppearanceRange('界面字号', 'cuFontSize', 9, 20, 1, ct.fontSize, 'px')
+  body += phoneAppearanceRange('图标圆角', 'cuIconRadius', 0, 27, 1, ct.iconBorderRadius, 'px')
+  body += phoneAppearanceRange('材质透明度', 'cuMaterialOpacity', 20, 100, 1, ct.materialOpacity, '%')
+  body += '</div></section>'
+
+  body += '<section class="phone-appearance-group"><div class="rs-group-heading"><span>字体与系统组件</span><small>这些设置同时作用于桌面和已接入 App</small></div>'
+  body += '<label class="phone-appearance-select-label" for="cuFontFamily">手机字体<select class="rd-input" id="cuFontFamily">' + phoneAppearanceFontOptions(ct) + '</select></label>'
+  body += '<div class="phone-appearance-font-actions"><button type="button" class="rs-action-btn subtle" id="cuUploadFont">上传字体</button><div id="cuFontList"></div></div>'
+  body += '<div class="phone-appearance-toggles">'
+  body += '<label class="rd-checkbox"><input type="checkbox" id="cuIsland"' + (ct.showDynamicIsland ? ' checked' : '') + '> 灵动岛</label>'
+  body += '<label class="rd-checkbox"><input type="checkbox" id="cuLabels"' + (ct.showAppLabels ? ' checked' : '') + '> App 名称</label>'
+  body += '<label class="rd-checkbox"><input type="checkbox" id="cuHome"' + (ct.showHomeIndicator ? ' checked' : '') + '> Home 指示条</label>'
+  body += '<label class="rd-checkbox"><input type="checkbox" id="cuShadow"' + (ct.showIconShadow ? ' checked' : '') + '> 图标阴影</label>'
+  body += '</div></section>'
+
+  body += '<section class="phone-appearance-group rs-css-section"><div class="rs-group-heading"><span>高级 CSS</span><small>只作用于手机框内部，输入时即时校验</small></div>'
+  body += '<textarea id="cuCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="cuCssHint cuCssError" placeholder=".phone-profile { box-shadow: none; }">' + esc(ct.customCss || '') + '</textarea>'
+  body += '<div class="rs-css-meta"><p class="rs-field-hint" id="cuCssHint">支持普通选择器与属性；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="cuCssCount">' + (ct.customCss || '').length + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>'
+  body += '<p class="rs-field-error" id="cuCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="cuCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="cuClearCss">清空 CSS</button></div></section>'
+  body += '<div class="phone-appearance-reset"><button type="button" class="rs-reset-btn" id="cuAppearanceReset">恢复手机外观默认值</button></div>'
+  body += '</div></div>'
+
+  var ov = openCuModal('手机外观', body, function() {
+    var cssDraft = ov.querySelector('#cuCustomCss')
+    var validation = compileScopedReaderCss(cssDraft ? cssDraft.value : ct.customCss, '.reader-phone-css-scope')
+    if (!validation.ok) throw new Error(validation.error)
+    ct.customCss = cssDraft ? cssDraft.value : ct.customCss
+    ct = savePhoneCustom(ct)
+    applyCustomFonts()
+    applyPhoneCustomCss(ct)
+    renderCustomPage()
+    showReaderToast('手机外观已保存')
+  }, triggerElement)
+  var dialog = ov.querySelector('.cu-modal')
+  dialog.classList.add('phone-appearance-workbench')
+  var previewHost = ov.querySelector('#phoneAppearancePreview')
+  var saveButton = ov.querySelector('#cuModalSave')
+  var cancelButton = ov.querySelector('#cuModalCancel')
+  saveButton.id = 'cuSave'
+  cancelButton.id = 'cuCancel'
+
+  function renderFontList() {
+    var select = ov.querySelector('#cuFontFamily')
+    if (select) {
+      var selected = ct.fontFamily
+      select.innerHTML = phoneAppearanceFontOptions(ct)
+      select.value = selected
+    }
+    var list = ov.querySelector('#cuFontList')
+    if (!list) return
+    list.innerHTML = (ct.customFonts || []).map(function(font, index) {
+      return '<span class="phone-appearance-font-chip"><span>' + esc(font.name) + '</span><button type="button" data-cu-del-font="' + index + '" aria-label="删除字体 ' + escapeHtmlAttribute(font.name) + '">×</button></span>'
+    }).join('')
+  }
+
+  function setSaveEnabled(enabled) {
+    saveButton.disabled = !enabled
+    saveButton.setAttribute('aria-disabled', enabled ? 'false' : 'true')
+  }
+
+  function renderDraftPreview() {
+    var result = compileScopedReaderCss(ct.customCss || '', '.reader-phone-css-preview-scope')
+    var style = result.ok && result.css
+      ? '<style id="reader-phone-preview-user-css">' + result.css + '</style>'
+      : '<style id="reader-phone-preview-user-css"></style>'
+    previewHost.innerHTML = renderPhonePreview(ct, {
+      scopeClass: 'reader-phone-css-preview-scope',
+      applyGlobalCss: false
+    }) + style
+  }
+
+  function setLiveMessage(message, isError) {
+    var status = ov.querySelector('#cuLiveStatus')
+    if (status) {
+      status.textContent = message
+      status.classList.toggle('is-error', !!isError)
+    }
+  }
+
+  function setCssDraft(rawCss) {
+    var count = ov.querySelector('#cuCssCount')
+    var error = ov.querySelector('#cuCssError')
+    if (count) count.textContent = rawCss.length + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH
+    var previewResult = compileScopedReaderCss(rawCss, '.reader-phone-css-preview-scope')
+    var actualResult = compileScopedReaderCss(rawCss, '.reader-phone-css-scope')
+    var result = previewResult.ok ? actualResult : previewResult
+    if (!result.ok) {
+      if (error) {
+        error.textContent = result.error
+        error.hidden = false
+      }
+      setSaveEnabled(false)
+      setLiveMessage('CSS 暂未应用 · 请按提示修改', true)
+      return false
+    }
+    if (error) {
+      error.textContent = ''
+      error.hidden = true
+    }
+    ct.customCss = rawCss
+    setSaveEnabled(true)
+    renderDraftPreview()
+    setLiveMessage('实时预览 · 保存后保留', false)
+    return true
+  }
+
+  function syncPresetButtons() {
+    ov.querySelectorAll('[data-cu-color]').forEach(function(button) {
+      var active = ct.wallpaperType !== 'image' && button.dataset.cuColor === ct.wallpaper
+      button.classList.toggle('active', active)
+      button.setAttribute('aria-pressed', active ? 'true' : 'false')
+    })
+  }
+
+  function updateDraft(callback) {
+    if (callback) callback()
+    ct = normalizePhoneCustom(ct)
+    renderDraftPreview()
+    setLiveMessage('实时预览 · 保存后保留', false)
+  }
+
+  renderFontList()
+  renderDraftPreview()
+
+  ov.querySelectorAll('[data-cu-color]').forEach(function(button) {
+    button.onclick = function() {
+      updateDraft(function() {
+        ct.wallpaper = button.dataset.cuColor
+        ct.wallpaperType = 'color'
+        ct.wallpaperImage = null
+      })
+      var colorInput = ov.querySelector('#cuWallpaperColor')
+      if (colorInput) colorInput.value = ct.wallpaper
+      syncPresetButtons()
+    }
+  })
+  var wallpaperColor = ov.querySelector('#cuWallpaperColor')
+  if (wallpaperColor) wallpaperColor.oninput = function() {
+    updateDraft(function() {
+      ct.wallpaper = wallpaperColor.value
+      ct.wallpaperType = 'color'
+      ct.wallpaperImage = null
+    })
+    syncPresetButtons()
+  }
+  var frameColor = ov.querySelector('#cuFrameColor')
+  if (frameColor) frameColor.oninput = function() {
+    updateDraft(function() { ct.frameColor = frameColor.value })
+  }
+  var timeColor = ov.querySelector('#cuTimeColor')
+  if (timeColor) timeColor.oninput = function() {
+    updateDraft(function() { ct.timeColor = timeColor.value })
+  }
+
+  function bindAppearanceRange(id, key, unit) {
+    var input = ov.querySelector('#' + id)
+    var output = ov.querySelector('#' + id + 'Val')
+    if (!input) return
+    input.oninput = function() {
+      updateDraft(function() { ct[key] = Number(input.value) })
+      if (output) output.textContent = input.value + (unit || '')
+    }
+  }
+  bindAppearanceRange('cuRadius', 'borderRadius', 'px')
+  bindAppearanceRange('cuFontSize', 'fontSize', 'px')
+  bindAppearanceRange('cuIconRadius', 'iconBorderRadius', 'px')
+  bindAppearanceRange('cuMaterialOpacity', 'materialOpacity', '%')
+
+  var fontSelect = ov.querySelector('#cuFontFamily')
+  if (fontSelect) fontSelect.onchange = function() {
+    updateDraft(function() { ct.fontFamily = fontSelect.value })
+  }
+  ;[
+    ['cuIsland', 'showDynamicIsland'],
+    ['cuLabels', 'showAppLabels'],
+    ['cuHome', 'showHomeIndicator'],
+    ['cuShadow', 'showIconShadow']
+  ].forEach(function(binding) {
+    var input = ov.querySelector('#' + binding[0])
+    if (input) input.onchange = function() {
+      updateDraft(function() { ct[binding[1]] = input.checked })
+    }
+  })
+
+  function setBackgroundError(message) {
+    var error = ov.querySelector('#cuBgError')
+    if (!error) return
+    error.textContent = message || ''
+    error.hidden = !message
+  }
+  function applyWallpaperImage(value) {
+    var raw = String(value || '').trim()
+    if (raw && !isSafeImageUrl(raw)) {
+      setBackgroundError('请选择本地图片，或输入安全的 HTTPS / 相对图片地址。')
+      return false
+    }
+    setBackgroundError('')
+    updateDraft(function() {
+      ct.wallpaperImage = raw || null
+      ct.wallpaperType = raw ? 'image' : 'color'
+    })
+    syncPresetButtons()
+    return true
+  }
+  var backgroundUrl = ov.querySelector('#cuWpUrl')
+  ov.querySelector('#cuApplyBg').onclick = function() {
+    applyWallpaperImage(backgroundUrl && backgroundUrl.value)
+  }
+  ov.querySelector('#cuClearBg').onclick = function() {
+    if (backgroundUrl) backgroundUrl.value = ''
+    applyWallpaperImage('')
+  }
+  ov.querySelector('#cuUploadBg').onclick = function() {
+    var input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/png,image/jpeg,image/webp'
+    input.onchange = function() {
+      var file = input.files && input.files[0]
+      if (!file) return
+      readReaderCallBackgroundFile(file).then(function(dataUrl) {
+        if (backgroundUrl) backgroundUrl.value = ''
+        applyWallpaperImage(dataUrl)
+      }).catch(function(error) {
+        setBackgroundError((error && error.message) || '图片读取失败，请换一张再试。')
+      })
+    }
+    input.click()
+  }
+
+  var cssInput = ov.querySelector('#cuCustomCss')
+  if (cssInput) cssInput.oninput = function() { setCssDraft(cssInput.value) }
+  ov.querySelector('#cuCssExample').onclick = function() {
+    cssInput.value = ':scope { --phone-system-accent: #c58fa0; }\n.phone-profile { box-shadow: none; }\n.phone-icon-label { letter-spacing: .04em; }'
+    setCssDraft(cssInput.value)
+    cssInput.focus()
+  }
+  ov.querySelector('#cuClearCss').onclick = function() {
+    cssInput.value = ''
+    setCssDraft('')
+    cssInput.focus()
+  }
+
+  ov.querySelector('#cuUploadFont').onclick = function() {
+    var input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.ttf,.otf,.woff,.woff2'
+    input.onchange = function() {
+      var file = input.files && input.files[0]
+      if (!file) return
+      if (file.size > 2 * 1024 * 1024) {
+        showReaderToast('字体文件请控制在 2MB 以内')
+        return
+      }
+      var name = prompt('字体名称:', file.name.replace(/\.[^.]+$/, '') || '自定义字体')
+      if (!name) return
+      name = name.replace(/["'\\;{}<>]/g, '').trim().slice(0, 64)
+      if (!name) return
+      var reader = new FileReader()
+      reader.onload = function() {
+        ct.customFonts = (ct.customFonts || []).concat([{ name:name, data:reader.result }])
+        ct.fontFamily = '"' + name + '"'
+        renderFontList()
+        renderDraftPreview()
+      }
+      reader.readAsDataURL(file)
+    }
+    input.click()
+  }
+  var fontList = ov.querySelector('#cuFontList')
+  if (fontList) fontList.onclick = function(event) {
+    var button = event.target.closest('[data-cu-del-font]')
+    if (!button) return
+    var index = parseInt(button.dataset.cuDelFont, 10)
+    var removed = ct.customFonts && ct.customFonts[index]
+    ct.customFonts = (ct.customFonts || []).filter(function(_, fontIndex) { return fontIndex !== index })
+    if (removed && ct.fontFamily === '"' + removed.name + '"') ct.fontFamily = readerPhoneCustomDefaults().fontFamily
+    renderFontList()
+    renderDraftPreview()
+  }
+
+  ov.querySelector('#cuAppearanceReset').onclick = function() {
+    var defaults = readerPhoneCustomDefaults()
+    ct = normalizePhoneCustom(Object.assign({}, defaults, {
+      readerId: ct.readerId,
+      readerAvatar: ct.readerAvatar,
+      topBgImage: ct.topBgImage,
+      appBgs: ct.appBgs,
+      appSettings: ct.appSettings,
+      customFonts: ct.customFonts,
+      customIcons: ct.customIcons
+    }))
+    ov.querySelector('#cuWallpaperColor').value = ct.wallpaper
+    ov.querySelector('#cuFrameColor').value = ct.frameColor
+    ov.querySelector('#cuTimeColor').value = ct.timeColor
+    ov.querySelector('#cuWpUrl').value = ''
+    ;[
+      ['cuRadius', ct.borderRadius, 'px'],
+      ['cuFontSize', ct.fontSize, 'px'],
+      ['cuIconRadius', ct.iconBorderRadius, 'px'],
+      ['cuMaterialOpacity', ct.materialOpacity, '%']
+    ].forEach(function(item) {
+      ov.querySelector('#' + item[0]).value = item[1]
+      ov.querySelector('#' + item[0] + 'Val').textContent = item[1] + item[2]
+    })
+    ov.querySelector('#cuIsland').checked = ct.showDynamicIsland
+    ov.querySelector('#cuLabels').checked = ct.showAppLabels
+    ov.querySelector('#cuHome').checked = ct.showHomeIndicator
+    ov.querySelector('#cuShadow').checked = ct.showIconShadow
+    ov.querySelector('#cuCustomCss').value = ''
+    renderFontList()
+    syncPresetButtons()
+    setCssDraft('')
+  }
+}
+
 function openReaderProfilePanel() {
   var ct = getPhoneCustom()
   var body = '<div class="cu-section"><div class="cu-section-title">个人信息</div>'
-  body += '<label class="cu-label">昵称</label><input class="rd-input" id="rpName" value="' + esc(ct.readerId || '') + '" placeholder="默认使用作品昵称">'
+  body += '<label class="cu-label">昵称</label><input class="rd-input" id="rpName" value="' + escapeHtmlAttribute(ct.readerId || '') + '" placeholder="默认使用作品昵称">'
   body += '<label class="cu-label">头像</label>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + esc(ct.readerAvatar || '') + '" placeholder="输入头像URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadAv">上传</button></div>'
-  if (ct.readerAvatar) body += '<div class="rd-preview-img"><img src="' + esc(ct.readerAvatar) + '" alt="" style="border-radius:50%"><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearAv">清除</button></div>'
+  body += '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" placeholder="输入头像URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadAv">上传</button></div>'
+  body += '<div class="rd-preview-img" id="rpAvatarPreview"' + (ct.readerAvatar ? '' : ' hidden') + '><img id="rpAvatarPreviewImage" src="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" alt="" style="border-radius:50%"><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearAv">清除</button></div>'
   body += '<label class="cu-label">顶部背景图</label>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="rpTopBgUrl" value="' + esc(ct.topBgImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadTop">上传</button></div>'
-  if (ct.topBgImage) body += '<div class="rd-preview-img"><img src="' + esc(ct.topBgImage) + '" alt=""><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearTop">清除</button></div>'
+  body += '<div class="rd-input-row"><input class="rd-input" id="rpTopBgUrl" value="' + escapeHtmlAttribute(ct.topBgImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadTop">上传</button></div>'
+  body += '<div class="rd-preview-img" id="rpTopBgPreview"' + (ct.topBgImage ? '' : ' hidden') + '><img id="rpTopBgPreviewImage" src="' + escapeHtmlAttribute(ct.topBgImage || '') + '" alt=""><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearTop">清除</button></div>'
   body += '</div>'
 
   var ov = document.createElement('div')
@@ -3872,12 +4614,23 @@ function openReaderProfilePanel() {
 
   ov.querySelector('#rpSave').onclick = function() {
     ct.readerId = ov.querySelector('#rpName').value.trim() || ct.readerId
-    var avu = ov.querySelector('#rpAvatarUrl'); if (avu && avu.value.trim()) ct.readerAvatar = avu.value.trim()
-    var tbu = ov.querySelector('#rpTopBgUrl'); if (tbu && tbu.value.trim()) ct.topBgImage = tbu.value.trim()
+    var avu = ov.querySelector('#rpAvatarUrl')
+    var tbu = ov.querySelector('#rpTopBgUrl')
+    ct.readerAvatar = avu && avu.value.trim() ? avu.value.trim() : null
+    ct.topBgImage = tbu && tbu.value.trim() ? tbu.value.trim() : null
     savePhoneCustom(ct)
     ov.remove()
     renderCustomPage()
     showReaderToast('个人信息已保存')
+  }
+  function setProfileImageDraft(inputId, previewId, imageId, value) {
+    var nextValue = String(value || '')
+    var input = ov.querySelector(inputId)
+    var preview = ov.querySelector(previewId)
+    var image = ov.querySelector(imageId)
+    if (input) input.value = nextValue
+    if (image) image.src = nextValue
+    if (preview) preview.hidden = !nextValue
   }
   // Upload buttons
   function bindUpload(btnId, setter) {
@@ -3887,10 +4640,10 @@ function openReaderProfilePanel() {
       inp.onchange = function() { var file = inp.files[0]; if (!file) return; var r = new FileReader(); r.onload = function() { setter(r.result) }; r.readAsDataURL(file) }; inp.click()
     }
   }
-  bindUpload('#rpUploadAv', function(v) { ct.readerAvatar = v })
-  bindUpload('#rpUploadTop', function(v) { ct.topBgImage = v })
-  var clearAv = ov.querySelector('#rpClearAv'); if (clearAv) clearAv.onclick = function() { ct.readerAvatar = null }
-  var clearTop = ov.querySelector('#rpClearTop'); if (clearTop) clearTop.onclick = function() { ct.topBgImage = null }
+  bindUpload('#rpUploadAv', function(v) { setProfileImageDraft('#rpAvatarUrl', '#rpAvatarPreview', '#rpAvatarPreviewImage', v) })
+  bindUpload('#rpUploadTop', function(v) { setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', v) })
+  var clearAv = ov.querySelector('#rpClearAv'); if (clearAv) clearAv.onclick = function() { setProfileImageDraft('#rpAvatarUrl', '#rpAvatarPreview', '#rpAvatarPreviewImage', null) }
+  var clearTop = ov.querySelector('#rpClearTop'); if (clearTop) clearTop.onclick = function() { setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', null) }
 }
 
 // ---- App Settings defaults ----
@@ -4155,6 +4908,9 @@ function getAppSettings(type) {
   var stored = ct.appSettings[type]
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {}
   var settings = readerOwnDataRecord(defaults[type] || {}, stored)
+  settings.customCss = typeof settings.customCss === 'string'
+    ? settings.customCss.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
+    : ''
   if (type === 'messages') settings = readerOwnDataRecord(settings, normalizedReaderCallBackgroundSettings(settings))
   return settings
 }
@@ -4233,6 +4989,7 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
   var closeButton = ov.querySelector('#cuModalClose')
   var closed = false
   var returnAppType = returnFocus && returnFocus.getAttribute ? returnFocus.getAttribute('data-app') : ''
+  var returnOwnerControl = returnFocus && returnFocus.getAttribute ? returnFocus.getAttribute('data-reader-phone-control') : ''
 
   function restoreModalFocus() {
     if (returnFocus && returnFocus.isConnected && typeof returnFocus.focus === 'function') {
@@ -4244,6 +5001,13 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
       for (var appIndex = 0; appIndex < appButtons.length; appIndex++) {
         if (appButtons[appIndex].getAttribute('data-app') !== returnAppType) continue
         appButtons[appIndex].focus()
+        return
+      }
+    }
+    if (returnOwnerControl) {
+      var ownerButton = document.querySelector('#tabCustom [data-reader-phone-control="' + returnOwnerControl + '"]')
+      if (ownerButton) {
+        ownerButton.focus()
         return
       }
     }
@@ -4344,7 +5108,7 @@ function cuSliderRow(label, id, min, max, step, val, unit) {
 }
 
 // ====== Preview Panel ======
-function renderCuPreview(type, s) {
+function renderCuPreviewLegacy(type, s) {
   var h = '<div class="cu-preview" id="cuPreview">'
   h += '<div class="cu-preview-label">预览</div>'
 
@@ -4465,6 +5229,225 @@ function renderCuPreview(type, s) {
   return h
 }
 
+function readerAppPreviewFrameStyle(custom) {
+  var ct = normalizePhoneCustom(custom)
+  var style = '--phone-bg:' + sanitizeCssColor(ct.wallpaper) +
+    ';--phone-radius:' + ct.borderRadius + 'px' +
+    ';--phone-font:' + safePhoneCustomFontFamily(ct.fontFamily, readerPhoneCustomDefaults().fontFamily) +
+    ';--phone-fontsize:' + ct.fontSize + 'px' +
+    ';--phone-frame:' + sanitizeCssColor(ct.frameColor) +
+    ';--phone-icon-radius:' + ct.iconBorderRadius + 'px' +
+    ';--phone-material-opacity:' + ct.materialOpacity + '%' +
+    ';--phone-time-color:' + sanitizeCssColor(ct.timeColor)
+  if (ct.wallpaperType === 'image' && ct.wallpaperImage) {
+    style += ';background-image:url("' + escapeHtmlAttribute(ct.wallpaperImage) + '");background-size:cover;background-position:center'
+  }
+  return style
+}
+
+function readerAppPreviewData() {
+  var pd = readerPhoneData(_work && _work.phoneData)
+  var contacts = Array.isArray(pd.contacts) ? pd.contacts : []
+  var contact = contacts[0] || { id: 'preview-contact', name: '林晚', avatarUrl: '' }
+  return { phone: pd, contacts: contacts, contact: contact, hasWork: !!(_work && _work.phoneData) }
+}
+
+function readerAppPreviewAvatar(contact, className, fallbackColor) {
+  var name = String(contact && contact.name || '林晚')
+  var h = '<span class="' + className + '" style="--rd-avatar-bg:' + sanitizeCssColor(fallbackColor || avatarColor(contact && contact.id || 'preview-contact')) + '">'
+  if (contact && contact.avatarUrl) h += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
+  else h += esc(name.charAt(0) || '林')
+  return h + '</span>'
+}
+
+function readerAppPreviewBody(type, settings) {
+  var data = readerAppPreviewData()
+  var pd = data.phone
+  var contact = data.contact
+  var s = readerOwnDataRecord(settings)
+  var shape = s.avatarShape === 'square' ? '2px' : (s.avatarShape === 'rounded' ? '8px' : '50%')
+
+  if (type === 'messages') {
+    var chatBg = sanitizeCssColor(s.chatBg || '#f0f0f0')
+    var otherBg = sanitizeCssColor(s.otherBubbleBg || '#fff')
+    var otherText = sanitizeCssColor(s.otherBubbleText || '#333')
+    var selfBg = sanitizeCssColor(s.selfBubbleBg || '#555')
+    var selfText = sanitizeCssColor(s.selfBubbleText || '#fff')
+    var avatarSize = boundedReaderSetting(s.avatarSize, 36, 24, 56)
+    var bubbleSize = boundedReaderSetting(s.bubbleFontSize, 13, 10, 18)
+    var otherRadius = boundedReaderSetting(s.otherBubbleRadius, 8, 0, 20)
+    var selfRadius = boundedReaderSetting(s.selfBubbleRadius, 8, 0, 20)
+    var chat = Array.isArray(pd.chats) && pd.chats[0] ? pd.chats[0] : null
+    var rounds = chat && Array.isArray(chat.rounds) ? chat.rounds : []
+    var messages = rounds.flatMap(function(round) { return Array.isArray(round.messages) ? round.messages : [] })
+      .filter(function(message) { return message && message.type !== 'time' && message.type !== 'call' })
+    var otherMessage = messages.find(function(message) { return message.senderId !== 'self' && typeof message.text === 'string' })
+    var selfMessage = messages.find(function(message) { return message.senderId === 'self' && typeof message.text === 'string' })
+    var otherCopy = otherMessage ? readerPhoneText(otherMessage.text) : '我到天台了，你慢慢来。'
+    var selfCopy = selfMessage ? readerPhoneText(selfMessage.text) : '风是不是很大？'
+    var readerCustom = getPhoneCustom()
+    var readerName = readerThreadDisplayName(pd, readerCustom)
+    var authoredReaderAvatar = pd.skin && typeof pd.skin.readerAvatar === 'string' && isSafeImageUrl(pd.skin.readerAvatar)
+      ? pd.skin.readerAvatar.trim()
+      : ''
+    var readerAvatar = readerCustom.readerAvatar || authoredReaderAvatar
+    var h = '<div class="rd-app-preview-chat chat-author-shell chat-reader-shell" style="display:flex;flex-direction:column;height:100%;--chat-editor-screen:' + chatBg + '">'
+    h += '<div class="chat-round-header"><span class="chat-round-control" aria-hidden="true">‹</span><div class="chat-round-title"><strong>' + esc(contact.name || '林晚') + '</strong></div><span class="chat-round-control" aria-hidden="true"></span></div>'
+    h += '<div class="chat-msg-area">' + (shouldShowPhoneTimestamp(pd, '今天 20:41') ? '<div class="rd-chat-time" style="text-align:center;padding:6px 0;font-size:.62rem;color:' + sanitizeCssColor(s.timeColor || '#b0b8c4') + '">今天 20:41</div>' : '')
+    h += '<div class="chat-msg rd-chat-message other is-other"><span class="chat-avatar" style="width:' + avatarSize + 'px;height:' + avatarSize + 'px;flex-basis:' + avatarSize + 'px;border-radius:' + shape + ';background:' + sanitizeCssColor(avatarColor(contact.id)) + '">' + esc(String(contact.name || '林').charAt(0)) + '</span><div class="rd-chat-message-body"><div class="chat-bubble" style="font-size:' + bubbleSize + 'px;background:' + otherBg + ';color:' + otherText + ';border-radius:' + otherRadius + 'px ' + otherRadius + 'px ' + otherRadius + 'px 2px">' + esc(otherCopy) + '</div></div></div>'
+    h += '<div class="chat-msg rd-chat-message self is-self"><span class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerName) + '" style="width:' + avatarSize + 'px;height:' + avatarSize + 'px;flex-basis:' + avatarSize + 'px;border-radius:' + shape + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerName)) + '">'
+    if (readerAvatar) h += '<img src="' + escapeHtmlAttribute(readerAvatar) + '" alt="">'
+    else h += esc((readerName || '我').charAt(0))
+    h += '</span><div class="rd-chat-message-body"><div class="chat-bubble" style="font-size:' + bubbleSize + 'px;background:' + selfBg + ';color:' + selfText + ';border-radius:' + selfRadius + 'px ' + selfRadius + 'px 2px ' + selfRadius + 'px">' + esc(selfCopy) + '</div></div></div></div>'
+    h += '<div class="chat-input-bar chat-composer rd-chat-composer has-choices"><input id="chatInput" class="rd-chat-choice-trigger" readonly value="" placeholder="点击选择回复..."><button type="button" id="chatSendBtn" class="chat-send-btn rd-chat-choice-toggle" tabindex="-1">▶</button></div></div>'
+    return h
+  }
+
+  if (type === 'forum') {
+    var posts = orderedForumPosts(pd.forumPosts).slice(0, 3)
+    if (posts.length === 0) posts = [
+      { id: 'preview-post-1', title: '今晚观星天气', contactName: contact.name || '林晚', time: '20:14', pinned: true },
+      { id: 'preview-post-2', title: '夏季大三角', contactName: 'MAY', time: '昨天' }
+    ]
+    var forumVars = '--rd-forum-card:' + sanitizeCssColor(s.cardBg || '#fff') +
+      ';--rd-forum-radius:' + boundedReaderSetting(s.cardRadius, 0, 0, 16) + 'px' +
+      ';--rd-forum-avatar-radius:' + shape +
+      ';--rd-forum-title:' + sanitizeCssColor(s.titleColor || '#555') +
+      ';--rd-forum-title-size:' + boundedReaderSetting(s.titleSize, 13, 10, 18) + 'px' +
+      ';--rd-forum-time:' + sanitizeCssColor(s.timeColor || '#999')
+    return posts.map(function(post, index) {
+      var postContact = data.contacts.find(function(candidate) { return candidate.id === post.contactId }) || { id: post.contactId || 'preview-' + index, name: post.contactName || contact.name || '林晚' }
+      var row = '<button type="button" class="rd-post-card" tabindex="-1" style="' + forumVars + '">'
+      row += readerAppPreviewAvatar(postContact, 'rd-forum-avatar')
+      row += '<span class="rd-forum-copy"><span class="rd-forum-title-line"><span class="rd-forum-title">' + esc(post.title || '未命名帖子') + '</span><span class="rd-forum-post-states">'
+      if (post.pinned) row += '<span class="rd-forum-post-state rd-forum-post-pinned">置顶</span>'
+      row += '</span></span><span class="rd-forum-meta">' + esc(postContact.name || '角色') + (shouldShowPhoneTimestamp(pd, post.time) ? ' / ' + esc(post.time) : '') + '</span></span></button>'
+      return row
+    }).join('')
+  }
+
+  if (type === 'memo') {
+    var memos = (Array.isArray(pd.memos) ? pd.memos : []).slice(0, 2)
+    if (memos.length === 0) memos = [{ content: '记得带上相机和备用电池。' }, { content: '周三下午三点，小组会议。' }]
+    var memoStyle = ['plain', 'sticky', 'vintage'].includes(s.cardStyle) ? s.cardStyle : 'plain'
+    var memoBg = memoStyle === 'sticky' ? '#fef9e7' : (memoStyle === 'vintage' ? '#f5e6c8' : sanitizeCssColor(s.cardBg || '#fff'))
+    var memoBorder = memoStyle === 'sticky' ? '#e8d5a0' : (memoStyle === 'vintage' ? '#d4c4a0' : sanitizeCssColor(s.cardBorder || '#eee'))
+    var memoVars = '--rd-memo-bg:' + memoBg +
+      ';--rd-memo-border:' + memoBorder +
+      ';--rd-memo-radius:' + (memoStyle === 'vintage' ? 2 : boundedReaderSetting(s.cardRadius, 4, 0, 16)) + 'px' +
+      ';--rd-memo-text:' + sanitizeCssColor(s.textColor || '#333') +
+      ';--rd-memo-font-size:' + boundedReaderSetting(s.fontSize, 12, 10, 16) + 'px' +
+      ';--rd-memo-line-height:' + boundedReaderSetting(s.lineHeight, 1.6, 1.2, 2.4)
+    return '<div class="rd-memo-stack rd-memo-style-' + memoStyle + '" style="' + memoVars + '">' + memos.map(function(memo) {
+      var foot = shouldShowPhoneTimestamp(pd, memo.time) ? '<div class="memo-card-foot"><time class="memo-time-reader">' + esc(memo.time) + '</time></div>' : ''
+      return '<article class="memo-card rd-memo-note"><div class="memo-card-inner"><div class="memo-editor" contenteditable="false">' + (memo.content || '空白备忘') + '</div>' + foot + '</div></article>'
+    }).join('') + '</div>'
+  }
+
+  if (type === 'gallery') {
+    var photos = (Array.isArray(pd.photos) ? pd.photos : []).slice(0, 6)
+    if (photos.length === 0) photos = [
+      { caption: '天台' }, { caption: '晚霞' }, { caption: '街灯' },
+      { caption: '云层' }, { caption: '车窗' }, { caption: '海面' }
+    ]
+    var gallerySettings = normalizedReaderGallerySettings(s)
+    var galleryVars = '--rd-gallery-columns:' + gallerySettings.columns + ';--rd-gallery-radius:' + gallerySettings.imageRadius + 'px;--rd-gallery-gap:' + gallerySettings.gap + 'px'
+    return '<div class="gallery-bar"><span class="gallery-bar-title">最近项目 (' + photos.length + ')</span></div><div class="gallery-grid rd-gallery-grid" style="' + galleryVars + '">' + photos.map(function(photo) {
+      var cell = '<button type="button" class="gallery-photo-card rd-gallery-photo" tabindex="-1" aria-pressed="false">'
+      if (photo.imageUrl) cell += '<img src="' + escapeHtmlAttribute(photo.imageUrl) + '" alt="">'
+      else cell += '<span class="gallery-photo-placeholder rd-gallery-photo-placeholder"><span class="gallery-photo-text">' + esc(photo.caption || '照片') + '</span></span>'
+      return cell + '</button>'
+    }).join('') + '</div>'
+  }
+
+  if (type === 'browser') {
+    var history = (Array.isArray(pd.browserHistory) ? pd.browserHistory : []).slice(0, 3)
+    if (history.length === 0) history = [
+      { id: 'preview-history-1', contactId: contact.id, title: '今晚观星天气', url: 'weather.local/tonight', time: '20:14' },
+      { id: 'preview-history-2', contactId: contact.id, title: '夏季大三角', url: 'stars.local/guide', time: '昨天' }
+    ]
+    var browserVars = '--rd-browser-entry:' + sanitizeCssColor(s.entryBg || 'transparent') +
+      ';--rd-browser-radius:' + boundedReaderSetting(s.entryRadius, 0, 0, 12) + 'px' +
+      ';--rd-browser-title:' + sanitizeCssColor(s.titleColor || '#555') +
+      ';--rd-browser-title-size:' + boundedReaderSetting(s.titleSize, 12, 10, 16) + 'px' +
+      ';--rd-browser-url:' + sanitizeCssColor(s.urlColor || '#999') +
+      ';--rd-browser-time:' + sanitizeCssColor(s.timeColor || '#999')
+    var browser = '<div class="browser-search-bar rd-browser-address"><span class="browser-search-icon rd-browser-search" aria-hidden="true">⌕</span><span class="browser-search-placeholder">搜索或输入网址</span></div><div class="browser-demo-body rd-browser-history" style="' + browserVars + '">'
+    history.forEach(function(item) {
+      browser += '<div class="browser-row rd-browser-entry"><span class="browser-dot rd-browser-marker" style="--rd-marker:' + sanitizeCssColor(avatarColor(item.contactId || contact.id)) + '"></span><span class="browser-info rd-browser-copy"><span class="browser-title rd-browser-title">' + esc(item.title || '未命名记录') + '</span><span class="browser-url rd-browser-url">' + esc(item.url || '') + '</span></span>' + (shouldShowPhoneTimestamp(pd, item.time) ? '<span class="browser-right"><time class="browser-time rd-browser-time">' + esc(String(item.time).replace(/\s.*$/, '')) + '</time></span>' : '') + '</div>'
+    })
+    return browser + '</div>'
+  }
+
+  if (type === 'shopping') {
+    var items = (Array.isArray(pd.shoppingItems) ? pd.shoppingItems : []).slice(0, 3)
+    if (!data.hasWork && items.length === 0) items = [{ name: '热饮', price: 18, style: '热', shop: '天台便利店' }, { name: '星图册', price: 42, shop: '旧书店' }]
+    var previewCartItems = items.filter(function(item) { return item.status !== 'order' })
+    var previewOrderItems = items.filter(function(item) { return item.status === 'order' })
+    var previewActiveTab = previewCartItems.length > 0 || previewOrderItems.length === 0 ? 'cart' : 'order'
+    var shopVars = '--rd-shop-card:' + sanitizeCssColor(s.cardBg || 'transparent') +
+      ';--rd-shop-radius:' + boundedReaderSetting(s.cardRadius, 0, 0, 16) + 'px' +
+      ';--rd-shop-name:' + sanitizeCssColor(s.nameColor || '#333') +
+      ';--rd-shop-name-size:' + boundedReaderSetting(s.nameSize, 12, 10, 16) + 'px' +
+      ';--rd-shop-price:' + sanitizeCssColor(s.priceColor || '#a3bded')
+    var previewTabs = renderPhoneShoppingTabs({
+      activeTab: previewActiveTab,
+      idPrefix: 'rdShopPreview',
+      cartPanelId: 'rdShopPreviewCart',
+      orderPanelId: 'rdShopPreviewOrder',
+      tabListClass: 'rd-shop-tabs',
+      tabClass: 'rd-shop-tab'
+    })
+    var previewCart = renderPhoneShoppingList(previewCartItems, {
+      mode: 'cart',
+      surface: 'reader',
+      style: shopVars,
+      showTimestamp: function(value) { return shouldShowPhoneTimestamp(pd, value) }
+    })
+    var previewOrders = renderPhoneShoppingList(previewOrderItems, {
+      mode: 'order',
+      surface: 'reader',
+      style: shopVars,
+      showTimestamp: function(value) { return shouldShowPhoneTimestamp(pd, value) }
+    })
+    return previewTabs + '<div class="shop-body-inner">' +
+      '<div class="rd-shop-panel" id="rdShopPreviewCart"' + (previewActiveTab === 'cart' ? '' : ' hidden') + '>' + previewCart + '</div>' +
+      '<div class="rd-shop-panel" id="rdShopPreviewOrder"' + (previewActiveTab === 'order' ? '' : ' hidden') + '>' + previewOrders + '</div></div>'
+  }
+
+  var contacts = data.contacts.slice(0, 4)
+  if (contacts.length === 0) contacts = [contact, { id: 'preview-contact-2', name: 'MAY' }, { id: 'preview-contact-3', name: '陈泊' }]
+  var contactVars = '--rd-contact-radius:' + shape +
+    ';--rd-contact-name:' + sanitizeCssColor(s.nameColor || '#555') +
+    ';--rd-contact-name-size:' + boundedReaderSetting(s.nameSize, 13, 10, 18) + 'px' +
+    ';--rd-contact-name-weight:' + (['600', '700'].includes(String(s.nameWeight)) ? s.nameWeight : '500')
+  return '<div class="rd-contact-book" style="' + contactVars + '">' + contacts.map(function(item) {
+    return '<div class="rd-contact-entry">' + readerAppPreviewAvatar(item, 'rd-contact-avatar') + '<div class="rd-contact-name">' + esc(item.name || '未命名') + '</div></div>'
+  }).join('') + '</div>'
+}
+
+function renderCuPreview(type, settings) {
+  var safeType = readerAppCssType(type) || 'browser'
+  var labels = { messages:'消息', forum:'论坛', memo:'备忘录', gallery:'相册', browser:'浏览记录', shopping:'购物清单', contacts:'联系人' }
+  var previewData = readerAppPreviewData()
+  var scopedTypes = ['memo', 'gallery', 'browser', 'shopping']
+  var previewTitle = labels[safeType]
+  if (scopedTypes.includes(safeType) && previewData.contact) {
+    previewTitle = (previewData.contact.name || '未命名') + ' · ' + previewTitle
+  }
+  var custom = getPhoneCustom()
+  applyCompiledReaderStyle(custom.customCss, '.reader-phone-css-preview-scope', 'reader-app-phone-preview-user-css')
+  var frameStyle = readerAppPreviewFrameStyle(custom)
+  var body = readerAppPreviewBody(safeType, settings)
+  var h = '<div class="cu-preview" id="cuPreview">'
+  h += '<div class="cu-preview-label"><span>实时预览</span><small>使用当前作品与实际 App 组件</small></div>'
+  h += '<div class="rd-phone-preview"><div class="phone-frame reader-app-preview-frame reader-phone-css-preview-scope" style="' + escapeHtmlAttribute(frameStyle) + '">'
+  h += '<div class="cu-panel cu-panel-embedded rd-phone-app-panel rd-phone-app-' + safeType + ' reader-app-preview-scope">'
+  h += '<div class="cu-header rd-phone-app-header"><span class="rd-back-btn" aria-hidden="true">←</span><span class="cu-title">' + esc(previewTitle) + '</span><span class="rd-back-spacer" aria-hidden="true"></span></div>'
+  h += '<div class="cu-body rd-phone-app-body">' + body + '</div></div></div></div></div>'
+  return h
+}
+
 function assignFiniteSetting(settings, key, value) {
   var number = Number(value)
   if (Number.isFinite(number)) settings[key] = number
@@ -4506,7 +5489,31 @@ function readCurrentSettings(modal, type) {
   if (memoStyle) s.cardStyle = memoStyle.dataset.cuMemoStyle
   var galleryCol = modal.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')
   if (galleryCol) s.columns = parseInt(galleryCol.dataset.cuGalleryCols) || 3
+  var customCss = modal.querySelector('#cuAppCustomCss')
+  s.customCss = customCss && typeof customCss.value === 'string'
+    ? customCss.value.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
+    : (typeof s.customCss === 'string' ? s.customCss.slice(0, READER_CUSTOM_CSS_MAX_LENGTH) : '')
   return s
+}
+
+function syncReaderAppCssFeedback(modal, type, settings) {
+  var rawCss = typeof settings.customCss === 'string' ? settings.customCss : ''
+  var result = applyReaderAppCustomCss(type, settings, { preview: true })
+  var error = modal.querySelector('#cuAppCssError')
+  var count = modal.querySelector('#cuAppCssCount')
+  var status = modal.querySelector('#cuAppLiveStatus')
+  var save = modal.querySelector('#cuModalSave')
+  if (count) count.textContent = rawCss.length + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH
+  if (error) {
+    error.hidden = result.ok
+    error.textContent = result.ok ? '' : result.error
+  }
+  if (status) {
+    status.classList.toggle('is-error', !result.ok)
+    status.textContent = result.ok ? '实时预览 · 保存后应用到实际 App' : 'CSS 有误，已保留上一次可用预览'
+  }
+  if (save) save.disabled = !result.ok || save.dataset.readerAsyncPending === 'true'
+  return result
 }
 
 function updateCuPreview(modal, type) {
@@ -4514,6 +5521,7 @@ function updateCuPreview(modal, type) {
   if (!preview) return
   var s = readCurrentSettings(modal, type)
   preview.innerHTML = renderCuPreview(type, s).replace(/^<div class="cu-preview"[^>]*>/, '').replace(/<\/div>$/, '')
+  syncReaderAppCssFeedback(modal, type, s)
 }
 
 function readerCallBackgroundPreviewMarkup(background) {
@@ -4698,10 +5706,21 @@ function openReaderAppSettings(type, trigger) {
   )
   if (curIcon) body += '<div class="rd-preview-img"><img src="' + esc(curIcon) + '" style="max-height:40px;border-radius:4px"></div>'
 
+  body += cuCard('高级 CSS',
+    '<div class="rs-css-section">' +
+      '<textarea id="cuAppCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="cuAppCssHint cuAppCssError" placeholder=".rd-phone-app-body { padding: 14px; }">' + esc(s.customCss || '') + '</textarea>' +
+      '<div class="rs-css-meta"><p class="rs-field-hint" id="cuAppCssHint">只作用于当前 App；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="cuAppCssCount">' + String((s.customCss || '').length) + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>' +
+      '<p class="rs-css-error" id="cuAppCssError" role="alert" hidden></p>' +
+      '<div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="cuAppCssSample">填入示例</button><button type="button" class="rs-action-btn subtle" id="cuAppCssClear">清空 CSS</button></div>' +
+    '</div>'
+  )
+
   body += '<div style="text-align:center;padding-top:8px"><button class="cu-reset-btn" id="cuAppReset">恢复默认</button></div>'
 
-  // Prepend preview
-  body = renderCuPreview(type, s) + body
+  body = '<div class="app-appearance-layout"><aside class="app-appearance-preview-pane">' +
+    renderCuPreview(type, s) +
+    '<p class="phone-appearance-status" id="cuAppLiveStatus" role="status" aria-live="polite">实时预览 · 保存后应用到实际 App</p>' +
+    '</aside><div class="app-appearance-controls">' + body + '</div></div>'
 
   var ov = openCuModal(title, body, function(modal) {
     // Helper: read color from active button or from picker
@@ -4749,6 +5768,12 @@ function openReaderAppSettings(type, trigger) {
     if (memoStyleBtn) s.cardStyle = memoStyleBtn.dataset.cuMemoStyle
     var galleryColBtn = modal.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')
     if (galleryColBtn) s.columns = parseInt(galleryColBtn.dataset.cuGalleryCols) || 3
+    var customCssInput = modal.querySelector('#cuAppCustomCss')
+    s.customCss = customCssInput && typeof customCssInput.value === 'string'
+      ? customCssInput.value.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
+      : ''
+    var customCssValidation = compileScopedReaderCss(s.customCss, '.rd-phone-app-' + readerAppCssType(type))
+    if (!customCssValidation.ok) throw new Error(customCssValidation.error)
     // Read icon URL
     var iconUrlEl = modal.querySelector('#cuIconUrl'); if (iconUrlEl && iconUrlEl.value.trim()) ct.customIcons[type] = iconUrlEl.value.trim()
     if (type === 'messages') Object.assign(s, normalizedReaderCallBackgroundSettings(callBackgroundDraft))
@@ -4763,9 +5788,12 @@ function openReaderAppSettings(type, trigger) {
       }
       throw error
     }
+    applyReaderAppCustomCss(type, s)
     renderCustomPage()
     showReaderToast((labels[type] || 'App') + '美化已保存')
   }, trigger)
+  var appAppearanceDialog = ov.querySelector('.cu-modal')
+  if (appAppearanceDialog) appAppearanceDialog.classList.add('app-appearance-workbench')
 
   var callBackgroundSaveButton = ov.querySelector('#cuModalSave')
   var callBackgroundError = ov.querySelector('#cuCallBackgroundError')
@@ -4785,7 +5813,10 @@ function openReaderAppSettings(type, trigger) {
 
   function invalidateReaderCallBackgroundOperation() {
     callBackgroundOperationVersion += 1
-    if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = false
+    if (callBackgroundSaveButton) {
+      delete callBackgroundSaveButton.dataset.readerAsyncPending
+      syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
+    }
   }
 
   ov.querySelectorAll('.cu-call-background-preset').forEach(function(button) {
@@ -4810,7 +5841,10 @@ function openReaderAppSettings(type, trigger) {
 
   if (pendingPersistedCallBackground) {
     var persistedOperationVersion = ++callBackgroundOperationVersion
-    if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = true
+    if (callBackgroundSaveButton) {
+      callBackgroundSaveButton.dataset.readerAsyncPending = 'true'
+      callBackgroundSaveButton.disabled = true
+    }
     clearReaderCallBackgroundError()
     verifyReaderCallBackgroundDataUrl(pendingPersistedCallBackground.callBackgroundImage).then(function(dataUrl) {
       if (!ov.isConnected || persistedOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== pendingPersistedFallbackDraft) return
@@ -4825,7 +5859,8 @@ function openReaderAppSettings(type, trigger) {
       showReaderCallBackgroundError('之前保存的通话背景无法使用，已改用安全预设。')
     }).finally(function() {
       if (ov.isConnected && persistedOperationVersion === callBackgroundOperationVersion && callBackgroundSaveButton) {
-        callBackgroundSaveButton.disabled = false
+        delete callBackgroundSaveButton.dataset.readerAsyncPending
+        syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
       }
     })
   }
@@ -4841,7 +5876,10 @@ function openReaderAppSettings(type, trigger) {
       var draftBeforeUpload = callBackgroundDraft
       var uploadOperationVersion = ++callBackgroundOperationVersion
       clearReaderCallBackgroundError()
-      if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = true
+      if (callBackgroundSaveButton) {
+        callBackgroundSaveButton.dataset.readerAsyncPending = 'true'
+        callBackgroundSaveButton.disabled = true
+      }
       readReaderCallBackgroundFile(file).then(function(dataUrl) {
         if (!ov.isConnected || uploadOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== draftBeforeUpload) return
         callBackgroundDraft = {
@@ -4855,7 +5893,10 @@ function openReaderAppSettings(type, trigger) {
         showReaderCallBackgroundError(error && error.message ? error.message : '图片无法使用')
       }).finally(function() {
         if (ov.isConnected && uploadOperationVersion === callBackgroundOperationVersion) {
-          if (callBackgroundSaveButton) callBackgroundSaveButton.disabled = false
+          if (callBackgroundSaveButton) {
+            delete callBackgroundSaveButton.dataset.readerAsyncPending
+            syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
+          }
           callBackgroundFile.value = ''
         }
       })
@@ -4908,6 +5949,22 @@ function openReaderAppSettings(type, trigger) {
   ov.querySelectorAll('.cu-style-btn').forEach(function(b) {
     b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
   })
+  var appCssInput = ov.querySelector('#cuAppCustomCss')
+  if (appCssInput) {
+    appCssInput.addEventListener('input', function() { updateCuPreview(ov, type) })
+  }
+  var appCssSample = ov.querySelector('#cuAppCssSample')
+  if (appCssSample && appCssInput) appCssSample.onclick = function() {
+    appCssInput.value = ':scope { --phone-system-accent: #9f6678; }\n.rd-phone-app-body { padding: 14px; }'
+    updateCuPreview(ov, type)
+    appCssInput.focus()
+  }
+  var appCssClear = ov.querySelector('#cuAppCssClear')
+  if (appCssClear && appCssInput) appCssClear.onclick = function() {
+    appCssInput.value = ''
+    updateCuPreview(ov, type)
+    appCssInput.focus()
+  }
   // Bind color buttons
   ov.querySelectorAll('.cu-color-btn').forEach(function(b) {
     b.onclick = function() {
@@ -4939,6 +5996,7 @@ function openReaderAppSettings(type, trigger) {
       b.classList.add('active')
     }
   })
+  syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
   // Reset
   var resetBtn = ov.querySelector('#cuAppReset')
   if (resetBtn) resetBtn.onclick = function() {
@@ -4950,6 +6008,7 @@ function openReaderAppSettings(type, trigger) {
       resetBtn.focus()
       return
     }
+    applyReaderAppCustomCss(type, getAppSettings(type))
     renderCustomPage()
     ov.closeReaderModal()
     showReaderToast((labels[type] || 'App') + '已恢复默认')
@@ -5000,7 +6059,7 @@ document.addEventListener('click', function(e) {
   if (ownerControl && ownerControl.closest('#tabCustom')) {
     e.preventDefault()
     if (ownerControl.dataset.readerPhoneControl === 'reading') openReaderSettingsPanel(ownerControl)
-    if (ownerControl.dataset.readerPhoneControl === 'appearance') openReaderCustomizePanel()
+    if (ownerControl.dataset.readerPhoneControl === 'appearance') openReaderCustomizePanel(ownerControl)
     if (ownerControl.dataset.readerPhoneControl === 'profile') openReaderProfilePanel()
     return
   }

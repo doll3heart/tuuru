@@ -236,6 +236,68 @@ test("reader App settings primary modal actions expose 44px targets", () => {
   assert.match(cancelRule, /min-height:\s*44px;/)
 })
 
+test("reader App appearance previews the real App shell and scopes live CSS", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-real-preview=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("browser")
+  const dialog = document.querySelector(".cu-modal")
+  const preview = document.getElementById("cuPreview")
+  const cssInput = document.getElementById("cuAppCustomCss")
+  const saveButton = document.getElementById("cuModalSave")
+
+  assert.equal(dialog.classList.contains("app-appearance-workbench"), true)
+  assert.ok(preview.querySelector(".phone-frame.reader-app-preview-frame"))
+  assert.ok(preview.querySelector(".rd-phone-app-panel.rd-phone-app-browser.reader-app-preview-scope"))
+  assert.ok(preview.querySelector(".rd-browser-history"))
+  assert.ok(preview.querySelector(".rd-browser-address"))
+  assert.ok(preview.querySelector(".rd-browser-entry"))
+  assert.equal(preview.querySelector(".cu-preview-browser"), null)
+  assert.ok(cssInput)
+
+  cssInput.value = ".rd-browser-title { letter-spacing: .08em; }"
+  cssInput.dispatchEvent(new Event("input", { bubbles: true }))
+  const previewStyle = document.getElementById("reader-app-preview-user-css")
+  assert.match(previewStyle.textContent, /\.reader-app-preview-scope\s+\.rd-browser-title/)
+  assert.equal(saveButton.disabled, false)
+
+  cssInput.value = ".rd-browser-title { position: fixed; }"
+  cssInput.dispatchEvent(new Event("input", { bubbles: true }))
+  assert.equal(saveButton.disabled, true)
+
+  cssInput.value = ".rd-browser-title { letter-spacing: .08em; }"
+  cssInput.dispatchEvent(new Event("input", { bubbles: true }))
+  saveButton.click()
+
+  const stored = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(stored.appSettings.browser.customCss, ".rd-browser-title { letter-spacing: .08em; }")
+  const runtimeStyle = document.getElementById("reader-app-browser-user-css")
+  assert.match(runtimeStyle.textContent, /\.rd-phone-app-browser\s+\.rd-browser-title/)
+})
+
+test("every reader App appearance preview uses its runtime component vocabulary", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-preview-vocabulary=${Date.now()}-${Math.random()}`)
+
+  const expectedComponents = {
+    messages: ".rd-chat-message",
+    forum: ".rd-post-card",
+    memo: ".rd-memo-note",
+    gallery: ".rd-gallery-photo",
+    browser: ".rd-browser-entry",
+    shopping: ".shop-card-block",
+    contacts: ".rd-contact-entry",
+  }
+
+  for (const [type, selector] of Object.entries(expectedComponents)) {
+    openNamedAppSettings(type)
+    const preview = document.getElementById("cuPreview")
+    assert.ok(preview.querySelector(`.reader-app-preview-scope.rd-phone-app-${type}`), `${type} uses the real App shell`)
+    assert.ok(preview.querySelector(selector), `${type} uses ${selector}`)
+    document.getElementById("cuModalCancel").click()
+  }
+})
+
 test("reader App settings stay retryable when local persistence fails", async t => {
   const alerts = []
   installDom(t)

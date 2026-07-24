@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises"
 
 const authorCss = await readFile(new URL("../css/styles.css", import.meta.url), "utf8")
 const readerCss = await readFile(new URL("../reader/reader.css", import.meta.url), "utf8")
+const sharedForumCss = await readFile(new URL("../css/phone-forum.css", import.meta.url), "utf8")
 
 function installDom() {
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
@@ -273,7 +274,7 @@ test("each forum follow-up can use a different authored role", async () => {
   const { draft, overlay } = fixture
   try {
     overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
-    overlay.querySelector('[data-forum-choice-edit="forum-comment-a"]').click()
+    overlay.querySelector('.chat-choice-btn[data-forum-comment-id="forum-comment-a"]').click()
     const editor = document.querySelector("#threadChoiceGroups")
     editor.querySelector('[data-thread-followup-add="0"]').click()
     const rows = document.querySelectorAll('#threadChoiceGroups .thread-choice-followup-row')
@@ -327,8 +328,7 @@ test("author can edit choices attached to a nested forum reply", async () => {
     const choice = overlay.querySelector('.chat-choice-btn[data-forum-comment-id="forum-reply-a"]')
     assert.ok(choice)
     assert.ok(overlay.querySelector('.forum-reply-item[data-forum-comment-id="forum-reply-a"] .forum-reply-avatar'))
-    assert.ok(overlay.querySelector('.forum-reply-item[data-forum-comment-id="forum-reply-a"] [data-forum-reply-delete="forum-reply-a"]'))
-    assert.match(authorCss, /\.forum-delete-btn\.is-reply\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/s)
+    assert.ok(overlay.querySelector('.forum-reply-item[data-forum-comment-id="forum-reply-a"] [data-forum-comment-action="forum-reply-a"]'))
     choice.click()
 
     const editor = document.querySelector("#threadChoiceGroups")
@@ -403,8 +403,9 @@ test("forum post detail exposes a complete editor and preserves paragraph breaks
     assert.equal(saved.time, "2026-07-22 23:10")
     assert.equal(saved.imageUrl, "https://example.com/post.png")
     assert.match(overlay.querySelector(".forum-post-content").textContent, /第一段\n\n第二段/)
-    assert.match(authorCss, /\.forum-post-content\s*\{[^}]*white-space:\s*pre-wrap/s)
-    assert.match(readerCss, /\.rd-forum-post-content\s*\{[^}]*white-space:\s*pre-wrap/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-post-content\s*\{[^}]*white-space:\s*pre-wrap/s)
+    assert.doesNotMatch(authorCss, /^\.forum-post-content\s*\{/m)
+    assert.doesNotMatch(readerCss, /\.rd-forum-post-content\s*\{/)
   } finally {
     closeFixture(fixture)
   }
@@ -421,7 +422,8 @@ test("forum authors can set a displayed comment count and custom comment floor",
     assert.equal(draft.snapshot().phoneData.forumPosts[0].displayCommentCount, 1288)
     assert.match(overlay.querySelector('.forum-comments-title').textContent, /1288/)
 
-    overlay.querySelector('[data-forum-comment-edit="forum-comment-a"]').click()
+    overlay.querySelector('[data-forum-comment-action="forum-comment-a"]').click()
+    document.querySelector('[data-forum-comment-menu-action="edit"]').click()
     document.querySelector('#ecFloor').value = '520'
     document.querySelector('#ecSave').click()
     assert.equal(draft.snapshot().phoneData.forumPosts[0].comments[0].displayFloor, 520)
@@ -495,6 +497,58 @@ test("new forum comments omit time by default and reveal it only on request", as
   }
 })
 
+test("forum comment timestamps can be edited directly or hidden", async () => {
+  const fixture = await openApp("forum-comment-time-editor", "forum")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    assert.ok(overlay.querySelector('[data-forum-comment-time="forum-comment-a"]'))
+    const nestedTime = overlay.querySelector('[data-forum-comment-time="forum-reply-a"]')
+    assert.ok(nestedTime)
+
+    nestedTime.click()
+    assert.equal(document.querySelector("#forumCommentTimeInput").value, "later")
+    document.querySelector("#forumCommentTimeInput").value = "2026/6/27"
+    document.querySelector("#forumCommentTimeSave").click()
+    assert.equal(draft.snapshot().phoneData.forumPosts[0].comments[0].replies[0].time, "2026/6/27")
+
+    overlay.querySelector('[data-forum-comment-time="forum-reply-a"]').click()
+    document.querySelector("#forumCommentTimeHide").click()
+    assert.equal(draft.snapshot().phoneData.forumPosts[0].comments[0].replies[0].time, "")
+    assert.equal(overlay.querySelector('[data-forum-comment-time="forum-reply-a"]'), null)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("a post can hide every reply timestamp without deleting saved times", async () => {
+  const fixture = await openApp("forum-post-reply-time-toggle", "forum")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    const toggle = overlay.querySelector('[data-post-reply-time-toggle="post-a"]')
+    assert.ok(toggle)
+    assert.equal(toggle.getAttribute("aria-pressed"), "false")
+    assert.equal(overlay.querySelectorAll("[data-forum-comment-time]").length, 3)
+
+    toggle.click()
+    let savedPost = draft.snapshot().phoneData.forumPosts[0]
+    assert.equal(savedPost.hideReplyTimes, true)
+    assert.equal(savedPost.comments[0].time, "刚刚")
+    assert.equal(savedPost.comments[0].replies[0].time, "later")
+    assert.equal(savedPost.comments[0].replies[0].replies[0].time, "latest")
+    assert.equal(overlay.querySelectorAll("[data-forum-comment-time]").length, 0)
+    assert.equal(overlay.querySelector('[data-post-reply-time-toggle="post-a"]').getAttribute("aria-pressed"), "true")
+
+    overlay.querySelector('[data-post-reply-time-toggle="post-a"]').click()
+    savedPost = draft.snapshot().phoneData.forumPosts[0]
+    assert.equal(savedPost.hideReplyTimes, false)
+    assert.equal(overlay.querySelectorAll("[data-forum-comment-time]").length, 3)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("deep forum replies stay aligned and delete by stable id", async () => {
   const fixture = await openApp("forum-deep-reply-delete", "forum")
   const { draft, overlay } = fixture
@@ -503,27 +557,150 @@ test("deep forum replies stay aligned and delete by stable id", async () => {
     const deep = overlay.querySelector('.forum-reply-item[data-forum-comment-id="forum-reply-child"]')
     assert.ok(deep)
     assert.equal(deep.getAttribute('style'), null)
-    deep.querySelector('[data-forum-reply-delete="forum-reply-child"]').click()
+    deep.querySelector('[data-forum-comment-action="forum-reply-child"]').click()
+    document.querySelector('[data-forum-comment-menu-action="delete"]').click()
     const root = draft.snapshot().phoneData.forumPosts[0].comments[0]
     assert.equal(root.replies.length, 1)
     assert.equal(root.replies[0].id, "forum-reply-a")
     assert.equal(root.replies[0].replies.length, 0)
-    assert.match(authorCss, /\.forum-reply-controls\s*\{[^}]*display:\s*flex/s)
-    assert.doesNotMatch(authorCss, /\.forum-replies\s*\{[^}]*margin:\s*6px\s+0\s+0\s+36px/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-comment-footer\s*\{[^}]*display:\s*flex/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-reply-copy > \.forum-replies\s*\{[^}]*margin-left:\s*-32px/s)
   } finally {
     closeFixture(fixture)
   }
 })
 
-test("forum comment drag handles support keyboard floor reordering", async () => {
+test("an NPC can reply to a nested forum reply and keeps the reply target", async () => {
+  const fixture = await openApp("forum-nested-reply-create", "forum")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    const nested = overlay.querySelector('.forum-reply-item[data-forum-comment-id="forum-reply-a"]')
+    assert.ok(nested, "nested replies need their own reply surface")
+    nested.dispatchEvent(new window.MouseEvent("click", { bubbles:true }))
+
+    const identity = document.querySelector('[name="forumId"][data-identity-contact="contact-2"][data-identity-alias=""]')
+    assert.ok(identity)
+    identity.click()
+    document.querySelector("#idOk").click()
+    document.querySelector("#fcContent").value = "我是在回复林澈"
+    document.querySelector("#fcSave").click()
+
+    const post = draft.snapshot().phoneData.forumPosts.find(item => item.id === "post-a")
+    const target = post.comments[0].replies[0]
+    assert.equal(post.comments.length, 2, "replying must not create another top-level comment")
+    assert.equal(target.replies.length, 2)
+    assert.deepEqual(target.replies.at(-1), {
+      ...target.replies.at(-1),
+      contactId: "contact-2",
+      content: "我是在回复林澈",
+      replyToCommentId: "forum-reply-a",
+      replyToContactId: "contact-1",
+      replyToAliasId: "",
+      replyToName: "林澈",
+    })
+
+    const savedReply = overlay.querySelector(`[data-forum-comment-id="${target.replies.at(-1).id}"]`)
+    assert.match(savedReply?.querySelector(".forum-reply-meta")?.textContent || "", /白榆\s*回复\s*林澈/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("forum comments use a compact social layout with heart and action controls", async () => {
+  const fixture = await openApp("forum-compact-social-layout", "forum")
+  const { overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    const parent = overlay.querySelector('.forum-comment[data-forum-comment-id="forum-comment-a"]')
+    const nested = parent.querySelector('.forum-reply-item[data-forum-comment-id="forum-reply-a"]')
+    assert.ok(parent.querySelector(".forum-comment-row"))
+    assert.ok(parent.querySelector('[data-forum-comment-likes="forum-comment-a"] .forum-like-heart'))
+    assert.ok(parent.querySelector('[data-forum-comment-action="forum-comment-a"]'))
+    assert.ok(nested.querySelector('[data-forum-comment-likes="forum-reply-a"] .forum-like-heart'))
+    assert.ok(nested.querySelector('[data-forum-comment-action="forum-reply-a"]'))
+    assert.equal(parent.querySelector(".forum-comment-actions, .forum-reply-controls, [data-forum-comment-drag]"), null)
+    assert.equal(parent.querySelector('[data-forum-reply-to]'), null)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-comment-row,[\s\S]*?display:\s*flex/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-comment-action-button\s*\{[^}]*width:\s*32px/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-comment-by,[\s\S]*?align-items:\s*center/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-reply-meta\s*\{[^}]*line-height:\s*1\.4/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-comment\s*\{[^}]*border-bottom:\s*1px solid/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-replies\s*\{[^}]*border:\s*0/s)
+    assert.match(sharedForumCss, /\.phone-frame \.forum-comment-time-button\s*\{[^}]*min-height:\s*32px/s)
+    assert.doesNotMatch(readerCss, /\.rd-forum-comment\s*\{[^}]*border:/s)
+
+    parent.querySelector('[data-forum-comment-action="forum-comment-a"]').click()
+    assert.ok(document.querySelector('.forum-comment-action-menu [data-forum-comment-menu-action="edit"]'))
+    assert.ok(document.querySelector('.forum-comment-action-menu [data-forum-comment-menu-action="delete"]'))
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("forum comment surfaces support keyboard sibling reordering", async () => {
   const fixture = await openApp("forum-comment-keyboard-reorder", "forum")
   const { draft, overlay } = fixture
   try {
     overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
-    const handle = overlay.querySelector('[data-forum-comment-drag="forum-comment-a"]')
-    assert.ok(handle)
-    handle.dispatchEvent(new window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true }))
+    const comment = overlay.querySelector('[data-forum-comment-id="forum-comment-a"]')
+    assert.ok(comment)
+    comment.dispatchEvent(new window.KeyboardEvent('keydown', { key:'ArrowDown', altKey:true, bubbles:true }))
     assert.deepEqual(draft.snapshot().phoneData.forumPosts[0].comments.map(comment => comment.id), ["forum-comment-b", "forum-comment-a"])
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("selecting the reader as reply author unlocks choices without adding a fixed reply", async () => {
+  const fixture = await openApp("forum-reader-reply-branches", "forum")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    const target = overlay.querySelector('[data-forum-comment-id="forum-comment-b"]')
+    target.dispatchEvent(new window.MouseEvent("click", { bubbles:true }))
+
+    const readerIdentity = document.querySelector('[name="forumId"][data-identity-reader="self"]')
+    assert.ok(readerIdentity)
+    readerIdentity.click()
+    document.querySelector("#idOk").click()
+
+    const replyModal = document.querySelector("#fcSave").closest(".modal-overlay")
+    assert.equal(replyModal.querySelector("#fcContent"), null)
+    replyModal.querySelector("#fcReaderChoices").click()
+    const choiceEditor = document.querySelector("#threadChoiceGroups")
+    choiceEditor.querySelector(".thread-choice-text").value = "我先想一想。"
+    choiceEditor.querySelector(".thread-choice-reply").value = "我先想一想。"
+    document.querySelector('[data-thread-followup-add="0"]').click()
+    choiceEditor.querySelector(".thread-choice-followups").value = "好，我等你。"
+    document.querySelector("#threadChoiceSave").click()
+    replyModal.querySelector("#fcSave").click()
+
+    const saved = draft.snapshot().phoneData.forumPosts[0].comments[1]
+    assert.equal(saved.replies.length, 0)
+    assert.equal(saved.choices[0].text, "我先想一想。")
+    assert.equal(saved.choices[0].followUpMessages[0].text, "好，我等你。")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("a held forum comment suppresses its reply click and enters drag mode", async () => {
+  const fixture = await openApp("forum-comment-long-press", "forum")
+  const { overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    const comment = overlay.querySelector('[data-forum-comment-id="forum-comment-b"]')
+    const down = new window.MouseEvent("pointerdown", { bubbles:true, button:0, clientX:20, clientY:20 })
+    Object.defineProperties(down, { pointerId:{ value:1 }, pointerType:{ value:"touch" } })
+    comment.dispatchEvent(down)
+    await new Promise(resolve => setTimeout(resolve, 440))
+    assert.ok(comment.classList.contains("is-forum-dragging"))
+    const up = new window.MouseEvent("pointerup", { bubbles:true, button:0, clientX:20, clientY:20 })
+    Object.defineProperties(up, { pointerId:{ value:1 }, pointerType:{ value:"touch" } })
+    document.dispatchEvent(up)
+    comment.dispatchEvent(new window.MouseEvent("click", { bubbles:true }))
+    assert.equal(document.querySelector("#idOk"), null)
   } finally {
     closeFixture(fixture)
   }

@@ -56,3 +56,18 @@ test("reader App panel rules do not leak through bare cu selectors", () => {
   assert.equal(ruleBodiesFor(".cu-header"), "")
   assert.equal(ruleBodiesFor(".cu-body"), "")
 })
+
+test("reader App surfaces do not derive their backgrounds from the home wallpaper", () => {
+  const appSurfaces = [
+    ".rd-message-section-tabs",
+    ".rd-moment-card",
+    ".rd-forum-detail",
+  ]
+
+  for (const selector of appSurfaces) {
+    const body = ruleBodiesFor(selector)
+    assert.ok(body, `${selector} must define its own App surface`)
+    assert.doesNotMatch(body, /--phone-bg/)
+    assert.match(body, /--phone-system-(?:bg|surface)/)
+  }
+})

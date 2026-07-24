@@ -174,6 +174,7 @@ export function createWorkRecord(data, {
     chapters:rawType===WORK_TYPE.ARTICLE?[{id:firstChapterId,name:"第一章"}]:[],
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
+    globalForbidden:Array.isArray(data.globalForbidden)?data.globalForbidden.slice():[],
     placeholderMode:data.placeholderMode||PLACEHOLDER_MODE.RANDOM_EACH,
    phoneModules:rawType===WORK_TYPE.ARTICLE?[]:undefined,
    phoneData:rawType===WORK_TYPE.PHONE?{
@@ -183,6 +184,7 @@ export function createWorkRecord(data, {
       forumPosts:[],
       forumNpcs:[],
       forumSettings:{showIpLocation:false},
+      displaySettings:{hideAllTimestamps:false},
       contactSortMode:"custom",
       apps:makePhoneApps(phoneAppIds),
       skin:JSON.parse(JSON.stringify(DEFAULT_PHONE_SKIN)),

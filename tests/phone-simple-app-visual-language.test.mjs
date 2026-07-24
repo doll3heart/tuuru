@@ -6,6 +6,8 @@ const editorSource = readFileSync(new URL("../js/pages/phone.js", import.meta.ur
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
 const editorCss = readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
 const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
+const shoppingSource = readFileSync(new URL("../js/phone-shopping-view.js", import.meta.url), "utf8")
+const shoppingCss = readFileSync(new URL("../css/phone-shopping.css", import.meta.url), "utf8")
 
 function ruleBodiesFor(css, selector) {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
@@ -42,9 +44,9 @@ test("author browser rows read as archive tickets", () => {
 })
 
 test("author shopping cards retain a receipt edge", () => {
-  const receipt = ruleBodiesFor(editorCss, ".shop-card-block")
+  const receipt = ruleBodiesFor(shoppingCss, ".phone-frame .shop-card-block")
   assert.match(receipt, /var\(--phone-system-(?:surface|border|radius|shadow)/)
-  assert.match(pseudoBodiesFor(editorCss, ".shop-card-block"), /content\s*:/)
+  assert.match(pseudoBodiesFor(shoppingCss, ".phone-frame .shop-card-block"), /content\s*:/)
 })
 
 test("author contact identity cards use compact non-circular geometry", () => {
@@ -59,9 +61,8 @@ test("reader simple apps expose semantic cards backed by phone-system tokens", (
     ".rd-memo-note",
     ".rd-gallery-photo",
     ".rd-browser-entry",
-    ".rd-shop-receipt",
     ".rd-contact-entry",
-    ".rd-profile-card-phone"
+    ".rd-profile-card-phone",
   ]
 
   for (const selector of semanticCards) {
@@ -70,5 +71,7 @@ test("reader simple apps expose semantic cards backed by phone-system tokens", (
     assert.match(ruleBodiesFor(readerCss, selector), /var\(--phone-system-(?:surface|border|radius|shadow)/, `${selector} should consume a shared phone-system token`)
   }
 
+  assert.match(shoppingSource, /cardClass\s*=\s*"shop-card-block"/)
+  assert.match(ruleBodiesFor(shoppingCss, ".phone-frame .shop-card-block"), /var\(--phone-system-(?:surface|border|radius|shadow)/)
   assert.match(readerSource, /--rd-browser-entry:[^\n]*sanitizeCssColor\(browserSettings\.entryBg\)/)
 })

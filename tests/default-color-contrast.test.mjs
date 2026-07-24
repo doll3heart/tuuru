@@ -3,7 +3,11 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
 
-const editorCss = readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
+const shoppingCss = readFileSync(new URL("../css/phone-shopping.css", import.meta.url), "utf8")
+const editorCss = [
+  readFileSync(new URL("../css/styles.css", import.meta.url), "utf8"),
+  shoppingCss,
+].join("\n")
 const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
 
@@ -105,7 +109,7 @@ test("light primary and hover fills use their readable ink tokens", () => {
       ".ct-add-btn",
       ".memo-toolbar button.active",
       ".memo-editor .check-dot.checked",
-      ".shop-checkout",
+      ".phone-frame .shop-checkout",
     ]],
     [readerCss, [
       ".rd-preset-save:hover",
@@ -130,7 +134,7 @@ test("light primary and hover fills use their readable ink tokens", () => {
       ".toast.success",
       ".ct-avatar-badge",
       ".ct-add-btn:hover",
-      ".shop-checkout:hover",
+      ".phone-frame .shop-checkout:hover",
     ]],
     [readerCss, [".drop-btn:hover", ".rd-landing-start-btn:hover", ".cu-btn-save:hover"]],
   ])
@@ -143,7 +147,7 @@ test("light primary and hover fills use their readable ink tokens", () => {
     }
   }
 
-  assert.match(ruleBody(editorCss, ".shop-circle.checked::after"), /border\s*:\s*2px\s+solid\s+var\(--c-btn-text\)/)
+  assert.match(ruleBody(shoppingCss, ".phone-frame .shop-circle.checked::after"), /border\s*:\s*2px\s+solid\s+var\(--phone-system-primary-ink/)
   assert.doesNotMatch(readerSource, /background\s*:\s*#a4c6eb\s*;\s*color\s*:\s*#fff/i)
   assert.match(readerSource, /background:var\(--c-primary\);color:var\(--c-btn-text\)[^"']*" id="cuSave"/)
   assert.match(readerSource, /background:var\(--c-primary\);color:var\(--c-btn-text\)[^"']*" id="rpSave"/)

@@ -81,6 +81,9 @@ test("legacy framed phone widths preserve their exact column positions", () => {
   const previewWidth = Number(preview.match(/width\s*:\s*(\d+)px/)[1])
   const borderWidth = Number(frame.match(/border\s*:\s*(\d+)px/)[1])
 
+  assert.equal(frameWidth, 360)
+  assert.equal(frameWidth, previewWidth)
+
   for (const innerWidth of [previewWidth - borderWidth * 2, frameWidth - borderWidth * 2]) {
     const positions = Array.from({ length: PHONE_GRID_METRICS.columns }, (_, column) => (
       getPhoneGridPosition(innerWidth, column, 0).left
@@ -145,15 +148,15 @@ test("bounded mobile article overlays stay borderless without exceeding the lega
   const baseWrapper = ruleBodiesFor(cssWithoutComments, ".rd-pm-phone-wrap")
 
   assert.match(overlay, /padding\s*:\s*var\(--reader-safe-top\)\s+var\(--reader-safe-right\)\s+var\(--reader-safe-bottom\)\s+var\(--reader-safe-left\)/)
-  assert.match(baseWrapper, /width\s*:\s*375px/)
+  assert.match(baseWrapper, /width\s*:\s*360px/)
   assert.match(baseWrapper, /max-width\s*:\s*100%/)
   assert.doesNotMatch(boundedWrapper, /width\s*:/)
   assert.match(boundedWrapper, /height\s*:\s*100%/)
   assert.match(frame, /border\s*:\s*none/)
   assert.match(frame, /border-radius\s*:\s*0/)
 
-  assert.deepEqual([320, 390, 844].map(width => Math.min(width, 375)), [320, 375, 375])
-  assert.equal(getPhoneGridPosition(375, 3, 0).left, 260)
+  assert.deepEqual([320, 390, 844].map(width => Math.min(width, 360)), [320, 360, 360])
+  assert.equal(getPhoneGridPosition(360, 3, 0).left, 260)
 })
 
 test("grid coordinates preserve numeric strings and reject non-finite values", () => {

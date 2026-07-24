@@ -3,14 +3,17 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
 
-const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
+const readerCss = [
+  readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8"),
+  readFileSync(new URL("../css/phone-shopping.css", import.meta.url), "utf8"),
+].join("\n")
 
 function ruleBodiesFor(selector) {
   const bodies = []
   const pattern = /([^{}]+)\{([^{}]*)\}/g
   let match
   while ((match = pattern.exec(readerCss))) {
-    const selectors = match[1].split(",").map(value => value.trim())
+    const selectors = match[1].replace(/\/\*[\s\S]*?\*\//g, "").split(",").map(value => value.trim())
     if (selectors.includes(selector)) bodies.push(match[2])
   }
   return bodies.join("\n")
@@ -93,6 +96,14 @@ function returnToDesktop() {
   assert.ok(document.getElementById("phoneDesktopReader"))
 }
 
+function confirmReaderConnection(contactIndex = 0) {
+  const gate = document.querySelector(".rd-connection-gate")
+  assert.ok(gate)
+  const source = gate.querySelector(`[data-connection-source-index="${contactIndex}"]`)
+  if (source) source.click()
+  gate.querySelector('[data-connection-action="confirm"]').click()
+}
+
 test("reader App lists and shopping tabs use native controls with focus continuity", async t => {
   const dom = installDom(t)
   const work = phoneWork()
@@ -135,6 +146,7 @@ test("reader App lists and shopping tabs use native controls with focus continui
   returnToDesktop()
 
   document.querySelector('[data-app-type="shopping"]').click()
+  confirmReaderConnection()
   const tabList = document.querySelector(".rd-shop-tabs")
   const tabs = [...tabList.querySelectorAll(".rd-shop-tab")]
   const panels = tabs.map(tab => document.getElementById(tab.getAttribute("aria-controls")))
@@ -167,11 +179,46 @@ test("reader App lists and shopping tabs use native controls with focus continui
   assert.equal(document.activeElement, tabs[0])
 })
 
+test("reader shopping uses the shared compact shell and a useful empty state", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-shopping-empty-state"
+  work.phoneData.contacts.push({ id: "contact-b", name: "Bob" })
+  work.phoneData.shoppingItems = []
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-shopping-empty-state=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="shopping"]').click()
+  confirmReaderConnection()
+
+  const header = document.querySelector(".rd-phone-app-header")
+  const body = document.querySelector(".rd-phone-app-body")
+  const context = document.querySelector(".rd-contact-context")
+  const cartEmpty = document.querySelector("#rdShopCart .rd-shop-empty")
+
+  assert.ok(header)
+  assert.equal(body.hasAttribute("style"), false)
+  assert.match(header.textContent, /Alice · 购物清单/)
+  assert.equal(context, null)
+  assert.equal(document.querySelector("#rdShopCart .rd-shop-receipt"), null)
+  assert.ok(cartEmpty.classList.contains("phone-shop-empty"))
+  assert.ok(cartEmpty.querySelector("strong").textContent.trim())
+  assert.ok(cartEmpty.querySelector("small").textContent.trim())
+
+  document.getElementById("rdShopOrderTab").click()
+  const orderEmpty = document.querySelector("#rdShopOrder .rd-shop-empty")
+  assert.ok(orderEmpty.classList.contains("phone-shop-empty"))
+  assert.ok(orderEmpty.querySelector("strong").textContent.trim())
+  assert.ok(orderEmpty.querySelector("small").textContent.trim())
+})
+
 test("reader App secondary controls keep touch-sized focus contracts", () => {
   const rows = ruleBodiesFor(".rd-chat-card") + ruleBodiesFor(".rd-post-card")
   const rowFocus = ruleBodiesFor(".rd-chat-card:focus-visible") + ruleBodiesFor(".rd-post-card:focus-visible")
-  const shopTab = ruleBodiesFor(".rd-shop-tab")
-  const shopFocus = ruleBodiesFor(".rd-shop-tab:focus-visible")
+  const shopTab = ruleBodiesFor(".phone-frame .shop-tab")
+  const shopFocus = ruleBodiesFor(".phone-frame .shop-tab:focus-visible")
 
   assert.match(rows, /min-height\s*:\s*(?:44|[5-9]\d|[1-9]\d{2,})px/)
   assert.match(rows, /appearance\s*:\s*none/)
@@ -179,7 +226,21 @@ test("reader App secondary controls keep touch-sized focus contracts", () => {
   assert.match(rowFocus, /outline\s*:\s*2px solid var\(--c-primary-hover\)/)
   assert.match(shopTab, /min-height\s*:\s*44px/)
   assert.match(shopTab, /appearance\s*:\s*none/)
-  assert.match(shopFocus, /outline\s*:\s*2px solid var\(--c-primary-hover\)/)
+  assert.match(shopFocus, /outline\s*:\s*2px solid var\(--phone-system-accent/)
+})
+
+test("reader shopping inherits the authored card surface and shared empty state", () => {
+  const contactContext = ruleBodiesFor(".rd-phone-app-panel .rd-contact-context")
+  const shopCard = ruleBodiesFor(".phone-frame .shop-card-block")
+  const shopEmpty = ruleBodiesFor(".phone-frame .phone-shop-empty")
+
+  assert.match(contactContext, /border\s*:\s*0/)
+  assert.match(contactContext, /box-shadow\s*:\s*none/)
+  assert.match(shopCard, /border\s*:\s*1px solid/)
+  assert.match(shopCard, /background\s*:\s*var\(--rd-shop-card/)
+  assert.match(shopCard, /box-shadow\s*:\s*2px 2px 0/)
+  assert.match(shopEmpty, /min-height\s*:\s*(?:1[2-9]\d|[2-9]\d{2,})px/)
+  assert.match(shopEmpty, /display\s*:\s*(?:flex|grid)/)
 })
 
 test("reader forum keeps pinned posts first and shows authored post states", async t => {

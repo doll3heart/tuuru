@@ -297,14 +297,14 @@ test("forum detail renders authored comments and keeps generated replies next to
   option.click()
 
   items = [...document.querySelectorAll('.rd-forum-thread [data-thread-item-id]')]
-  assert.deepEqual(items.map(item => item.querySelector(':scope > .rd-thread-comment-content').textContent.trim()), [
+  assert.deepEqual(items.map(item => item.querySelector('.forum-comment-content, .forum-reply-content').textContent.trim()), [
     "我会带望远镜。",
     "那我带热饮过去。",
     "正好，晚上会冷。",
     "这是作者排在后面的论坛评论。",
   ])
-  assert.deepEqual(items.map(item => item.querySelector(':scope > .rd-forum-comment-meta .rd-thread-comment-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "沈岚"])
-  assert.equal(items[3].querySelector('.rd-forum-floor').textContent, "4楼")
+  assert.deepEqual(items.map(item => item.querySelector('.forum-comment-name, .forum-reply-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "沈岚"])
+  assert.equal(items[3].querySelector('.forum-comment-floor').textContent, "4楼")
 
   const reselect = document.querySelector('.rd-thread-choice-reselect[data-thread-scope="forum"]')
   assert.ok(reselect)
@@ -316,7 +316,7 @@ test("forum detail renders authored comments and keeps generated replies next to
   reopenedReselect.click()
 
   items = [...document.querySelectorAll('.rd-forum-thread [data-thread-item-id]')]
-  const visibleText = items.map(item => item.querySelector(':scope > .rd-thread-comment-content').textContent).join(" ")
+  const visibleText = items.map(item => item.querySelector('.forum-comment-content, .forum-reply-content').textContent).join(" ")
   assert.doesNotMatch(visibleText, /那我带热饮过去/)
   assert.doesNotMatch(visibleText, /正好，晚上会冷/)
   assert.match(visibleText, /这是作者排在后面的论坛评论/)
@@ -325,6 +325,32 @@ test("forum detail renders authored comments and keeps generated replies next to
   const persisted = JSON.parse(localStorage.getItem(`moirain_work_${authoredWork.id}`))
   assert.deepEqual(persisted.phoneData.forumPosts, forumBeforePlay)
   assert.equal(persisted.phoneData.forumPosts[0].comments[0].choices[0].used, undefined)
+})
+
+test("reader keeps the post time and hides all reply times when the post setting is enabled", async t => {
+  const work = socialChoiceWork()
+  const post = work.phoneData.forumPosts[0]
+  post.hideReplyTimes = true
+  post.comments[0].replies.push({
+    id: "forum-nested-time",
+    contactId: "contact-1",
+    contactName: "沈岚",
+    content: "这是一条楼中楼。",
+    time: "21:03",
+    replies: [],
+  })
+  await openSeededPhone(t, work)
+
+  document.querySelector('[data-app-type="forum"]').click()
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+
+  assert.equal(document.querySelector(".forum-post-time")?.textContent, "21:00")
+  assert.equal(document.querySelectorAll(".forum-comment-time").length, 0)
+  assert.match(document.querySelector(".rd-forum-thread").textContent, /这是一条楼中楼/)
+
+  const persisted = JSON.parse(localStorage.getItem(`moirain_work_${work.id}`))
+  assert.equal(persisted.phoneData.forumPosts[0].comments[0].time, "21:01")
+  assert.equal(persisted.phoneData.forumPosts[0].comments[0].replies[0].time, "21:03")
 })
 
 test("forum choices render consecutive follow-ups from different authored roles", async t => {
@@ -343,9 +369,9 @@ test("forum choices render consecutive follow-ups from different authored roles"
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
   document.querySelector('.rd-thread-choice-option[data-thread-scope="forum"]').click()
   const items = [...document.querySelectorAll('.rd-forum-thread [data-thread-item-id]')]
-  assert.deepEqual(items.slice(0, 4).map(item => item.querySelector(':scope > .rd-forum-comment-meta .rd-thread-comment-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "白榆小号"])
-  assert.equal(items[3].querySelector(':scope > .rd-thread-comment-content').textContent.trim(), "我也会过去。")
-  assert.match(items[3].querySelector('.rd-forum-comment-avatar img')?.getAttribute('src') || '', /^data:image\/png/)
+  assert.deepEqual(items.slice(0, 4).map(item => item.querySelector('.forum-comment-name, .forum-reply-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "白榆小号"])
+  assert.equal(items[3].querySelector('.forum-comment-content, .forum-reply-content').textContent.trim(), "我也会过去。")
+  assert.match(items[3].querySelector('.forum-comment-avatar img, .forum-reply-avatar img')?.getAttribute('src') || '', /^data:image\/png/)
 })
 
 test("reader forum applies the selected avatar shape and renders avatars for comments and nested replies", async t => {
@@ -382,11 +408,11 @@ test("reader forum applies the selected avatar shape and renders avatars for com
   assert.match(document.querySelector(".rd-post-card").getAttribute("style"), /--rd-forum-avatar-radius:50%/)
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
   assert.match(document.querySelector(".rd-forum-detail").getAttribute("style"), /--rd-forum-avatar-radius:50%/)
-  const avatars = [...document.querySelectorAll(".rd-forum-comment-avatar img")]
+  const avatars = [...document.querySelectorAll(".forum-comment-avatar img, .forum-reply-avatar img")]
   assert.equal(avatars.length, 2)
   assert.match(avatars[0].src, /^data:image\/png/)
   assert.match(avatars[1].src, /^data:image\/png/)
-  assert.ok(document.querySelector(".rd-forum-comment.is-reply .rd-forum-comment-avatar"))
+  assert.ok(document.querySelector(".forum-reply-item .forum-reply-avatar"))
 })
 
 test("reader forum defaults to hot comments, keeps authored floors, and stores likes only in the reading session", async t => {
@@ -403,26 +429,26 @@ test("reader forum defaults to hot comments, keeps authored floors, and stores l
   document.querySelector('[data-app-type="forum"]').click()
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
 
-  let comments = [...document.querySelectorAll('.rd-forum-thread > .rd-forum-comment')]
+  let comments = [...document.querySelectorAll('.rd-forum-thread > .forum-comment')]
   assert.equal(document.querySelector('[data-forum-sort="hot"]').getAttribute('aria-pressed'), 'true')
   assert.equal(document.querySelector('.rd-forum-thread-head h4 span').textContent, '1288')
   assert.equal(comments[0].dataset.threadItemId, 'comment-hot')
-  assert.equal(comments[0].querySelector('.rd-forum-floor').textContent, '520楼')
+  assert.equal(comments[0].querySelector('.forum-comment-floor').textContent, '520楼')
 
   document.querySelector('[data-forum-sort="latest"]').click()
-  comments = [...document.querySelectorAll('.rd-forum-thread > .rd-forum-comment')]
+  comments = [...document.querySelectorAll('.rd-forum-thread > .forum-comment')]
   assert.equal(comments[0].dataset.threadItemId, 'comment-latest')
-  assert.equal(comments[0].querySelector('.rd-forum-floor').textContent, '3楼')
+  assert.equal(comments[0].querySelector('.forum-comment-floor').textContent, '3楼')
 
   const like = comments[0].querySelector('[data-forum-comment-like="comment-latest"]')
   like.click()
-  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '赞 1')
+  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '♡1')
   assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').getAttribute('aria-pressed'), 'true')
 
   document.querySelector('.rd-forum-detail .rd-back-btn').click()
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
   assert.equal(document.querySelector('[data-forum-sort="latest"]').getAttribute('aria-pressed'), 'true')
-  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '赞 1')
+  assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '♡1')
   assert.deepEqual(JSON.parse(localStorage.getItem(`moirain_work_${work.id}`)).phoneData.forumPosts[0].comments, authoredComments)
 })
 
@@ -438,7 +464,7 @@ test("reader forum resolves contact aliases for posts and comments", async t => 
   document.querySelector('[data-app-type="forum"]').click()
   assert.match(document.querySelector('.rd-forum-meta').textContent, /雨夜路人/)
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
-  assert.equal(document.querySelector('.rd-forum-post-author strong').textContent, "雨夜路人")
-  assert.equal(document.querySelector('.rd-thread-comment-name').textContent, "雨夜路人")
-  assert.match(document.querySelector('.rd-forum-comment-avatar img').src, /^data:image\/png/)
+  assert.equal(document.querySelector('.forum-post-author').childNodes[0].textContent.trim(), "雨夜路人")
+  assert.equal(document.querySelector('.forum-comment-name').textContent, "雨夜路人")
+  assert.match(document.querySelector('.forum-comment-avatar img').src, /^data:image\/png/)
 })

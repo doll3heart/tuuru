@@ -31,6 +31,8 @@ test("the writing-habits page keeps contact transfer explicit and placeholder pr
   assert.match(source, /updateWork\(work\.id,\s*\{\s*phoneData:/s)
   assert.match(source, /readAuthorPlaceholderPresets/)
   assert.match(source, /saveAuthorPlaceholderPreset/)
+  assert.match(source, /data-preset-global-forbidden/)
+  assert.match(source, /globalForbidden:parseForbiddenWords/)
   assert.doesNotMatch(source, /updateWork\([^)]*placeholders/s)
 })
 
@@ -88,11 +90,50 @@ test("the article feature list distinguishes scene tags from chapters", () => {
 test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {
   for (const feature of [
     "App 管理", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
-    "外卖卡片", "消息编辑菜单", "消息回复选项", "聊天轮次", "语音与视频通话",
-    "动态", "论坛", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
+    "外卖卡片", "消息编辑菜单", "会话置顶与排序", "消息回复选项", "聊天轮次", "语音与视频通话",
+    "动态", "论坛", "楼中楼回复关系", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
   ]) {
     assert.match(source, new RegExp(feature))
   }
+})
+
+test("the shopping tutorial explains how to edit an existing product card", () => {
+  assert.match(source, /手机或 iPad 长按商品卡片/)
+  assert.match(source, /电脑右键商品卡片/)
+  assert.match(source, /购物车和订单里的已有商品都可以重新修改/)
+  assert.match(source, /包括显示时间/)
+})
+
+test("the forum tutorial explains the current comment controls and reader reply branches", () => {
+  for (const feature of [
+    "评论操作菜单",
+    "评论点赞数",
+    "评论显示时间",
+    "评论与楼中楼排序",
+    "论坛读者回复选项",
+    "论坛角色后续回复",
+  ]) {
+    assert.match(source, new RegExp(feature))
+  }
+  assert.match(source, /轻点评论或楼中楼/)
+  assert.match(source, /评论或楼中楼右侧的 ×/)
+  assert.match(source, /爱心和数字/)
+  assert.match(source, /点时间戳[^。]*隐藏时间/)
+  assert.match(source, /手机或 iPad 长按[^。]*电脑按住鼠标/)
+  assert.match(source, /一级评论会带着全部楼中楼移动/)
+  assert.match(source, /楼中楼只在当前同级回复中移动/)
+  assert.match(source, /Alt \+ ↑\/↓/)
+  assert.match(source, /回复人选择“读者”后打开/)
+  assert.match(source, /已设置的选项会显示在评论下方[^。]*再次编辑/)
+  assert.match(source, /逐条选择联系人、小号或 NPC/)
+})
+
+test("the placeholder feature list covers global words, search, and cleanup", () => {
+  for (const feature of ["单项违禁词", "全局违禁词", "搜索与整理词库"]) {
+    assert.match(source, new RegExp(feature))
+  }
+  assert.match(source, /整理全部词库/)
+  assert.match(source, /换行、逗号、顿号、分号、斜杠或竖线/)
 })
 
 test("every tutorial category keeps a searchable FAQ", () => {
@@ -103,6 +144,9 @@ test("every tutorial category keeps a searchable FAQ", () => {
     "选项点击后没有跳转怎么办",
     "链接怎样打开作品里的论坛帖子",
     "外卖卡片点击后会去哪里",
+    "为什么没有看到论坛回复选项",
+    "论坛评论和楼中楼怎样排序",
+    "论坛评论时间怎样修改或隐藏",
     "@ 提及没有高亮怎么办",
     "随机结果怎样在几个节点中保持一致",
     "完整备份适合发给读者吗",

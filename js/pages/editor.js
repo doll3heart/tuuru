@@ -18,6 +18,7 @@ import { searchArticleWork } from "../article-work-search.js"
 import { createEditorSplitPaneController, readEditorSplitPreference } from "../editor-split-pane.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
+import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js"
 
 // State
 var _workId = null
@@ -1053,6 +1054,7 @@ function openPlaceholderPanel(wid) {
   var w = getWork(wid)
   if (!w) return
   var phs = w.placeholders || []
+  var globalForbidden = parseForbiddenWords(w.globalForbidden)
   var authorPresets = readAuthorPlaceholderPresets()
   var body = '<div class="ph-panel" id="phPanel">'
 
@@ -1070,8 +1072,10 @@ function openPlaceholderPanel(wid) {
   body += '<button class="btn btn-sm btn-outline" data-ph-a="preset-name">添加 NAME 预设</button>'
   body += '<button class="btn btn-sm btn-primary" data-ph-a="add">添加占位符</button>'
   body += '</div>'
+  body += '<label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="ph-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label>'
+  body += '<section class="placeholder-global-forbidden"><div><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></div><textarea id="phGlobalForbidden" class="ph-input" placeholder="可用换行、逗号、顿号、分号或斜杠分隔">' + esc(globalForbidden.join('\n')) + '</textarea><button type="button" class="btn btn-sm btn-outline" data-ph-a="cleanup-forbidden">整理全部词库</button></section>'
   body += '<div class="ph-author-presets"><select class="ph-select" id="phAuthorPreset"><option value="">我的预设</option>'
-  body += '</select><button class="btn btn-sm btn-outline" data-ph-a="apply-author-preset">套用预设</button><button class="btn btn-sm btn-ghost" data-ph-a="save-author-preset">保存当前为预设</button><button class="btn btn-sm btn-ghost" data-ph-a="delete-author-preset">删除预设</button><button class="btn btn-sm btn-ghost" data-ph-a="export-author-presets">导出预设</button><button class="btn btn-sm btn-ghost" data-ph-a="import-author-presets">导入预设</button><input type="file" id="phAuthorPresetFile" accept=".json,application/json" hidden></div>'
+  body += '</select><button class="btn btn-sm btn-outline" data-ph-a="apply-author-preset">套用预设</button><details class="placeholder-preset-management"><summary>管理预设</summary><div><button class="btn btn-sm btn-ghost" data-ph-a="save-author-preset">保存当前为预设</button><button class="btn btn-sm btn-ghost" data-ph-a="delete-author-preset">删除预设</button><button class="btn btn-sm btn-ghost" data-ph-a="export-author-presets">导出预设</button><button class="btn btn-sm btn-ghost" data-ph-a="import-author-presets">导入预设</button></div></details><input type="file" id="phAuthorPresetFile" accept=".json,application/json" hidden></div>'
 
   // List
   body += '<div class="ph-list">'
@@ -1080,7 +1084,7 @@ function openPlaceholderPanel(wid) {
   }
   for (var i = 0; i < phs.length; i++) {
     var ph = phs[i]
-    body += buildPhCard(ph)
+    body += buildPhCard(ph, globalForbidden)
   }
   body += '</div>'
 
@@ -1113,17 +1117,39 @@ function openPlaceholderPanel(wid) {
       return (latest && latest.placeholders || []).map(function(ph) {
         var card = Array.from(panel.querySelectorAll('[data-ph-id]')).find(function(item) { return String(item.dataset.phId) === String(ph.id) })
         if (!card) return ph
-        var pendingForbidden = card.querySelector('.ph-forbidden-input')?.value?.trim()
-        var forbidden = Array.isArray(ph.forbidden) ? ph.forbidden.slice() : []
-        if (pendingForbidden) forbidden.push(pendingForbidden)
         return Object.assign({}, ph, {
           label: document.getElementById('ph_label_' + ph.id)?.value?.trim() || ph.label || '占位符',
           key: document.getElementById('ph_key_' + ph.id)?.value?.trim() || ph.key || '',
           prompt: document.getElementById('ph_prompt_' + ph.id)?.value?.trim() || ph.prompt || '',
           mode: document.getElementById('ph_mode_' + ph.id)?.value || ph.mode || 'each',
-          forbidden: forbidden
+          forbidden: parseForbiddenWords(card.querySelector('[data-ph-forbidden]')?.value)
         })
       })
+    }
+
+    function applyPlaceholderSearch() {
+      var query = String(panel.querySelector('[data-placeholder-search]')?.value || '').trim().toLocaleLowerCase()
+      var visible = 0
+      panel.querySelectorAll('[data-ph-id]').forEach(function(card) {
+        var haystack = Array.from(card.querySelectorAll('input,textarea,select')).map(function(field) {
+          return field.value || ''
+        }).join(' ') + ' ' + (card.textContent || '')
+        haystack = haystack.toLocaleLowerCase()
+        card.hidden = Boolean(query) && !haystack.includes(query)
+        if (!card.hidden) visible += 1
+      })
+      var status = panel.querySelector('[data-placeholder-search-status]')
+      if (status) status.textContent = query ? visible + ' 个结果' : ''
+    }
+    panel.querySelector('[data-placeholder-search]').oninput = applyPlaceholderSearch
+    panel.querySelector('#phGlobalForbidden').onchange = function() {
+      globalForbidden = parseForbiddenWords(this.value)
+      this.value = globalForbidden.join('\n')
+      updateWork(wid, { globalForbidden:globalForbidden })
+      panel.querySelectorAll('[data-global-forbidden-summary]').forEach(function(summary) {
+        summary.outerHTML = buildInheritedForbiddenSummary(globalForbidden)
+      })
+      showToast('全局违禁词已保存')
     }
 
     refreshAuthorPresetSelect('')
@@ -1151,6 +1177,25 @@ function openPlaceholderPanel(wid) {
         refreshPhList(wid, ov)
         return
       }
+      if (act === 'cleanup-forbidden') {
+        var current = collectVisiblePlaceholders()
+        globalForbidden = parseForbiddenWords(panel.querySelector('#phGlobalForbidden')?.value)
+        current.forEach(function(placeholder) {
+          updatePlaceholder(wid, placeholder.id, {
+            label:placeholder.label,
+            key:placeholder.key,
+            prompt:placeholder.prompt,
+            mode:placeholder.mode,
+            forbidden:dedupeForbiddenWords(placeholder.forbidden),
+          })
+        })
+        updateWork(wid, { globalForbidden:globalForbidden })
+        panel.querySelector('#phGlobalForbidden').value = globalForbidden.join('\n')
+        refreshPhList(wid, ov)
+        applyPlaceholderSearch()
+        showToast('词库已整理并应用')
+        return
+      }
       if (act === 'export-author-presets') {
         var presets = readAuthorPlaceholderPresets()
         if (!presets.length) { showToast('请先保存一套作者预设'); return }
@@ -1167,7 +1212,9 @@ function openPlaceholderPanel(wid) {
         var current = collectVisiblePlaceholders()
         if (!current.length) { showToast('请先添加占位符'); return }
         showPrompt('保存当前为预设', '给这套预设起个名字', function(name) {
-          var saved = saveAuthorPlaceholderPreset(name, current)
+          var saved = saveAuthorPlaceholderPreset(name, current, {
+            globalForbidden:parseForbiddenWords(panel.querySelector('#phGlobalForbidden')?.value),
+          })
           if (!saved) { showToast('预设保存失败'); return }
           refreshAuthorPresetSelect(saved.id)
           showToast('作者预设已保存在本机')
@@ -1180,7 +1227,15 @@ function openPlaceholderPanel(wid) {
         if (!preset) { showToast('请先选择预设'); return }
         var currentWork = getWork(wid)
         var created = instantiateAuthorPlaceholderPreset(preset, uid)
-        updateWork(wid, { placeholders: (currentWork.placeholders || []).concat(created) })
+        globalForbidden = dedupeForbiddenWords([
+          ...parseForbiddenWords(panel.querySelector('#phGlobalForbidden')?.value || currentWork.globalForbidden),
+          ...(preset.globalForbidden || []),
+        ])
+        updateWork(wid, {
+          placeholders:(currentWork.placeholders || []).concat(created),
+          globalForbidden:globalForbidden,
+        })
+        panel.querySelector('#phGlobalForbidden').value = globalForbidden.join('\n')
         refreshPhList(wid, ov)
         showToast('已套用预设')
         return
@@ -1208,30 +1263,6 @@ function openPlaceholderPanel(wid) {
         refreshPhList(wid, ov)
         return
       }
-      if (act === 'add-forbidden' && pid) {
-        var input = btn.parentElement.querySelector('.ph-forbidden-input')
-        var word = (input?.value || '').trim()
-        if (word) {
-          var phObj = (getWork(wid).placeholders || []).find(function(p){ return p.id === pid })
-          if (phObj) {
-            phObj.forbidden = phObj.forbidden || []
-            phObj.forbidden.push(word)
-            updatePlaceholder(wid, pid, {forbidden: phObj.forbidden})
-            refreshPhList(wid, ov)
-          }
-        }
-        return
-      }
-      if (act === 'remove-forbidden' && pid) {
-        var idx = parseInt(btn.dataset.phIdx)
-        var phObj = (getWork(wid).placeholders || []).find(function(p){ return p.id === pid })
-        if (phObj && phObj.forbidden && idx < phObj.forbidden.length) {
-          phObj.forbidden.splice(idx, 1)
-          updatePlaceholder(wid, pid, {forbidden: phObj.forbidden})
-          refreshPhList(wid, ov)
-        }
-        return
-      }
     })
 
     var authorPresetFileInput = panel.querySelector('#phAuthorPresetFile')
@@ -1255,8 +1286,19 @@ function openPlaceholderPanel(wid) {
   })
 }
 
-function buildPhCard(ph) {
-  var fw = ph.forbidden || []
+function buildInheritedForbiddenSummary(words) {
+  var inherited = parseForbiddenWords(words)
+  var h = '<div class="placeholder-inherited-forbidden" data-global-forbidden-summary aria-label="全局生效的违禁词"' + (inherited.length ? '' : ' hidden') + '>'
+  h += '<span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-words">'
+  inherited.forEach(function(word) {
+    h += '<span class="placeholder-inherited-word">' + esc(word) + '</span>'
+  })
+  h += '</span></div>'
+  return h
+}
+
+function buildPhCard(ph, globalForbidden) {
+  var fw = parseForbiddenWords(ph.forbidden)
   var h = '<div class="ph-card" data-ph-id="' + ph.id + '">'
   h += '<div class="ph-card-head">'
   h += '<label class="sr-only" for="ph_label_' + ph.id + '">显示名称</label>'
@@ -1281,14 +1323,9 @@ function buildPhCard(ph) {
   // Row 3: forbidden words
   h += '<div class="ph-row">'
   h += '<label>违禁词</label>'
-  h += '<span class="ph-forbidden-tags">'
-  for (var fi = 0; fi < fw.length; fi++) {
-    h += '<span class="ph-fw-tag">' + esc(fw[fi]) + '<button data-ph-a="remove-forbidden" data-ph-idx="' + fi + '" title="移除">\u2715</button></span>'
-  }
-  h += '</span>'
-  h += '<input class="ph-input ph-forbidden-input" placeholder="添加违禁词">'
-  h += '<button class="btn btn-sm btn-ghost" data-ph-a="add-forbidden">添加</button>'
+  h += '<textarea class="ph-input ph-forbidden-input" id="ph_forbidden_' + ph.id + '" data-ph-forbidden placeholder="多个词可用逗号、顿号或换行分隔">' + esc(fw.join('\n')) + '</textarea>'
   h += '</div>'
+  h += buildInheritedForbiddenSummary(globalForbidden)
   // Save button
   h += '<div class="ph-row ph-row-end">'
   h += '<button class="btn btn-sm btn-primary" data-ph-a="save">保存</button>'
@@ -1303,11 +1340,13 @@ function savePhCard(wid, pid) {
   var keyEl = document.getElementById('ph_key_' + pid)
   var promptEl = document.getElementById('ph_prompt_' + pid)
   var modeEl = document.getElementById('ph_mode_' + pid)
+  var forbiddenEl = document.getElementById('ph_forbidden_' + pid)
   updatePlaceholder(wid, pid, {
     label: (labelEl?.value || '').trim() || '占位符',
     key: (keyEl?.value || '').trim(),
     prompt: (promptEl?.value || '').trim(),
-    mode: modeEl?.value || 'each'
+    mode: modeEl?.value || 'each',
+    forbidden: parseForbiddenWords(forbiddenEl?.value),
   })
   showToast('已保存')
 }
@@ -1315,6 +1354,7 @@ function savePhCard(wid, pid) {
 function refreshPhList(wid, overlay) {
   var w = getWork(wid)
   var phs = w.placeholders || []
+  var globalForbidden = parseForbiddenWords(w.globalForbidden)
   var listEl = overlay.querySelector('.ph-list')
   if (!listEl) return
   var h = ''
@@ -1322,7 +1362,7 @@ function refreshPhList(wid, overlay) {
     h = '<div class="ph-empty">暂无占位符。点击上方按钮添加。</div>'
   }
   for (var i = 0; i < phs.length; i++) {
-    h += buildPhCard(phs[i])
+    h += buildPhCard(phs[i], globalForbidden)
   }
   listEl.innerHTML = h
 }

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
 
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
+const sharedChatCss = readFileSync(new URL("../css/phone-chat.css", import.meta.url), "utf8")
 
 function installDom(t) {
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
@@ -115,15 +116,34 @@ function seedPhoneWork(work) {
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 }
 
-async function openSeededChat(t, work = choiceWork()) {
+async function openSeededChat(t, work = choiceWork(), phoneCustom) {
   installDom(t)
   seedPhoneWork(work)
+  if (phoneCustom) localStorage.setItem("moirain_phoneCustom", JSON.stringify(phoneCustom))
   await import(`../reader/reader.js?reader-chat-choice-runtime=${Date.now()}-${Math.random()}`)
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()
   document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
 }
+
+test("reader-authored messages use the reader profile avatar", async t => {
+  const readerAvatar = "data:image/png;base64,cmVhZGVyLWF2YXRhcg=="
+  await openSeededChat(t, choiceWork(), {
+    readerId: "读者昵称",
+    readerAvatar,
+  })
+
+  document.getElementById("chatInput").click()
+  document.querySelector(".rd-reply-option").click()
+
+  const selfMessage = document.querySelector(".rd-chat-message.is-self")
+  assert.ok(selfMessage)
+  const avatar = selfMessage.querySelector(".chat-avatar")
+  assert.ok(avatar, "reader messages must render the reader-owned avatar")
+  assert.equal(avatar.querySelector("img")?.getAttribute("src"), readerAvatar)
+  assert.equal(avatar.getAttribute("aria-label"), "读者昵称")
+})
 
 test("a choice without reader text keeps reselection on its first generated follow-up", async t => {
   const work = choiceWork()
@@ -168,6 +188,15 @@ test("reader chat delegates choice application and rollback to the shared immuta
 
 test("a full-sentence choice is inserted after its owner and can be rolled back for reselection", async t => {
   await openSeededChat(t)
+
+  assert.ok(document.querySelector(".chat-author-shell.chat-reader-shell"))
+  assert.ok(document.querySelector(".chat-round-header"))
+  assert.ok(document.querySelector("#chatMsgArea.chat-msg-area"))
+  assert.ok(document.querySelector(".rd-chat-message.chat-msg"))
+  assert.ok(document.querySelector(".rd-chat-composer.chat-input-bar.chat-composer"))
+  assert.match(sharedChatCss, /\.phone-frame \.chat-msg-area\s*\{[^}]*scrollbar-width:\s*none/s)
+  assert.match(sharedChatCss, /\.phone-frame \.chat-msg-area::-webkit-scrollbar\s*\{[^}]*display:\s*none/s)
+  assert.match(readerSource, /rd-app-preview-chat chat-author-shell chat-reader-shell/)
 
   const composer = document.getElementById("chatInput")
   assert.ok(composer)

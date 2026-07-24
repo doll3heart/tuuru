@@ -8,6 +8,7 @@ import {
   serializeAuthorPlaceholderPresetBundle,
 } from "../author-placeholder-presets.js"
 import { mergeContactBundle, parseContactBundle, serializeContactBundle } from "../contact-bundles.js"
+import { parseForbiddenWords } from "../forbidden-words.js"
 
 function esc(value) {
   return String(value ?? "")
@@ -81,7 +82,7 @@ function renderPresetField(field = {}) {
     <label><span>显示名称</span><input class="form-input" data-field-label value="${esc(field.label)}" placeholder="例如：姓名"></label>
     <label><span>提问文字</span><input class="form-input" data-field-prompt value="${esc(field.prompt)}" placeholder="例如：你的名字？"></label>
     <label><span>替换方式</span><select class="form-select" data-field-mode>${modeOptions(field.mode || "each")}</select></label>
-    <label class="preset-forbidden"><span>禁用词（逗号或换行分隔）</span><input class="form-input" data-field-forbidden value="${esc(Array.isArray(field.forbidden) ? field.forbidden.join("，") : "")}" placeholder="可留空"></label>
+    <label class="preset-forbidden"><span>单项违禁词</span><input class="form-input" data-field-forbidden value="${esc(Array.isArray(field.forbidden) ? field.forbidden.join("，") : "")}" placeholder="可用换行、逗号、顿号、分号或斜杠分隔"></label>
     <button type="button" class="btn btn-sm btn-ghost preset-field-remove" data-field-remove aria-label="删除这一项">删除</button>
   </div>`
 }
@@ -97,6 +98,7 @@ function renderPresetEditor(preset = {}) {
         <button type="button" class="btn btn-sm btn-ghost" data-preset-delete>${preset.id ? "删除习惯" : "取消"}</button>
       </div>
     </div>
+    <label class="preset-global-forbidden"><span class="form-label">全局违禁词</span><textarea class="form-textarea" data-preset-global-forbidden placeholder="套用后对作品内所有占位符生效">${esc(Array.isArray(preset.globalForbidden) ? preset.globalForbidden.join("\n") : "")}</textarea></label>
     <div class="preset-fields">${fields.map(renderPresetField).join("")}</div>
     <p class="resource-status" data-preset-status aria-live="polite"></p>
   </article>`
@@ -295,16 +297,17 @@ function renderLegacyTutorialPage() {
         { title:"填写标记和问题", body:"<p>标记是作者写进内容的文字；问题是读者看到的提示。标记可自由命名。</p>" },
         { title:"选择替换方式", body:"<p>全文替换使用同一个答案；随机替换会变化；场景锁定会在同一场景保持一致。</p>" },
         { title:"写入标记", body:"<p>把标记原样写进正文、消息或其他支持的内容。</p>" },
-        { title:"预览测试", body:"<p>在读者预览中填写答案，检查替换范围和禁用词。</p>" },
+        { title:"整理与搜索", body:"<p>搜索名称、标记、问题或违禁词；点击「整理全部词库」可按多种分隔符拆词并清除重复项。</p>" },
+        { title:"预览测试", body:"<p>在读者预览中填写答案，检查替换范围和违禁词。</p>" },
         { title:"保存作者预设", body:"<p>常用配置可保存为作者预设。套用后，各作品仍可单独修改。</p>" },
       ],
-      checklist:["内容中的标记完全一致", "问题文字容易理解", "禁用词已经测试", "修改作者预设不会改变旧作品"],
+      checklist:["内容中的标记完全一致", "问题文字容易理解", "违禁词已经测试", "修改作者预设不会改变旧作品"],
       faq:[
         { title:"修改显示名称", body:"<p><strong>入口：</strong>作品编辑器 →「占位符」→「显示名称」。这不会修改正文标记。</p>" },
         { title:"让一个答案全文生效", body:"<p>选择「全文替换」，再把自定义标记写进需要替换的位置。</p>" },
         { title:"让结果随机变化", body:"<p>选择「随机替换」，再填写可用值。</p>" },
         { title:"让同一场景保持一致", body:"<p>选择「场景锁定」，再为节点设置场景。</p>" },
-        { title:"限制部分输入", body:"<p>在「禁用词」中用逗号或换行分隔，并到预览中测试。</p>" },
+        { title:"限制部分输入", body:"<p>当前占位符的词填在「违禁词」；需要所有占位符共用的词填在「全局违禁词」。支持换行、逗号、顿号、分号、斜杠和竖线分隔。</p>" },
         { title:"带到另一篇作品", body:"<p>保存为作者预设，再到目标作品中套用。</p>" },
         { title:"内容没有替换", body:"<p>检查内容中的文字是否与标记完全一致，并确认占位符已保存到当前作品。</p>" },
         { title:"导出会带走所有作者预设吗？", body:"<p>不会。作品文件只包含当前作品正在使用的占位符。</p>" },
@@ -383,16 +386,24 @@ const TUTORIAL_FEATURE_SECTIONS = [
       { title:"红包、转账与亲属卡", what:"添加带金额和备注的互动卡片。", where:"会话 → ＋ → 转账；下一页还有红包和亲属卡。", use:"选择卡片类型，填写金额、祝福语、备注或亲属关系。", effect:"接收方读者可以领取或收款，状态保存在本地阅读记录中。" },
       { title:"外卖卡片", what:"添加商家、订单、金额和配送状态。", where:"会话 → ＋ → 下一页 → 外卖卡片。", use:"填写商家和订单内容后保存。", effect:"读者可领取卡片；点击卡片会打开外卖搜索，支持时会尝试打开对应 App。" },
       { title:"消息编辑菜单", what:"修改消息并在指定位置补充剧情。", where:"手机或 iPad 长按消息；电脑右键消息。", use:"选择编辑、引用、在前插入时间、在前插入消息或添加选项。", effect:"可以修正文案、补充上下文和设置读者回复。" },
+      { title:"会话置顶与排序", what:"整理单聊和群聊在消息列表中的顺序。", where:"小手机 → 消息列表。", use:"点击置顶按钮；长按拖动排序柄，或聚焦后使用上下方向键。", effect:"置顶会话排在前面；同一分区内可保存自定义顺序。" },
       { title:"消息回复选项", what:"在一条消息后加入读者选择和角色接话。", where:"消息编辑菜单 → 添加选项。", use:"填写选项文本、读者回复和角色后续回复；每行后续文字生成一个气泡。", effect:"读者选择后会按顺序显示对应回复。" },
       { title:"聊天轮次", what:"把聊天剧情分成依次开放的多轮内容。", where:"会话右上角菜单。", use:"结束当前轮并填写下一轮信息，再继续添加消息。", effect:"阅读节奏可以按轮次或单条消息推进。" },
       { title:"语音与视频通话", what:"添加角色通话事件。", where:"消息或通话编辑入口。", use:"选择通话类型并填写内容。", effect:"读者可体验来电和通话流程。" },
       { title:"群聊身份", what:"设置群主、管理员和成员头衔。", where:"群聊 → 右上角菜单 → 管理群聊。", use:"勾选成员并设置群主、管理员和头衔。", effect:"群聊消息旁显示对应身份。" },
       { title:"动态", what:"制作角色动态、评论和读者回复。", where:"消息 App → 动态。", use:"添加动态内容、发布身份、评论和回复选项。", effect:"读者可以浏览动态并选择回复。" },
-      { title:"论坛", what:"创建帖子、评论和楼中楼。", where:"论坛 App。", use:"选择发布身份，填写内容并设置时间。", effect:"读者可浏览、排序和互动。" },
+      { title:"论坛", what:"创建帖子和一级评论。", where:"论坛 App。", use:"选择发布身份，填写帖子内容、评论内容和显示时间。", effect:"读者可浏览帖子并参与评论区互动。" },
+      { title:"楼中楼回复关系", what:"让角色回复指定的评论或楼中楼。", where:"论坛 App → 打开帖子 → 评论区。", use:"轻点评论或楼中楼，选择联系人、小号或 NPC，再填写回复内容。", effect:"评论区显示“回复者 回复 被回复者”，多层回复保留各自的目标关系。" },
+      { title:"评论操作菜单", what:"编辑或删除一条评论、楼中楼。", where:"评论或楼中楼右侧的 ×。", use:"点 ×，再选择“编辑”或“删除”。", effect:"编辑会更新当前内容；删除会移除当前内容及其下方回复。" },
+      { title:"评论点赞数", what:"设置评论和楼中楼显示的点赞数。", where:"评论或楼中楼右侧的爱心和数字。", use:"点爱心或数字，填写非负整数并保存。", effect:"作者端和读者端会显示更新后的点赞数。" },
+      { title:"评论显示时间", what:"修改、隐藏单条时间，或统一隐藏本帖全部回复时间。", where:"单条时间在评论或楼中楼下方；整帖开关在主楼时间右侧。", use:"点时间戳，修改后保存；需要隐藏单条时点“隐藏时间”。点“隐藏全部回复时间”可统一隐藏，再点可恢复。", effect:"作者端和读者端按设置显示；整帖开关不会清空各条已保存的时间。" },
+      { title:"评论与楼中楼排序", what:"调整评论区内容的显示顺序。", where:"论坛帖子评论区。", use:"手机或 iPad 长按后上下拖动；电脑按住鼠标后上下拖动。一级评论会带着全部楼中楼移动；楼中楼只在当前同级回复中移动。键盘聚焦后可按 Alt + ↑/↓。", effect:"评论顺序会保存，楼中楼层级和回复目标保持不变。" },
+      { title:"论坛读者回复选项", what:"为指定评论准备多句读者可选的完整回复。", where:"轻点评论或楼中楼 → 选择回复人 → 读者。", use:"回复选项入口会在回复人选择“读者”后打开。进入“编辑读者回复选项”，添加选项文字和读者发出的完整回复。已设置的选项会显示在评论下方，点击选项可以再次编辑。", effect:"读者可从多条回复中选择一条，评论区会按该选项继续显示内容。" },
+      { title:"论坛角色后续回复", what:"为每个读者选项安排角色继续接话。", where:"编辑读者回复选项 → 角色后续消息。", use:"点“添加”，逐条选择联系人、小号或 NPC，再填写回复内容。", effect:"同一选项可连续显示多个角色回复，不同选项可进入不同对话走向。" },
       { title:"备忘录", what:"为角色添加带时间的备忘内容。", where:"备忘录 App 或角色接入。", use:"选择联系人并添加备忘内容和时间。", effect:"读者在该角色的备忘录中查看。" },
       { title:"相册", what:"按相册整理角色照片和说明。", where:"相册 App 或角色接入。", use:"新建相册，再添加图片、说明和时间。", effect:"读者可进入相册逐张查看。" },
       { title:"浏览记录", what:"添加角色浏览过的页面记录。", where:"浏览器 App 或角色接入。", use:"填写标题、网址和日期时间。", effect:"读者看到带时间的浏览历史。" },
-      { title:"购物", what:"制作购物车、订单和商品记录。", where:"购物 App 或角色接入。", use:"填写商品信息，并在购物车与订单状态之间调整。", effect:"读者可查看角色的购物清单和订单。" },
+      { title:"购物", what:"制作购物车、订单和商品记录。", where:"购物 App 或角色接入。", use:"填写商品信息；修改已有商品时，手机或 iPad 长按商品卡片，电脑右键商品卡片，再选择“编辑”。也可以在购物车与订单状态之间调整。", effect:"读者可查看角色的购物清单和订单。" },
       { title:"角色接入", what:"为不同联系人分配专属 App 内容。", where:"小手机设置 → 角色接入。", use:"选择联系人，再配置备忘录、相册、浏览器或购物内容。", effect:"切换角色时显示对应数据。" },
       { title:"阅读节奏控制", what:"安排读者查看内容的顺序。", where:"设置 App → 阅读节奏控制。", use:"打开功能并拖动内容卡片排序。", effect:"读者会按顺序收到浏览提示。" },
     ],
@@ -415,7 +426,9 @@ const TUTORIAL_FEATURE_SECTIONS = [
       { title:"全文替换", what:"所有标记使用同一个答案。", where:"占位符的替换方式。", use:"选择“全文替换”，再把标记写进内容。", effect:"支持的文字位置统一替换。" },
       { title:"随机替换", what:"从可用值中随机选择结果。", where:"占位符的替换方式。", use:"选择“随机替换”并填写可用值。", effect:"标记出现时可以得到不同结果。" },
       { title:"场景锁定", what:"让同一场景使用同一个随机结果。", where:"占位符替换方式和节点场景。", use:"选择“场景锁定”，再为节点设置场景。", effect:"同场景节点保持一致。" },
-      { title:"禁用词", what:"限制读者提交部分内容。", where:"占位符编辑页。", use:"用逗号或换行填写禁用词。", effect:"命中禁用词时会提示修改。" },
+      { title:"单项违禁词", what:"只限制一个占位符的部分输入。", where:"占位符卡片 → 违禁词。", use:"输入词语，可用换行、逗号、顿号、分号、斜杠或竖线分隔。", effect:"该占位符命中词语时会提示修改。" },
+      { title:"全局违禁词", what:"让同一作品的所有占位符共用一份限制词。", where:"占位符管理 → 全局违禁词。", use:"输入词语后点击「整理全部词库」；小手机再点击底部「保存」。", effect:"任一占位符命中词语时都会提示修改。" },
+      { title:"搜索与整理词库", what:"查找占位符和清理重复词语。", where:"占位符管理顶部。", use:"输入关键词筛选；点击「整理全部词库」拆分并去重。", effect:"快速定位项目，并保留每个词第一次出现的写法。" },
       { title:"作者占位符预设", what:"保存可跨作品复用的占位符配置。", where:"作品占位符设置或“写作习惯”。", use:"保存预设，再到其他作品套用。", effect:"目标作品获得一份可独立修改的配置。" },
     ],
   },
@@ -451,7 +464,15 @@ const TUTORIAL_FAQ_SECTIONS = {
     { question:"外卖卡片点击后会去哪里？", answer:"卡片会按商家和订单内容打开外卖搜索；支持的 Android 环境会先尝试打开对应 App，并保留网页入口。" },
     { question:"红包、转账和亲属卡会改变作者数据吗？", answer:"领取与收款状态只记录在读者当前设备的阅读进度中。" },
     { question:"怎样修改已经添加的消息？", answer:"手机或 iPad 长按消息，电脑右键消息，再从菜单选择编辑、引用或插入内容。" },
+    { question:"怎样修改已经添加的商品？", answer:"手机或 iPad 长按商品卡片，电脑右键商品卡片，再从菜单选择“编辑”。购物车和订单里的已有商品都可以重新修改，包括显示时间。" },
     { question:"角色后续回复怎样分成多个气泡？", answer:"在消息的“添加选项”中填写后续回复，每行文字会生成一个气泡。" },
+    { question:"怎样回复指定的论坛评论或楼中楼？", answer:"轻点目标评论或楼中楼，选择联系人、小号或 NPC，再填写内容。发布后会显示回复双方的名字。" },
+    { question:"为什么没有看到论坛回复选项？", answer:"轻点目标评论或楼中楼，在回复人选择器中选择“读者”，再打开“编辑读者回复选项”。" },
+    { question:"已经设置的论坛回复选项怎样修改？", answer:"点评论下方的选项文字，修改选项、读者完整回复或角色后续消息，再保存。" },
+    { question:"论坛评论和楼中楼怎样排序？", answer:"手机或 iPad 长按内容后拖动；电脑按住鼠标后拖动。一级评论会带着楼中楼一起移动，楼中楼会在当前同级回复中移动。" },
+    { question:"论坛评论怎样修改点赞数？", answer:"在创作端点评论右侧的爱心或数字，填写点赞数并保存。" },
+    { question:"论坛评论时间怎样修改或隐藏？", answer:"点评论或楼中楼下方的时间戳可修改或隐藏。点主楼时间右侧的“隐藏全部回复时间”，可统一隐藏本帖全部评论和楼中楼时间；再次点击会恢复。" },
+    { question:"论坛评论怎样编辑或删除？", answer:"点评论右侧的 ×，再选择“编辑”或“删除”。" },
   ],
   social:[
     { question:"联系人小号和论坛 NPC 怎样选择？", answer:"发布帖子、评论或楼中楼时打开身份选择器，再选择联系人、小号或 NPC。" },
@@ -562,10 +583,7 @@ function collectPresetFields(editor) {
     label: row.querySelector("[data-field-label]")?.value?.trim() || "",
     prompt: row.querySelector("[data-field-prompt]")?.value?.trim() || "",
     mode: row.querySelector("[data-field-mode]")?.value || "each",
-    forbidden: (row.querySelector("[data-field-forbidden]")?.value || "")
-      .split(/[,，\n]/)
-      .map(value => value.trim())
-      .filter(Boolean),
+    forbidden: parseForbiddenWords(row.querySelector("[data-field-forbidden]")?.value),
   })).filter(field => field.key || field.label || field.prompt)
 }
 
@@ -684,7 +702,9 @@ function bindPlaceholderLibrary(root) {
         return
       }
       const previousId = editor.dataset.presetId
-      const saved = saveAuthorPlaceholderPreset(name, fields)
+      const saved = saveAuthorPlaceholderPreset(name, fields, {
+        globalForbidden:parseForbiddenWords(editor.querySelector("[data-preset-global-forbidden]")?.value),
+      })
       if (!saved) {
         if (status) status.textContent = "保存失败，浏览器无法写入作者全局设置。"
         return

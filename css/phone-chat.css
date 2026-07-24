@@ -1,0 +1,182 @@
+/* Shared chat shell: the reader inherits the authored conversation viewport. */
+.phone-frame .chat-author-shell {
+  --chat-editor-ink: #40383b;
+  --chat-editor-line: #8f7b81;
+  --chat-editor-paper: #fffafa;
+  --chat-editor-pink: #c79ba6;
+  --chat-editor-screen: rgba(215, 208, 210, .92);
+  --chat-editor-shadow: #baa9ad;
+  min-height: 0;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: #c7b9bd;
+  position: relative;
+  color: var(--chat-editor-ink);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.phone-frame .chat-round-header {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  min-height: 43px;
+  box-sizing: border-box;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  flex-shrink: 0;
+  align-items: center;
+  overflow: hidden;
+  border-bottom: 1px solid var(--chat-editor-line);
+  background: rgba(247, 240, 239, .97);
+}
+.phone-frame .chat-round-control {
+  display: grid;
+  width: 44px;
+  min-width: 0;
+  height: 43px;
+  box-sizing: border-box;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--chat-editor-ink);
+  font: 700 18px/1 ui-monospace, monospace;
+  cursor: pointer;
+}
+.phone-frame .chat-round-control:hover {
+  background: rgba(184, 135, 148, .15);
+}
+.phone-frame .chat-round-control:focus-visible,
+.phone-frame .chat-composer button:focus-visible,
+.phone-frame .chat-composer input:focus-visible {
+  outline: 2px solid #8f6370;
+  outline-offset: -3px;
+}
+.phone-frame .chat-round-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  overflow: hidden;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.phone-frame .chat-round-title strong,
+.phone-frame .chat-round-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.phone-frame .chat-round-title span {
+  color: #75676c;
+  font-size: 8px;
+}
+.phone-frame .chat-msg-area {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 11px 9px;
+  background: var(--chat-editor-screen);
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.phone-frame .chat-msg-area::-webkit-scrollbar {
+  display: none;
+}
+.phone-frame .chat-msg {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  margin: 8px 0;
+}
+.phone-frame .chat-msg.self {
+  flex-direction: row-reverse;
+  padding: 0;
+}
+.phone-frame .chat-avatar {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--chat-editor-line);
+  border-radius: 1px;
+  background-color: #d0aab3;
+  box-shadow: 1px 1px var(--chat-editor-shadow);
+  color: #fff;
+  font-size: .65rem;
+  font-weight: 600;
+  overflow: hidden;
+}
+.phone-frame .chat-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.phone-frame .chat-bubble {
+  max-width: 190px;
+  min-height: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--chat-editor-line);
+  border-radius: 3px;
+  background: var(--chat-editor-paper);
+  box-shadow: 2px 2px var(--chat-editor-shadow);
+  color: var(--chat-editor-ink);
+  font-size: .76rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.phone-frame .chat-msg.self .chat-bubble {
+  background: var(--chat-editor-pink);
+  box-shadow: -2px 2px #98747c;
+  color: #fff;
+}
+.phone-frame .chat-input-bar.chat-composer {
+  display: grid;
+  min-height: 47px;
+  grid-template-columns: 38px minmax(0, 1fr) 44px;
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 5px 6px 7px !important;
+  border-top: 0 !important;
+  background: #f7f0ef !important;
+  position: static;
+}
+.phone-frame .chat-reader-shell .chat-input-bar.chat-composer {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+.phone-frame .chat-composer #chatPlusBtn,
+.phone-frame .chat-composer #chatSendBtn,
+.phone-frame .chat-composer #chatInput {
+  min-width: 0;
+  height: 35px;
+  border: 1px solid var(--chat-editor-line);
+  border-radius: 2px;
+  background: #fffafa;
+  color: var(--chat-editor-ink);
+}
+.phone-frame .chat-composer #chatInput {
+  width: 100%;
+  padding: 0 9px;
+  outline: none;
+  font: 500 9px/1.3 ui-monospace, monospace;
+}
+.phone-frame .chat-composer #chatInput::placeholder {
+  color: #6d6266;
+  opacity: 1;
+}
+.phone-frame .chat-composer #chatSendBtn {
+  width: 44px;
+  padding: 0;
+  background: #cda9b1;
+  font: 700 11px/1 ui-monospace, monospace;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phone-frame .chat-round-control {
+    transition: none;
+  }
+}

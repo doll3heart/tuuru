@@ -98,33 +98,36 @@ function seedPhoneWork(work) {
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 }
 
-function assertSelectedContent(firstText, secondText) {
+function assertLegacyConnectionFlow(type, firstText, secondText) {
   const frame = document.querySelector(".phone-frame")
-  assert.match(frame.textContent, new RegExp(firstText))
-  assert.doesNotMatch(frame.textContent, new RegExp(secondText))
+  const gate = frame.querySelector('.rd-connection-gate[data-connection-state="choose"]')
+  assert.ok(gate)
+  assert.doesNotMatch(gate.textContent, new RegExp(`${firstText}|${secondText}`))
+  assert.equal(frame.querySelector(".rd-contact-select"), null)
 
-  let select = frame.querySelector(".rd-contact-select")
-  assert.equal(select.tagName, "SELECT")
-  assert.equal(select.getAttribute("aria-label"), "内容联系人")
-  assert.equal(select.options.length, 2)
-  assert.deepEqual([...select.options].map(option => option.value), ["0", "1"])
-  assert.equal(select.value, "0")
-  assert.equal(select.options[1].textContent, "Bob <script>")
-  assert.equal(frame.querySelector("[data-contact-id]"), null)
+  const sources = [...gate.querySelectorAll("[data-connection-source-index]")]
+  assert.equal(sources.length, 2)
+  assert.deepEqual(sources.map(source => source.dataset.connectionSourceIndex), ["0", "1"])
+  assert.match(sources[1].textContent, /Bob <script>/)
+  sources[1].click()
+  assert.equal(sources[1].getAttribute("aria-pressed"), "true")
+  assert.equal(sources[0].getAttribute("aria-pressed"), "false")
+  assert.equal(document.querySelector("[data-forged]"), null)
+  assert.equal(frame.querySelector("script"), null)
 
-  select.value = "1"
-  select.dispatchEvent(new Event("change", { bubbles: true }))
+  gate.querySelector('[data-connection-action="confirm"]').click()
 
-  select = frame.querySelector(".rd-contact-select")
-  assert.equal(select.value, "1")
-  assert.equal(document.activeElement, select)
+  const title = frame.querySelector(".rd-phone-app-header .cu-title")
+  assert.match(title.textContent, new RegExp(`Bob <script> ·`))
   assert.doesNotMatch(frame.textContent, new RegExp(firstText))
   assert.match(frame.textContent, new RegExp(secondText))
+  assert.equal(frame.querySelector(".rd-contact-source"), null)
+  assert.equal(frame.querySelector(".rd-contact-select"), null)
   assert.equal(document.querySelector("[data-forged]"), null)
   assert.equal(frame.querySelector("script"), null)
 }
 
-test("contact-scoped reader Apps can switch away from the first contact", async t => {
+test("legacy contact-scoped reader Apps use the access page instead of an in-App selector", async t => {
   installDom(t)
   const work = phoneWork()
   seedPhoneWork(work)
@@ -140,7 +143,7 @@ test("contact-scoped reader Apps can switch away from the first contact", async 
     ["shopping", "Alice item", "Bob item"],
   ]) {
     document.querySelector(`[data-app-type="${type}"]`).click()
-    assertSelectedContent(firstText, secondText)
+    assertLegacyConnectionFlow(type, firstText, secondText)
     document.querySelector(".rd-back-btn").click()
     assert.ok(document.getElementById("phoneDesktopReader"))
   }
@@ -185,11 +188,11 @@ test("configured locked Apps require reader confirmation and keep the authored s
 
     frame = document.querySelector(".phone-frame")
     assert.equal(frame.querySelector(".rd-connection-gate"), null)
-    const source = frame.querySelector(".rd-contact-source")
-    assert.ok(source, `${type} should keep the connected source visible`)
-    assert.match(source.textContent, /Bob <script>的手机/)
+    const title = frame.querySelector(".rd-phone-app-header .cu-title")
+    assert.match(title.textContent, /Bob <script> ·/)
     assert.doesNotMatch(frame.textContent, new RegExp(firstText))
     assert.match(frame.textContent, new RegExp(secondText))
+    assert.equal(frame.querySelector(".rd-contact-source"), null)
     assert.equal(frame.querySelector(".rd-contact-select"), null)
 
     frame.querySelector(".rd-back-btn").click()
@@ -296,7 +299,7 @@ test("contact-scoped reader Apps keep legacy content without contacts", async t 
   }
 })
 
-test("a single contact keeps the existing reader App presentation", async t => {
+test("a single contact still confirms access before showing the App", async t => {
   installDom(t)
   const work = phoneWork()
   work.id = "reader-contact-context-single"
@@ -314,24 +317,26 @@ test("a single contact keeps the existing reader App presentation", async t => {
     ["shopping", "Alice item", "Bob item"],
   ]) {
     document.querySelector(`[data-app-type="${type}"]`).click()
-    const frame = document.querySelector(".phone-frame")
+    let frame = document.querySelector(".phone-frame")
+    const gate = frame.querySelector('.rd-connection-gate[data-connection-state="choose"]')
+    assert.ok(gate)
+    assert.doesNotMatch(gate.textContent, new RegExp(firstText))
+    gate.querySelector('[data-connection-action="confirm"]').click()
+    frame = document.querySelector(".phone-frame")
     assert.equal(frame.querySelector(".rd-contact-select"), null)
+    assert.match(frame.querySelector(".rd-phone-app-header .cu-title").textContent, /Alice ·/)
     assert.match(frame.textContent, new RegExp(firstText))
     assert.doesNotMatch(frame.textContent, new RegExp(secondText))
     frame.querySelector(".rd-back-btn").click()
   }
 })
 
-test("the reader contact picker remains usable on touch and keyboard", () => {
-  const context = ruleBodiesFor(".rd-contact-context")
-  const select = ruleBodiesFor(".rd-contact-select")
-  const focus = ruleBodiesFor(".rd-contact-select:focus-visible")
+test("the reader access source picker remains usable on touch and keyboard", () => {
+  const source = ruleBodiesFor(".rd-connection-source")
+  const focus = ruleBodiesFor(".rd-connection-source:focus-visible")
 
-  assert.match(context, /display\s*:\s*flex/)
-  assert.match(context, /min-width\s*:\s*0/)
-  assert.match(select, /min-width\s*:\s*0/)
-  assert.match(select, /min-height\s*:\s*44px/)
-  assert.match(select, /font\s*:\s*inherit/)
+  assert.match(source, /min-height\s*:\s*(?:44|[5-9]\d|[1-9]\d{2,})px/)
+  assert.match(source, /font\s*:\s*inherit/)
   assert.match(focus, /outline\s*:\s*2px\s+solid/)
 })
 
