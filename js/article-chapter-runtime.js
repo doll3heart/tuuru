@@ -194,6 +194,20 @@ export function expandArticleChapterPath(nodes, path, options) {
   return nextPath
 }
 
+export function reconcileArticleConditionalPath(nodes, path, options) {
+  var routeEntries = validEntries(nodes, path).filter(function(entry) {
+    return !isConditionalArticleNode(entry.node)
+  })
+  if (!routeEntries.length) return pathCopy(path)
+
+  var nextPath = []
+  routeEntries.forEach(function(entry) {
+    appendTransitionNodes(nextPath, visibleConditionalPreludes(nodes, entry.node, options))
+    appendTransitionNodes(nextPath, [entry.node])
+  })
+  return expandArticleChapterPath(nodes, nextPath, options)
+}
+
 export function currentArticleChapterEntries(nodes, path) {
   var entries = validEntries(nodes, path)
   if (!entries.length) return []

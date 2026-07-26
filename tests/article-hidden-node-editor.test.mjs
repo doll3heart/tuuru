@@ -94,6 +94,28 @@ test("authors create a hidden paragraph node with a badge and guarded tools", ()
   assert.equal(document.querySelector('[data-a="is"]'), null)
 })
 
+test("authors can create and immediately use a scene from the visible scene selector", () => {
+  const root = render()
+  root.querySelector('.wt-node-select[data-n="source"]').click()
+  const sceneSelect = document.querySelector('[data-a="ss"]')
+
+  assert.ok(sceneSelect)
+  assert.ok(sceneSelect.querySelector('option[value="__add_scene__"]'))
+
+  sceneSelect.value = "__add_scene__"
+  sceneSelect.dispatchEvent(new Event("change", { bubbles: true }))
+  assert.match(document.querySelector(".modal-overlay").textContent, /新建场景/)
+
+  document.getElementById("pI").value = "雨夜"
+  document.getElementById("pK").click()
+
+  const work = getWork(baseWork.id)
+  const createdScene = work.scenes.find(scene => scene.name === "雨夜")
+  assert.ok(createdScene)
+  assert.equal(work.nodes.find(node => node.id === "source").scene, createdScene.id)
+  assert.match(document.querySelector('[data-a="ss"]').selectedOptions[0].textContent, /场景：雨夜/)
+})
+
 test("condition editor saves AND-of-OR stable choice ids and warns on deleted references", () => {
   const created = getWork(baseWork.id).nodes.find(node => node.kind === "conditional")
   assert.ok(created)

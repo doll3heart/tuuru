@@ -9,6 +9,7 @@ import {
   expandArticleChapterPath,
   nextArticleChapterPath,
   previousArticleChapterPath,
+  reconcileArticleConditionalPath,
 } from "../js/article-chapter-runtime.js"
 
 const nodes = [
@@ -309,6 +310,31 @@ test("conditional preludes are not duplicated when the retained route already co
   assert.deepEqual(
     appendArticleChoice(ordered, ["prelude", "source"], 1, "target", visibleConditionalIds(["prelude", "target-prelude"])).path,
     ["prelude", "source", "target-prelude", "target"],
+  )
+})
+
+test("conditional prose is reconciled against current selections without losing the ordinary route", () => {
+  const ordered = [
+    { id: "source", chapterId: "chapter-1", choices: [{ id: "go", targetId: "target" }] },
+    { id: "memory", chapterId: "chapter-1", kind: "conditional" },
+    { id: "target", chapterId: "chapter-1", choices: [] },
+  ]
+
+  assert.deepEqual(
+    reconcileArticleConditionalPath(
+      ordered,
+      ["source", "memory", "target"],
+      visibleConditionalIds([]),
+    ),
+    ["source", "target"],
+  )
+  assert.deepEqual(
+    reconcileArticleConditionalPath(
+      ordered,
+      ["source", "target"],
+      visibleConditionalIds(["memory"]),
+    ),
+    ["source", "memory", "target"],
   )
 })
 

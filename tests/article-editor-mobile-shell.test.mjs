@@ -617,7 +617,7 @@ test("the bounded editor header keeps title and scene controls usable in one row
   const scene = root.querySelector('.editor-header [data-a="ss"]')
 
   assert.equal(title.getAttribute("aria-label"), "节点标题")
-  assert.equal(scene.getAttribute("aria-label"), "节点场景")
+  assert.equal(scene.getAttribute("aria-label"), "当前节点所属场景；打开可新建场景")
 
   const bounded = cssBlockAfterMarker(css, "/* Article editor bounded mobile workspace */")
   assert.ok(bounded)

@@ -460,11 +460,12 @@ function buildHeader(w, n) {
     h += '<span class="conditional-node-kind">隐藏段落</span>'
     h += '<button type="button" class="btn btn-sm btn-outline" data-a="edit-display-condition" data-w="' + w.id + '" data-n="' + n.id + '">显示条件</button>'
   }
-  h += '<select data-a="ss" data-n="' + n.id + '" aria-label="节点场景"><option value="">场景</option>'
+  h += '<select data-a="ss" data-n="' + n.id + '" aria-label="当前节点所属场景；打开可新建场景"><option value="">不使用场景</option>'
   for (var i = 0; i < sc.length; i++) {
     var s = sc[i]
-    h += '<option value="' + s.id + '"' + (n.scene === s.id ? ' selected' : '') + '>' + esc(s.name) + '</option>'
+    h += '<option value="' + s.id + '"' + (n.scene === s.id ? ' selected' : '') + '>场景：' + esc(s.name) + '</option>'
   }
+  h += '<option value="__add_scene__">＋ 新建场景…</option>'
   h += '</select>'
   h += '</div>'
   h += '<span class="word-count" id="wc_' + n.id + '">' + formatEditorCharacterCount(n.content || '') + '</span>'
@@ -1098,9 +1099,6 @@ function nodeHTML(w, n, actionIndex, targetPick, renderIndex) {
   var ch = w.chapters || []
   var curCid = n.chapterId || ""
   var canMoveChapter = ch.some(function(c) { return c.id !== curCid })
-  var siblingPosition = renderIndex?.siblingPositionByNodeId.get(n.id)
-  var canMoveUp = Boolean(siblingPosition && siblingPosition.index > 0)
-  var canMoveDown = Boolean(siblingPosition && siblingPosition.index < siblingPosition.count - 1)
   var actionPanelId = 'wtNodeActions_' + actionIndex
   var targetDescription = {
     ok:Boolean(renderIndex?.targetPathByNodeId.has(n.id)),
@@ -1140,8 +1138,6 @@ function nodeHTML(w, n, actionIndex, targetPick, renderIndex) {
   h += '</select>'
   if (conditional) h += '<button type="button" data-a="edit-display-condition" data-w="' + w.id + '" data-n="' + n.id + '" title="编辑显示条件" aria-label="编辑显示条件">条件</button>'
   h += '<button type="button" data-a="rn2" data-w="' + w.id + '" data-n="' + n.id + '" title="重命名" aria-label="重命名节点">\u270e</button>'
-  h += '<button type="button" data-a="up" data-w="' + w.id + '" data-n="' + n.id + '" title="上移" aria-label="上移节点"' + (canMoveUp ? '' : ' disabled') + '>\u25b2</button>'
-  h += '<button type="button" data-a="dn" data-w="' + w.id + '" data-n="' + n.id + '" title="下移" aria-label="下移节点"' + (canMoveDown ? '' : ' disabled') + '>\u25bc</button>'
   h += '<button type="button" data-a="dl" data-w="' + w.id + '" data-n="' + n.id + '" title="删除" aria-label="删除节点">\u2715</button>'
   h += '</span></div>'
   return h
@@ -1377,14 +1373,6 @@ function handleClick(e) {
     return
   }
   if (a === "sl") { _nodeId = n; _splitPaneController?.closeOverlay(mobileShell); prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
-  if (a === "up") {
-    if (!moveNode(w, n, -1)) restoreOutlineActionFocus(outlineActionTrigger, b)
-    return
-  }
-  if (a === "dn") {
-    if (!moveNode(w, n, 1)) restoreOutlineActionFocus(outlineActionTrigger, b)
-    return
-  }
   if (a === "dl") {
     showConfirm("删除节点", "确定删除此节点？", function() {
       deleteNode(w, n)
@@ -1649,6 +1637,22 @@ function handleChange(e) {
 
   // Native select controls reliably commit through change on touch and keyboard.
   if (a === "ss") {
+    if (b.value === "__add_scene__") {
+      var currentScene = getNode(w, n)?.scene || ""
+      b.value = currentScene
+      showPrompt("新建场景", "例如：雨夜", function(sceneName) {
+        var scene = addScene(w, sceneName)
+        if (!scene) {
+          showToast("场景添加失败，请重试", "error")
+          return
+        }
+        updateNode(w, n, {scene:scene.id})
+        refreshEditor(w)
+      }, function() {
+        b.focus()
+      })
+      return
+    }
     updateNode(w, n, {scene: b.value})
     return
   }
@@ -2659,39 +2663,6 @@ function insertImageAtCursor(src) {
   document.execCommand('insertImage', false, src)
   // Trigger auto-save
   updateNode(_workId, _nodeId, {content: ce.innerHTML})
-}
-
-function moveNode(wid, nid, dir) {
-  var w = getWork(wid)
-  if (!w || !w.nodes || !w.nodes.length) return false
-  var ns = w.nodes
-
-  var node = ns.find(function(x) { return x.id === nid })
-  if (!node) return false
-  var cid = node.chapterId || ""
-
-  // Collect sibling nodes in same chapter (preserving global order)
-  var siblings = []
-  for (var i = 0; i < ns.length; i++) {
-    if ((ns[i].chapterId || "") === cid) {
-      siblings.push(ns[i])
-    }
-  }
-  if (siblings.length < 2) return false
-
-  var si = siblings.findIndex(function(x) { return x.id === nid })
-  var st = si + dir
-  if (st < 0 || st >= siblings.length) return false
-
-  // Swap in global array
-  var gi = ns.findIndex(function(x) { return x.id === nid })
-  var gt = ns.findIndex(function(x) { return x.id === siblings[st].id })
-  var tmp = ns[gi]
-  ns[gi] = ns[gt]
-  ns[gt] = tmp
-  updateWork(wid, {nodes: ns})
-  refreshEditor(wid)
-  return true
 }
 
 function refreshEditor(wid) {

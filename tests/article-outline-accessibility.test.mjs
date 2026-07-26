@@ -353,18 +353,15 @@ test("outline actions expose one named disclosure and one sibling panel per item
     assert.equal(panel.querySelector(':scope > select[data-a="mc"]').disabled, true)
     assert.deepEqual(
       controls.filter(control => control.tagName === "BUTTON").map(control => control.dataset.a),
-      ["rn2", "up", "dn", "dl"],
+      ["rn2", "dl"],
     )
+    assert.equal(panel.querySelector('[data-a="up"]'), null)
+    assert.equal(panel.querySelector('[data-a="dn"]'), null)
     for (const control of controls) {
       assert.ok(control.getAttribute("aria-label")?.trim())
       if (control.tagName === "BUTTON") assert.equal(control.type, "button")
     }
   }
-
-  assert.equal(nodeRows[0].querySelector('[data-a="up"]').disabled, true)
-  assert.equal(nodeRows[0].querySelector('[data-a="dn"]').disabled, false)
-  assert.equal(nodeRows[1].querySelector('[data-a="up"]').disabled, false)
-  assert.equal(nodeRows[1].querySelector('[data-a="dn"]').disabled, true)
 
   const chapterButtons = [...chapterRows[0].querySelectorAll(":scope > .chapter-actions > button")]
   assert.deepEqual(
@@ -511,7 +508,7 @@ test("desktop outline actions regain focus after cancellation", () => {
   assert.equal(localStorage.getItem("tuuru_works"), before)
 })
 
-test("node action panels reuse move, reorder, and delete command paths", () => {
+test("node action panels reuse move and delete command paths", () => {
   try {
     const movableWork = JSON.parse(JSON.stringify(work))
     movableWork.chapters.push({ id: "chapter-b", name: "Chapter B" })
@@ -534,20 +531,6 @@ test("node action panels reuse move, reorder, and delete command paths", () => {
 
     localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
     root = render()
-    row = root.querySelector('.wt-node-select[data-n="node-b"]').closest(".wt-node")
-    trigger = row.querySelector(".wt-action-disclosure")
-    trigger.click()
-    document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="up"]').click()
-
-    assert.equal(trigger.getAttribute("aria-expanded"), "false")
-    assert.deepEqual(
-      JSON.parse(localStorage.getItem("tuuru_works")).works[0].nodes.map(node => node.id),
-      ["node-b", "node-a"],
-    )
-    assert.equal(document.querySelectorAll('.wt-action-disclosure[aria-expanded="true"]').length, 0)
-
-    localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
-    root = render()
     row = root.querySelector('.wt-node-select[data-n="node-a"]').closest(".wt-node")
     trigger = row.querySelector(".wt-action-disclosure")
     const beforeDelete = localStorage.getItem("tuuru_works")
@@ -557,14 +540,6 @@ test("node action panels reuse move, reorder, and delete command paths", () => {
     assert.equal(trigger.getAttribute("aria-expanded"), "false")
     assert.equal(document.activeElement?.id, "cN")
     document.getElementById("cN").click()
-    assert.equal(document.activeElement, trigger)
-    assert.equal(localStorage.getItem("tuuru_works"), beforeDelete)
-
-    trigger.click()
-    const unavailableUp = document.getElementById(trigger.getAttribute("aria-controls")).querySelector('[data-a="up"]')
-    unavailableUp.disabled = false
-    unavailableUp.click()
-    assert.equal(trigger.getAttribute("aria-expanded"), "false")
     assert.equal(document.activeElement, trigger)
     assert.equal(localStorage.getItem("tuuru_works"), beforeDelete)
   } finally {
@@ -580,6 +555,8 @@ test("outline action disclosures preserve desktop access and fit bounded touch p
   const triggerFocus = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-action-disclosure:focus-visible")
   const desktopNodeActions = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-node:hover .node-actions")
   const desktopChapterActions = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-title:hover .chapter-actions")
+  const desktopChapterTrigger = ruleBodiesFor(cssWithoutComments, ".world-tree .wt-chapter-title > .wt-action-disclosure")
+  const desktopOpenChapter = ruleBodiesFor(cssWithoutComments, '.world-tree .wt-chapter-title[data-outline-actions-open="true"] > .chapter-actions')
   const boundedTrigger = ruleBodiesFor(bounded || "", ".world-tree .wt-action-disclosure")
   const boundedClosedNode = ruleBodiesFor(bounded || "", ".world-tree .wt-node .node-actions")
   const boundedClosedChapter = ruleBodiesFor(bounded || "", ".world-tree .wt-chapter-title .chapter-actions")
@@ -594,6 +571,8 @@ test("outline action disclosures preserve desktop access and fit bounded touch p
   assert.match(triggerFocus, /outline\s*:\s*2px\s+solid/)
   assert.match(desktopNodeActions, /display\s*:\s*flex/)
   assert.match(desktopChapterActions, /display\s*:\s*flex/)
+  assert.match(desktopChapterTrigger, /display\s*:\s*(?:inline-)?flex/)
+  assert.match(desktopOpenChapter, /display\s*:\s*flex/)
   assert.match(boundedTrigger, /display\s*:\s*(?:inline-)?flex/)
   assert.match(boundedTrigger, /min-width\s*:\s*44px/)
   assert.match(boundedTrigger, /min-height\s*:\s*44px/)

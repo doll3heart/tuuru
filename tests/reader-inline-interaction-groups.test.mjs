@@ -146,3 +146,25 @@ test("ordinary selections from separate groups jointly unlock a hidden prelude",
   assert.match(document.body.textContent, /两次反应共同触发的隐藏内容/)
   assert.match(document.body.textContent, /目标正文/)
 })
+
+test("reselecting an ordinary choice immediately reconciles hidden prose without losing the route", async t => {
+  installDom(t)
+  await startWork(workFixture(), "inline-groups-reselection")
+
+  document.querySelector('[data-interaction-group-id="group-a"][data-choice-id="ordinary-a"]').click()
+  document.querySelector('[data-interaction-group-id="group-b"][data-choice-id="ordinary-b"]').click()
+  document.querySelector('.article-choices.is-branch [data-choice-id="branch-a"]').click()
+
+  assert.match(document.body.textContent, /两次反应共同触发的隐藏内容/)
+  assert.match(document.body.textContent, /目标正文/)
+
+  document.querySelector('[data-interaction-group-id="group-a"][data-choice-id="ordinary-a2"]').click()
+
+  assert.doesNotMatch(document.body.textContent, /两次反应共同触发的隐藏内容/)
+  assert.match(document.body.textContent, /目标正文/)
+
+  document.querySelector('[data-interaction-group-id="group-a"][data-choice-id="ordinary-a"]').click()
+
+  assert.match(document.body.textContent, /两次反应共同触发的隐藏内容/)
+  assert.match(document.body.textContent, /目标正文/)
+})

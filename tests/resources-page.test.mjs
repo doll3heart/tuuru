@@ -6,6 +6,15 @@ import { JSDOM } from "jsdom"
 const source = readFileSync(new URL("../js/pages/resources.js", import.meta.url), "utf8")
 const app = readFileSync(new URL("../js/app.js", import.meta.url), "utf8")
 const css = readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
+const editorSource = readFileSync(new URL("../js/pages/editor.js", import.meta.url), "utf8")
+const phoneSource = readFileSync(new URL("../js/pages/phone.js", import.meta.url), "utf8")
+const phoneDataSource = readFileSync(new URL("../js/data.js", import.meta.url), "utf8")
+const interactiveSource = readFileSync(new URL("../js/interactive-scene-editor.js", import.meta.url), "utf8")
+const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
+const tutorialCopy = source.slice(
+  source.indexOf("function renderLegacyTutorialPage"),
+  source.indexOf("function renderTutorialFeature("),
+)
 
 test("the author shell exposes one compact writing-help entry and two resource routes", () => {
   assert.match(app, /class="app-resources-link\$\{/)
@@ -41,7 +50,7 @@ test("the tutorial explains the social identities and author placeholders that a
     assert.match(source, new RegExp(term))
   }
   assert.match(source, /旧称“固定脸”/)
-  assert.match(source, /语音通话不会使用/)
+  assert.match(source, /语音通话不显示/)
   assert.match(source, /标记可自由命名/)
   assert.match(source, /读者本人[^。]*IP/)
 })
@@ -87,40 +96,105 @@ test("the tutorial lists features by meaning, location, use, and effect", () => 
 })
 
 test("the article feature list distinguishes scene tags from chapters", () => {
-  assert.match(source, /章节组织阅读路线/)
+  assert.match(source, /章节决定读者翻到哪一页/)
   assert.match(source, /场景锁定/)
-  assert.match(source, /节点标题旁的场景选择器/)
+  assert.match(source, /编辑器顶部的“场景：…”下拉框/)
+  assert.match(source, /普通写作选【不使用场景】/)
 })
 
 test("the tutorial fully explains paragraph nodes, ordinary responses, and hidden conditions", () => {
   for (const phrase of [
-    "章节才是读者翻阅的一页",
-    "同一章节内的普通节点会按结构顺序合并",
+    "章节是读者翻阅的一页",
+    "同章普通节点按当前路线合并",
     "选项文本",
     "选择后内容",
     "每一行都会按独立正文段落显示",
-    "同一节点可以容纳多组",
+    "同一节点可以放多组",
     "移动状态",
     "待放置提示",
     "剧情分支始终固定在节点正文末尾",
-    "各组分别记录读者选择",
-    "普通互动与节点末尾的剧情分支可以同时存在",
-    "在本章添加隐藏节点",
-    "同一组中的选项使用“或”",
-    "不同条件组之间使用“且”",
+    "每组单独记录选择",
+    "普通互动和末尾剧情分支可以同时存在",
+    "同一组中的选项按【或】判断",
+    "不同组按【且】判断",
     "稳定 ID",
     "条件已失效",
-    "隐藏节点在结构树中的位置",
+    "隐藏节点会在拖动后的结构位置插入",
+    "右侧【节点列表】",
+    "目标章节名称",
+    "展开【＋、隐、◎、✎、×】",
+    "编辑器顶部的场景下拉框",
+    "点“＋ 新建场景…”",
+    "按住节点左边的“⠿”拖动",
   ]) assert.match(source, new RegExp(phrase))
   assert.match(source, /故事总纲、章节规划、伏笔回收、世界规则、地点与组织、人物档案、人物关系和灵感碎片/)
-  assert.match(source, /搜索分类名称或已记录内容/)
-  assert.match(source, /作者正文颜色[^。]*不会随作品导出/)
+  assert.match(source, /顶部搜索框可搜索分类和内容/)
+  assert.match(source, /作者正文颜色[\s\S]*不随作品导出/)
+})
+
+test("tutorial entries use visible click-by-click controls without internal shorthand", () => {
+  for (const phrase of [
+    "右侧【节点列表】",
+    "目标章节名称",
+    "这一行右侧【…】",
+    "展开【＋、隐、◎、✎、×】",
+  ]) {
+    assert.match(tutorialCopy, new RegExp(phrase))
+  }
+  assert.doesNotMatch(tutorialCopy, /作品结构|章节操作|上移、下移/)
+  assert.doesNotMatch(tutorialCopy, /点添加按钮|进入设置页|节点菜单|章节树|等控件/)
+  assert.doesNotMatch(tutorialCopy, /不是[^。；\n]{0,100}而是|并非[^。；\n]{0,100}而是/)
+  assert.doesNotMatch(tutorialCopy, /→/)
+})
+
+test("critical tutorial button names are backed by the shipped interface", () => {
+  for (const label of [
+    "节点列表",
+    "在本章添加隐藏节点",
+    "在本章添加互动页",
+    "在正文中插入普通互动",
+    "编辑末尾剧情分支",
+    "选择目标节点",
+    "放到光标处",
+    "显示条件",
+    "编辑互动页",
+    "移至…",
+  ]) {
+    assert.match(editorSource, new RegExp(label))
+  }
+  assert.match(source, /【节点列表】/)
+  assert.match(source, /【＋、隐、◎、✎、×】/)
+  assert.match(source, /【◇】/)
+  assert.match(source, /【⇄】/)
+  assert.match(source, /【选择目标节点】/)
+  assert.match(source, /【放到光标处】/)
+  assert.match(source, /【显示条件】/)
+  assert.match(source, /【编辑互动页】/)
+  assert.match(source, /【移至…】/)
+  for (const label of [
+    "排列 App",
+    "保存并编辑内容",
+    "新建群聊",
+    "对话操作",
+    "结束此轮",
+  ]) {
+    assert.match(phoneSource, new RegExp(label))
+  }
+  assert.match(source, /【排列】/)
+  assert.match(phoneDataSource, /浏览器/)
+  assert.match(source, /【浏览器】|【插入浏览器模块】/)
+  assert.match(interactiveSource, /后续跳转至（必选）/)
+  assert.match(source, /后续跳转至（必选）/)
+  assert.match(readerSource, /导出美化包/)
+  assert.match(readerSource, /导入美化包/)
+  assert.match(source, /导出美化包/)
+  assert.doesNotMatch(tutorialCopy, /【美化】|APP 图标与名称|浏览记录图标/)
 })
 
 test("the tutorial documents reader appearance package privacy in the existing file section", () => {
   assert.match(source, /读者美化包/)
   assert.match(source, /个人主页顶部图/)
-  assert.match(source, /读者昵称和头像不会写入美化包/)
+  assert.match(source, /昵称、头像、读者 ID、阅读记录和作品内容不会写入美化包/)
 })
 
 test("the tutorial gives interactive pictures a complete searchable section", () => {
@@ -157,10 +231,10 @@ test("the tutorial gives interactive pictures a complete searchable section", ()
 })
 
 test("interactive-picture guidance documents page splitting, final continuation, and branch placement", () => {
-  assert.match(source, /互动图片前的正文、互动图片、跳转目标开始的正文/)
+  assert.match(source, /互动图片前正文页、互动图片页、后续普通节点开始的正文页/)
   assert.match(source, /最后一个画面/)
   assert.match(source, /后续普通节点/)
-  assert.match(source, /暂不支持.*剧情分支/)
+  assert.match(source, /互动图片内不能添加剧情分支/)
   assert.match(source, /选项组.*后续普通节点/)
   assert.match(source, /后续跳转至/)
   assert.match(source, /稳定节点 ID/)
@@ -182,7 +256,7 @@ test("the tutorial explains article message contact visibility without reviving 
 
 test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {
   for (const feature of [
-    "App 管理", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
+    "App 排列", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
     "外卖卡片", "消息编辑菜单", "会话置顶与排序", "消息回复选项", "聊天轮次", "语音与视频通话",
     "动态", "论坛", "楼中楼回复关系", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
   ]) {
@@ -208,7 +282,7 @@ test("the forum tutorial explains the current comment controls and reader reply 
   ]) {
     assert.match(source, new RegExp(feature))
   }
-  assert.match(source, /轻点评论或楼中楼/)
+  assert.match(source, /轻点目标评论或楼中楼/)
   assert.match(source, /评论或楼中楼右侧的 ×/)
   assert.match(source, /爱心和数字/)
   assert.match(source, /点时间戳[^。]*隐藏时间/)
@@ -216,7 +290,7 @@ test("the forum tutorial explains the current comment controls and reader reply 
   assert.match(source, /一级评论会带着全部楼中楼移动/)
   assert.match(source, /楼中楼只在当前同级回复中移动/)
   assert.match(source, /Alt \+ ↑\/↓/)
-  assert.match(source, /回复人选择“读者”后打开/)
+  assert.match(source, /回复人选择器中点【读者】/)
   assert.match(source, /已设置的选项会显示在评论下方[^。]*再次编辑/)
   assert.match(source, /逐条选择联系人、小号或 NPC/)
 })

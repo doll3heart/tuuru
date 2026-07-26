@@ -32,6 +32,7 @@ import {
   expandArticleChapterPath,
   nextArticleChapterPath,
   previousArticleChapterPath,
+  reconcileArticleConditionalPath,
 } from '../js/article-chapter-runtime.js'
 import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
@@ -2615,12 +2616,24 @@ function renderArticleReader() {
             if (!legacyTransition.ok) return
             applyArticleRouteState(legacyTransition.path, legacySelection.state)
           } else {
-            _articleInteractionSelections = recordArticleInteractionSelection(
+            var currentPath = _articlePath.slice()
+            var updatedInteractionSelections = recordArticleInteractionSelection(
               _articleInteractionSelections,
               interactionGroupId,
               nodeId,
               interactionChoiceId,
             )
+            var reconciledPath = reconcileArticleConditionalPath(
+              nodes,
+              currentPath,
+              articleRuntimeOptions(_articleChoiceMemory, updatedInteractionSelections),
+            )
+            var reconciledState = articleRouteStateForPath(currentPath, reconciledPath)
+            reconciledState.interactionSelections = pruneArticleInteractionSelections(
+              updatedInteractionSelections,
+              reconciledPath,
+            )
+            applyArticleRouteState(reconciledPath, reconciledState)
           }
           _nodeId = _articlePath[_articlePath.length - 1]
           _visitedNodes = _articlePath.slice(0, -1)
