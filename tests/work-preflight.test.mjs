@@ -29,7 +29,7 @@ test("a complete article passes without findings", () => {
   assert.deepEqual(report.issues, [])
 })
 
-test("article inspection reports invalid starts, blank nodes, and broken branches", () => {
+test("article inspection derives its start and reports blank nodes and broken branches", () => {
   const report = inspectWorkBeforePublish({
     id:"article-broken",
     type:"article",
@@ -53,14 +53,13 @@ test("article inspection reports invalid starts, blank nodes, and broken branche
     phoneModules:[{ id:"module-1", nodeId:"gone", type:"memo" }],
   })
 
-  assert.deepEqual(report.counts, { error:5, warning:3 })
+  assert.deepEqual(report.counts, { error:4, warning:3 })
   assert.deepEqual(
     report.issues.map(issue => issue.code),
     [
       "work-title-empty",
       "placeholder-key-duplicate",
       "placeholder-key-empty",
-      "article-start-invalid",
       "article-node-title-empty",
       "article-choice-text-empty",
       "article-choice-target-missing",
@@ -171,4 +170,44 @@ test("an article also inspects its embedded phone data and image sources", () =>
       "phone-image-url-invalid",
     ],
   )
+})
+
+test("article inspection blocks missing and invalid interactive-picture continuation targets", () => {
+  const base = {
+    id:"article-scenes",
+    type:"article",
+    title:"互动图片出口",
+    startNode:"start",
+    placeholders:[],
+    phoneModules:[],
+    nodes:[
+      { id:"start", title:"开始", content:"正文", choices:[{ id:"to-scene", text:"进入", targetId:"scene-node" }] },
+      { id:"scene-node", title:"互动图片", content:"", choices:[], kind:"interactive-scene", interactiveSceneId:"scene-1" },
+      { id:"hidden", title:"隐藏内容", content:"隐藏", choices:[], kind:"conditional" },
+      { id:"ending", title:"结束", content:"结束", choices:[] },
+    ],
+  }
+
+  const missing = inspectWorkBeforePublish({
+    ...base,
+    interactiveScenes:[{ id:"scene-1", nodeId:"scene-node", nextNodeId:"", stages:[{ id:"stage-1", hotspots:[] }] }],
+  })
+  assert.ok(missing.issues.some(issue => issue.code === "interactive-scene-next-node-missing"))
+
+  for (const nextNodeId of ["gone", "hidden", "scene-node"]) {
+    const invalid = inspectWorkBeforePublish({
+      ...base,
+      interactiveScenes:[{ id:"scene-1", nodeId:"scene-node", nextNodeId, stages:[{ id:"stage-1", hotspots:[] }] }],
+    })
+    assert.ok(
+      invalid.issues.some(issue => issue.code === "interactive-scene-next-node-invalid"),
+      nextNodeId,
+    )
+  }
+
+  const valid = inspectWorkBeforePublish({
+    ...base,
+    interactiveScenes:[{ id:"scene-1", nodeId:"scene-node", nextNodeId:"ending", stages:[{ id:"stage-1", hotspots:[] }] }],
+  })
+  assert.equal(valid.issues.some(issue => issue.code.startsWith("interactive-scene-next-node-")), false)
 })

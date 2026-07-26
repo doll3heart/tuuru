@@ -1,5 +1,6 @@
 import { resolvePhoneReadingFlowStep } from "./phone-reading-flow.js"
 import { safeMessageCardUrl } from "./message-card-links.js"
+import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 
 function items(value) {
   return Array.isArray(value) ? value : []
@@ -82,7 +83,7 @@ function inspectArticle(work, issues) {
       .map(([id]) => id),
   )
 
-  if (!uniqueNodeIds.has(String(work?.startNode || ""))) {
+  if (!uniqueNodeIds.has(resolveAutomaticArticleStartNodeId(work))) {
     addIssue(
       issues,
       "article-start-invalid",
@@ -154,6 +155,44 @@ function inspectArticle(work, issues) {
           "重新选择目标节点。",
         )
       }
+    }
+  }
+
+  const uniqueNodeById = new Map(
+    nodes
+      .filter(node => uniqueNodeIds.has(String(node?.id || "")))
+      .map(node => [String(node.id), node]),
+  )
+  for (const [sceneIndex, scene] of items(work?.interactiveScenes).entries()) {
+    const sceneTitle = plainText(scene?.title) || `第 ${sceneIndex + 1} 个互动图片`
+    const location = `互动文章 · 互动图片 · ${sceneTitle}`
+    const nextNodeId = String(scene?.nextNodeId || "").trim()
+    if (!nextNodeId) {
+      addIssue(
+        issues,
+        "interactive-scene-next-node-missing",
+        "error",
+        "互动图片没有设置后续跳转节点",
+        location,
+        "打开互动图片编辑器，在“后续跳转至”中选择一个普通节点。",
+      )
+      continue
+    }
+    const nextNode = uniqueNodeById.get(nextNodeId)
+    const ownerNodeId = String(scene?.nodeId || "")
+    if (
+      !nextNode
+      || nextNode?.kind === "conditional"
+      || nextNodeId === ownerNodeId
+    ) {
+      addIssue(
+        issues,
+        "interactive-scene-next-node-invalid",
+        "error",
+        "互动图片的后续跳转节点已失效",
+        location,
+        "重新选择一个现有的普通节点作为固定后续去向。",
+      )
     }
   }
 

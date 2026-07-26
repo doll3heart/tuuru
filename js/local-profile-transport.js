@@ -7,6 +7,8 @@ const AUTHOR_SETTING_KEYS = new Set([
   "tuuru_author_placeholder_presets",
   "tuuru_author_npc_packs",
   "tuuru_editor_split",
+  "tuuru_article_editor_view",
+  "tuuru_article_author_notes",
 ])
 const READER_PREFIX = "moirain_"
 

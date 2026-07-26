@@ -92,6 +92,80 @@ test("the article feature list distinguishes scene tags from chapters", () => {
   assert.match(source, /节点标题旁的场景选择器/)
 })
 
+test("the tutorial fully explains paragraph nodes, ordinary responses, and hidden conditions", () => {
+  for (const phrase of [
+    "章节才是读者翻阅的一页",
+    "同一章节内的普通节点会按结构顺序合并",
+    "选项文本",
+    "选择后内容",
+    "每一行都会按独立正文段落显示",
+    "在本章添加隐藏节点",
+    "同一组中的选项使用“或”",
+    "不同条件组之间使用“且”",
+    "稳定 ID",
+    "条件已失效",
+    "隐藏节点在结构树中的位置",
+  ]) assert.match(source, new RegExp(phrase))
+  assert.match(source, /故事总纲、章节规划、伏笔回收、世界规则、地点与组织、人物档案、人物关系和灵感碎片/)
+  assert.match(source, /搜索分类名称或已记录内容/)
+  assert.match(source, /作者正文颜色[^。]*不会随作品导出/)
+})
+
+test("the tutorial documents reader appearance package privacy in the existing file section", () => {
+  assert.match(source, /读者美化包/)
+  assert.match(source, /个人主页顶部图/)
+  assert.match(source, /读者昵称和头像不会写入美化包/)
+})
+
+test("the tutorial gives interactive pictures a complete searchable section", () => {
+  assert.match(source, /id:"interactive", title:"互动图片"/)
+  for (const feature of [
+    "创建独立互动页",
+    "管理多个画面",
+    "背景图与立绘",
+    "移动和缩放画面",
+    "矩形、椭圆与手绘热区",
+    "六种触发方式",
+    "摄像头靠近互动",
+    "热区动作帧",
+    "动作帧播放与返回",
+    "说话人、台词与占位符",
+    "对话框与触摸提示美化",
+    "素材体积与保存",
+    "读者端逐页验收",
+  ]) assert.match(source, new RegExp(feature))
+  for (const detail of [
+    "探索完当前画面的全部互动点",
+    "点击对话框进入下一画面",
+    "靠近后点击",
+    "靠近后长按",
+    "静态图",
+    "GIF",
+    "视频",
+    "0\\.3",
+    "30 秒",
+    "首轮",
+    "HTTPS 图床",
+    "不会替换图片链接",
+  ]) assert.match(source, new RegExp(detail))
+})
+
+test("interactive-picture guidance documents page splitting, final continuation, and branch placement", () => {
+  assert.match(source, /互动图片前的正文、互动图片、跳转目标开始的正文/)
+  assert.match(source, /最后一个画面/)
+  assert.match(source, /后续普通节点/)
+  assert.match(source, /暂不支持.*剧情分支/)
+  assert.match(source, /选项组.*后续普通节点/)
+  assert.match(source, /后续跳转至/)
+  assert.match(source, /稳定节点 ID/)
+  assert.match(source, /严格进入作者选择的节点/)
+})
+
+test("shipped tutorial copy uses neutral route terms", () => {
+  assert.doesNotMatch(source, /父节点|兄弟节点/)
+  assert.match(source, /并行节点/)
+})
+
 test("the tutorial explains article message contact visibility without reviving step movement", () => {
   assert.match(source, /本模块可见/)
   assert.match(source, /消息.*联系人/s)
@@ -155,6 +229,10 @@ test("every tutorial category keeps a searchable FAQ", () => {
   for (const question of [
     "删除作品集会删除原作品吗",
     "选项点击后没有跳转怎么办",
+    "为什么点击对话框还不能进入下一画面",
+    "靠近后点击或靠近后长按没有触发怎么办",
+    "动作帧播放结束后会发生什么",
+    "本地图片太大导致保存失败怎么办",
     "链接怎样打开作品里的论坛帖子",
     "外卖卡片点击后会去哪里",
     "为什么没有看到论坛回复选项",
@@ -224,6 +302,7 @@ test("tutorial directory switches the visible guide without a page reload", asyn
   document.body.innerHTML = page.renderResourcesPage({ initialTab:"tutorial" })
   page.bindResourcesPage()
 
+  assert.ok(document.querySelector('[data-tutorial-nav="interactive"]'))
   assert.equal(document.querySelector('[data-tutorial-category="start"]').hidden, false)
   assert.equal(document.querySelector('[data-tutorial-category="social"]').hidden, true)
   document.querySelector('[data-tutorial-nav="article"]').click()

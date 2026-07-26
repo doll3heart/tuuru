@@ -117,7 +117,7 @@ test("repeated dragging moves across chapters without changing ids or links", ()
   assert.equal(saved.nodes[2].chapterId, "chapter-b")
   assert.equal(saved.nodes[2].choices[0].id, "choice-a")
   assert.equal(saved.nodes[2].choices[0].targetId, "node-b")
-  assert.equal(saved.startNode, "node-a")
+  assert.equal(saved.startNode, "node-b")
 
   const secondHandle = document.querySelector('.wt-node[data-node-id="node-a"] .wt-node-drag-handle')
   const secondTarget = document.querySelector('.wt-node[data-node-id="node-b"]')
@@ -148,5 +148,5 @@ test("drag affordance is handle-only and exposes insertion feedback", () => {
 test("mobile choice rows reflow controls instead of overflowing the modal", () => {
   const css = readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
   assert.match(css, /@media\(max-width:480px\)\{[\s\S]*?\.ch-item\s*\{[^}]*grid-template-columns\s*:\s*20px minmax\(0,1fr\) auto auto/)
-  assert.match(css, /@media\(max-width:480px\)\{[\s\S]*?\.ch-text\s*\{[^}]*grid-column\s*:\s*2\/-1/)
+  assert.match(css, /@media\(max-width:480px\)\{[\s\S]*?\.ch-choice-text\s*\{[^}]*grid-column\s*:\s*2\/-1/)
 })

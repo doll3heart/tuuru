@@ -149,7 +149,7 @@ test("browser protocol is local-only, data-only, bounded, and cleanup-aware", as
   assert.match(harnessSource, /peerB\.state\(replacement\.handleId\)/)
 })
 
-test("package adds only the exact browser-lock script and no dependency", async () => {
+test("package keeps the exact browser-lock script alongside approved runtime dependencies", async () => {
   const packageJson = JSON.parse(await read(new URL("../package.json", import.meta.url)))
 
   assert.deepEqual(packageJson.scripts, {
@@ -162,6 +162,7 @@ test("package adds only the exact browser-lock script and no dependency", async 
     "test:locks:browser": "node scripts/serve-lock-harness.mjs --port 4177 --timeout 180000",
   })
   assert.deepEqual(packageJson.dependencies, {
+    "@mediapipe/tasks-vision": "^0.10.35",
     dompurify: "^3.4.11",
   })
   assert.deepEqual(packageJson.devDependencies, {

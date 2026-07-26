@@ -27,6 +27,8 @@ test("local profile package round-trips author works, author settings, and reade
     tuuru_theme: "tuuru",
     tuuru_author_placeholder_presets: JSON.stringify({ version: 1, presets: [] }),
     tuuru_author_npc_packs: JSON.stringify({ version: 1, packs: [{ id:"pack-a", name:"论坛路人", npcs:[] }] }),
+    tuuru_article_editor_view: JSON.stringify({ version: 1, works: { "author-1": { editorTextColor:"#5a3344" } } }),
+    tuuru_article_author_notes: JSON.stringify({ version: 1, works: { "author-1": { outline:"PRIVATE_OUTLINE" } } }),
     moirain_profile: JSON.stringify({ readerId: "小雨" }),
     moirain_work_reader1: JSON.stringify({ id: "reader1", type: "phone", title: "读者作品" }),
     unrelated_secret: "must-not-export",
@@ -39,6 +41,8 @@ test("local profile package round-trips author works, author settings, and reade
   assert.equal(inspected.summary.authorWorkCount, 1)
   assert.equal(inspected.summary.readerEntryCount, 2)
   assert.equal(raw.includes("unrelated_secret"), false)
+  assert.equal(raw.includes("tuuru_article_editor_view"), true)
+  assert.equal(raw.includes("tuuru_article_author_notes"), true)
 
   const target = new MemoryStorage({ tuuru_works: database([]) })
   const result = mergeLocalProfile(target, inspected.profile)
@@ -47,6 +51,8 @@ test("local profile package round-trips author works, author settings, and reade
   assert.equal(JSON.parse(target.getItem("moirain_profile")).readerId, "小雨")
   assert.equal(JSON.parse(target.getItem("moirain_work_reader1")).title, "读者作品")
   assert.equal(JSON.parse(target.getItem("tuuru_author_npc_packs")).packs[0].name, "论坛路人")
+  assert.equal(JSON.parse(target.getItem("tuuru_article_editor_view")).works["author-1"].editorTextColor, "#5a3344")
+  assert.equal(JSON.parse(target.getItem("tuuru_article_author_notes")).works["author-1"].outline, "PRIVATE_OUTLINE")
 })
 
 test("local profile inspection rejects malformed and unsupported packages", () => {

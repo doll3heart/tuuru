@@ -134,7 +134,12 @@ test("saved article appearance applies below content when a cached work opens", 
     type: "article",
     title: "Appearance",
     author: "Reader",
-    nodes: [{ id: "start", title: "Start", content: "<p>Readable paragraph</p>", choices: [] }],
+    nodes: [{
+      id: "start",
+      title: "Start",
+      content: "<p>Readable paragraph</p>",
+      choices: [{ id: "response", mode: "interaction", text: "Respond", selectedText: "Response line one\nResponse line two", targetId: "" }],
+    }],
     chapters: [],
     scenes: [],
     placeholders: [],
@@ -205,6 +210,14 @@ test("saved article appearance applies below content when a cached work opens", 
   assert.equal(reader.style.getPropertyValue("--rd-reading-text"), "#fefefe")
   assert.match(document.getElementById("reader-article-user-css").textContent, /\.reader-article-css-scope \.article-title/)
 
+  document.querySelector('[data-choice-id="response"]').click()
+  const response = document.querySelector(".article-interaction-response.article-content")
+  assert.ok(response)
+  assert.equal(response.style.fontSize, "30px")
+  assert.equal(response.style.lineHeight, "2.2")
+  assert.equal(response.querySelector("p").style.marginBottom, "24px")
+  assert.equal(response.querySelector("p").style.textIndent, "2em")
+
   const secondContent = content.cloneNode(true)
   reader.appendChild(secondContent)
   document.querySelector(".reader-settings-btn").click()
@@ -226,4 +239,106 @@ test("article appearance controls are touch-safe and keyboard-visible", () => {
   assert.match(readerCss, /\.rs-align-btn:focus-visible[^}]*outline:\s*2px solid var\(--c-primary-hover\)/s)
   assert.match(cssBody(".article-reading-backdrop"), /position:\s*fixed/)
   assert.match(cssBody(".article-reading-backdrop"), /pointer-events:\s*none/)
+})
+
+test("reader appearance package imports only visuals and preserves personal reader data", async t => {
+  const dom = installDom(t)
+  localStorage.setItem("moirain_profile", JSON.stringify({
+    readerId:"PRIVATE_PROFILE_ID",
+    readerAvatar:"PRIVATE_PROFILE_AVATAR",
+    bio:"PRIVATE_PROFILE_BIO",
+  }))
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:"PRIVATE_WORK_ID" }]))
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    readerId:"PRIVATE_PHONE_ID",
+    readerAvatar:"data:image/png;base64,UFJJVkFURV9BVkFUQVI=",
+    topBgImage:"data:image/png;base64,b2xkLWNvdmVy",
+    wallpaper:"#eeeeee",
+  }))
+  const packageText = JSON.stringify({
+    format:"tuuru-reader-appearance",
+    version:1,
+    appearance:{
+      article:{ fontSize:29, accentColor:"#a06b7b" },
+      phone:{
+        wallpaper:"#123456",
+        topBgImage:"data:image/png;base64,bmV3LWNvdmVy",
+        readerId:"SHOULD_NOT_IMPORT",
+        readerAvatar:"SHOULD_NOT_IMPORT",
+        customFonts:[],
+        appBgs:{},
+        appSettings:{},
+        customIcons:{},
+      },
+    },
+  })
+  globalThis.FileReader = class {
+    readAsText(file) {
+      this.result = file.contents
+      this.onload?.()
+    }
+  }
+  const originalInputClick = dom.window.HTMLInputElement.prototype.click
+  dom.window.HTMLInputElement.prototype.click = function() {
+    if (this.type === "file" && this.accept.includes("json")) {
+      Object.defineProperty(this, "files", {
+        configurable:true,
+        value:[{ size:packageText.length, contents:packageText }],
+      })
+      this.onchange?.()
+      return
+    }
+    return originalInputClick.call(this)
+  }
+
+  await import(`../reader/reader.js?reader-appearance-package-import=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('[data-reader-phone-control="reading"]').click()
+
+  assert.ok(document.querySelector("[data-reader-appearance-export]"))
+  assert.ok(document.querySelector("[data-reader-appearance-import]"))
+  assert.match(document.querySelector(".reader-appearance-transfer").textContent, /不会包含昵称 \/ ID、头像、简介、作品、书架、密码或阅读记录/)
+  assert.match(document.querySelector(".reader-appearance-transfer").textContent, /个人主页顶部图/)
+
+  let downloadedBlob = null
+  let downloadedName = ""
+  const originalUrl = globalThis.URL
+  const originalAnchorClick = dom.window.HTMLAnchorElement.prototype.click
+  globalThis.URL = {
+    createObjectURL(blob) {
+      downloadedBlob = blob
+      return "blob:reader-appearance-package"
+    },
+    revokeObjectURL() {},
+  }
+  dom.window.HTMLAnchorElement.prototype.click = function() {
+    downloadedName = this.download
+  }
+  t.after(() => {
+    globalThis.URL = originalUrl
+    dom.window.HTMLAnchorElement.prototype.click = originalAnchorClick
+  })
+  document.querySelector("[data-reader-appearance-export]").click()
+  const exported = await downloadedBlob.text()
+  assert.equal(downloadedName, "Tuuru-读者美化包.json")
+  assert.equal(exported.includes("PRIVATE_PHONE_ID"), false)
+  assert.equal(exported.includes("PRIVATE_PROFILE_AVATAR"), false)
+  assert.equal(exported.includes("PRIVATE_WORK_ID"), false)
+  assert.equal(exported.includes("data:image/png;base64,b2xkLWNvdmVy"), true)
+
+  document.querySelector("[data-reader-appearance-import]").click()
+
+  assert.equal(JSON.parse(localStorage.getItem("moirain_readerSettings")).fontSize, 29)
+  const phone = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(phone.wallpaper, "#123456")
+  assert.equal(phone.topBgImage, "data:image/png;base64,bmV3LWNvdmVy")
+  assert.equal(phone.readerId, "PRIVATE_PHONE_ID")
+  assert.equal(phone.readerAvatar, "data:image/png;base64,UFJJVkFURV9BVkFUQVI=")
+  assert.equal(localStorage.getItem("moirain_profile"), JSON.stringify({
+    readerId:"PRIVATE_PROFILE_ID",
+    readerAvatar:"PRIVATE_PROFILE_AVATAR",
+    bio:"PRIVATE_PROFILE_BIO",
+  }))
+  assert.equal(localStorage.getItem("moirain_recent"), JSON.stringify([{ id:"PRIVATE_WORK_ID" }]))
+  assert.equal(document.getElementById("rsFontSize").value, "29")
 })

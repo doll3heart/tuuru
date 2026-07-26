@@ -136,9 +136,11 @@ test("the pane helper updates state without replacing editor content", async () 
   root.innerHTML = `
     <div class="editor-mobile-view-switch">
       <button data-a="mobile-pane" data-pane="editor" aria-pressed="true"></button>
+      <button data-a="mobile-pane" data-pane="notes" aria-pressed="false"></button>
       <button data-a="mobile-pane" data-pane="outline" aria-pressed="false"></button>
     </div>
     <div id="articleEditorPane"><div id="draft" contenteditable="true">draft</div></div>
+    <div id="articleNotesPane"></div>
     <div id="articleOutlinePane"></div>`
   const draft = root.querySelector("#draft")
 
@@ -147,6 +149,10 @@ test("the pane helper updates state without replacing editor content", async () 
   assert.equal(root.querySelector('[data-pane="editor"]').getAttribute("aria-pressed"), "false")
   assert.equal(root.querySelector('[data-pane="outline"]').getAttribute("aria-pressed"), "true")
   assert.equal(root.querySelector("#draft"), draft)
+
+  assert.equal(applyEditorMobilePane(root, "notes"), true)
+  assert.equal(root.dataset.mobilePane, "notes")
+  assert.equal(root.querySelector('[data-pane="notes"]').getAttribute("aria-pressed"), "true")
 
   const snapshot = root.innerHTML
   assert.equal(applyEditorMobilePane(root, "invalid"), false)
@@ -164,6 +170,7 @@ test("rendered mobile view controls switch panes in place without a storage writ
   const editable = root.querySelector(".content-editable")
   const editorButton = paneButton("editor")
   const outlineButton = paneButton("outline")
+  const notesButton = paneButton("notes")
 
   assert.ok(shell)
   assert.equal(shell.dataset.mobilePane, "editor")
@@ -171,6 +178,8 @@ test("rendered mobile view controls switch panes in place without a storage writ
   assert.equal(editorButton?.type, "button")
   assert.equal(editorButton?.textContent.trim(), "正文")
   assert.equal(editorButton?.getAttribute("aria-controls"), "articleEditorPane")
+  assert.equal(notesButton?.textContent.trim(), "设定")
+  assert.equal(notesButton?.getAttribute("aria-controls"), "articleNotesPane")
   assert.equal(outlineButton?.textContent.trim(), "结构")
   assert.equal(outlineButton?.getAttribute("aria-controls"), "articleOutlinePane")
 
@@ -184,6 +193,11 @@ test("rendered mobile view controls switch panes in place without a storage writ
   assert.equal(root.querySelector(".content-editable"), editable)
   assert.equal(localStorage.getItem("tuuru_works"), beforeStorage)
   assert.equal(location.hash, beforeHash)
+
+  notesButton.click()
+  assert.equal(shell.dataset.mobilePane, "notes")
+  assert.equal(paneButton("notes").getAttribute("aria-pressed"), "true")
+  assert.equal(localStorage.getItem("tuuru_works"), beforeStorage)
 })
 
 test("the compact mobile writing dock progressively discloses insert and format tools", async () => {
@@ -324,6 +338,89 @@ test("a saved editor font is reinstalled and applied when the editor opens again
   assert.match(root.querySelector(".content-editable").getAttribute("style"), /Saved Font/)
 })
 
+test("author text color is local-only, applies immediately, and can be reset", async () => {
+  const work = article("local-color-work", [{ id: "local-color-node" }])
+  seed(work)
+  const root = await render(work.id)
+  const beforeWork = localStorage.getItem("tuuru_works")
+  const color = root.querySelector('.editor-toolbar [data-a="fs-color"]')
+
+  assert.equal(color?.type, "color")
+  color.value = "#5a3344"
+  color.dispatchEvent(new Event("change", { bubbles:true }))
+
+  assert.equal(root.querySelector(".content-editable").style.color, "rgb(90, 51, 68)")
+  assert.equal(
+    JSON.parse(localStorage.getItem("tuuru_article_editor_view")).works[work.id].editorTextColor,
+    "#5a3344",
+  )
+  assert.equal(localStorage.getItem("tuuru_works"), beforeWork)
+
+  root.querySelector('.editor-toolbar [data-a="fs-color-reset"]').click()
+  assert.equal(document.querySelector(".content-editable").style.color, "")
+  assert.equal(
+    JSON.parse(localStorage.getItem("tuuru_article_editor_view")).works[work.id].editorTextColor,
+    "",
+  )
+  assert.equal(localStorage.getItem("tuuru_works"), beforeWork)
+})
+
+test("private author notes switch in the existing side panel and never change work data", async () => {
+  const work = article("author-notes-work", [{ id: "author-notes-node" }])
+  seed(work)
+  let root = await render(work.id)
+  const beforeWork = localStorage.getItem("tuuru_works")
+  const notesTab = root.querySelector('[data-a="side-pane"][data-pane="notes"]')
+
+  assert.ok(notesTab)
+  notesTab.click()
+  assert.equal(root.querySelector(".world-tree").dataset.sidePane, "notes")
+  assert.equal(root.querySelector("#articleNotesPane").hidden, false)
+  assert.equal(root.querySelector("#articleOutlinePane").hidden, true)
+  assert.equal(root.querySelectorAll(".author-notes-group").length, 4)
+  assert.deepEqual(
+    [...root.querySelectorAll('[data-a="note-section"]')].map(button => button.dataset.section),
+    [
+      "outline",
+      "chapterPlans",
+      "foreshadowing",
+      "worldbuilding",
+      "locations",
+      "characters",
+      "relationships",
+      "ideas",
+    ],
+  )
+  const noteSearch = root.querySelector("[data-author-notes-search]")
+  assert.equal(noteSearch?.getAttribute("aria-label"), "搜索作品设定")
+  assert.match(root.querySelector(".author-notes-privacy").textContent, /仅保存在作者端/)
+
+  root.querySelector('[data-a="note-section"][data-section="worldbuilding"]').click()
+  const worldbuilding = root.querySelector('[data-author-note="worldbuilding"]')
+  worldbuilding.value = "雨季持续三个月"
+  worldbuilding.dispatchEvent(new Event("input", { bubbles:true }))
+  await new Promise(resolve => setTimeout(resolve, 220))
+
+  const stored = JSON.parse(localStorage.getItem("tuuru_article_author_notes"))
+  assert.equal(stored.works[work.id].worldbuilding, "雨季持续三个月")
+  assert.equal(root.querySelector("[data-author-notes-status]").textContent, "已保存")
+  assert.equal(
+    root.querySelector('[data-a="note-section"][data-section="worldbuilding"] [data-note-count]').textContent,
+    "7",
+  )
+  assert.equal(localStorage.getItem("tuuru_works"), beforeWork)
+
+  noteSearch.value = "雨季"
+  noteSearch.dispatchEvent(new Event("input", { bubbles:true }))
+  assert.equal(root.querySelector('[data-a="note-section"][data-section="worldbuilding"]').hidden, false)
+  assert.equal(root.querySelector('[data-a="note-section"][data-section="characters"]').hidden, true)
+  assert.match(root.querySelector("[data-author-notes-search-status]").textContent, /1 个分类/)
+
+  root.innerHTML = (await editorModulePromise).renderEditor(work.id)
+  assert.equal(root.querySelector(".world-tree").dataset.sidePane, "notes")
+  assert.equal(root.querySelector('[data-author-note="worldbuilding"]').value, "雨季持续三个月")
+})
+
 test("chapter creation stays inline and the editor source has no native dialogs", async () => {
   const work = article("inline-chapter-work", [{ id: "inline-chapter-node" }])
   seed(work)
@@ -373,6 +470,35 @@ test("outline selection returns to editing while an editor choice does not steal
   choice.click()
   assert.ok(document.getElementById("ce_focus-b"))
   assert.notEqual(document.activeElement, paneButton("editor"))
+})
+
+test("ordinary interaction preview selects one response without navigation or a work write", async () => {
+  const work = article("interaction-preview-work", [{
+    id:"interaction-node",
+    choices:[
+      {id:"interaction-a", text:"点点头", mode:"interaction"},
+      {id:"interaction-b", text:"摇摇头", mode:"interaction"},
+    ],
+  }])
+  seed(work)
+  const root = await render(work.id)
+  const options = [...root.querySelectorAll('[data-choice-mode="interaction"]')]
+  const before = localStorage.getItem("tuuru_works")
+
+  assert.equal(options.length, 2)
+  assert.ok(root.querySelector("#ce_interaction-node"))
+  options[1].click()
+  assert.equal(options[0].getAttribute("aria-pressed"), "false")
+  assert.equal(options[1].getAttribute("aria-pressed"), "true")
+  assert.equal(options[1].classList.contains("is-selected"), true)
+  assert.equal(root.querySelectorAll('.choice-btn.is-selected').length, 1)
+  assert.ok(root.querySelector("#ce_interaction-node"))
+
+  options[0].click()
+  assert.equal(options[0].getAttribute("aria-pressed"), "true")
+  assert.equal(options[1].getAttribute("aria-pressed"), "false")
+  assert.equal(root.querySelectorAll('.choice-btn.is-selected').length, 1)
+  assert.equal(localStorage.getItem("tuuru_works"), before)
 })
 
 test("empty, first-node, last-node, and cross-work transitions choose a reachable pane", async () => {
@@ -619,6 +745,7 @@ test("word count consistently measures visible text and keeps its label", async 
 
   editable.innerHTML = "<em>甲</em><br>乙&amp;&nbsp;"
   editable.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
+  await new Promise(resolve => setTimeout(resolve, 220))
 
   assert.equal(count.textContent, "4 字")
   const saved = JSON.parse(localStorage.getItem("tuuru_works"))

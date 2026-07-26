@@ -164,13 +164,15 @@ export function renderHeader(){
   const isEditorRoute = path.startsWith("/edit/")
   const isResourcesRoute = path.startsWith("/resources")
   const activeTheme = getTheme()
-  const readerHomeUrl = buildReaderHomeUrl(location.href)
+  const readerModeUrl = isEditorRoute
+    ? buildReaderPreviewUrl(path.slice("/edit/".length), location.href)
+    : buildReaderHomeUrl(location.href)
   return `<header class="app-header${isEditorRoute ? " app-header-editor" : ""}${isResourcesRoute ? " app-header-resources" : ""}">
     ${isEditorRoute ? `<a class="logo" href="#/" aria-label="返回作品库" onclick="event.preventDefault();navigate('/')">Tuuru<span style="font-size:.55rem;color:var(--c-text2);opacity:.35;margin-left:6px;font-weight:400;white-space:nowrap">tuuru.chat</span></a>` : ""}
     <div class="app-header-actions">
       <nav class="app-mode-switch" aria-label="应用模式">
         <span class="app-mode-link active" aria-current="page">创作端</span>
-        <a class="app-mode-link" href="${readerHomeUrl}">读者端</a>
+        <a class="app-mode-link" href="${readerModeUrl}">读者端</a>
       </nav>
       <a class="app-resources-link${path.startsWith("/resources") ? " active" : ""}" href="#/resources/tutorial" aria-label="写作习惯与使用教程" title="打开使用教程"><span class="app-resources-link-mark" aria-hidden="true">?</span></a>
       <div class="theme-wrap">
@@ -197,7 +199,7 @@ export function renderHeader(){
 import { renderHome } from "./pages/home.js"
 import { renderNew } from "./pages/new.js"
 import { renderEditor } from "./pages/editor.js"
-import { openReaderPreview } from "./pages/reader.js"
+import { buildReaderPreviewUrl, openReaderPreview } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 import { bindResourcesPage, renderResourcesPage } from "./pages/resources.js"
 

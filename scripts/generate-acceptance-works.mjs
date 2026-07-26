@@ -12,13 +12,13 @@ const outputDirectory = join(projectRoot, "samples", "acceptance")
 await mkdir(outputDirectory, { recursive: true })
 
 const works = buildAcceptanceWorks()
-for (const [kind, work] of Object.entries(works)) {
+for (const [kind, basename] of Object.entries(ACCEPTANCE_FILES)) {
+  const work = works[kind]
   const validation = validateWorkForImport(work)
   if (!validation.ok) {
     throw new Error(`${kind} acceptance work failed validation: ${validation.code} ${validation.message}`)
   }
 
-  const basename = ACCEPTANCE_FILES[kind]
   const json = `${JSON.stringify(work, null, 2)}\n`
   await Promise.all([
     writeFile(join(outputDirectory, `${basename}.json`), json, "utf8"),

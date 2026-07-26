@@ -1,10 +1,20 @@
-export const CURRENT_WORK_SCHEMA_VERSION = 1
+export const CURRENT_WORK_SCHEMA_VERSION = 3
 
 import { isSafeCssColor, isSafeIconValue, isSafeIdentifier } from "./safe-values.js"
 import { normalizeWorkWatermark } from "./work-watermark.js"
+import { normalizeInteractiveScene } from "./interactive-scene-model.js"
+import {
+  articleNodeHasInteractiveSceneCard,
+  migrateInteractiveSceneCards,
+} from "./interactive-scene-node.js"
+import {
+  articleNodeIsConditional,
+  normalizeArticleDisplayCondition,
+} from "./article-condition-model.js"
+import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 
 const SUPPORTED_WORK_TYPES = new Set(["article", "phone"])
-const ARTICLE_COLLECTIONS = ["chapters", "phoneModules", "placeholders", "scenes"]
+const ARTICLE_COLLECTIONS = ["chapters", "phoneModules", "placeholders", "scenes", "interactiveScenes"]
 const PHONE_COLLECTIONS = [
   "contacts", "chats", "moments", "forumPosts", "forumNpcs", "apps",
   "memos", "photos", "albums", "browserHistory", "shoppingItems",
@@ -200,7 +210,90 @@ function validateWorkRenderValues(work, path, { strictPresentation }) {
   return { ok: true }
 }
 
-function normalizeArticle(input, path) {
+function migrateLegacyArticleChapterMembership(work, sourceVersion) {
+  if (sourceVersion > 1 || !work.chapters.length) return
+  const firstChapterId = String(work.chapters[0]?.id || "")
+  if (!firstChapterId) return
+
+  const legacyUngrouped = work.nodes.filter(node => !String(node?.chapterId || ""))
+  if (!legacyUngrouped.length) return
+
+  const orderedNodes = work.nodes.filter(node => String(node?.chapterId || ""))
+  let insertIndex = -1
+  for (let index = 0; index < orderedNodes.length; index += 1) {
+    if (String(orderedNodes[index]?.chapterId || "") === firstChapterId) insertIndex = index
+  }
+  const migratedNodes = legacyUngrouped.map(node => ({ ...node, chapterId: firstChapterId }))
+  orderedNodes.splice(insertIndex + 1, 0, ...migratedNodes)
+  work.nodes = orderedNodes
+}
+
+function conditionalInvariantFailure(code, path, message) {
+  return failure("invalid-article", message, [{ code, path, message }])
+}
+
+function canonicalArticleNodeId(value) {
+  return String(value || "")
+}
+
+function validateAuthoredConditionalArticleInvariants(work, path) {
+  const conditionalNodeIds = new Set()
+  const normalizedInteractiveScenes = work.interactiveScenes.map(normalizeInteractiveScene)
+  for (let nodeIndex = 0; nodeIndex < work.nodes.length; nodeIndex += 1) {
+    const node = work.nodes[nodeIndex]
+    if (!articleNodeIsConditional(node)) continue
+    conditionalNodeIds.add(canonicalArticleNodeId(node.id))
+    if (node.interactiveSceneId !== undefined && node.interactiveSceneId !== "") {
+      return conditionalInvariantFailure(
+        "conditional-interactive-scene",
+        `${path}.nodes[${nodeIndex}].interactiveSceneId`,
+        "条件节点不能是互动场景节点。",
+      )
+    }
+  }
+  if (conditionalNodeIds.has(canonicalArticleNodeId(work.startNode))) {
+    return conditionalInvariantFailure(
+      "conditional-start-node",
+      `${path}.startNode`,
+      "条件节点不能作为文章起点。",
+    )
+  }
+  for (let nodeIndex = 0; nodeIndex < work.nodes.length; nodeIndex += 1) {
+    const choices = work.nodes[nodeIndex].choices
+    for (let choiceIndex = 0; choiceIndex < choices.length; choiceIndex += 1) {
+      if (choices[choiceIndex].mode === "interaction") continue
+      if (!conditionalNodeIds.has(canonicalArticleNodeId(choices[choiceIndex].targetId))) continue
+      return conditionalInvariantFailure(
+        "conditional-choice-target",
+        `${path}.nodes[${nodeIndex}].choices[${choiceIndex}].targetId`,
+        "分支选项不能指向条件节点。",
+      )
+    }
+  }
+  for (let sceneIndex = 0; sceneIndex < work.interactiveScenes.length; sceneIndex += 1) {
+    if (!conditionalNodeIds.has(normalizedInteractiveScenes[sceneIndex].nodeId)) continue
+    return conditionalInvariantFailure(
+      "conditional-interactive-scene",
+      `${path}.interactiveScenes[${sceneIndex}].nodeId`,
+      "条件节点不能是互动场景节点。",
+    )
+  }
+  for (let sceneIndex = 0; sceneIndex < work.interactiveScenes.length; sceneIndex += 1) {
+    const sceneId = normalizedInteractiveScenes[sceneIndex].id
+    const ownerIndex = work.nodes.findIndex(node => (
+      articleNodeIsConditional(node) && articleNodeHasInteractiveSceneCard(node, sceneId)
+    ))
+    if (ownerIndex < 0) continue
+    return conditionalInvariantFailure(
+      "conditional-interactive-scene",
+      `${path}.nodes[${ownerIndex}].content`,
+      "条件节点不能拥有互动场景入口。",
+    )
+  }
+  return { ok: true }
+}
+
+function normalizeArticle(input, path, sourceVersion) {
   const nodesResult = recordArray(input.nodes, `${path}.nodes`, { required: true })
   if (!nodesResult.ok) return asWorkFailure(nodesResult, "invalid-article", "文章作品结构无效。")
 
@@ -215,6 +308,45 @@ function normalizeArticle(input, path) {
     const result = recordArray(input.nodes[index].choices, `${path}.nodes[${index}].choices`)
     if (!result.ok) return asWorkFailure(result, "invalid-article", "文章作品结构无效。")
     work.nodes[index].choices = result.value
+    if (sourceVersion < 3 && articleNodeIsConditional(work.nodes[index])) {
+      const legacyKindKeyBase = "__legacyConditionalKindV2"
+      let legacyKindKey = legacyKindKeyBase
+      let suffix = 2
+      while (Object.hasOwn(work.nodes[index], legacyKindKey)) {
+        legacyKindKey = `${legacyKindKeyBase}_${suffix}`
+        suffix += 1
+      }
+      work.nodes[index][legacyKindKey] = work.nodes[index].kind
+      delete work.nodes[index].kind
+    }
+    if (sourceVersion >= 3 && articleNodeIsConditional(work.nodes[index])) {
+      work.nodes[index].choices = []
+      work.nodes[index].displayCondition = normalizeArticleDisplayCondition(
+        input.nodes[index].displayCondition,
+      )
+    }
+  }
+  work.startNode = resolveAutomaticArticleStartNodeId(work)
+  if (sourceVersion >= 3) {
+    const conditionalInvariantResult = validateAuthoredConditionalArticleInvariants(work, path)
+    if (!conditionalInvariantResult.ok) return conditionalInvariantResult
+  }
+  migrateLegacyArticleChapterMembership(work, sourceVersion)
+  for (let sceneIndex = 0; sceneIndex < work.interactiveScenes.length; sceneIndex += 1) {
+    const sourceScene = input.interactiveScenes[sceneIndex]
+    const stagesResult = recordArray(
+      sourceScene.stages,
+      `${path}.interactiveScenes[${sceneIndex}].stages`,
+    )
+    if (!stagesResult.ok) return asWorkFailure(stagesResult, "invalid-article", "互动场景结构无效。")
+    for (let stageIndex = 0; stageIndex < stagesResult.value.length; stageIndex += 1) {
+      const hotspotsResult = recordArray(
+        sourceScene.stages[stageIndex].hotspots,
+        `${path}.interactiveScenes[${sceneIndex}].stages[${stageIndex}].hotspots`,
+      )
+      if (!hotspotsResult.ok) return asWorkFailure(hotspotsResult, "invalid-article", "互动场景结构无效。")
+    }
+    work.interactiveScenes[sceneIndex] = normalizeInteractiveScene(sourceScene)
   }
   for (let index = 0; index < work.phoneModules.length; index += 1) {
     const moduleData = input.phoneModules[index].data
@@ -231,10 +363,10 @@ function normalizeArticle(input, path) {
       work.phoneModules[index].data = result.value
     }
   }
-  const firstValidNode = work.nodes.find(node => typeof node.id === "string" && node.id.length > 0)
-  const hasValidStart = typeof work.startNode === "string"
-    && work.nodes.some(node => node.id === work.startNode)
-  if (!hasValidStart) work.startNode = firstValidNode?.id || ""
+  const interactiveNodeMigration = migrateInteractiveSceneCards(work)
+  work.nodes = interactiveNodeMigration.work.nodes
+  work.interactiveScenes = interactiveNodeMigration.work.interactiveScenes
+  work.startNode = resolveAutomaticArticleStartNodeId(work)
   return { ok: true, work }
 }
 
@@ -352,7 +484,7 @@ function validateAndNormalizeWorkUnchecked(input, {
   if (!nestingResult.ok) return nestingResult
 
   let normalized
-  if (input.type === "article") normalized = normalizeArticle(input, path)
+  if (input.type === "article") normalized = normalizeArticle(input, path, sourceVersion)
   else if (!isRecord(input.phoneData)) {
     normalized = failure("invalid-phone", "手机作品缺少有效的手机数据。", [{
       code: "invalid-record", path: `${path}.phoneData`, message: "phoneData 必须是对象。",

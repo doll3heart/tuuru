@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tuuru 读者端 Demo · 作者主题继承</title>
+  <style>
+    :root{
+      color-scheme:light;
+      --bg:#EEE6E7;
+      --surface:#FFFAF9;
+      --surface-2:#E2D2D6;
+      --primary:#C7A1AA;
+      --primary-strong:#6F4A55;
+      --text:#40383B;
+      --text-2:#66585D;
+      --border:#C8B6BA;
+      --font:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    }
+    *{box-sizing:border-box}
+    body{
+      min-height:100vh;
+      margin:0;
+      padding:40px;
+      background:var(--bg);
+      color:var(--text);
+      font-family:var(--font);
+    }
+    main{
+      width:min(1120px,100%);
+      margin:auto;
+      padding:34px;
+      border:1px solid color-mix(in srgb,var(--border) 78%,transparent);
+      border-radius:14px;
+      background:var(--surface);
+    }
+    header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding-bottom:26px;border-bottom:1px solid var(--border)}
+    h1{margin:0;font-size:28px;line-height:1.25;letter-spacing:-.02em}
+    header p{max-width:520px;margin:8px 0 0;color:var(--text-2);font-size:14px;line-height:1.65}
+    .mode{flex:0 0 auto;padding:7px 10px;border-radius:999px;background:var(--surface-2);color:var(--primary-strong);font-size:12px;font-weight:700}
+    .grid{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(320px,.92fr);gap:34px;padding-top:30px}
+    h2{margin:0 0 16px;font-size:16px}
+    .swatches{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .swatch{min-width:0}
+    .chip{height:84px;border-radius:9px;border:1px solid color-mix(in srgb,var(--border) 68%,transparent)}
+    .swatch strong,.swatch span{display:block}
+    .swatch strong{margin-top:8px;font-size:12px}
+    .swatch span{margin-top:2px;color:var(--text-2);font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace}
+    .sample{padding:22px;border-radius:10px;background:color-mix(in srgb,var(--bg) 68%,var(--surface))}
+    .sample-title{font-size:22px;font-weight:750;letter-spacing:-.02em}
+    .sample-section{margin-top:17px;font-size:16px;font-weight:700}
+    .sample-body{max-width:44ch;margin-top:8px;font-size:14px;line-height:1.75}
+    .sample-meta{margin-top:8px;color:var(--text-2);font-size:12px}
+    .thread{margin-top:25px;padding-top:18px;border-top:1px solid var(--border)}
+    .comment{display:grid;grid-template-columns:38px minmax(0,1fr);gap:11px}
+    .avatar{display:grid;width:38px;height:38px;place-items:center;border-radius:50%;background:#20bd67;color:white;font-size:13px;font-weight:800}
+    .comment.reply{grid-template-columns:30px minmax(0,1fr);margin:16px 0 0 22px;padding-top:14px;border-top:1px solid color-mix(in srgb,var(--border) 70%,transparent)}
+    .comment.reply .avatar{width:30px;height:30px;background:#ec4899;font-size:11px}
+    .meta{display:flex;align-items:baseline;gap:6px;min-width:0;font-size:12px}
+    .name{color:var(--primary-strong);font-weight:750}
+    .relation{color:var(--text-2)}
+    .target{color:var(--primary-strong);font-weight:650}
+    .content{margin-top:7px;font-size:14px;line-height:1.6}
+    .actions{display:flex;align-items:center;justify-content:space-between;margin-top:9px;color:var(--text-2);font-size:12px}
+    .heart{display:inline-flex;align-items:center;gap:4px;color:var(--primary-strong);font-weight:650}
+    .rule{margin-top:24px;padding:14px 16px;border-radius:8px;background:var(--surface-2);color:var(--text-2);font-size:12px;line-height:1.65}
+    @media(max-width:760px){
+      body{padding:16px}
+      main{padding:22px}
+      header{align-items:flex-start;flex-direction:column}
+      .grid{grid-template-columns:1fr}
+      .swatches{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>作者主题继承</h1>
+        <p>读者端沿用编辑器最终外观。此轮只重排信息结构、去除创作控件，并补齐阅读态交互。</p>
+      </div>
+      <span class="mode">结构优化 · 色彩不变</span>
+    </header>
+
+    <div class="grid">
+      <section aria-labelledby="colorsTitle">
+        <h2 id="colorsTitle">现有主题色</h2>
+        <div class="swatches">
+          <div class="swatch"><div class="chip" style="background:#EEE6E7"></div><strong>页面背景</strong><span>#EEE6E7</span></div>
+          <div class="swatch"><div class="chip" style="background:#FFFAF9"></div><strong>主表面</strong><span>#FFFAF9</span></div>
+          <div class="swatch"><div class="chip" style="background:#E2D2D6"></div><strong>次表面</strong><span>#E2D2D6</span></div>
+          <div class="swatch"><div class="chip" style="background:#C7A1AA"></div><strong>主色</strong><span>#C7A1AA</span></div>
+          <div class="swatch"><div class="chip" style="background:#6F4A55"></div><strong>强调色</strong><span>#6F4A55</span></div>
+          <div class="swatch"><div class="chip" style="background:#40383B"></div><strong>正文</strong><span>#40383B</span></div>
+          <div class="swatch"><div class="chip" style="background:#66585D"></div><strong>辅助文字</strong><span>#66585D</span></div>
+          <div class="swatch"><div class="chip" style="background:#C8B6BA"></div><strong>边框</strong><span>#C8B6BA</span></div>
+        </div>
+      </section>
+
+      <section aria-labelledby="typeTitle">
+        <h2 id="typeTitle">排版与回复结构</h2>
+        <div class="sample">
+          <div class="sample-title">帖子详情</div>
+          <div class="sample-section">今晚有人看流星吗</div>
+          <div class="sample-body">正文保持作者设置的字体与颜色，阅读态只负责整理层级和交互位置。</div>
+          <div class="sample-meta">裴亦惜 · 1 小时前</div>
+
+          <div class="thread">
+            <div class="comment">
+              <span class="avatar">顾</span>
+              <div>
+                <div class="meta">
+                  <span class="name">顾逢川</span>
+                </div>
+                <div class="content">今晚我也会去，天台风大，记得带件外套。</div>
+                <div class="actions"><span>3 分钟前 · 回复</span><span class="heart">♡ 12</span></div>
+              </div>
+            </div>
+            <div class="comment reply">
+              <span class="avatar">裴</span>
+              <div>
+                <div class="meta">
+                  <span class="name">裴亦惜</span>
+                  <span class="relation">回复</span>
+                  <span class="target">顾逢川</span>
+                </div>
+                <div class="content">好，我会带上。楼中楼仍保留完整的阅读宽度。</div>
+                <div class="actions"><span>刚刚 · 回复</span><span class="heart">♡ 赞</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="rule">作者主题决定颜色、字体、背景与组件形状；读者模式决定内容层级、触控范围和互动反馈。</div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

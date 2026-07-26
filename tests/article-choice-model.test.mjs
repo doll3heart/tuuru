@@ -168,6 +168,96 @@ test("reconciles non-branch interaction choices without requiring or preserving 
   assert.deepEqual(result.choices[0].customMeta, { keep:true })
 })
 
+test("reconciles ordinary interaction label and selected prose without changing its id", () => {
+  const existing = [{
+    id: "choice-a",
+    mode: "interaction",
+    text: "Old label",
+    selectedText: "Old selected prose",
+    targetId: "",
+    customMeta: { keep: true },
+  }]
+
+  const result = reconcileArticleChoices(existing, [{
+    id: "choice-a",
+    mode: "interaction",
+    text: "New label",
+    selectedText: "New selected prose",
+    targetId: "",
+  }], () => "unused")
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.choices, [{
+    id: "choice-a",
+    mode: "interaction",
+    text: "New label",
+    selectedText: "New selected prose",
+    targetId: "",
+    customMeta: { keep: true },
+  }])
+})
+
+test("keeps a legacy interaction response as a fallback until an author supplies selected prose", () => {
+  const result = reconcileArticleChoices([{
+    id: "choice-a",
+    mode: "interaction",
+    text: "Legacy label",
+    targetId: "",
+  }], [{
+    id: "choice-a",
+    mode: "interaction",
+    text: "Current draft label",
+    targetId: "",
+  }], () => "unused")
+
+  assert.equal(result.ok, true)
+  assert.equal(result.choices[0].text, "Current draft label")
+  assert.equal(Object.hasOwn(result.choices[0], "selectedText"), false)
+})
+
+test("keeps authored selected prose as dormant metadata when an existing interaction becomes a branch", () => {
+  const response = "A\r\nB\rC\nD"
+  const result = reconcileArticleChoices([{
+    id: "choice-a",
+    mode: "interaction",
+    text: "Old label",
+    selectedText: "Old response",
+    targetId: "",
+  }], [{
+    id: "choice-a",
+    mode: "branch",
+    text: "Branch label",
+    selectedText: response,
+    targetId: "node-b",
+  }], () => "unused")
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.choices, [{
+    id: "choice-a",
+    text: "Branch label",
+    selectedText: response,
+    targetId: "node-b",
+  }])
+})
+
+test("keeps authored selected prose on a newly assigned branch choice id", () => {
+  const response = "New response\nsecond line"
+  const result = reconcileArticleChoices([], [{
+    mode: "branch",
+    text: "New branch",
+    selectedText: response,
+    targetId: "node-b",
+  }], () => "choice-new")
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.choices, [{
+    id: "choice-new",
+    text: "New branch",
+    selectedText: response,
+    targetId: "node-b",
+  }])
+})
+
 test("describes valid and dangling article targets", () => {
   const work = fixtureWork()
   const valid = describeArticleTarget(work, "a-1")

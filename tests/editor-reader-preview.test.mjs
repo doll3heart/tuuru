@@ -13,9 +13,24 @@ test("the author read route is only a bridge to the real reader", () => {
   assert.match(bridgeSource, /searchParams\.set\(["']preview["']/)
   assert.doesNotMatch(bridgeSource, /function renderNode|function renderArticleReader|pm-inline-card/)
 
-  assert.match(appSource, /import\s*\{\s*openReaderPreview\s*\}\s*from\s*["']\.\/pages\/reader\.js["']/)
+  assert.match(
+    appSource,
+    /import\s*\{[^}]*openReaderPreview[^}]*\}\s*from\s*["']\.\/pages\/reader\.js["']/s,
+  )
   assert.match(appSource, /router\(["']\/read\/:id["'][\s\S]*openReaderPreview\(p\.id\)/)
   assert.doesNotMatch(appSource, /import\s*\{\s*renderReader\s*\}\s*from\s*["']\.\/pages\/reader\.js["']/)
+})
+
+test("the editor header reader mode opens the current work preview", () => {
+  assert.match(
+    appSource,
+    /import\s*\{[^}]*buildReaderPreviewUrl[^}]*\}\s*from\s*["']\.\/pages\/reader\.js["']/s,
+  )
+  assert.match(
+    appSource,
+    /isEditorRoute\s*\?\s*buildReaderPreviewUrl\(path\.slice\(["']\/edit\/["']\.length\),\s*location\.href\)\s*:\s*buildReaderHomeUrl\(location\.href\)/s,
+  )
+  assert.match(appSource, /href="\$\{readerModeUrl\}"/)
 })
 
 test("preview URLs stay same-origin under a subdirectory and encode the work id", async t => {

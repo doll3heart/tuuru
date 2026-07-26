@@ -36,18 +36,23 @@ function createDom() {
 }
 
 test("current major announcement covers every user-facing release area", () => {
-  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.id, "2026-07-22-phone-social-completeness")
-  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.items.length, 10)
+  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.id, "2026-07-26-article-memory-interactive-pages")
+  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.items.length, 9)
   const copy = [
     CURRENT_RELEASE_ANNOUNCEMENT.intro,
     ...CURRENT_RELEASE_ANNOUNCEMENT.items.flatMap(item => [item.title, item.body]),
   ].join("\n")
   for (const required of [
-    "剧情分支", "普通互动", "撤销", "外卖卡片", "视频通话背景",
-    "置顶", "消息头像", "论坛头像", "论坛主楼", "热门或最新",
-    "多角色续答", "@ 提及", "手机输入法", "显示评论总数", "显示楼层", "动态评论", "整部小手机文本", "显示名称", "作者自定义", "@读者", "联系人包", "内置教程",
-    "整机搬家", "合并策略", "动态头像", "日期时间", "不会主动清空",
-    "JSON 与 PNG", "首次打开时显示一次",
+    "正文段落", "节点标题", "NEXT", "自动起点", "第一个普通节点",
+    "选项文本", "选择后内容", "首行缩进", "隐藏节点", "稳定 ID",
+    "同一条件组", "附加条件组", "互动图片", "独立阅读页面", "后续跳转至",
+    "暂不承载剧情分支", "作者设定", "故事总纲", "人物关系", "不随作品导出",
+    "读者美化包", "个人主页顶部图", "不会包含读者昵称、头像、ID",
+    "缓冲保存", "发布检查", "内置教程", "不会清空 localStorage",
+    "只打开首页", "安全默认值", "作品格式版本", "附加字段继续保留",
+    "没有归属章节的节点", "归入第一章", "既有互动文章", "自动起点",
+    "同章普通节点", "首次正式上线", "停止覆盖", "保留原始数据",
+    "首次打开时显示一次",
   ]) assert.match(copy, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
 })
 

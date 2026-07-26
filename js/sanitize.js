@@ -2,10 +2,10 @@ import createDOMPurify from "dompurify"
 import { normalizeCssColor } from "./safe-values.js"
 
 const ALLOWED_TAGS = [
-  "p", "div", "br", "b", "strong", "i", "em", "u", "span", "img",
+  "p", "div", "br", "b", "strong", "i", "em", "u", "span", "img", "button", "small",
 ]
 const ALLOWED_ATTRIBUTES = [
-  "class", "style", "src", "alt", "title", "align", "data-pm-id", "data-pm-type",
+  "class", "style", "src", "alt", "title", "align", "type", "data-pm-id", "data-pm-type", "data-is-id",
 ]
 const ALIGNMENTS = new Set(["left", "center", "right", "justify"])
 const PHONE_MODULE_TYPES = new Set([
@@ -16,6 +16,13 @@ const ARTICLE_CLASSES = new Map([
   ["pm-inline-card", "DIV"],
   ["pm-card-icon", "SPAN"],
   ["pm-card-label", "SPAN"],
+  ["interactive-scene-card", "DIV"],
+  ["interactive-scene-card-icon", "SPAN"],
+  ["interactive-scene-card-copy", "SPAN"],
+  ["interactive-scene-card-label", "SPAN"],
+  ["interactive-scene-card-actions", "SPAN"],
+  ["interactive-scene-card-edit", "BUTTON"],
+  ["interactive-scene-card-delete", "BUTTON"],
 ])
 const MEMO_CLASSES = new Map([
   ["check-line", "DIV"],
@@ -28,6 +35,8 @@ const MEMO_CLASSES = new Map([
 const IMAGE_FIELD_NAMES = new Set([
   "avatar", "avatarUrl", "messageAvatarUrl", "forumAvatarUrl", "faceUrl", "image", "imageUrl", "readerAvatar",
   "topBgImage", "wallpaperImage",
+  "frameImage",
+  "characterImage",
 ])
 const DATA_IMAGE_PATTERN = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i
 const MAX_DATA_IMAGE_LENGTH = 10 * 1024 * 1024
@@ -102,6 +111,17 @@ function cleanElementPolicy(element, profile) {
   } else {
     element.removeAttribute("data-pm-id")
     element.removeAttribute("data-pm-type")
+  }
+
+  if (element.classList.contains("interactive-scene-card")) {
+    const id = element.getAttribute("data-is-id") || ""
+    if (!/^[a-z0-9_-]{1,128}$/i.test(id)) {
+      element.classList.remove("interactive-scene-card")
+      if (!element.classList.length) element.removeAttribute("class")
+      element.removeAttribute("data-is-id")
+    }
+  } else {
+    element.removeAttribute("data-is-id")
   }
 }
 

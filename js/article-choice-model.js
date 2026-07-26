@@ -18,9 +18,17 @@ function choiceTargetId(draft) {
   return draft?.targetId ?? ""
 }
 
+function hasOwnProperty(value, key) {
+  return Object.prototype.hasOwnProperty.call(value ?? {}, key)
+}
+
 function applyChoiceMode(choice, draft) {
-  if (draft?.mode === "interaction") choice.mode = "interaction"
-  else delete choice.mode
+  if (hasOwnProperty(draft, "selectedText")) choice.selectedText = draft.selectedText ?? ""
+  if (draft?.mode === "interaction") {
+    choice.mode = "interaction"
+  } else {
+    delete choice.mode
+  }
   return choice
 }
 

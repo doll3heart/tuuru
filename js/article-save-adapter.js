@@ -1,3 +1,5 @@
+import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
+
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
@@ -124,7 +126,7 @@ function applyPlaceholderFields(work, payload) {
 }
 
 function repairedStartNode(work, nodes) {
-  return nodes.some(node => node.id === work.startNode) ? work.startNode : nodes[0]?.id ?? ""
+  return resolveAutomaticArticleStartNodeId({ ...work, nodes })
 }
 
 function applyAddNode(work, payload) {

@@ -141,6 +141,55 @@ test("pure database helpers validate and serialize normalized unknown JSON field
   assert.deepEqual(inspectLocalDatabaseRaw(raw), { ok: true, raw, data: database })
 })
 
+test("a pushed version 1 article stays untouched on read and preserves content when later saved as version 3", () => {
+  const database = {
+    works: [{
+      id: "pushed-version-1-work",
+      schemaVersion: 1,
+      type: "article",
+      title: "Pushed version 1 work",
+      chapters: [{ id: "chapter-1", name: "Chapter 1" }],
+      scenes: [],
+      placeholders: [],
+      phoneModules: [],
+      startNode: "node-1",
+      futureAuthorMetadata: { keep: true },
+      nodes: [{
+        id: "node-1",
+        title: "Opening",
+        chapterId: "chapter-1",
+        content: "<p>Keep this prose</p>",
+        choices: [{ id: "choice-1", text: "Keep this choice", targetId: "node-1" }],
+        futureNodeMetadata: { keep: true },
+      }],
+    }],
+    contacts: [],
+    groups: [],
+  }
+  const raw = JSON.stringify(database)
+  const storage = createKeyedStorage([[LOCAL_DATABASE_KEY, raw]])
+
+  const loaded = readLocalDatabase(storage)
+
+  assert.equal(loaded.works[0].schemaVersion, 3)
+  assert.deepEqual(loaded.works[0].interactiveScenes, [])
+  assert.equal(loaded.works[0].nodes[0].content, "<p>Keep this prose</p>")
+  assert.equal(loaded.works[0].nodes[0].choices[0].text, "Keep this choice")
+  assert.deepEqual(loaded.works[0].futureAuthorMetadata, { keep: true })
+  assert.deepEqual(loaded.works[0].nodes[0].futureNodeMetadata, { keep: true })
+  assert.equal(storage.peek(LOCAL_DATABASE_KEY), raw)
+  assert.equal(storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+
+  writeLocalDatabase(loaded, storage)
+  const saved = JSON.parse(storage.peek(LOCAL_DATABASE_KEY)).works[0]
+  assert.equal(saved.schemaVersion, 3)
+  assert.deepEqual(saved.interactiveScenes, [])
+  assert.equal(saved.nodes[0].content, "<p>Keep this prose</p>")
+  assert.equal(saved.nodes[0].choices[0].text, "Keep this choice")
+  assert.deepEqual(saved.futureAuthorMetadata, { keep: true })
+  assert.deepEqual(saved.nodes[0].futureNodeMetadata, { keep: true })
+})
+
 test("pure database validation reports ordinary invalid structures without throwing", () => {
   const status = validateLocalDatabase({ works: {} })
 

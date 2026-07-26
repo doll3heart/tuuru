@@ -1,5 +1,5 @@
 // Tuuru Works - Article Editor (clean rewrite)
-import { getWork, updateWork, addNode, updateNode, deleteNode, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, addPhoneModule, updatePhoneModule, deletePhoneModule, getPhoneModulesByNode, getPhoneModule } from "../data.js"
+import { getWork, updateWork, addNode, createConditionalArticleNode, updateNode, deleteNode, addScene, deleteScene, addPlaceholder, deletePlaceholder, updatePlaceholder, uid, WORK_TYPE, PLACEHOLDER_MODE, BUILTIN_FONTS, DEFAULT_EDITOR_SETTINGS, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, addPhoneModule, updatePhoneModule, deletePhoneModule, getPhoneModulesByNode, getPhoneModule, migrateInteractiveSceneWork } from "../data.js"
 import { navigate } from "../router.js"
 import { showToast, renderHeader, modal } from "../app.js"
 import { createPhoneWorkDraft } from "../phone-work-access.js"
@@ -10,15 +10,26 @@ import { createEditorPhoneModuleDragController } from "../editor-phone-module-dr
 import { createEditorNodeDragController } from "../editor-node-drag.js"
 import { reorderArticleNode } from "../article-node-reorder.js"
 import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
+import { articleNodeIsConditional, buildArticleChoiceCatalog, normalizeArticleDisplayCondition } from "../article-condition-model.js"
 import { openPhoneAppModal } from "./phone.js"
 import { activateEditorCustomFonts, editorFontFormat, editorFontValue, installEditorCustomFonts, removeEditorCustomFont, renameEditorCustomFont, upsertEditorCustomFont } from "../editor-custom-fonts.js"
 import { deleteEditorFontAsset, persistEditorFontAsset, resolveEditorFontAssets } from "../editor-font-storage.js"
 import { compressEditorImage } from "../image-compression.js"
 import { searchArticleWork } from "../article-work-search.js"
 import { createEditorSplitPaneController, readEditorSplitPreference } from "../editor-split-pane.js"
+import { readArticleEditorViewState, writeArticleEditorViewState } from "../article-editor-view-state.js"
+import { readArticleAuthorNotes, writeArticleAuthorNotes } from "../article-author-notes.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
 import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js"
+import { openInteractiveSceneEditor } from "../interactive-scene-editor.js"
+import { createEditorPersistenceBuffer } from "../editor-persistence-buffer.js"
+import { createArticleEditorRenderIndex } from "../article-editor-render-index.js"
+import {
+  createInteractiveSceneNodeDraft,
+  interactiveSceneForNode,
+  isInteractiveSceneNode,
+} from "../interactive-scene-node.js"
 
 // State
 var _workId = null
@@ -31,13 +42,59 @@ var _nodeDragController = null
 var _articleTargetPick = null
 var _articleTargetInspect = null
 var _splitPaneController = null
+var _editorPersistence = createEditorPersistenceBuffer()
 var FORMAT_COMMANDS = { bold:'bold', italic:'italic', underline:'underline', left:'justifyLeft', center:'justifyCenter', right:'justifyRight' }
+var AUTHOR_NOTE_GROUPS = [
+  {
+    id:"story",
+    label:"剧情",
+    sections:[
+      {id:"outline", label:"故事总纲", hint:"主线与阶段目标", placeholder:"记录故事主线、阶段目标、核心冲突与结局方向……"},
+      {id:"chapterPlans", label:"章节规划", hint:"章节节奏与场次", placeholder:"按章节记录事件顺序、场次安排、情绪节奏与待写内容……"},
+      {id:"foreshadowing", label:"伏笔回收", hint:"线索与兑现进度", placeholder:"记录伏笔、首次出现位置、提示次数、计划回收位置与完成状态……"},
+    ],
+  },
+  {
+    id:"world",
+    label:"世界",
+    sections:[
+      {id:"worldbuilding", label:"世界规则", hint:"时代与运行规则", placeholder:"记录时代背景、能力体系、制度、禁忌、日常规则与例外……"},
+      {id:"locations", label:"地点与组织", hint:"空间、阵营与资源", placeholder:"记录地点氛围、地理关系、组织结构、阵营立场与关键资源……"},
+    ],
+  },
+  {
+    id:"people",
+    label:"人物",
+    sections:[
+      {id:"characters", label:"人物档案", hint:"动机、秘密与成长", placeholder:"记录人物身份、外貌、习惯、动机、秘密、弱点与成长线……"},
+      {id:"relationships", label:"人物关系", hint:"关系变化与称呼", placeholder:"记录人物之间的关系、称呼、共同经历、矛盾与变化节点……"},
+    ],
+  },
+  {
+    id:"scratch",
+    label:"随记",
+    sections:[
+      {id:"ideas", label:"灵感碎片", hint:"对白、画面与待整理想法", placeholder:"随手记下暂时还没归类的对白、画面、动作、标题与零散想法……"},
+    ],
+  },
+]
+var AUTHOR_NOTE_SECTIONS = AUTHOR_NOTE_GROUPS.flatMap(function(group) { return group.sections })
+var AUTHOR_NOTE_SECTION_IDS = AUTHOR_NOTE_SECTIONS.map(function(section) { return section.id })
 
 function esc(s) {
   if (!s) return ""
   var d = document.createElement("div")
   d.textContent = s
   return d.innerHTML
+}
+
+function escAttr(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 function countEditorCharacters(value) {
@@ -162,25 +219,35 @@ function openEditorFontManager(workId) {
 
 
 export function renderEditor(wid) {
+  _editorPersistence.flush()
   _phoneModuleDragController?.reset("refresh")
   _nodeDragController?.reset("refresh")
   _outlineActionMenu.reset()
-  if (_workId !== wid) {
+  var workChanged = _workId !== wid
+  if (workChanged) {
     _mobilePane = "editor"
     _pendingMobileFocus = null
     _articleTargetPick = null
     _articleTargetInspect = null
+    _nodeId = null
   }
   _workId = wid
-  var w = getWork(wid)
+  var w = migrateInteractiveSceneWork(wid) || getWork(wid)
   if (!w) return '<div class="app-main"><div class="empty-state"><h3>作品未找到</h3></div></div>'
   loadEditorCustomFonts(wid, w.editorSettings?.customFonts)
   var ns = w.nodes || []
+  if (workChanged) {
+    var savedView = readArticleEditorViewState(wid, globalThis.localStorage)
+    if (savedView.nodeId && ns.some(function(n) { return n.id === savedView.nodeId })) {
+      _nodeId = savedView.nodeId
+    }
+  }
   if (!_nodeId || !ns.find(function(n){ return n.id === _nodeId })) {
     _nodeId = ns.length ? ns[0].id : null
   }
+  if (_nodeId) writeArticleEditorViewState(wid, {nodeId:_nodeId}, globalThis.localStorage)
   if (!_nodeId) _mobilePane = "outline"
-  var L = buildIconbar(wid)
+  var L = buildIconbar(wid, _nodeId)
   var E = buildEditor(w, _nodeId)
   var W = buildWorldTree(w)
   var M = buildMobileCommandbar(wid, _nodeId)
@@ -194,9 +261,11 @@ export function renderEditor(wid) {
 
 function buildMobileViewSwitch() {
   var editorPressed = _mobilePane === "editor" ? "true" : "false"
+  var notesPressed = _mobilePane === "notes" ? "true" : "false"
   var outlinePressed = _mobilePane === "outline" ? "true" : "false"
   var h = '<div class="editor-mobile-view-switch" role="group" aria-label="编辑器视图">'
   h += '<button type="button" data-a="mobile-pane" data-pane="editor" aria-controls="articleEditorPane" aria-pressed="' + editorPressed + '">正文</button>'
+  h += '<button type="button" data-a="mobile-pane" data-pane="notes" aria-controls="articleNotesPane" aria-pressed="' + notesPressed + '">设定</button>'
   h += '<button type="button" data-a="mobile-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + outlinePressed + '">结构</button>'
   h += '</div>'
   return h
@@ -204,6 +273,9 @@ function buildMobileViewSwitch() {
 
 function buildMobileCommandbar(wid, nid) {
   var es = getSettings(wid)
+  var conditional = articleNodeIsConditional(getNode(wid, nid))
+  var viewState = readArticleEditorViewState(wid, globalThis.localStorage)
+  var localTextColor = viewState.editorTextColor || "#40383b"
   var editorToolsDisabled = _mobilePane === "editor" && nid ? "" : " disabled"
   var h = '<div class="editor-mobile-commandbar" aria-label="移动端编辑工具">'
   h += '<div class="editor-mobile-dock" role="group" aria-label="写作工具">'
@@ -218,8 +290,9 @@ function buildMobileCommandbar(wid, nid) {
   h += '<div class="editor-mobile-tool-head"><strong>插入内容</strong><button type="button" data-a="mobile-tools-close" data-panel="insert">完成</button></div>'
   h += '<div class="editor-mobile-insert-grid">'
   h += '<button type="button" data-a="ph" data-w="' + wid + '"><span aria-hidden="true">{}</span><span>占位符</span></button>'
-  h += '<button type="button" data-a="ch" data-w="' + wid + '"><span aria-hidden="true">⇄</span><span>选项</span></button>'
+  if (!conditional) h += '<button type="button" data-a="ch" data-w="' + wid + '"><span aria-hidden="true">⇄</span><span>选项</span></button>'
   h += '<button type="button" data-a="im"><span aria-hidden="true">＋</span><span>图片</span></button>'
+  if (!conditional) h += '<button type="button" data-a="is"><span aria-hidden="true">◎</span><span>互动页</span></button>'
   h += '<button type="button" data-a="pa-msg" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.messages.icon + '</span><span>消息</span></button>'
   h += '<button type="button" data-a="pa-forum" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.forum.icon + '</span><span>论坛</span></button>'
   h += '<button type="button" data-a="pa-memo" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.memo.icon + '</span><span>备忘</span></button>'
@@ -252,6 +325,8 @@ function buildMobileCommandbar(wid, nid) {
   }
   if (customFonts.length) h += '<option value="__manage__">管理本机字体…</option>'
   h += '<option value="__custom__">+ 导入字体…</option></select></label>'
+  h += '<label class="editor-mobile-setting-field editor-mobile-color-setting"><span>字色</span><input type="color" data-a="fs-color" aria-label="作者正文颜色" value="' + localTextColor + '"></label>'
+  h += '<button type="button" class="editor-mobile-color-reset" data-a="fs-color-reset">恢复默认字色</button>'
   h += '<label class="editor-mobile-setting-field"><span>字号</span><select class="toolbar-setting" data-a="fs-size" aria-label="字号">'
   var sizes = [12,14,16,18,20,22,24,28,32]
   for (var si = 0; si < sizes.length; si++) {
@@ -325,12 +400,15 @@ function restoreOutlineActionFocus(disclosure, actionControl) {
   target?.focus()
 }
 
-function buildIconbar(wid) {
+function buildIconbar(wid, nid) {
+  var node = getNode(wid, nid)
+  var conditional = articleNodeIsConditional(node)
   var h = '<div class="editor-iconbar">'
   h += '<button type="button" data-a="ph" data-w="' + wid + '" title="占位符" aria-label="插入占位符">{}</button>'
-  h += '<button type="button" data-a="ch" data-w="' + wid + '" title="选项" aria-label="编辑选项">⇄</button>'
+  if (!conditional) h += '<button type="button" data-a="ch" data-w="' + wid + '" title="选项" aria-label="编辑选项">⇄</button>'
   h += '<div class="divider"></div>'
   h += '<button type="button" data-a="im" title="图片" aria-label="插入图片">+</button>'
+  if (!conditional) h += '<button type="button" data-a="is" title="互动页" aria-label="在本章添加互动页">◎</button>'
   h += '<div class="divider"></div>'
   h += '<button type="button" data-a="pa-msg" data-w="' + wid + '" title="消息" aria-label="插入消息模块">' + PHONE_APP_DEFS.messages.icon + '</button>'
   h += '<button type="button" data-a="pa-forum" data-w="' + wid + '" title="论坛" aria-label="插入论坛模块">' + PHONE_APP_DEFS.forum.icon + '</button>'
@@ -346,6 +424,7 @@ function buildIconbar(wid) {
 function buildEditor(w, nid) {
   var n = (w.nodes || []).find(function(x){ return x.id === nid })
   if (!n) return '<div class="editor-area" id="articleEditorPane"><div class="editor-empty">选择一个节点开始编辑</div></div>'
+  if (isInteractiveSceneNode(n)) return buildInteractiveNodeEditor(w, n)
   var h = '<div class="editor-area" id="articleEditorPane">'
   if (_articleTargetInspect && _articleTargetInspect.workId === w.id) {
     var inspected = describeArticleTarget(w, n.id)
@@ -360,9 +439,14 @@ function buildEditor(w, nid) {
 
 function buildHeader(w, n) {
   var sc = w.scenes || []
+  var conditional = articleNodeIsConditional(n)
   var h = '<div class="editor-header">'
   h += '<input class="node-name" id="nt_' + n.id + '" value="' + esc(n.title || '') + '" placeholder="节点标题" aria-label="节点标题" data-a="rn" data-n="' + n.id + '">'
   h += '<div class="editor-actions">'
+  if (conditional) {
+    h += '<span class="conditional-node-kind">隐藏段落</span>'
+    h += '<button type="button" class="btn btn-sm btn-outline" data-a="edit-display-condition" data-w="' + w.id + '" data-n="' + n.id + '">显示条件</button>'
+  }
   h += '<select data-a="ss" data-n="' + n.id + '" aria-label="节点场景"><option value="">场景</option>'
   for (var i = 0; i < sc.length; i++) {
     var s = sc[i]
@@ -388,6 +472,8 @@ function getSettings(wid) {
 function buildToolbar(nid) {
   var w = getWork(_workId)
   var es = getSettings(_workId)
+  var viewState = readArticleEditorViewState(_workId, globalThis.localStorage)
+  var localTextColor = viewState.editorTextColor || "#40383b"
 
   var h = '<div class="editor-toolbar"><div class="editor-toolbar-scroll">'
   // Editing history
@@ -424,6 +510,8 @@ function buildToolbar(nid) {
   if (cfs.length) h += '<option value="__manage__">管理本机字体…</option>'
   h += '<option value="__custom__">+ 导入字体…</option>'
   h += '</select>'
+  h += '<label class="toolbar-color-setting" title="仅改变作者本机的正文颜色"><span>字色</span><input type="color" data-a="fs-color" aria-label="作者正文颜色" value="' + localTextColor + '"></label>'
+  h += '<button type="button" class="toolbar-color-reset" data-a="fs-color-reset" title="恢复默认正文颜色" aria-label="恢复默认正文颜色">重置字色</button>'
 
   // Font size
   h += '<select class="toolbar-setting" data-a="fs-size" title="字号" aria-label="字号"><option value="">字号</option>'
@@ -474,6 +562,33 @@ function buildToolbar(nid) {
   return h
 }
 
+function buildInteractiveNodeEditor(w, n) {
+  var scene = interactiveSceneForNode(w, n)
+  var stage = scene?.stages?.find(function(candidate) {
+    return candidate.id === scene.startStageId
+  }) || scene?.stages?.[0]
+  var stageCount = scene?.stages?.length || 0
+  var background = stage?.image || ""
+  var character = stage?.characterImage || ""
+  var h = '<div class="editor-area interactive-node-editor-area" id="articleEditorPane">'
+  h += '<div class="editor-header interactive-node-header">'
+  h += '<input class="node-name" id="nt_' + n.id + '" value="' + esc(n.title || scene?.title || '互动场景') + '" placeholder="互动页标题" aria-label="互动页标题" data-a="rn" data-n="' + n.id + '">'
+  h += '<span class="interactive-node-kind">◎ 互动页</span>'
+  h += '<span class="word-count">' + stageCount + ' 画面</span>'
+  h += '</div>'
+  h += '<div class="interactive-node-workspace">'
+  h += '<div class="interactive-node-preview" aria-label="互动页预览">'
+  if (background) h += '<img class="interactive-node-preview-background" src="' + esc(background) + '" alt="">'
+  if (character) h += '<img class="interactive-node-preview-character" src="' + esc(character) + '" alt="">'
+  h += '<div class="interactive-node-preview-copy"><span>INTERACTIVE PAGE</span><strong>' + esc(scene?.title || n.title || '互动场景') + '</strong><small>' + stageCount + ' 个画面 · 独立阅读页面</small></div>'
+  h += '</div>'
+  h += '<div class="interactive-node-actions">'
+  h += '<p>这个节点在读者端会直接打开全屏互动页，不会显示成正文卡片。</p>'
+  h += '<button type="button" class="btn btn-primary" data-a="edit-interactive-node" data-w="' + w.id + '" data-n="' + n.id + '">编辑互动页</button>'
+  h += '</div></div></div>'
+  return h
+}
+
 function positionMarginPopover(trigger, popover) {
   var toolbar = trigger?.closest(".editor-toolbar")
   if (!toolbar || !popover) return
@@ -487,15 +602,17 @@ function positionMarginPopover(trigger, popover) {
 
 function buildContent(n) {
   var es = getSettings(_workId)
+  var viewState = readArticleEditorViewState(_workId, globalThis.localStorage)
   var style = 'font-family:' + (es.fontFamily || DEFAULT_EDITOR_SETTINGS.fontFamily) + ';'
   style += 'font-size:' + (es.fontSize || DEFAULT_EDITOR_SETTINGS.fontSize) + 'px;'
   style += 'line-height:' + (es.lineHeight || DEFAULT_EDITOR_SETTINGS.lineHeight) + ';'
   style += 'letter-spacing:' + (es.letterSpacing || 0) + 'px;'
   style += 'padding:' + (es.marginTop || 24) + 'px ' + (es.marginRight || 32) + 'px ' + (es.marginBottom || 24) + 'px ' + (es.marginLeft || 32) + 'px;'
+  if (viewState.editorTextColor) style += 'color:' + viewState.editorTextColor + ';'
   if (es.indentFirstLine) {
     style += 'text-indent:2em;'
   }
-  var hasChoices = (n.choices || []).length > 0
+  var hasChoices = !articleNodeIsConditional(n) && (n.choices || []).length > 0
   var h = '<div class="editor-content' + (hasChoices ? ' has-choices' : '') + '">'
   h += '<div class="content-editable" id="ce_' + n.id + '" contenteditable="true" data-a="ce" data-n="' + n.id + '" style="' + esc(style) + '">' + (n.content || '') + '</div>'
   // Choice card at bottom
@@ -505,7 +622,8 @@ function buildContent(n) {
     h += '<div class="choice-card-btns">'
     for (var ci = 0; ci < n.choices.length; ci++) {
       var c = n.choices[ci]
-      h += '<button class="choice-btn" data-a="ch-go" data-w="' + _workId + '" data-n="' + n.id + '" data-cid="' + c.id + '" data-choice-mode="' + (c.mode === 'interaction' ? 'interaction' : 'branch') + '" data-target="' + esc(c.targetId || '') + '">' + esc(c.text || '选项') + '</button>'
+      var interaction = c.mode === 'interaction'
+      h += '<button class="choice-btn" data-a="ch-go" data-w="' + _workId + '" data-n="' + n.id + '" data-cid="' + c.id + '" data-choice-mode="' + (interaction ? 'interaction' : 'branch') + '" data-target="' + esc(c.targetId || '') + '"' + (interaction ? ' aria-pressed="false"' : '') + '><span class="choice-btn-text">' + esc(c.text || '选项') + '</span>' + (interaction ? '<span class="choice-btn-state" aria-hidden="true">已选择</span>' : '') + '</button>'
     }
     h += '</div>'
     h += '</div>'
@@ -517,16 +635,25 @@ function buildContent(n) {
 function buildWorldTree(w) {
   var ns = w.nodes || []
   var ch = w.chapters || []
+  var renderIndex = createArticleEditorRenderIndex(w)
   var targetPick = _articleTargetPick && _articleTargetPick.workId === w.id ? _articleTargetPick : null
-  var h = '<div class="world-tree' + (targetPick ? ' target-pick-mode' : '') + '" id="articleOutlinePane"' + (targetPick ? ' data-target-purpose="' + esc(targetPick.purpose) + '"' : '') + '>'
+  var viewState = readArticleEditorViewState(w.id, globalThis.localStorage)
+  var sidePane = targetPick ? "outline" : viewState.sidePane
+  var h = '<aside class="world-tree' + (targetPick ? ' target-pick-mode' : '') + '" data-side-pane="' + sidePane + '" data-work-id="' + esc(w.id) + '"' + (targetPick ? ' data-target-purpose="' + esc(targetPick.purpose) + '"' : '') + '>'
+  if (!targetPick) {
+    h += '<div class="editor-side-tabs" role="group" aria-label="右侧创作面板">'
+    h += '<button type="button" data-a="side-pane" data-pane="outline" aria-controls="articleOutlinePane" aria-pressed="' + (sidePane === "outline" ? "true" : "false") + '">结构</button>'
+    h += '<button type="button" data-a="side-pane" data-pane="notes" aria-controls="articleNotesPane" aria-pressed="' + (sidePane === "notes" ? "true" : "false") + '">设定</button>'
+    h += '</div>'
+  }
+  h += '<section class="editor-side-view editor-outline-view" id="articleOutlinePane"' + (sidePane === "outline" ? '' : ' hidden') + '>'
   if (targetPick) {
-    h += '<div class="target-picker-head"><div><strong>选择目标节点</strong><small>' + (targetPick.purpose === 'start' ? '设置故事起点' : '给当前选项指定去向') + '</small></div>'
+    h += '<div class="target-picker-head"><div><strong>选择目标节点</strong><small>给当前选项指定去向</small></div>'
     h += '<button type="button" data-a="target-cancel" data-w="' + w.id + '" aria-label="取消选择目标">取消</button></div>'
     h += '<div class="target-picker-search-wrap"><input type="search" class="target-picker-search" aria-label="搜索目标节点" placeholder="搜索章节或节点"></div>'
   } else {
     h += '<div class="wt-header"><span>节点列表</span><div>'
     h += '<button type="button" data-a="outline-overlay-close" aria-label="收起作品结构" title="收起作品结构" class="wt-overlay-close">×</button>'
-    h += '<button type="button" data-a="pick-start" data-w="' + w.id + '" aria-label="选择故事起点" title="选择故事起点">起点</button>'
     h += '<button type="button" data-a="as" data-w="' + w.id + '" aria-label="添加章节"><span class="wt-action-label-desktop">+章</span><span class="wt-action-label-mobile">+章节</span></button>'
     h += '<button type="button" data-a="an" data-w="' + w.id + '" aria-label="添加节点"><span class="wt-action-label-desktop">+</span><span class="wt-action-label-mobile">+节点</span></button></div></div>'
     h += '<div class="wt-chapter-create" hidden>'
@@ -540,74 +667,166 @@ function buildWorldTree(w) {
   if (ns.length === 0) {
     h += '<div class="wt-empty">暂无节点</div>'
   } else {
-    // Group nodes by scene
-    var grouped = {}
-    for (var i = 0; i < ns.length; i++) {
-      var n = ns[i]
-      var cid = n.chapterId || ""
-      if (!grouped[cid]) grouped[cid] = []
-      grouped[cid].push(n)
-    }
     var nodeActionIndex = 0
     // Render scenes
     for (var ci = 0; ci < ch.length; ci++) {
       var chs = ch[ci]
       var chid = chs.id
-      var cNodes = grouped[chid] || []
+      var cNodes = renderIndex.nodesByChapterId.get(chid) || []
       var chapterContentId = 'wtChapterContent_' + ci
       var chapterActionPanelId = 'wtChapterActions_' + ci
       var chapterActionLabel = '章节操作：' + (chs.name || '未命名章节')
+      var chapterCollapsed = !targetPick && viewState.collapsedChapterIds.includes(chid)
       h += '<div class="wt-chapter" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
       h += '<div class="wt-chapter-title" data-outline-action-host>'
-      h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="true" aria-controls="' + chapterContentId + '">'
-      h += '<span class="arrow open" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span><span class="chapter-count">' + cNodes.length + ' 节</span></button>'
+      h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="' + (chapterCollapsed ? 'false' : 'true') + '" aria-controls="' + chapterContentId + '">'
+      h += '<span class="arrow' + (chapterCollapsed ? '' : ' open') + '" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span><span class="chapter-count">' + cNodes.length + ' 节</span></button>'
       h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + chapterActionPanelId + '" aria-label="' + esc(chapterActionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
-      h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-add-node" data-w="' + w.id + '" data-sid="' + chid + '" title="在本章添加节点" aria-label="在本章添加节点">＋</button><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
-      h += '<div class="wt-chapter-content" id="' + chapterContentId + '" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
+      h += '<span class="chapter-actions wt-action-panel" id="' + chapterActionPanelId + '" role="group" aria-label="' + esc(chapterActionLabel) + '"><button type="button" data-a="chapter-add-node" data-w="' + w.id + '" data-sid="' + chid + '" title="在本章添加正文节点" aria-label="在本章添加正文节点">＋</button><button type="button" data-a="chapter-add-conditional" data-w="' + w.id + '" data-sid="' + chid + '" title="在本章添加隐藏节点" aria-label="在本章添加隐藏节点">隐</button><button type="button" data-a="chapter-add-interactive" data-w="' + w.id + '" data-sid="' + chid + '" title="在本章添加互动页" aria-label="在本章添加互动页">◎</button><button type="button" data-a="chapter-rename" data-w="' + w.id + '" data-sid="' + chid + '" title="重命名章节" aria-label="重命名章节">\u270e</button><button type="button" data-a="chapter-delete" data-w="' + w.id + '" data-sid="' + chid + '" title="删除章节" aria-label="删除章节">\u2715</button></span></div>'
+      h += '<div class="wt-chapter-content" id="' + chapterContentId + '" data-node-drop-chapter data-chapter-id="' + esc(chid) + '"' + (chapterCollapsed ? ' hidden' : '') + '>'
       for (var ni = 0; ni < cNodes.length; ni++) {
-        h += nodeHTML(w, cNodes[ni], nodeActionIndex++, targetPick)
+        var currentActionIndex = nodeActionIndex++
+        h += nodeHTML(w, cNodes[ni], currentActionIndex, targetPick, renderIndex)
         var cnode = cNodes[ni]
-        if (!targetPick && cnode.choices && cnode.choices.length) {
-          for (var cci = 0; cci < cnode.choices.length; cci++) {
-            var cc = cnode.choices[cci]
+        var branchChoices = (cnode.choices || []).filter(function(choice) { return choice.mode !== 'interaction' })
+        if (!targetPick && branchChoices.length) {
+          var choiceContentId = 'wtChoiceList_' + currentActionIndex
+          var choicesCollapsed = viewState.collapsedChoiceNodeIds.includes(cnode.id)
+          h += '<div class="wt-choice-group" data-choice-source-node="' + esc(cnode.id) + '">'
+          h += '<button type="button" class="wt-choice-toggle" data-a="tc" data-w="' + w.id + '" data-n="' + esc(cnode.id) + '" aria-expanded="' + (choicesCollapsed ? 'false' : 'true') + '" aria-controls="' + choiceContentId + '"><span aria-hidden="true">↳</span><span>' + branchChoices.length + ' 个跳转选项</span></button>'
+          h += '<div class="wt-choice-list" id="' + choiceContentId + '"' + (choicesCollapsed ? ' hidden' : '') + '>'
+          for (var cci = 0; cci < branchChoices.length; cci++) {
+            var cc = branchChoices[cci]
             h += '<button type="button" class="wt-choice" data-a="sl" data-w="' + w.id + '" data-n="' + (cc.targetId || '') + '">'
             h += '<span class="wt-choice-arrow" aria-hidden="true">\u21b3</span>'
             h += '<span class="wt-choice-text">' + esc(cc.text || '选项') + '</span>'
             h += '</button>'
           }
+          h += '</div></div>'
         }
       }
       h += '</div></div>'
     }
-    var uncid = grouped[""] || []
+    var uncid = renderIndex.nodesByChapterId.get("") || []
     if (uncid.length) h += '<div class="wt-ungrouped" data-node-drop-chapter data-chapter-id="">'
     for (var ui = 0; ui < uncid.length; ui++) {
-      h += nodeHTML(w, uncid[ui], nodeActionIndex++, targetPick)
+      h += nodeHTML(w, uncid[ui], nodeActionIndex++, targetPick, renderIndex)
     }
     if (uncid.length) h += '</div>'
   }
-  h += '</div></div>'
+  h += '</div></section>'
+  h += buildAuthorNotesPane(w.id, viewState, sidePane === "notes")
+  h += '</aside>'
   return h
 }
 
-function nodeHTML(w, n, actionIndex, targetPick) {
+function buildAuthorNotesPane(workId, viewState, active) {
+  var notes = readArticleAuthorNotes(workId, globalThis.localStorage)
+  var activeSection = viewState.noteSection || "outline"
+  if (!AUTHOR_NOTE_SECTION_IDS.includes(activeSection)) activeSection = "outline"
+  var h = '<section class="editor-side-view author-notes-pane" id="articleNotesPane"' + (active ? '' : ' hidden') + '>'
+  h += '<div class="author-notes-head"><div><strong>作品设定</strong><small>写作时随手查阅的私人资料库</small></div><span data-author-notes-status role="status" aria-live="polite">已保存</span></div>'
+  h += '<p class="author-notes-privacy"><span aria-hidden="true">◇</span>仅保存在作者端，不进入作品预览与导出文件</p>'
+  h += '<label class="author-notes-search"><span class="sr-only">搜索作品设定</span><input type="search" data-author-notes-search aria-label="搜索作品设定" placeholder="搜索分类或已记录内容"><output data-author-notes-search-status aria-live="polite">8 个分类</output></label>'
+  h += '<nav class="author-notes-directory" aria-label="设定分类">'
+  for (var gi = 0; gi < AUTHOR_NOTE_GROUPS.length; gi++) {
+    var group = AUTHOR_NOTE_GROUPS[gi]
+    h += '<section class="author-notes-group" data-note-group="' + group.id + '"><h3>' + group.label + '</h3><div>'
+    for (var i = 0; i < group.sections.length; i++) {
+      var section = group.sections[i]
+      var sectionCount = String(notes[section.id] || "").length
+      h += '<button type="button" data-a="note-section" data-section="' + section.id + '" aria-controls="authorNote_' + section.id + '" aria-pressed="' + (section.id === activeSection ? "true" : "false") + '">'
+      h += '<span><strong>' + section.label + '</strong><small>' + section.hint + '</small></span><span data-note-count aria-label="' + sectionCount + ' 字">' + sectionCount + '</span></button>'
+    }
+    h += '</div></section>'
+  }
+  h += '<p class="author-notes-empty" data-author-notes-empty hidden>没有找到相关分类或内容</p></nav>'
+  for (var si = 0; si < AUTHOR_NOTE_SECTIONS.length; si++) {
+    var item = AUTHOR_NOTE_SECTIONS[si]
+    var itemCount = String(notes[item.id] || "").length
+    h += '<label class="author-note-editor" id="authorNote_' + item.id + '"' + (item.id === activeSection ? '' : ' hidden') + '>'
+    h += '<span class="author-note-editor-head"><span><strong>' + item.label + '</strong><small>' + item.hint + '</small></span><output data-note-editor-count>' + itemCount + ' 字</output></span>'
+    h += '<textarea data-author-note="' + item.id + '" maxlength="200000" placeholder="' + item.placeholder + '">' + esc(notes[item.id]) + '</textarea></label>'
+  }
+  h += '</section>'
+  return h
+}
+
+function filterAuthorNoteSections(notesPane, query) {
+  if (!notesPane) return
+  var normalized = String(query || "").trim().toLowerCase()
+  var visibleCount = 0
+  notesPane.querySelectorAll('[data-a="note-section"]').forEach(function(button) {
+    var section = button.dataset.section
+    var editor = notesPane.querySelector('[data-author-note="' + section + '"]')
+    var haystack = (button.textContent + " " + (editor?.value || "")).toLowerCase()
+    var visible = !normalized || haystack.includes(normalized)
+    button.hidden = !visible
+    if (visible) visibleCount += 1
+  })
+  notesPane.querySelectorAll("[data-note-group]").forEach(function(group) {
+    group.hidden = Array.from(group.querySelectorAll('[data-a="note-section"]')).every(function(button) { return button.hidden })
+  })
+  var empty = notesPane.querySelector("[data-author-notes-empty]")
+  if (empty) empty.hidden = visibleCount !== 0
+  var status = notesPane.querySelector("[data-author-notes-search-status]")
+  if (status) status.textContent = normalized ? "找到 " + visibleCount + " 个分类" : AUTHOR_NOTE_SECTION_IDS.length + " 个分类"
+}
+
+function setEditorSidePane(sidePanel, pane) {
+  if (!sidePanel || (pane !== "outline" && pane !== "notes")) return false
+  sidePanel.dataset.sidePane = pane
+  sidePanel.querySelectorAll('[data-a="side-pane"][data-pane]').forEach(function(control) {
+    control.setAttribute("aria-pressed", String(control.dataset.pane === pane))
+  })
+  var outlinePane = sidePanel.querySelector("#articleOutlinePane")
+  var notesPane = sidePanel.querySelector("#articleNotesPane")
+  if (outlinePane) outlinePane.hidden = pane !== "outline"
+  if (notesPane) notesPane.hidden = pane !== "notes"
+  return true
+}
+
+function describeDisplayCondition(work, node, renderIndex) {
+  var condition = normalizeArticleDisplayCondition(node?.displayCondition)
+  if (!condition.all.length) return "未设置条件"
+  var labelsById = renderIndex?.conditionLabelByChoiceId
+  if (!labelsById) {
+    labelsById = new Map()
+    buildArticleChoiceCatalog(work).forEach(function(item) {
+      if (!item.disabled && !labelsById.has(item.choiceId)) labelsById.set(item.choiceId, item.choiceText)
+    })
+  }
+  return condition.all.map(function(group) {
+    return "(" + group.anyChoiceIds.map(function(choiceId) {
+      return labelsById.get(choiceId) || "条件已失效"
+    }).join(" 或 ") + ")"
+  }).join(" 且 ")
+}
+
+function nodeHTML(w, n, actionIndex, targetPick, renderIndex) {
   var ac = n.id === _nodeId ? ' active' : ''
   var current = n.id === _nodeId ? ' aria-current="true"' : ''
   var ch = w.chapters || []
   var curCid = n.chapterId || ""
   var canMoveChapter = ch.some(function(c) { return c.id !== curCid })
-  var siblings = (w.nodes || []).filter(function(node) { return (node.chapterId || "") === curCid })
-  var siblingIndex = siblings.findIndex(function(node) { return node.id === n.id })
-  var canMoveUp = siblingIndex > 0
-  var canMoveDown = siblingIndex >= 0 && siblingIndex < siblings.length - 1
+  var siblingPosition = renderIndex?.siblingPositionByNodeId.get(n.id)
+  var canMoveUp = Boolean(siblingPosition && siblingPosition.index > 0)
+  var canMoveDown = Boolean(siblingPosition && siblingPosition.index < siblingPosition.count - 1)
   var actionPanelId = 'wtNodeActions_' + actionIndex
+  var targetDescription = {
+    ok:Boolean(renderIndex?.targetPathByNodeId.has(n.id)),
+    pathLabel:renderIndex?.targetPathByNodeId.get(n.id),
+  }
   var actionLabel = '节点操作：' + (n.title || '未命名节点')
-  var targetDescription = describeArticleTarget(w, n.id)
   var targetPath = targetDescription.ok ? targetDescription.pathLabel : (n.title || '未命名节点')
+  var conditional = articleNodeIsConditional(n)
+  var conditionSummary = conditional ? describeDisplayCondition(w, n, renderIndex) : ""
   var h = '<div class="wt-node' + ac + '" data-outline-action-host data-node-id="' + esc(n.id) + '" data-chapter-id="' + esc(curCid) + '">'
   if (targetPick) {
-    h += '<button type="button" class="wt-node-target-select" data-a="target-select" data-w="' + w.id + '" data-n="' + esc(n.id) + '" data-target-path="' + esc(targetPath.toLowerCase()) + '">'
+    h += '<button type="button" class="wt-node-target-select" data-a="target-select" data-w="' + w.id + '" data-n="' + esc(n.id) + '" data-target-path="' + esc(targetPath.toLowerCase()) + '"' + (conditional ? ' disabled aria-disabled="true" title="隐藏节点不能作为起点或选项去向"' : '') + '>'
     h += '<span class="dot" aria-hidden="true"></span><span class="node-label">' + esc(targetPath) + '</span>'
+    if (isInteractiveSceneNode(n)) h += '<span class="wt-node-kind-badge">互动</span>'
+    if (conditional) h += '<span class="wt-node-kind-badge is-conditional">隐藏</span>'
     if (w.startNode === n.id) h += '<span class="wt-start-badge">起点</span>'
     h += '</button></div>'
     return h
@@ -616,6 +835,8 @@ function nodeHTML(w, n, actionIndex, targetPick) {
   h += '<button type="button" class="wt-node-select" data-a="sl" data-w="' + w.id + '" data-n="' + n.id + '"' + current + '>'
   h += '<span class="dot" aria-hidden="true"></span>'
   h += '<span class="node-label">' + esc(n.title || '节点') + '</span>'
+  if (isInteractiveSceneNode(n)) h += '<span class="wt-node-kind-badge">互动</span>'
+  if (conditional) h += '<span class="wt-node-kind-badge is-conditional">隐藏</span><span class="wt-condition-summary" title="' + esc(conditionSummary) + '">' + esc(conditionSummary) + '</span>'
   if (w.startNode === n.id) h += '<span class="wt-start-badge">起点</span>'
   h += '</button>'
   h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + actionPanelId + '" aria-label="' + esc(actionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
@@ -628,6 +849,7 @@ function nodeHTML(w, n, actionIndex, targetPick) {
     }
   }
   h += '</select>'
+  if (conditional) h += '<button type="button" data-a="edit-display-condition" data-w="' + w.id + '" data-n="' + n.id + '" title="编辑显示条件" aria-label="编辑显示条件">条件</button>'
   h += '<button type="button" data-a="rn2" data-w="' + w.id + '" data-n="' + n.id + '" title="重命名" aria-label="重命名节点">\u270e</button>'
   h += '<button type="button" data-a="up" data-w="' + w.id + '" data-n="' + n.id + '" title="上移" aria-label="上移节点"' + (canMoveUp ? '' : ' disabled') + '>\u25b2</button>'
   h += '<button type="button" data-a="dn" data-w="' + w.id + '" data-n="' + n.id + '" title="下移" aria-label="下移节点"' + (canMoveDown ? '' : ' disabled') + '>\u25bc</button>'
@@ -667,6 +889,7 @@ function syncEditorFormatButtons() {
 }
 
 function handleClick(e) {
+  _editorPersistence.flush()
   var phoneModuleCard = e.target.closest(".pm-inline-card")
   if (phoneModuleCard && !e.target.closest(".pm-card-hamburger")) {
     if (_phoneModuleDragController?.consumeClick(phoneModuleCard, e)) {
@@ -725,8 +948,41 @@ function handleClick(e) {
     if (applyEditorMobilePane(mobileShell, b.dataset.pane)) {
       _mobilePane = b.dataset.pane
       _pendingMobileFocus = null
+      if (_mobilePane === "notes" || _mobilePane === "outline") {
+        var mobileSidePanel = mobileShell.querySelector(".world-tree")
+        setEditorSidePane(mobileSidePanel, _mobilePane)
+        writeArticleEditorViewState(w, {sidePane:_mobilePane}, globalThis.localStorage)
+      }
       updateMobileEditorToolAvailability(mobileShell, _mobilePane)
     }
+    return
+  }
+  if (a === "side-pane") {
+    var sidePanel = b.closest(".world-tree")
+    if (setEditorSidePane(sidePanel, b.dataset.pane)) {
+      writeArticleEditorViewState(w, {sidePane:b.dataset.pane}, globalThis.localStorage)
+    }
+    return
+  }
+  if (a === "note-section") {
+    var notesPane = b.closest("#articleNotesPane")
+    var noteSection = b.dataset.section
+    if (!notesPane || !AUTHOR_NOTE_SECTION_IDS.includes(noteSection)) return
+    notesPane.querySelectorAll('[data-a="note-section"]').forEach(function(control) {
+      control.setAttribute("aria-pressed", String(control === b))
+    })
+    notesPane.querySelectorAll(".author-note-editor").forEach(function(editor) {
+      editor.hidden = editor.id !== "authorNote_" + noteSection
+    })
+    writeArticleEditorViewState(w, {sidePane:"notes", noteSection:noteSection}, globalThis.localStorage)
+    notesPane.querySelector('[data-author-note="' + noteSection + '"]')?.focus()
+    return
+  }
+  if (a === "fs-color-reset") {
+    writeArticleEditorViewState(w, {editorTextColor:""}, globalThis.localStorage)
+    var localColorEditable = document.getElementById("ce_" + _nodeId)
+    localColorEditable?.style.removeProperty("color")
+    mobileShell?.querySelectorAll('[data-a="fs-color"]').forEach(function(input) { input.value = "#40383b" })
     return
   }
   if (b.closest('[data-mobile-tool-panel="insert"]')) closeMobileToolPanels(mobileShell, false)
@@ -743,13 +999,6 @@ function handleClick(e) {
     })
     return
   }
-  if (a === "pick-start") {
-    _articleTargetInspect = null
-    _articleTargetPick = {purpose: "start", workId: w, sourceNodeId: _nodeId}
-    prepareMobilePaneRefresh("outline", true)
-    refreshEditor(w)
-    return
-  }
   if (a === "target-cancel") {
     var cancelledTargetPick = _articleTargetPick
     _articleTargetPick = null
@@ -762,15 +1011,9 @@ function handleClick(e) {
   }
   if (a === "target-select") {
     var targetPickState = _articleTargetPick
-    if (!targetPickState || targetPickState.workId !== w || !getNode(w, n)) return
+    var selectedTargetNode = getNode(w, n)
+    if (!targetPickState || targetPickState.workId !== w || !selectedTargetNode || articleNodeIsConditional(selectedTargetNode)) return
     _articleTargetPick = null
-    if (targetPickState.purpose === "start") {
-      updateWork(w, {startNode: n})
-      _nodeId = n
-      prepareMobilePaneRefresh("editor", true)
-      refreshEditor(w)
-      return
-    }
     if (targetPickState.purpose === "choice" && targetPickState.drafts?.[targetPickState.draftIndex]) {
       targetPickState.drafts[targetPickState.draftIndex].targetId = n
       _nodeId = targetPickState.sourceNodeId
@@ -847,7 +1090,7 @@ function handleClick(e) {
   if (a === "rn2") {
     var nd = getNode(w, n)
     showPrompt("重命名节点", nd ? nd.title : "", function(nn) {
-      if (nn) { updateNode(w, n, {title: nn}); refreshEditor(w) }
+      if (nn) { renameArticleNode(w, n, nn); refreshEditor(w) }
     }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
     return
   }
@@ -860,11 +1103,31 @@ function handleClick(e) {
     return
   }
   if (a === "ch") {
+    if (articleNodeIsConditional(getNode(w, _nodeId))) {
+      showToast("隐藏节点不能设置选项", "error")
+      return
+    }
     openChoicePanel(w, _nodeId)
     return
   }
   if (a === "im") {
     openImagePanel()
+    return
+  }
+  if (a === "is") {
+    if (articleNodeIsConditional(getNode(w, _nodeId))) {
+      showToast("隐藏节点不能转换为互动页", "error")
+      return
+    }
+    createInteractiveSceneNode(w, _nodeId)
+    return
+  }
+  if (a === "edit-display-condition") {
+    openDisplayConditionPanel(w, n)
+    return
+  }
+  if (a === "edit-interactive-node") {
+    openInteractiveSceneForNode(w, n)
     return
   }
   // Phone app shortcuts - create inline cards
@@ -883,7 +1146,14 @@ function handleClick(e) {
   }
   // Navigate to target node via choice card
   if (a === "ch-go") {
-    if (b.dataset.choiceMode === 'interaction') return
+    if (b.dataset.choiceMode === 'interaction') {
+      b.closest('.choice-card-btns')?.querySelectorAll('[data-choice-mode="interaction"]').forEach(function(option) {
+        var selected = option === b
+        option.classList.toggle('is-selected', selected)
+        option.setAttribute('aria-pressed', String(selected))
+      })
+      return
+    }
     var target = b.dataset.target
     if (target && getNode(w, target)) {
       _nodeId = target
@@ -900,6 +1170,22 @@ function handleClick(e) {
     if (chapterContent) chapterContent.hidden = !nextExpanded
     var arrow = b.querySelector(".arrow")
     if (arrow) arrow.classList.toggle("open", nextExpanded)
+    var chapterView = readArticleEditorViewState(w, globalThis.localStorage)
+    var collapsedChapters = chapterView.collapsedChapterIds.filter(function(id) { return id !== b.dataset.sid })
+    if (!nextExpanded) collapsedChapters.push(b.dataset.sid)
+    writeArticleEditorViewState(w, {collapsedChapterIds:collapsedChapters}, globalThis.localStorage)
+    return
+  }
+  if (a === "tc") {
+    var choicesExpanded = b.getAttribute("aria-expanded") === "true"
+    var nextChoicesExpanded = !choicesExpanded
+    var choiceList = document.getElementById(b.getAttribute("aria-controls"))
+    b.setAttribute("aria-expanded", String(nextChoicesExpanded))
+    if (choiceList) choiceList.hidden = !nextChoicesExpanded
+    var choiceView = readArticleEditorViewState(w, globalThis.localStorage)
+    var collapsedChoiceNodes = choiceView.collapsedChoiceNodeIds.filter(function(id) { return id !== n })
+    if (!nextChoicesExpanded) collapsedChoiceNodes.push(n)
+    writeArticleEditorViewState(w, {collapsedChoiceNodeIds:collapsedChoiceNodes}, globalThis.localStorage)
     return
   }
   if (a === "chapter-add-node") {
@@ -913,6 +1199,44 @@ function handleClick(e) {
       prepareMobilePaneRefresh("editor", true)
       refreshEditor(w)
     }
+    return
+  }
+  if (a === "chapter-add-conditional") {
+    var conditionalChapterId = b.dataset.sid
+    var conditionalWork = getWork(w)
+    var conditionalChapterNodes = (conditionalWork?.nodes || []).filter(function(node) {
+      return String(node.chapterId || "") === String(conditionalChapterId || "")
+    })
+    if (!conditionalChapterNodes.some(function(node) { return !articleNodeIsConditional(node) })) {
+      showToast("请先在本章添加正文节点", "error")
+      return
+    }
+    var conditionalNode = createConditionalArticleNode(
+      w,
+      conditionalChapterId,
+      conditionalChapterNodes[conditionalChapterNodes.length - 1]?.id,
+    )
+    if (!conditionalNode) {
+      showToast("请先在本章添加正文节点", "error")
+      return
+    }
+    _nodeId = conditionalNode.id
+    prepareMobilePaneRefresh("editor", true)
+    refreshEditor(w)
+    openDisplayConditionPanel(w, conditionalNode.id)
+    return
+  }
+  if (a === "chapter-add-interactive") {
+    var interactiveChapterId = b.dataset.sid
+    var interactiveChapterWork = getWork(w)
+    var interactiveChapterNodes = (interactiveChapterWork?.nodes || []).filter(function(node) {
+      return String(node.chapterId || "") === String(interactiveChapterId || "")
+    })
+    createInteractiveSceneNode(
+      w,
+      interactiveChapterNodes[interactiveChapterNodes.length - 1]?.id || null,
+      interactiveChapterId,
+    )
     return
   }
   if (a === "chapter-delete") {
@@ -976,8 +1300,10 @@ function getNode(wid, nid) {
 }
 
 function handleChange(e) {
+  _editorPersistence.flush()
   var b = e.target.closest("[data-a]")
   if (!b) return
+  var mobileShell = b.closest(".editor-body-area")
   var outlineActionTrigger = _outlineActionMenu.closeForAction(b)
   var a = b.dataset.a
   var w = b.dataset.w || _workId
@@ -985,7 +1311,7 @@ function handleChange(e) {
 
   // Node title rename (from editor header input)
   if (a === "rn") {
-    updateNode(w, n, {title: b.value})
+    renameArticleNode(w, n, b.value)
     return
   }
 
@@ -1019,6 +1345,16 @@ function handleChange(e) {
   }
 
   // Layout settings
+  if (a === "fs-color") {
+    var localTextColor = /^#[0-9a-f]{6}$/i.test(b.value) ? b.value.toLowerCase() : ""
+    writeArticleEditorViewState(w, {editorTextColor:localTextColor}, globalThis.localStorage)
+    var localTextEditable = document.getElementById("ce_" + _nodeId)
+    if (localTextEditable) localTextEditable.style.color = localTextColor
+    mobileShell?.querySelectorAll('[data-a="fs-color"]').forEach(function(input) {
+      input.value = localTextColor || "#40383b"
+    })
+    return
+  }
   if (a === "fs-font") {
     var val = b.value
     if (val === "__manage__") {
@@ -1117,6 +1453,7 @@ function handleChange(e) {
 
 function applyEditorStyle() {
   var es = getSettings(_workId)
+  var viewState = readArticleEditorViewState(_workId, globalThis.localStorage)
   var ce = document.getElementById("ce_" + _nodeId)
   if (!ce) return
   ce.style.fontFamily = es.fontFamily || DEFAULT_EDITOR_SETTINGS.fontFamily
@@ -1125,6 +1462,7 @@ function applyEditorStyle() {
   ce.style.letterSpacing = (es.letterSpacing || 0) + 'px'
   ce.style.padding = (es.marginTop || 24) + 'px ' + (es.marginRight || 32) + 'px ' + (es.marginBottom || 24) + 'px ' + (es.marginLeft || 32) + 'px'
   ce.style.textIndent = es.indentFirstLine ? '2em' : '0'
+  ce.style.color = viewState.editorTextColor || ''
 }
 
 // SVG icon for help button: circle with question mark
@@ -1463,6 +1801,10 @@ function openChoicePanel(wid, nid, options) {
   if (!w) return
   var node = getNode(wid, nid)
   if (!node) return
+  if (articleNodeIsConditional(node)) {
+    showToast("隐藏节点不能设置选项", "error")
+    return
+  }
   var choices = Array.isArray(options?.draftChoices)
     ? JSON.parse(JSON.stringify(options.draftChoices))
     : JSON.parse(JSON.stringify(node.choices || []))
@@ -1496,13 +1838,25 @@ function openChoicePanel(wid, nid, options) {
     var interaction = mode === 'interaction'
     panel.dataset.choiceMode = interaction ? 'interaction' : 'branch'
     listEl.querySelectorAll('.ch-target-pick,.ch-target-inspect').forEach(function(control) { control.hidden = interaction })
-    listEl.querySelectorAll('.ch-text').forEach(function(input) {
-      input.placeholder = interaction ? '选中后显示的简短文字' : '选项文字'
+    listEl.querySelectorAll('.ch-selected-field').forEach(function(field) {
+      field.hidden = !interaction
+      var selectedInput = field.querySelector('.ch-selected-text')
+      var optionInput = field.closest('.ch-item')?.querySelector('.ch-text')
+      if (interaction && selectedInput && selectedInput.dataset.selectedAuthored !== 'true') {
+        selectedInput.value = optionInput?.value || ''
+      }
     })
   }
   applyChoiceMode(choiceMode)
   var modeSelect = panel.querySelector('#chMode')
   if (modeSelect) modeSelect.onchange = function() { applyChoiceMode(modeSelect.value) }
+  listEl.addEventListener('input', function(ev) {
+    var selectedInput = ev.target.closest('.ch-selected-text')
+    if (selectedInput) {
+      selectedInput.dataset.selectedAuthored = 'true'
+      selectedInput.dataset.selectedDirty = 'true'
+    }
+  })
 
   if (panel) {
     panel.addEventListener('click', function(ev) {
@@ -1595,13 +1949,25 @@ function openChoicePanel(wid, nid, options) {
 function collectChoiceDrafts(listEl) {
   var mode = listEl.closest('.ch-panel')?.querySelector('#chMode')?.value === 'interaction' ? 'interaction' : 'branch'
   return Array.from(listEl.querySelectorAll('.ch-item')).map(function(row) {
-    return {
+    var selectedInput = row.querySelector('.ch-selected-text')
+    var draft = {
       id: row.dataset.choiceId || '',
       text: row.querySelector('.ch-text')?.value || '',
       targetId: row.querySelector('.ch-target-pick')?.dataset.targetId || '',
       mode: mode
     }
+    if (selectedInput?.dataset.selectedAuthored === 'true') draft.selectedText = selectedChoiceTextDraft(selectedInput)
+    return draft
   })
+}
+
+function selectedChoiceTextDraft(input) {
+  if (!input || input.dataset.selectedDirty === 'true') return input?.value || ''
+  try {
+    var original = JSON.parse(input.dataset.selectedOriginal || '')
+    if (typeof original === 'string') return original
+  } catch (_) {}
+  return input.value || ''
 }
 
 function saveChoicesFromDOM(wid, nid, listEl) {
@@ -1627,7 +1993,9 @@ function saveChoicesFromDOM(wid, nid, listEl) {
       showToast('选项 #' + (i + 1) + ' 的目标节点已不存在，请重新选择', 'error')
       return false
     }
-    if (drafts[i].mode === 'interaction') drafts[i].targetId = ''
+    if (drafts[i].mode === 'interaction') {
+      drafts[i].targetId = ''
+    }
   }
   var reconciled = reconcileArticleChoices(curNode.choices || [], drafts, uid)
   if (!reconciled.ok) {
@@ -1659,11 +2027,15 @@ function chRowHTML(wid, nid, choice, idx, allNodes) {
   var work = getWork(wid)
   var target = choice.targetId ? describeArticleTarget(work, choice.targetId) : {ok: false}
   var targetLabel = target.ok ? target.pathLabel : (choice.targetId ? '目标已删除 · 请重新选择' : '选择目标节点')
-  var h = '<div class="ch-item" data-ch-idx="' + idx + '" data-choice-id="' + esc(choice.id || '') + '">'
+  var hasAuthoredSelectedText = Object.prototype.hasOwnProperty.call(choice || {}, 'selectedText')
+  var selectedText = hasAuthoredSelectedText ? (choice.selectedText ?? '') : (choice.text ?? '')
+  var selectedTextOriginal = JSON.stringify(selectedText)
+  var h = '<div class="ch-item" data-ch-idx="' + idx + '" data-choice-id="' + escAttr(choice.id || '') + '">'
   h += '<span class="ch-num">#' + (idx + 1) + '</span>'
-  h += '<input class="ch-text" id="ch_text_' + idx + '" value="' + esc(choice.text || '') + '" placeholder="选项文字">'
-  h += '<button type="button" class="ch-target-pick' + (choice.targetId && !target.ok ? ' invalid' : '') + '" data-ch-a="pick-target" data-target-id="' + esc(choice.targetId || '') + '"><span>' + esc(targetLabel) + '</span><b aria-hidden="true">›</b></button>'
-  if (target.ok) h += '<button type="button" class="ch-target-inspect" data-ch-a="inspect-target" data-target-id="' + esc(choice.targetId) + '" title="查看目标节点" aria-label="查看目标节点">查看</button>'
+  h += '<label class="ch-field ch-choice-text"><span class="ch-field-copy"><span class="ch-field-label">选项文本</span><small class="ch-field-help">显示在读者点击的按钮上</small></span><input class="ch-text" id="ch_text_' + idx + '" value="' + escAttr(choice.text || '') + '" placeholder="读者按钮上的文字" aria-label="选项文本"></label>'
+  h += '<label class="ch-field ch-selected-field"><span class="ch-field-copy"><span class="ch-field-label">选择后内容</span><small class="ch-field-help">点击后插入正文，每行显示为独立正文段落</small></span><textarea class="ch-selected-text" id="ch_selected_text_' + idx + '" rows="3" placeholder="读者选择后显示的内容" aria-label="选择后内容" data-selected-authored="' + (hasAuthoredSelectedText ? 'true' : 'false') + '" data-selected-dirty="false" data-selected-original="' + escAttr(selectedTextOriginal) + '">' + esc(selectedText) + '</textarea></label>'
+  h += '<button type="button" class="ch-target-pick' + (choice.targetId && !target.ok ? ' invalid' : '') + '" data-ch-a="pick-target" data-target-id="' + escAttr(choice.targetId || '') + '"><span>' + esc(targetLabel) + '</span><b aria-hidden="true">›</b></button>'
+  if (target.ok) h += '<button type="button" class="ch-target-inspect" data-ch-a="inspect-target" data-target-id="' + escAttr(choice.targetId) + '" title="查看目标节点" aria-label="查看目标节点">查看</button>'
   h += '<button type="button" class="ch-del-btn" data-ch-a="del-choice" data-ch-idx="' + idx + '" title="删除选项" aria-label="删除选项">\u2715</button>'
   h += '</div>'
   return h
@@ -1685,9 +2057,161 @@ function reindexChRows(listEl) {
     if (num) num.textContent = '#' + (i + 1)
     var text = row.querySelector('.ch-text')
     if (text) text.id = 'ch_text_' + i
+    var selectedText = row.querySelector('.ch-selected-text')
+    if (selectedText) selectedText.id = 'ch_selected_text_' + i
     var delBtn = row.querySelector('.ch-del-btn')
     if (delBtn) delBtn.dataset.chIdx = i
   }
+}
+
+function openDisplayConditionPanel(wid, nid) {
+  var work = getWork(wid)
+  var node = getNode(wid, nid)
+  if (!work || !articleNodeIsConditional(node)) return
+  var normalized = normalizeArticleDisplayCondition(node.displayCondition)
+  var groups = normalized.all.map(function(group) { return group.anyChoiceIds.slice() })
+  if (!groups.length) groups.push([])
+
+  var ov = modal('', '<div class="condition-panel" id="conditionPanel"></div>', '')
+  var titleEl = ov.querySelector('.modal-title')
+  if (titleEl) titleEl.parentElement.style.display = 'none'
+  var panel = ov.querySelector('#conditionPanel')
+  if (!panel) {
+    ov.remove()
+    return
+  }
+
+  function catalog() {
+    return buildArticleChoiceCatalog(getWork(wid), {excludeNodeId:nid})
+  }
+
+  function choiceById(choiceId) {
+    var matches = catalog().filter(function(item) { return item.choiceId === choiceId })
+    return matches.length === 1 ? matches[0] : null
+  }
+
+  function choiceLabel(item) {
+    return item.chapterName + " · " + item.sourceNodeTitle + " · " + item.choiceText
+  }
+
+  function resultHTML(item, groupIndex) {
+    var disabled = item.disabled || groups[groupIndex].includes(item.choiceId)
+    var h = '<button type="button" class="condition-choice-result' + (item.disabled ? ' is-invalid' : '') + '" data-condition-a="add-choice" data-group-index="' + groupIndex + '" data-choice-id="' + escAttr(item.choiceId) + '"' + (disabled ? ' disabled' : '') + '>'
+    h += '<span>' + esc(choiceLabel(item)) + '</span>'
+    h += '<small>ID ' + esc(item.choiceId) + (item.disabled ? ' · 不可引用' : '') + '</small>'
+    h += '</button>'
+    return h
+  }
+
+  function renderResults(groupElement, groupIndex, query) {
+    var results = buildArticleChoiceCatalog(getWork(wid), {query:query, excludeNodeId:nid}).slice(0, 50)
+    var resultsElement = groupElement.querySelector('.condition-choice-results')
+    if (!resultsElement) return
+    resultsElement.innerHTML = results.length
+      ? results.map(function(item) { return resultHTML(item, groupIndex) }).join('')
+      : '<p class="condition-empty">没有找到相关选项</p>'
+  }
+
+  function renderPanel() {
+    var selectedTotal = groups.reduce(function(total, group) { return total + group.length }, 0)
+    var h = '<div class="condition-head"><div><strong>隐藏节点显示条件</strong><p>以下条件全部满足时显示；同一组内满足任一项即可。</p><span class="condition-rule-summary">' + groups.length + ' 组条件 · 已引用 ' + selectedTotal + ' 个选项</span></div><button type="button" data-condition-a="cancel" aria-label="关闭显示条件编辑">×</button></div>'
+    h += '<div class="condition-groups">'
+    groups.forEach(function(choiceIds, groupIndex) {
+      if (groupIndex > 0) h += '<div class="condition-group-join" aria-hidden="true"><span>并且</span></div>'
+      h += '<section class="condition-group" data-group-index="' + groupIndex + '" aria-label="条件组 ' + (groupIndex + 1) + '">'
+      h += '<div class="condition-group-head"><div class="condition-group-title"><span class="condition-group-index" aria-hidden="true">' + (groupIndex + 1) + '</span><span><strong>条件组 ' + (groupIndex + 1) + '</strong><small>' + (groupIndex === 0 ? '基础条件' : '附加条件') + '</small></span></div><div><output data-condition-selected-count>' + choiceIds.length + ' 项</output><button type="button" data-condition-a="remove-group" data-group-index="' + groupIndex + '" aria-label="删除条件 ' + (groupIndex + 1) + '">删除</button></div></div>'
+      h += '<div class="condition-logic"><strong>任一项（或）</strong><span>满足其中一项即可</span></div><div class="condition-selected">'
+      if (!choiceIds.length) h += '<span class="condition-empty">还没有引用选项，请从下方搜索结果中添加。</span>'
+      choiceIds.forEach(function(choiceId) {
+        var item = choiceById(choiceId)
+        if (!item || item.disabled) {
+          h += '<span class="condition-reference is-invalid"><span>条件已失效 · ' + esc(choiceId) + '</span><button type="button" data-condition-a="remove-choice" data-group-index="' + groupIndex + '" data-choice-id="' + escAttr(choiceId) + '" aria-label="移除失效条件 ' + escAttr(choiceId) + '">×</button></span>'
+          return
+        }
+        h += '<span class="condition-reference"><span>' + esc(choiceLabel(item)) + '</span><small>ID ' + esc(choiceId) + '</small><button type="button" data-condition-a="remove-choice" data-group-index="' + groupIndex + '" data-choice-id="' + escAttr(choiceId) + '" aria-label="移除条件 ' + escAttr(item.choiceText) + '">×</button></span>'
+      })
+      h += '</div>'
+      h += '<label class="condition-search"><span>搜索相关选项</span><input type="search" data-condition-search data-group-index="' + groupIndex + '" placeholder="搜索选项文字、节点、章节或 ID" autocomplete="off"></label>'
+      h += '<div class="condition-choice-results">'
+      h += catalog().slice(0, 50).map(function(item) { return resultHTML(item, groupIndex) }).join('')
+      h += '</div></section>'
+    })
+    h += '</div><div class="condition-actions"><button type="button" class="btn btn-sm btn-outline" data-condition-a="add-group">+ 添加附加条件（且）</button><button type="button" class="btn btn-sm btn-primary" data-condition-a="save">保存显示条件</button></div>'
+    panel.innerHTML = h
+  }
+
+  panel.addEventListener('input', function(event) {
+    var input = event.target.closest('[data-condition-search]')
+    if (!input) return
+    var groupIndex = Number(input.dataset.groupIndex)
+    var groupElement = input.closest('.condition-group')
+    if (!Number.isInteger(groupIndex) || !groups[groupIndex] || !groupElement) return
+    renderResults(groupElement, groupIndex, input.value)
+  })
+
+  panel.addEventListener('click', function(event) {
+    var button = event.target.closest('[data-condition-a]')
+    if (!button) return
+    var action = button.dataset.conditionA
+    var groupIndex = Number(button.dataset.groupIndex)
+    if (action === 'cancel') {
+      ov.remove()
+      return
+    }
+    if (action === 'add-group') {
+      groups.push([])
+      renderPanel()
+      return
+    }
+    if (action === 'remove-group') {
+      if (!Number.isInteger(groupIndex) || !groups[groupIndex]) return
+      if (groups.length === 1) groups[0] = []
+      else groups.splice(groupIndex, 1)
+      renderPanel()
+      return
+    }
+    if (action === 'add-choice') {
+      var choiceId = button.dataset.choiceId || ''
+      var item = choiceById(choiceId)
+      if (!Number.isInteger(groupIndex) || !groups[groupIndex] || !item || item.disabled) return
+      if (!groups[groupIndex].includes(choiceId)) groups[groupIndex].push(choiceId)
+      renderPanel()
+      return
+    }
+    if (action === 'remove-choice') {
+      if (!Number.isInteger(groupIndex) || !groups[groupIndex]) return
+      groups[groupIndex] = groups[groupIndex].filter(function(choiceId) { return choiceId !== button.dataset.choiceId })
+      renderPanel()
+      return
+    }
+    if (action === 'save') {
+      if (!groups.length || groups.some(function(group) { return !group.length })) {
+        showToast('每一组条件都需要至少选择一个选项', 'error')
+        return
+      }
+      if (groups.some(function(group) {
+        return group.some(function(choiceId) {
+          var item = choiceById(choiceId)
+          return !item || item.disabled
+        })
+      })) {
+        showToast('请先移除或替换已失效的条件', 'error')
+        return
+      }
+      var displayCondition = normalizeArticleDisplayCondition({
+        all: groups.map(function(anyChoiceIds) { return {anyChoiceIds:anyChoiceIds} }),
+      })
+      updateNode(wid, nid, {displayCondition:displayCondition, choices:[]})
+      ov.remove()
+      refreshEditor(wid)
+      showToast('显示条件已保存')
+    }
+  })
+
+  ov.addEventListener('click', function(event) {
+    if (event.target === ov) ov.remove()
+  })
+  renderPanel()
 }
 
 function openImagePanel() {
@@ -1836,6 +2360,7 @@ function moveNode(wid, nid, dir) {
 }
 
 function refreshEditor(wid) {
+  _editorPersistence.flush()
   var a = document.getElementById("app")
   if (a) {
     a.innerHTML = renderHeader() + '<div id="editorMain">' + renderEditor(wid) + '</div>'
@@ -1951,6 +2476,166 @@ document.addEventListener("keydown", function(e) {
     }
   }
 })
+
+// ====== Interactive Scene Nodes ======
+
+function saveInteractiveScene(wid, scene, syncResult) {
+  var work = getWork(wid)
+  if (!work) return
+  var scenes = (work.interactiveScenes || []).slice()
+  var index = scenes.findIndex(function(candidate) { return candidate.id === scene.id })
+  if (index >= 0) scenes[index] = scene
+  else scenes.push(scene)
+  if (syncResult?.interactiveScenes) scenes = syncResult.interactiveScenes
+  updateWork(wid, {
+    interactiveScenes:scenes,
+    interactiveDialogueStyle:syncResult?.interactiveDialogueStyle || work.interactiveDialogueStyle,
+  })
+}
+
+function buildInteractiveSceneContinuationGroups(work, sourceNodeId) {
+  var nodes = Array.isArray(work?.nodes) ? work.nodes : []
+  var idCounts = new Map()
+  nodes.forEach(function(node) {
+    var id = String(node?.id || "")
+    if (id) idCounts.set(id, (idCounts.get(id) || 0) + 1)
+  })
+  var groups = (Array.isArray(work?.chapters) ? work.chapters : []).map(function(chapter) {
+    return {
+      chapterId:String(chapter?.id || ""),
+      chapterName:String(chapter?.name || "未命名章节"),
+      nodes:[],
+    }
+  })
+  var firstGroupByChapterId = new Map()
+  groups.forEach(function(group) {
+    if (!firstGroupByChapterId.has(group.chapterId)) {
+      firstGroupByChapterId.set(group.chapterId, group)
+    }
+  })
+  var ungrouped = null
+  nodes.forEach(function(node) {
+    var id = String(node?.id || "")
+    if (
+      !id
+      || id === String(sourceNodeId || "")
+      || idCounts.get(id) !== 1
+      || node?.kind === "conditional"
+      || isInteractiveSceneNode(node)
+    ) return
+    var group = firstGroupByChapterId.get(String(node?.chapterId || ""))
+    if (!group) {
+      if (!ungrouped) {
+        ungrouped = {chapterId:"", chapterName:"未分组", nodes:[]}
+        groups.push(ungrouped)
+      }
+      group = ungrouped
+    }
+    group.nodes.push({
+      nodeId:id,
+      title:String(node?.title || "未命名节点"),
+    })
+  })
+  return groups
+}
+
+function createInteractiveSceneNode(wid, afterNodeId, chapterId) {
+  var work = getWork(wid)
+  if (!work) return
+  var afterNode = (work.nodes || []).find(function(node) { return node.id === afterNodeId })
+  var resolvedChapterId = chapterId || afterNode?.chapterId || work.chapters?.[0]?.id || ""
+  var draftRecords = createInteractiveSceneNodeDraft({
+    nodeId:uid(),
+    sceneId:uid(),
+    stageId:uid(),
+    chapterId:resolvedChapterId,
+    title:"互动场景",
+  })
+  openInteractiveSceneEditor({
+    scene:draftRecords.scene,
+    workStyle:work.interactiveDialogueStyle,
+    allScenes:(work.interactiveScenes || []).concat([draftRecords.scene]),
+    targetGroups:buildInteractiveSceneContinuationGroups(work, draftRecords.node.id),
+    idFactory:uid,
+    allowDelete:false,
+    onSave:function(scene, syncResult) {
+      var latest = getWork(wid)
+      if (!latest) return
+      var node = Object.assign({}, draftRecords.node, {
+        title:scene.title || draftRecords.node.title,
+        chapterId:resolvedChapterId,
+      })
+      var nodes = (latest.nodes || []).slice()
+      var afterIndex = nodes.findIndex(function(candidate) { return candidate.id === afterNodeId })
+      if (afterIndex < 0) {
+        afterIndex = nodes.reduce(function(lastIndex, candidate, index) {
+          return String(candidate.chapterId || "") === String(resolvedChapterId) ? index : lastIndex
+        }, -1)
+      }
+      nodes.splice(afterIndex + 1, 0, node)
+      var scenes = (latest.interactiveScenes || []).concat([
+        Object.assign({}, scene, {nodeId:node.id}),
+      ])
+      if (syncResult?.interactiveScenes) {
+        scenes = syncResult.interactiveScenes.map(function(candidate) {
+          return candidate.id === scene.id ? Object.assign({}, candidate, {nodeId:node.id}) : candidate
+        })
+      }
+      updateWork(wid, {
+        nodes:nodes,
+        interactiveScenes:scenes,
+        interactiveDialogueStyle:syncResult?.interactiveDialogueStyle || latest.interactiveDialogueStyle,
+      })
+      _nodeId = node.id
+      prepareMobilePaneRefresh("editor", true)
+      refreshEditor(wid)
+      showToast('互动页已添加到章节')
+    },
+  })
+}
+
+function openInteractiveSceneForNode(wid, nid) {
+  var work = getWork(wid)
+  var node = (work?.nodes || []).find(function(candidate) { return candidate.id === nid })
+  var scene = interactiveSceneForNode(work, node)
+  if (!work || !node || !scene) {
+    showToast('互动页数据不存在', 'error')
+    return
+  }
+  openInteractiveSceneEditor({
+    scene:scene,
+    workStyle:work.interactiveDialogueStyle,
+    allScenes:work.interactiveScenes || [],
+    targetGroups:buildInteractiveSceneContinuationGroups(work, nid),
+    idFactory:uid,
+    onSave:function(updatedScene, syncResult) {
+      var linkedScene = Object.assign({}, updatedScene, {nodeId:nid})
+      saveInteractiveScene(wid, linkedScene, syncResult)
+      updateNode(wid, nid, {title:linkedScene.title || node.title})
+      refreshEditor(wid)
+      showToast('互动页已保存')
+    },
+    onDelete:function() {
+      showConfirm("删除互动页", "确定删除这个互动节点和它的全部画面吗？", function() {
+        deleteNode(wid, nid)
+        refreshEditor(wid)
+        showToast('互动页已删除')
+      })
+    },
+  })
+}
+
+function renameArticleNode(wid, nid, title) {
+  updateNode(wid, nid, {title:title})
+  var work = getWork(wid)
+  var node = (work?.nodes || []).find(function(candidate) { return candidate.id === nid })
+  if (!isInteractiveSceneNode(node)) return
+  updateWork(wid, {
+    interactiveScenes:(work.interactiveScenes || []).map(function(scene) {
+      return scene.id === node.interactiveSceneId ? Object.assign({}, scene, {title:title}) : scene
+    }),
+  })
+}
 
 // ====== Phone Module Inline Cards ======
 
@@ -2190,6 +2875,35 @@ function renderWorkSearchResults(input) {
 
 // Auto-save content on input
 document.addEventListener("input", function(e) {
+  var authorNote = e.target.closest?.("[data-author-note]")
+  if (authorNote) {
+    var section = authorNote.dataset.authorNote
+    if (!AUTHOR_NOTE_SECTION_IDS.includes(section) || !_workId) return
+    var noteWorkId = _workId
+    var noteValue = authorNote.value
+    _editorPersistence.schedule("note:" + noteWorkId + ":" + section, function() {
+      writeArticleAuthorNotes(noteWorkId, {[section]:noteValue}, globalThis.localStorage)
+    })
+    var notesPane = authorNote.closest("#articleNotesPane")
+    var count = authorNote.value.length
+    var notesStatus = notesPane?.querySelector("[data-author-notes-status]")
+    if (notesStatus) notesStatus.textContent = "已保存"
+    var sectionCount = notesPane?.querySelector('[data-a="note-section"][data-section="' + section + '"] [data-note-count]')
+    if (sectionCount) {
+      sectionCount.textContent = String(count)
+      sectionCount.setAttribute("aria-label", count + " 字")
+    }
+    var editorCount = authorNote.closest(".author-note-editor")?.querySelector("[data-note-editor-count]")
+    if (editorCount) editorCount.textContent = count + " 字"
+    var notesSearch = notesPane?.querySelector("[data-author-notes-search]")
+    if (notesSearch?.value) filterAuthorNoteSections(notesPane, notesSearch.value)
+    return
+  }
+  var authorNotesSearch = e.target.closest?.("[data-author-notes-search]")
+  if (authorNotesSearch) {
+    filterAuthorNoteSections(authorNotesSearch.closest("#articleNotesPane"), authorNotesSearch.value)
+    return
+  }
   var workSearch = e.target.closest?.("[data-work-search]")
   if (workSearch) {
     renderWorkSearchResults(workSearch)
@@ -2220,7 +2934,19 @@ document.addEventListener("input", function(e) {
   if (!ce) return
   var nid = ce.dataset.n
   if (!nid || !_workId) return
-  updateNode(_workId, nid, {content: ce.innerHTML})
+  var contentWorkId = _workId
+  var contentValue = ce.innerHTML
+  _editorPersistence.schedule("node:" + contentWorkId + ":" + nid, function() {
+    updateNode(contentWorkId, nid, {content:contentValue})
+  })
   var wc = document.getElementById("wc_" + nid)
   if (wc) wc.textContent = formatEditorCharacterCount(ce)
+})
+
+globalThis.addEventListener?.("pagehide", function() {
+  _editorPersistence.flush()
+})
+
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "hidden") _editorPersistence.flush()
 })

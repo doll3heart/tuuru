@@ -8,6 +8,8 @@ import {
   normalizeWorkCollection,
   serializeWorkCollectionBundle,
 } from "./work-collections.js"
+import { migrateInteractiveSceneCards } from "./interactive-scene-node.js"
+import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 import {
   moveWorkBefore as moveWorkBeforeRecords,
   moveWorkByOffset as moveWorkByOffsetRecords,
@@ -148,6 +150,11 @@ export function uid(){return Date.now().toString(36)+Math.random().toString(36).
 export function avatarColor(id){if(!id)return"#6366f1";let h=0;for(let i=0;i<id.length;i++)h=((h<<5)-h)+id.charCodeAt(i);return AC[Math.abs(h)%AC.length]}
 function rd(){return readLocalDatabase()}
 function wr(d){writeLocalDatabase(d)}
+function ensureArticleStartNode(work){
+  if(!work||work.type!==WORK_TYPE.ARTICLE||!Array.isArray(work.nodes))return work
+  work.startNode=resolveAutomaticArticleStartNodeId(work)
+  return work
+}
 export function getWorks(){return rd().works}
 export function getWork(id){return rd().works.find(w=>w.id===id)}
 export function getWorksByType(t){return rd().works.filter(w=>w.type===t)}
@@ -176,13 +183,14 @@ export function createWorkRecord(data, {
     updatedAt:updatedAt,
     password:data.password||"",
     locked:data.locked||false,
-    nodes:rawType===WORK_TYPE.ARTICLE?[{id:firstNodeId,title:"开始",content:"",choices:[],scene:"",chapterId:""}]:[],
+    nodes:rawType===WORK_TYPE.ARTICLE?[{id:firstNodeId,title:"开始",content:"",choices:[],scene:"",chapterId:firstChapterId}]:[],
     chapters:rawType===WORK_TYPE.ARTICLE?[{id:firstChapterId,name:"第一章"}]:[],
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
     globalForbidden:Array.isArray(data.globalForbidden)?data.globalForbidden.slice():[],
     placeholderMode:data.placeholderMode||PLACEHOLDER_MODE.RANDOM_EACH,
    phoneModules:rawType===WORK_TYPE.ARTICLE?[]:undefined,
+   interactiveScenes:rawType===WORK_TYPE.ARTICLE?[]:undefined,
    phoneData:rawType===WORK_TYPE.PHONE?{
       contacts:[],
       chats:[],
@@ -251,10 +259,16 @@ export function createWork(data){
   return w
 }
 
-export function updateWork(id,data){const db=rd();const i=db.works.findIndex(x=>x.id===id);if(i<0)return null;db.works[i]={...db.works[i],...data,updatedAt:Date.now()};wr(db);return db.works[i]}
+export function updateWork(id,data){const db=rd();const i=db.works.findIndex(x=>x.id===id);if(i<0)return null;db.works[i]=ensureArticleStartNode({...db.works[i],...data,updatedAt:Date.now()});wr(db);return db.works[i]}
 export function moveWorkBefore(id,targetId){const db=rd();const result=moveWorkBeforeRecords(db.works,id,targetId);if(!result.changed)return null;db.works=result.works;wr(db);return db.works.find(work=>work.id===id)||null}
 export function moveWorkByOffset(id,offset){const db=rd();const result=moveWorkByOffsetRecords(db.works,id,offset);if(!result.changed)return null;db.works=result.works;wr(db);return db.works.find(work=>work.id===id)||null}
 export function setWorkPinned(id,pinned){const db=rd();const result=toggleWorkPinnedRecord(db.works,id,pinned);if(!result.changed)return null;db.works=result.works;wr(db);return db.works.find(work=>work.id===id)||null}
+export function migrateInteractiveSceneWork(id){
+  const db=rd();const i=db.works.findIndex(x=>x.id===id);if(i<0)return null
+  const result=migrateInteractiveSceneCards(db.works[i])
+  if(!result.changed)return db.works[i]
+  db.works[i]={...result.work,updatedAt:Date.now()};wr(db);return db.works[i]
+}
 export function deleteWork(id){const db=rd();db.works=db.works.filter(w=>w.id!==id);if(Array.isArray(db.collections)){const now=Date.now();db.collections=db.collections.map(c=>(c.workIds||[]).includes(id)?{...c,workIds:c.workIds.filter(wid=>wid!==id),updatedAt:now}:c)}wr(db)}
 export function duplicateWork(id){const db=rd();const o=db.works.find(w=>w.id===id);if(!o)return null;const c=JSON.parse(JSON.stringify(o));c.id=uid();c.title=o.title+" (副本)";c.createdAt=Date.now();c.updatedAt=Date.now();db.works.push(c);wr(db);return c}
 
@@ -263,16 +277,23 @@ export function createWorkCollection(data){const db=rd();const existingIds=new S
 export function updateWorkCollection(id,data){const db=rd();const index=(db.collections||[]).findIndex(c=>c.id===id);if(index<0)return null;const existingIds=new Set(db.works.map(w=>w.id));const current=db.collections[index];const next=normalizeWorkCollection({...current,...data,id:current.id,createdAt:current.createdAt,updatedAt:Date.now(),workIds:(data.workIds||current.workIds||[]).filter(wid=>existingIds.has(wid))});db.collections=db.collections.slice();db.collections[index]=next;wr(db);return next}
 export function deleteWorkCollection(id){const db=rd();db.collections=(db.collections||[]).filter(c=>c.id!==id);wr(db);return true}
 
-export function addNode(workId,afterId,chapterId){
+function addPreparedArticleNode(workId,{afterId,chapterId,node,requireOrdinaryNode=false}){
   const db=rd();const w=db.works.find(x=>x.id===workId);if(!w||w.type!==WORK_TYPE.ARTICLE)return null
+  if(requireOrdinaryNode&&(!Array.isArray(w.nodes)||!w.nodes.some(node=>node?.kind!=="conditional")))return null
   const targetChapterId=w.chapters&&w.chapters.some(ch=>ch.id===chapterId)?chapterId:(w.chapters&&w.chapters[0]?w.chapters[0].id:"")
-  const n={id:uid(),title:"新节点",content:"",choices:[],scene:"",chapterId:targetChapterId}
+  const n={...node,chapterId:targetChapterId}
   if(afterId){const i=w.nodes.findIndex(x=>x.id===afterId);w.nodes.splice(i+1,0,n)}else w.nodes.push(n)
-  if(!w.startNode||!w.nodes.some(x=>x.id===w.startNode))w.startNode=w.nodes[0]?.id||""
+  ensureArticleStartNode(w)
   w.updatedAt=Date.now();wr(db);return n
 }
+export function addNode(workId,afterId,chapterId){return addPreparedArticleNode(workId,{afterId,chapterId,node:{id:uid(),title:"新节点",content:"",choices:[],scene:""}})}
+export function createConditionalArticleNode(workId,chapterId,afterId){
+  return addPreparedArticleNode(workId,{afterId,chapterId,node:{
+    id:uid(),title:"隐藏节点",content:"",choices:[],scene:"",kind:"conditional",displayCondition:{all:[]},
+  },requireOrdinaryNode:true})
+}
 export function updateNode(wid,nid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;Object.assign(n,data);w.updatedAt=Date.now();wr(db);return n}
-export function deleteNode(wid,nid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;w.nodes=w.nodes.filter(x=>x.id!==nid);w.nodes.forEach(x=>{x.choices=x.choices.filter(c=>c.targetId!==nid)});if(!w.nodes.some(x=>x.id===w.startNode))w.startNode=w.nodes[0]?.id||"";w.updatedAt=Date.now();wr(db)}
+export function deleteNode(wid,nid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;const removed=w.nodes.find(x=>x.id===nid);w.nodes=w.nodes.filter(x=>x.id!==nid);w.nodes.forEach(x=>{x.choices=x.choices.filter(c=>c.targetId!==nid)});if(removed&&Array.isArray(w.interactiveScenes)){w.interactiveScenes=w.interactiveScenes.filter(scene=>scene.id!==removed.interactiveSceneId&&scene.nodeId!==nid)}ensureArticleStartNode(w);w.updatedAt=Date.now();wr(db)}
 export function addChoice(wid,nid,tid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;const c={id:uid(),text:"",targetId:tid||""};n.choices.push(c);w.updatedAt=Date.now();wr(db);return c}
 export function updateChoice(wid,nid,cid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;const c=n.choices.find(x=>x.id===cid);if(!c)return null;Object.assign(c,data);w.updatedAt=Date.now();wr(db);return c}
 export function deleteChoice(wid,nid,cid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;const n=w.nodes.find(x=>x.id===nid);if(!n)return;n.choices=n.choices.filter(x=>x.id!==cid);w.updatedAt=Date.now();wr(db)}

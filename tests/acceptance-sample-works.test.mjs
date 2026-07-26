@@ -58,7 +58,7 @@ async function readArtifactPair(kind) {
 test("generated JSON and PNG artifacts are deterministic production-valid work pairs", async () => {
   const expectedWorks = buildAcceptanceWorks()
 
-  for (const kind of ["article", "phone"]) {
+  for (const kind of ["article"]) {
     const pair = await readArtifactPair(kind)
     assert.deepEqual(pair.jsonWork, expectedWorks[kind], `${kind} JSON must match its canonical builder`)
     assert.deepEqual(pair.pngWork, pair.jsonWork, `${kind} PNG must carry the same work as JSON`)
@@ -136,8 +136,8 @@ test("article sample covers chapters, branch navigation, images, all phone modul
   })
 })
 
-test("phone sample covers every exported app, authored order, settings, gates, media, and choices", async () => {
-  const { jsonWork: work } = await readArtifactPair("phone")
+test("phone runtime fixture covers every exported app, authored order, settings, gates, media, and choices", async () => {
+  const work = buildAcceptanceWorks().phone
   const phone = work.phoneData
 
   assert.equal(work.type, "phone")
@@ -155,7 +155,8 @@ test("phone sample covers every exported app, authored order, settings, gates, m
   assert.equal(phone.skin.wallpaperType, "image")
   assert.match(phone.skin.wallpaperImage, /^data:image\/png;base64,/)
   assert.match(phone.skin.topBgImage, /^data:image\/png;base64,/)
-  assert.match(phone.skin.readerAvatar, /^data:image\/png;base64,/)
+  assert.equal(phone.skin.readerId, "读者")
+  assert.equal(phone.skin.readerAvatar, null)
   assert.equal(phone.skin.borderRadius, 30)
   assert.equal(phone.skin.iconBorderRadius, 14)
   assert.equal(phone.skin.materialOpacity, 72)
@@ -217,8 +218,8 @@ test("phone sample covers every exported app, authored order, settings, gates, m
   assert.match(work.watermark.image, /^data:image\/png;base64,/)
 })
 
-test("phone sample opens every App and its authored secondary navigation in the production reader", async t => {
-  const { jsonWork: work } = await readArtifactPair("phone")
+test("phone runtime fixture opens every App and its authored secondary navigation in the production reader", async t => {
+  const work = buildAcceptanceWorks().phone
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
     url: "http://localhost/reader/",
   })

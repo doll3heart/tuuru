@@ -123,6 +123,30 @@ test("non-message flow cues do not use a side-tab accent border", () => {
   assert.doesNotMatch(cueRule, /border-left\s*:/)
 })
 
+test("article nodes flow as chapter text with a one-and-a-half paragraph boundary", () => {
+  const contentRule = readerCss.slice(
+    readerCss.indexOf(".article-content {"),
+    readerCss.indexOf(".article-node:not(:last-child)"),
+  )
+  const previousNodeEndingRule = readerCss.slice(
+    readerCss.indexOf(".article-node:not(:last-child)"),
+    readerCss.indexOf(".article-node + .article-node {"),
+  )
+  const adjacentNodeRule = readerCss.slice(
+    readerCss.indexOf(".article-node + .article-node {"),
+    readerCss.indexOf(".article-node-title {"),
+  )
+
+  assert.match(contentRule, /margin-bottom:\s*0/)
+  assert.match(previousNodeEndingRule, /margin-bottom:\s*0/)
+  assert.match(adjacentNodeRule, /margin-top:\s*0/)
+  assert.match(
+    adjacentNodeRule,
+    /padding-top:\s*calc\(var\(--rd-paragraph-spacing,\s*1em\)\s*\*\s*1\.5\)/,
+  )
+  assert.match(adjacentNodeRule, /border-top:\s*0/)
+})
+
 test("reader desktop keeps authored App colors on the neutral default surface", async t => {
   installDom(t)
   const work = flowPhoneWork()
@@ -168,7 +192,91 @@ test("article back returns to the previous chapter before it exits the reader", 
   assert.ok(document.querySelector(".rd-home") === null)
 })
 
-test("ordinary article interactions select in place without changing the story path", async t => {
+test("a chapter ending without choices uses NEXT to open the next non-empty chapter", async t => {
+  installDom(t)
+  const work = articleWork()
+  work.id = "next-chapter-without-choice"
+  work.nodes[0].choices = []
+  work.chapters.splice(1, 0, { id: "empty-chapter", name: "空章" })
+
+  await startWork(work, "next-chapter-without-choice")
+
+  const next = document.querySelector("[data-reader-next]")
+  assert.ok(next)
+  assert.equal(next.textContent.trim(), "NEXT")
+  assert.equal(document.querySelector("[data-reader-home].drop-btn"), null)
+
+  next.click()
+
+  assert.equal(document.querySelector(".article-title").textContent, "第二节")
+  assert.match(document.querySelector(".article-reader").textContent, /继续/)
+  assert.equal(document.querySelector("[data-reader-next]"), null)
+  assert.ok(document.querySelector("[data-reader-home].drop-btn"))
+  assert.ok(document.querySelector("[data-reader-previous]"))
+})
+
+test("one chapter renders ordered no-choice nodes as one page without node headings", async t => {
+  installDom(t)
+  const work = articleWork()
+  work.id = "linear-article-chapter"
+  work.chapters = [{ id: "chapter-one", name: "第一章" }]
+  work.nodes = [
+    {
+      id: "start",
+      title: "作者用节点一",
+      chapterId: "chapter-one",
+      content: "<p>第一段正文</p>",
+      choices: [],
+    },
+    {
+      id: "second-paragraph",
+      title: "作者用节点二",
+      chapterId: "chapter-one",
+      content: "<p>第二段正文</p>",
+      choices: [],
+    },
+  ]
+  await startWork(work, "linear-article-chapter")
+
+  assert.equal(document.querySelector(".article-title").textContent, "第一章")
+  assert.equal(document.querySelectorAll(".article-node").length, 2)
+  assert.match(document.querySelector(".article-reader").textContent, /第一段正文.*第二段正文/s)
+  assert.equal(document.querySelector(".article-node-title"), null)
+  assert.ok(document.querySelector(".drop-btn[data-reader-home]"))
+})
+
+test("a version 1 article created with an ungrouped initial node keeps the editor order and renders both paragraphs", async t => {
+  installDom(t)
+  const work = articleWork()
+  work.schemaVersion = 1
+  work.id = "legacy-linear-article"
+  work.chapters = [{ id: "chapter-one", name: "111" }]
+  work.startNode = "new-node"
+  work.nodes = [
+    {
+      id: "start",
+      title: "开始",
+      chapterId: "",
+      content: "<p>222</p>",
+      choices: [],
+    },
+    {
+      id: "new-node",
+      title: "新节点",
+      chapterId: "chapter-one",
+      content: "<p>111</p>",
+      choices: [],
+    },
+  ]
+  await startWork(work, "legacy-linear-article")
+
+  assert.equal(document.querySelectorAll(".article-node").length, 2)
+  assert.match(document.querySelector(".article-reader").textContent, /111.*222/s)
+  assert.equal(document.querySelector(".article-node-title"), null)
+  assert.ok(document.querySelector(".drop-btn[data-reader-home]"))
+})
+
+test("ordinary article interactions record the response then continue chapter text", async t => {
   installDom(t)
   const work = articleWork()
   work.id = "ordinary-article-interactions"
@@ -176,19 +284,31 @@ test("ordinary article interactions select in place without changing the story p
     { id:"nod", text:"点点头", mode:"interaction", targetId:"" },
     { id:"shake", text:"摇摇头", mode:"interaction", targetId:"" },
   ]
+  work.nodes = [work.nodes[0], {
+    id: "after-reaction",
+    title: "作者用后续文段",
+    chapterId: "chapter-one",
+    content: "<p>互动后的正文</p>",
+    choices: [],
+  }, work.nodes[1]]
   await startWork(work, "ordinary-article-interactions")
 
-  const buttons = [...document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]')]
+  let buttons = [...document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]')]
   assert.equal(buttons.length, 2)
-  assert.ok(document.querySelector("[data-reader-home]"), "an interaction-only ending should still expose the home action")
+  assert.equal(document.querySelector(".drop-btn[data-reader-home]"), null)
   buttons[0].click()
+  buttons = [...document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]')]
   assert.equal(buttons[0].getAttribute("aria-pressed"), "true")
-  assert.equal(document.querySelectorAll(".article-node").length, 1)
+  assert.equal(document.querySelectorAll(".article-node").length, 2)
+  assert.match(document.querySelector(".article-reader").textContent, /互动后的正文/)
+  assert.ok(document.querySelector(".drop-btn[data-reader-next]"))
+  assert.equal(document.querySelector(".drop-btn[data-reader-home]"), null)
   assert.doesNotMatch(document.querySelector(".article-reader").textContent, /继续/)
   buttons[1].click()
+  buttons = [...document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]')]
   assert.equal(buttons[0].getAttribute("aria-pressed"), "false")
   assert.equal(buttons[1].getAttribute("aria-pressed"), "true")
-  assert.equal(document.querySelectorAll(".article-node").length, 1)
+  assert.equal(document.querySelectorAll(".article-node").length, 2)
 })
 
 test("standalone author flow guides one conversation and schedules calls", async t => {

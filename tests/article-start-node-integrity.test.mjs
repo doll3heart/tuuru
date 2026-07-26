@@ -10,13 +10,13 @@ globalThis.window = dom.window
 globalThis.document = dom.window.document
 globalThis.localStorage = dom.window.localStorage
 
-const { addNode, deleteNode, getWork } = await import("../js/data.js")
+const { addNode, createConditionalArticleNode, deleteNode, getWork, updateWork } = await import("../js/data.js")
 
-function seed(nodes, startNode) {
+function seed(nodes, startNode, schemaVersion = 1) {
   localStorage.setItem("tuuru_works", JSON.stringify({
     works: [{
       id: "work-a",
-      schemaVersion: 1,
+      schemaVersion,
       type: "article",
       title: "Article",
       chapters: [{ id: "chapter-a", name: "Chapter" }],
@@ -59,6 +59,42 @@ test("adding a node repairs a dangling startNode to the first stable node", () =
   addNode("work-a")
 
   assert.equal(getWork("work-a").startNode, "node-a")
+})
+
+test("creating a conditional node in an empty article does not create an invalid start", () => {
+  seed([], "")
+
+  const created = createConditionalArticleNode("work-a", "chapter-a")
+
+  assert.equal(created, null)
+  assert.deepEqual(getWork("work-a").nodes, [])
+  assert.equal(getWork("work-a").startNode, "")
+})
+
+test("deleting the ordinary start never promotes a conditional node", () => {
+  seed([
+    { ...node("memory"), kind: "conditional" },
+    node("ordinary"),
+  ], "ordinary", 3)
+
+  deleteNode("work-a", "ordinary")
+
+  assert.equal(getWork("work-a").startNode, "")
+})
+
+test("saving the only node makes it the start node", () => {
+  seed([], "")
+
+  const updated = updateWork("work-a", {
+    nodes: [{
+      ...node("interactive-node"),
+      kind: "interactive-scene",
+      interactiveSceneId: "scene-a",
+    }],
+  })
+
+  assert.equal(updated.startNode, "interactive-node")
+  assert.equal(getWork("work-a").startNode, "interactive-node")
 })
 
 test("adding a node can target a chosen chapter without changing legacy fallback", () => {

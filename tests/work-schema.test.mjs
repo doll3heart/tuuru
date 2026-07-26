@@ -28,6 +28,75 @@ test("legacy article works remain importable and receive defaults", () => {
   assert.equal(result.work.schemaVersion, CURRENT_WORK_SCHEMA_VERSION)
   assert.equal(result.work.startNode, "start")
   assert.deepEqual(result.work.placeholders, [])
+  assert.deepEqual(result.work.interactiveScenes, [])
+})
+
+test("article imports normalize interactive scene stages and hotspots", () => {
+  const result = validateWorkForImport({
+    type: "article",
+    nodes: [{ id: "start", content: "Hello" }],
+    interactiveScenes: [{
+      id: "touch-1",
+      nodeId: "start",
+      stages: [{
+        id: "stage-1",
+        image: "https://example.test/hand.gif",
+        hotspots: [{ id: "palm", trigger: "face-near", fallbackTrigger: "hold" }],
+      }],
+    }],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.interactiveScenes[0].startStageId, "stage-1")
+  assert.equal(result.work.interactiveScenes[0].stages[0].hotspots[0].trigger, "face-near")
+  assert.equal(result.work.interactiveScenes[0].stages[0].hotspots[0].fallbackTrigger, "hold")
+  const interactiveNode = result.work.nodes.find(node => node.kind === "interactive-scene")
+  assert.ok(interactiveNode)
+  assert.equal(interactiveNode.interactiveSceneId, "touch-1")
+  assert.equal(result.work.interactiveScenes[0].nodeId, interactiveNode.id)
+})
+
+test("legacy inline interactive cards become chapter nodes during import", () => {
+  const result = validateWorkForImport({
+    type: "article",
+    chapters: [{ id: "chapter-1", name: "第一章" }],
+    nodes: [{
+      id: "start",
+      title: "开始",
+      chapterId: "chapter-1",
+      content: '<div class="interactive-scene-card" data-is-id="touch-1"><span>旧入口</span></div>',
+    }],
+    interactiveScenes: [{
+      id: "touch-1",
+      nodeId: "start",
+      title: "掌心",
+      stages: [{ id: "stage-1", hotspots: [] }],
+    }],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.nodes.length, 1)
+  assert.equal(result.work.nodes[0].kind, "interactive-scene")
+  assert.equal(result.work.nodes[0].interactiveSceneId, "touch-1")
+  assert.equal(result.work.nodes[0].content, "")
+})
+
+test("interactive scene nested collections reject invalid entries at stable paths", () => {
+  const invalidStages = validateWorkForImport({
+    type: "article",
+    nodes: [],
+    interactiveScenes: [{ id: "touch-1", stages: [null] }],
+  })
+  assert.equal(invalidStages.ok, false)
+  assert.equal(invalidStages.issues[0].path, "$.interactiveScenes[0].stages[0]")
+
+  const invalidHotspots = validateWorkForImport({
+    type: "article",
+    nodes: [],
+    interactiveScenes: [{ id: "touch-1", stages: [{ id: "stage-1", hotspots: [false] }] }],
+  })
+  assert.equal(invalidHotspots.ok, false)
+  assert.equal(invalidHotspots.issues[0].path, "$.interactiveScenes[0].stages[0].hotspots[0]")
 })
 
 test("article normalization repairs a dangling start node to the first valid node", () => {
@@ -42,6 +111,282 @@ test("article normalization repairs a dangling start node to the first valid nod
 
   assert.equal(result.ok, true)
   assert.equal(result.work.startNode, "node-a")
+})
+
+test("version 3 normalizes conditional nodes without materializing legacy interaction selected prose", () => {
+  const result = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    nodes: [
+      {
+        id: "start",
+        content: "Start",
+        choices: [{ id: "choice-a", mode: "interaction", text: "Choose", targetId: "" }],
+        futureNodeMetadata: { keep: true },
+      },
+      {
+        id: "memory",
+        kind: "conditional",
+        content: "Memory",
+        choices: [{ id: "must-be-removed" }],
+        displayCondition: { all: [{ anyChoiceIds: ["choice-a", "choice-a", ""] }] },
+        futureConditionalMetadata: { keep: true },
+      },
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.schemaVersion, 3)
+  assert.deepEqual(result.work.nodes[0].choices[0], {
+    id: "choice-a", mode: "interaction", text: "Choose", targetId: "",
+  })
+  assert.deepEqual(result.work.nodes[1].choices, [])
+  assert.deepEqual(result.work.nodes[1].displayCondition, { all: [{ anyChoiceIds: ["choice-a"] }] })
+  assert.deepEqual(result.work.nodes[1].futureConditionalMetadata, { keep: true })
+  assert.deepEqual(result.work.nodes[0].futureNodeMetadata, { keep: true })
+})
+
+test("version 2 quarantines conditional-shaped unknown kinds without overwriting metadata", () => {
+  const fixtures = [
+    { name: "string", metadata: "keep this string" },
+    { name: "array", metadata: ["keep", { nested: true }] },
+    { name: "object", metadata: { keep: { nested: true } } },
+    { name: "primitive", metadata: false },
+    { name: "quarantine-key collision", metadata: "keep", quarantineCollision: "existing" },
+  ]
+
+  for (const fixture of fixtures) {
+    const input = {
+      schemaVersion: 2,
+      type: "article",
+      nodes: [{
+        id: "legacy-node",
+        kind: "conditional",
+        content: "Legacy unknown kind",
+        choices: [{ id: "legacy-choice", text: "Keep", targetId: "" }],
+        displayCondition: { all: [{ anyChoiceIds: ["legacy-choice", "legacy-choice", ""] }] },
+        legacySchemaV2: fixture.metadata,
+        ...(fixture.quarantineCollision === undefined ? {} : {
+          __legacyConditionalKindV2: fixture.quarantineCollision,
+        }),
+      }],
+    }
+
+    const first = validateWorkForImport(input)
+
+    assert.equal(first.ok, true, fixture.name)
+    assert.equal(first.work.schemaVersion, 3, fixture.name)
+    assert.equal(Object.hasOwn(first.work.nodes[0], "kind"), false, fixture.name)
+    assert.deepEqual(first.work.nodes[0].legacySchemaV2, fixture.metadata, fixture.name)
+    assert.deepEqual(first.work.nodes[0].choices, input.nodes[0].choices, fixture.name)
+    assert.deepEqual(first.work.nodes[0].displayCondition, input.nodes[0].displayCondition, fixture.name)
+    const quarantineKeys = Object.keys(first.work.nodes[0]).filter(key => (
+      (key === "__legacyConditionalKindV2" || /^__legacyConditionalKindV2_\d+$/.test(key))
+      && first.work.nodes[0][key] === "conditional"
+    ))
+    assert.equal(quarantineKeys.length, 1, fixture.name)
+    const quarantineKey = quarantineKeys[0]
+    if (fixture.quarantineCollision !== undefined) {
+      assert.equal(first.work.nodes[0].__legacyConditionalKindV2, fixture.quarantineCollision)
+      assert.equal(quarantineKey, "__legacyConditionalKindV2_2")
+    }
+
+    const second = validateWorkForImport(first.work)
+    assert.equal(second.ok, true, fixture.name)
+    assert.deepEqual(second.work, first.work, fixture.name)
+  }
+})
+
+test("legacy manual starts are canonicalized while conditional branch targets remain invalid", () => {
+  const startResult = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    startNode: "memory",
+    nodes: [
+      { id: "memory", kind: "conditional", choices: [] },
+      { id: "ordinary", choices: [] },
+    ],
+  })
+  assert.equal(startResult.ok, true)
+  assert.equal(startResult.work.startNode, "ordinary")
+
+  const targetResult = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    nodes: [
+      { id: "start", choices: [{ id: "branch", text: "Go", targetId: "memory" }] },
+      { id: "memory", kind: "conditional", choices: [] },
+    ],
+  })
+  assert.equal(targetResult.ok, false)
+  assert.equal(targetResult.issues[0].path, "$.nodes[0].choices[0].targetId")
+})
+
+test("version 3 rejects authored conditional scene hybrids before interactive-scene migration", () => {
+  const result = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    nodes: [{ id: "start", choices: [{ id: "go", text: "Go", targetId: "memory" }] }, {
+      id: "memory",
+      kind: "conditional",
+      interactiveSceneId: "scene-a",
+      content: "",
+      choices: [],
+    }],
+    interactiveScenes: [{ id: "scene-a", nodeId: "memory", stages: [{ id: "stage-a", hotspots: [] }] }],
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.issues[0].path, "$.nodes[1].interactiveSceneId")
+})
+
+test("version 3 canonicalizes explicit interactive-scene node links before conditional validation", () => {
+  for (const nodeId of [" memory ", "\tmemory\n"]) {
+    const result = validateWorkForImport({
+      schemaVersion: 3,
+      type: "article",
+      nodes: [{ id: "start", choices: [] }, {
+        id: "memory",
+        kind: "conditional",
+        content: "",
+        choices: [],
+      }],
+      interactiveScenes: [{ id: "scene-a", nodeId, stages: [{ id: "stage-a", hotspots: [] }] }],
+    })
+
+    assert.equal(result.ok, false, JSON.stringify(nodeId))
+    assert.equal(result.issues[0].path, "$.interactiveScenes[0].nodeId")
+  }
+})
+
+test("version 3 canonicalizes numeric conditional starts but rejects branch and scene references", () => {
+  const startResult = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    startNode: "123",
+    nodes: [{ id: 123, kind: "conditional", choices: [] }, { id: "ordinary", choices: [] }],
+  })
+  assert.equal(startResult.ok, true)
+  assert.equal(startResult.work.startNode, "ordinary")
+
+  const branchResult = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    nodes: [
+      { id: "start", choices: [{ id: "go", text: "Go", targetId: "123" }] },
+      { id: 123, kind: "conditional", choices: [] },
+    ],
+  })
+  assert.equal(branchResult.ok, false)
+  assert.equal(branchResult.issues[0].path, "$.nodes[0].choices[0].targetId")
+
+  const sceneResult = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    nodes: [{ id: "start", choices: [] }, { id: 123, kind: "conditional", choices: [] }],
+    interactiveScenes: [{ id: "scene-a", nodeId: "123", stages: [{ id: "stage-a", hotspots: [] }] }],
+  })
+  assert.equal(sceneResult.ok, false)
+  assert.equal(sceneResult.issues[0].path, "$.interactiveScenes[0].nodeId")
+})
+
+test("version 3 rejects a conditional node that owns a legacy inline interactive-scene card", () => {
+  const result = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    nodes: [{ id: "start", choices: [] }, {
+      id: "memory",
+      kind: "conditional",
+      content: '<div class="interactive-scene-card" data-is-id="scene-a"><span>Legacy</span></div>',
+      choices: [],
+    }],
+    interactiveScenes: [{ id: "scene-a", stages: [{ id: "stage-a", hotspots: [] }] }],
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.issues[0].path, "$.nodes[1].content")
+})
+
+test("version 3 detects normalized fallback IDs for conditional legacy inline cards", () => {
+  for (const scene of [
+    { stages: [{ id: "stage-a", hotspots: [] }] },
+    { id: "", stages: [{ id: "stage-a", hotspots: [] }] },
+  ]) {
+    const result = validateWorkForImport({
+      schemaVersion: 3,
+      type: "article",
+      nodes: [{ id: "start", choices: [] }, {
+        id: "memory",
+        kind: "conditional",
+        content: '<div class="interactive-scene-card" data-is-id="interactive-scene"><span>Legacy</span></div>',
+        choices: [],
+      }],
+      interactiveScenes: [scene],
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.issues[0].path, "$.nodes[1].content")
+  }
+})
+
+test("dangling starts repair to the first ordinary node rather than a leading conditional", () => {
+  const result = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    startNode: "missing",
+    nodes: [
+      { id: "memory", kind: "conditional", choices: [] },
+      { id: "ordinary", choices: [] },
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.startNode, "ordinary")
+})
+
+test("version 1 articles move legacy ungrouped nodes into the first chapter after its authored nodes", () => {
+  const result = validateWorkForImport({
+    schemaVersion: 1,
+    type: "article",
+    startNode: "new-node",
+    chapters: [{ id: "chapter-one", name: "111" }],
+    nodes: [
+      { id: "start", title: "开始", chapterId: "", content: "222", choices: [] },
+      { id: "new-node", title: "新节点", chapterId: "chapter-one", content: "111", choices: [] },
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.migrated, true)
+  assert.deepEqual(
+    result.work.nodes.map(node => [node.id, node.chapterId]),
+    [
+      ["new-node", "chapter-one"],
+      ["start", "chapter-one"],
+    ],
+  )
+  assert.equal(result.work.startNode, "new-node")
+})
+
+test("article normalization makes the sole node the start node", () => {
+  const result = validateWorkForImport({
+    type: "article",
+    startNode: "",
+    nodes: [{
+      id: "interactive-node",
+      kind: "interactive-scene",
+      interactiveSceneId: "scene-a",
+      content: "",
+    }],
+    interactiveScenes: [{
+      id: "scene-a",
+      nodeId: "interactive-node",
+      stages: [{ id: "stage-a", hotspots: [] }],
+    }],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.startNode, "interactive-node")
 })
 
 test("legacy phone works receive safe collection defaults", () => {

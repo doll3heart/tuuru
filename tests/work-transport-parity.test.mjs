@@ -30,14 +30,40 @@ test("current article and phone exports have identical JSON and PNG reader seman
   const fixtures = [
     {
       id: "article-golden",
-      schemaVersion: 1,
+      schemaVersion: 3,
       type: "article",
       title: "Article",
-      nodes: [{ id: "start", content: '<b>safe</b><img src="javascript:bad">', choices: [] }],
-      chapters: [],
+      startNode: "start",
+      nodes: [
+        {
+          id: "start", chapterId: "chapter-a", content: '<b>safe</b><img src="javascript:bad">',
+          choices: [
+            { id:"choice-remember", text:"记住", targetId:"target" },
+            { id:"choice-react", mode:"interaction", text:"回应", selectedText:"第一行\n第二行", targetId:"" },
+          ],
+        },
+        {
+          id: "conditional", kind: "conditional", chapterId: "chapter-a", content: "<p>记忆段落</p>", choices: [],
+          displayCondition: { all: [{ anyChoiceIds:["choice-remember"] }, { anyChoiceIds:["choice-react"] }] },
+        },
+        { id:"target", chapterId:"chapter-a", content:"<p>Target</p>", choices:[] },
+      ],
+      chapters: [{ id:"chapter-a", name:"第一章" }],
       scenes: [],
       placeholders: [],
       phoneModules: [{ id: "module", type: "memo", data: { memos: [] } }],
+      interactiveScenes: [{
+        id: "touch-scene",
+        nodeId: "start",
+        title: "掌心",
+        startStageId: "stage-1",
+        dialogueStyle: { surfaceColor:"#fffaf9", textColor:"#40383b" },
+        stages: [{
+          id: "stage-1",
+          image: "https://example.test/hand.gif",
+          hotspots: [{ id:"palm", trigger:"face-near", fallbackTrigger:"hold" }],
+        }],
+      }],
       editorSettings: {
         fontSize: 18,
         customFonts: [{
@@ -86,7 +112,13 @@ test("current article and phone exports have identical JSON and PNG reader seman
     },
   ]
   globalThis.localStorage = {
-    getItem() { return JSON.stringify({ works: fixtures, contacts: [], groups: [] }) },
+    getItem(key) {
+      if (key === "tuuru_works") return JSON.stringify({ works: fixtures, contacts: [], groups: [] })
+      if (key === "tuuru_article_author_notes") return JSON.stringify({ version:1, works:{ "article-golden":{ outline:"PRIVATE_OUTLINE" } } })
+      if (key === "tuuru_article_editor_view") return JSON.stringify({ version:1, works:{ "article-golden":{ editorTextColor:"#5a3344" } } })
+      if (key === "moirain_profile") return JSON.stringify({ readerId:"PRIVATE_READER_ID", readerAvatar:"PRIVATE_READER_AVATAR" })
+      return null
+    },
     setItem() { throw new Error("export must not write") },
   }
   t.after(() => { globalThis.localStorage = originalStorage })
@@ -100,7 +132,20 @@ test("current article and phone exports have identical JSON and PNG reader seman
     assert.deepEqual(jsonWork.watermark, fixture.watermark)
     assert.equal(jsonWork.editorSettings, undefined)
     assert.doesNotMatch(serialized, /Author Device Only|AUTHOR_LOCAL_ONLY/)
-    if (fixture.type === "article") assert.deepEqual(jsonWork.futureField, { preserved: true })
+    assert.doesNotMatch(serialized, /PRIVATE_OUTLINE|editorTextColor|tuuru_article_author_notes/)
+    assert.doesNotMatch(serialized, /PRIVATE_READER_ID|PRIVATE_READER_AVATAR|_articleChoiceMemory/)
+    if (fixture.type === "article") {
+      assert.deepEqual(jsonWork.futureField, { preserved: true })
+      const conditionalNode = jsonWork.nodes.find(node => node.id === "conditional")
+      const sourceNode = jsonWork.nodes.find(node => node.id === "start")
+      assert.equal(conditionalNode.kind, "conditional")
+      assert.deepEqual(conditionalNode.displayCondition, {
+        all: [{ anyChoiceIds:["choice-remember"] }, { anyChoiceIds:["choice-react"] }],
+      })
+      assert.equal(sourceNode.choices[1].selectedText, "第一行\n第二行")
+      assert.equal(jsonWork.interactiveScenes[0].stages[0].hotspots[0].trigger, "face-near")
+      assert.equal(jsonWork.interactiveScenes[0].stages[0].image, "https://example.test/hand.gif")
+    }
     if (fixture.type === "phone") {
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "settings"), false)
       assert.equal(jsonWork.phoneData.apps.some(app => app.type === "customize"), false)

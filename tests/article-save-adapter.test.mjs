@@ -715,6 +715,21 @@ test("add and delete node are single atomic transforms with start and choice rep
   )
 })
 
+test("deleting an ordinary start does not promote a conditional node", () => {
+  const harness = createHarness()
+  harness.adapter.deleteNode("ordinary")
+
+  const deleted = applyEnvelope(harness.commitInputs[0], articleWork({
+    startNode: "ordinary",
+    nodes: [
+      { ...articleWork().nodes[0], id: "memory", kind: "conditional" },
+      { ...articleWork().nodes[1], id: "ordinary" },
+    ],
+  }))
+
+  assert.equal(deleted.startNode, "")
+})
+
 test("replaceChoices replaces once, preserves unique matching choice fields, and validates IDs and targets", () => {
   const harness = createHarness()
   const replacement = [

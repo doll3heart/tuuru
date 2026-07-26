@@ -14,7 +14,6 @@ export const ACCEPTANCE_APP_TYPES = Object.freeze([
 
 export const ACCEPTANCE_FILES = Object.freeze({
   article: "tuuru-article-acceptance",
-  phone: "tuuru-phone-acceptance",
 })
 
 const CREATED_AT = Date.UTC(2026, 6, 19, 8, 0, 0)
@@ -329,7 +328,6 @@ function phoneAssets() {
   return {
     wallpaper: createIllustrationDataUrl("phone-wallpaper-starry-port", { width: 300, height: 520, kind: "wallpaper" }),
     top: createIllustrationDataUrl("phone-profile-rain-roof", { width: 300, height: 130 }),
-    reader: createIllustrationDataUrl("phone-reader-avatar", { width: 96, height: 96, kind: "portrait" }),
     lin: createIllustrationDataUrl("phone-lin-avatar", { width: 96, height: 96, kind: "portrait" }),
     zhen: createIllustrationDataUrl("phone-zhen-avatar", { width: 96, height: 96, kind: "portrait" }),
     qiao: createIllustrationDataUrl("phone-qiao-avatar", { width: 96, height: 96, kind: "portrait" }),
@@ -528,10 +526,10 @@ export function buildPhoneAcceptanceWork() {
   ]
 
   return {
-    id: "acceptance-phone-20260719",
+    id: "acceptance-phone-runtime",
     schemaVersion: CURRENT_WORK_SCHEMA_VERSION,
     type: "phone",
-    title: "《雾港口袋终端》纯小手机验收作品",
+    title: "纯小手机运行时验收数据",
     desc: "覆盖七个可导出 App、复杂桌面排序、角色设备接入、聊天/动态/论坛选项、相册与购物二级跳转。",
     coverColor: "#384b5c",
     author: "Tuuru 验收作者",
@@ -567,8 +565,8 @@ export function buildPhoneAcceptanceWork() {
         borderRadius: 30,
         fontFamily: "KaiTi, serif",
         fontSize: 13,
-        readerId: "雾港档案员",
-        readerAvatar: image.reader,
+        readerId: "读者",
+        readerAvatar: null,
         showDynamicIsland: true,
         iconStyle: "mixed",
         showIconShadow: false,

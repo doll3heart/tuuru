@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { Buffer } from "node:buffer"
 import { JSDOM } from "jsdom"
+import { CURRENT_WORK_SCHEMA_VERSION } from "../js/work-schema.js"
 
 function phoneWork() {
   return {
@@ -241,6 +242,10 @@ test("reader keeps its cached work when only the recent list exceeds quota", asy
   work.id = "reader-recent-quota-work"
   work.title = "Recent quota"
   const serializedWork = JSON.stringify(work)
+  const normalizedSerializedWork = JSON.stringify({
+    ...work,
+    schemaVersion: CURRENT_WORK_SCHEMA_VERSION,
+  })
 
   globalThis.FileReader = class {
     readAsText() {
@@ -266,7 +271,7 @@ test("reader keeps its cached work when only the recent list exceeds quota", asy
     "moirain_work_reader-recent-quota-work",
     "moirain_recent",
   ])
-  assert.equal(storage.values.get("moirain_work_reader-recent-quota-work"), serializedWork)
+  assert.equal(storage.values.get("moirain_work_reader-recent-quota-work"), normalizedSerializedWork)
   assert.equal(storage.values.get("moirain_recent"), storage.originalRecent)
   assert.equal(alerts.length, 1)
 

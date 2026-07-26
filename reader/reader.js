@@ -10,7 +10,22 @@ import { advanceCallPlayback, createCallPlaybackState } from './call-playback.js
 import { applyChatChoice, rollbackChatChoice } from '../js/chat-choice-runtime.js'
 import { applyThreadChoice, rollbackThreadChoice } from '../js/thread-choice-runtime.js'
 import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
-import { appendArticleChoice, currentArticleChapterEntries, previousArticleChapterPath } from '../js/article-chapter-runtime.js'
+import {
+  pruneArticleChoiceMemory,
+  recordArticleChoice,
+  selectedArticleChoiceIds,
+} from '../js/article-choice-memory.js'
+import { articleDisplayConditionMatches } from '../js/article-condition-model.js'
+import { resolveAutomaticArticleStartNodeId } from '../js/article-start-node.js'
+import {
+  appendArticleChoice,
+  continueArticleChapterPath,
+  continueArticleInteraction,
+  currentArticleChapterEntries,
+  expandArticleChapterPath,
+  nextArticleChapterPath,
+  previousArticleChapterPath,
+} from '../js/article-chapter-runtime.js'
 import { prepareEditorPreview } from './editor-preview.js'
 import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-links.js'
@@ -56,6 +71,28 @@ import { substitutePhoneTextData } from '../js/phone-placeholder-text.js'
 import { showReleaseAnnouncementOnce } from '../js/release-announcement.js'
 import { WORK_COLLECTION_BUNDLE_TYPE } from '../js/work-collections.js'
 import { inspectReaderCollectionBundle, installReaderCollection } from './work-collection-import.js'
+import { downloadBlob } from '../js/download.js'
+import {
+  READER_APPEARANCE_PACKAGE_MAX_BYTES,
+  inspectReaderAppearancePackage,
+  serializeReaderAppearancePackage,
+} from './appearance-package.js'
+import { workUsesCameraInteractions } from '../js/interactive-scene-model.js'
+import { mountInteractiveScene } from '../js/interactive-scene-renderer.js'
+import { substituteInteractiveSceneText } from '../js/interactive-scene-placeholders.js'
+import {
+  interactiveSceneForNode,
+  isInteractiveSceneNode,
+} from '../js/interactive-scene-node.js'
+import {
+  createFaceNearSignal,
+  requestInteractiveCameraPreflight,
+  startInteractiveFaceNearSession,
+} from '../js/interactive-scene-camera.js'
+import {
+  readerInteractiveSceneById,
+  replaceInteractiveSceneCards,
+} from './interactive-scene-entry.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -224,6 +261,7 @@ var _work = null
 var _nodeId = null
 var _visitedNodes = []
 var _articlePath = []
+var _articleChoiceMemory = {}
 var _articleInteractionSelections = Object.create(null)
 var _renderedRecentIds = []
 var _renderedCollectionIds = []
@@ -232,6 +270,9 @@ var _readerCollectionValues = Object.create(null)
 var _readerPhoneChoiceSession = null
 var _readerPhoneFlowSession = null
 var _editorPreviewMode = false
+var _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
+var _interactiveSceneCameraSession = null
+var _interactiveSceneController = null
 
 function readerPhoneText(value) {
   return substitutePlaceholders(String(value || ''), _work && _work.placeholders || [], {
@@ -336,6 +377,95 @@ function getPlaceholders() {
 function getRecents() {
   return lsGet('recent') || []
 }
+
+function resetArticleReaderSession() {
+  _nodeId = null
+  _visitedNodes = []
+  _articlePath = []
+  _articleChoiceMemory = {}
+  _articleInteractionSelections = Object.create(null)
+}
+
+function articleRuntimeOptions(memory) {
+  var selectedIds = selectedArticleChoiceIds(memory === undefined ? _articleChoiceMemory : memory)
+  return {
+    selectedChoiceIds:selectedIds,
+    isNodeVisible:function(node) {
+      return node?.kind !== 'conditional'
+        || articleDisplayConditionMatches(node.displayCondition, selectedIds)
+    },
+  }
+}
+
+function articlePathIdCounts(path) {
+  return (path || []).reduce(function(counts, nodeId) {
+    if (typeof nodeId === 'string' && nodeId) counts[nodeId] = (counts[nodeId] || 0) + 1
+    return counts
+  }, {})
+}
+
+function articleRouteStateForPath(previousPath, nextPath) {
+  var previousCounts = articlePathIdCounts(previousPath)
+  var retainedCounts = articlePathIdCounts(nextPath)
+  var memory = pruneArticleChoiceMemory(_articleChoiceMemory, nextPath)
+  var interactionSelections = Object.assign({}, _articleInteractionSelections)
+  var retained = new Set(nextPath)
+  Object.keys(previousCounts).forEach(function(sourceNodeId) {
+    if (previousCounts[sourceNodeId] <= (retainedCounts[sourceNodeId] || 0)) return
+    delete memory[sourceNodeId]
+    delete interactionSelections[sourceNodeId]
+  })
+  Object.keys(interactionSelections).forEach(function(sourceNodeId) {
+    if (!retained.has(sourceNodeId)) delete interactionSelections[sourceNodeId]
+  })
+  return {memory:memory, interactionSelections:interactionSelections}
+}
+
+function applyArticleRouteState(nextPath, state) {
+  _articlePath = nextPath
+  _articleChoiceMemory = state.memory
+  _articleInteractionSelections = state.interactionSelections
+}
+
+function pruneArticleReaderRouteState(previousPath) {
+  applyArticleRouteState(_articlePath, articleRouteStateForPath(previousPath, _articlePath))
+}
+
+function replaceArticlePath(nextPath) {
+  var previousPath = _articlePath.slice()
+  _articlePath = nextPath
+  pruneArticleReaderRouteState(previousPath)
+}
+
+function selectionPrefixState(sourcePathIndex, sourceNodeId) {
+  if (!Number.isInteger(sourcePathIndex) || sourcePathIndex < 0 || _articlePath[sourcePathIndex] !== sourceNodeId) return null
+  var path = _articlePath.slice(0, sourcePathIndex + 1)
+  return {path:path, state:articleRouteStateForPath(_articlePath, path)}
+}
+
+function isExactArticleChoiceId(value) {
+  return typeof value === 'string' && value.length > 0 && value.trim() === value
+}
+
+function canRecordArticleChoice(sourceNodeId, choiceId) {
+  if (!isExactArticleChoiceId(sourceNodeId) || !isExactArticleChoiceId(choiceId)) return false
+  var sourceMatches = ((_work && _work.nodes) || []).filter(function(node) {
+    return node?.id === sourceNodeId
+  })
+  if (sourceMatches.length !== 1) return false
+  var matchingChoices = []
+  ;((_work && _work.nodes) || []).forEach(function(node) {
+    ;(node?.choices || []).forEach(function(choice) {
+      if (choice?.id === choiceId) matchingChoices.push({node:node, choice:choice})
+    })
+  })
+  return matchingChoices.length === 1 && matchingChoices[0].node === sourceMatches[0]
+}
+
+function candidateReaderArticleChoiceMemory(memory, sourceNodeId, choiceId) {
+  if (!canRecordArticleChoice(sourceNodeId, choiceId)) return null
+  return recordArticleChoice(memory, sourceNodeId, choiceId)
+}
 function getReaderCollections() {
   var collections = lsGet('collections')
   return Array.isArray(collections) ? collections : []
@@ -350,6 +480,7 @@ function addRecent(work) {
 
 // ====== HOME (tabs: personal page + import) ======
 function renderHome() {
+  resetArticleReaderSession()
   var h = '<div class="rd-home">'
   h += '<header class="rd-product-header">'
   h += '<div class="rd-product-brand">Tuuru</div>'
@@ -442,10 +573,30 @@ document.addEventListener('click', function(event) {
     event.preventDefault()
     var previousPath = previousArticleChapterPath((_work && _work.nodes) || [], _articlePath)
     if (previousPath.length && previousPath.length < _articlePath.length) {
-      _articlePath = previousPath
+      replaceArticlePath(previousPath)
       _nodeId = _articlePath[_articlePath.length - 1]
       _visitedNodes = _articlePath.slice(0, -1)
       renderArticleReader()
+    }
+    return
+  }
+
+  var nextTrigger = target.closest('[data-reader-next]')
+  if (nextTrigger) {
+    event.preventDefault()
+    var nextChapter = nextArticleChapterPath(
+      (_work && _work.nodes) || [],
+      (_work && _work.chapters) || [],
+      _articlePath,
+      articleRuntimeOptions(),
+    )
+    if (nextChapter.ok) {
+      replaceArticlePath(nextChapter.path)
+      _nodeId = _articlePath[_articlePath.length - 1]
+      _visitedNodes = _articlePath.slice(0, -1)
+      renderArticleReader()
+      document.documentElement.scrollTop = 0
+      document.body.scrollTop = 0
     }
     return
   }
@@ -796,6 +947,30 @@ function placeholderForbiddenWord(placeholder, value, globalForbidden) {
   }) || ''
 }
 
+async function ensureInteractiveCameraPreflight(statusElement, button) {
+  if (!workUsesCameraInteractions(_work)) return _interactiveCameraState
+  if (_interactiveCameraState.preflighted) return _interactiveCameraState
+  if (button) {
+    button.disabled = true
+    button.textContent = '正在确认摄像头权限…'
+  }
+  if (statusElement) statusElement.textContent = '只会在本机判断脸部是否靠近，不录制、不保存、不上传，也不会使用麦克风。'
+  var result = await requestInteractiveCameraPreflight()
+  _interactiveCameraState = Object.assign({}, result, {preflighted:true})
+  if (statusElement) {
+    statusElement.textContent = result.granted && result.detectorAvailable
+      ? '摄像头互动已就绪。摄像头只会在进入对应互动页时启用。'
+      : result.granted
+        ? '摄像头权限已开启，但当前浏览器不支持本地靠近识别；靠近互动不会降级成普通点击。'
+        : '摄像头互动不可用，作品会使用作者设置的点击或长按备用操作。'
+  }
+  if (button) {
+    button.disabled = false
+    button.textContent = '开始阅读'
+  }
+  return _interactiveCameraState
+}
+
 function showLandingPage(work, callback) {
   var phs = work.placeholders || []
   var hasPassword = !!(work.password && work.password.trim())
@@ -832,6 +1007,15 @@ function showLandingPage(work, callback) {
       h += '</div>'
     })
     h += '<button class="rd-landing-preset-btn" id="rdPresetBtn">从预设填入</button>'
+    h += '</div>'
+  }
+
+  if (workUsesCameraInteractions(work)) {
+    h += '<div class="rd-landing-divider"></div>'
+    h += '<div class="rd-landing-section rd-camera-preflight">'
+    h += '<div class="rd-landing-section-title">沉浸互动权限</div>'
+    h += '<p class="rd-landing-desc">本作品含有“脸部靠近”互动。开始时会申请前置摄像头权限；画面只在当前设备处理，不录制、不保存、不上传，也不会使用麦克风。</p>'
+    h += '<p class="rd-camera-preflight-status" id="rdCameraPreflightStatus" role="status" aria-live="polite">如果拒绝或设备不支持，剧情会改用作者设置的备用操作。</p>'
     h += '</div>'
   }
 
@@ -896,8 +1080,19 @@ function showLandingPage(work, callback) {
     if (forbiddenFound) return
     work.readerPhValues = values
     tryReaderStorageWrite(function() { lsSet('readerPhValues', values) })
-    document.body.removeChild(overlay)
-    callback()
+    function enterWork() {
+      if (!overlay.isConnected) return
+      overlay.remove()
+      callback()
+    }
+    if (workUsesCameraInteractions(work)) {
+      ensureInteractiveCameraPreflight(
+        overlay.querySelector('#rdCameraPreflightStatus'),
+        overlay.querySelector('#rdStartBtn'),
+      ).then(enterWork)
+    } else {
+      enterWork()
+    }
   }
 
   // Close on overlay click
@@ -1005,10 +1200,12 @@ function loadWork(work, options) {
   _work = work
   resetReaderPhoneChoiceSession(work)
   resetReaderPhoneFlowSession(work)
-  _nodeId = null
-  _visitedNodes = []
-  _articlePath = []
-  _articleInteractionSelections = Object.create(null)
+  resetArticleReaderSession()
+  _interactiveSceneCameraSession?.stop()
+  _interactiveSceneCameraSession = null
+  _interactiveSceneController?.destroy()
+  _interactiveSceneController = null
+  _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
   _activeReaderCollectionId = options && options.collectionId || ''
   var rememberWork = !options || options.remember !== false
   if (rememberWork) {
@@ -1026,7 +1223,9 @@ function loadWork(work, options) {
       renderArticleReader()
     }
   }
-  if (options && options.skipLanding) startReading()
+  if (options && options.skipLanding && workUsesCameraInteractions(work)) {
+    showLandingPage(Object.assign({}, work, {password:"", placeholders:[]}), startReading)
+  } else if (options && options.skipLanding) startReading()
   else showLandingPage(work, startReading)
 }
 
@@ -1117,6 +1316,113 @@ function saveReaderSettings(data) {
     showReaderToast('设置已在本页生效，但浏览器未能保存；请检查本地存储空间')
   }
   return normalized
+}
+
+function readerAppearancePackageTransferMarkup() {
+  return '<section class="reader-appearance-transfer" aria-labelledby="readerAppearanceTransferTitle">' +
+    '<div class="rs-group-heading"><span id="readerAppearanceTransferTitle">美化包</span><small>文章、手机与 App 外观可一起分享</small></div>' +
+    '<p>仅包含外观设置。不会包含昵称 / ID、头像、简介、作品、书架、密码或阅读记录。</p>' +
+    '<p class="reader-appearance-transfer-assets">会包含你主动设置的壁纸、个人主页顶部图、字体和图标；分享前请确认这些素材适合公开。</p>' +
+    '<div class="reader-appearance-transfer-actions">' +
+    '<button type="button" class="rs-action-btn" data-reader-appearance-export>导出美化包</button>' +
+    '<button type="button" class="rs-action-btn subtle" data-reader-appearance-import>导入美化包</button>' +
+    '</div><p class="reader-appearance-transfer-status" role="status" aria-live="polite"></p></section>'
+}
+
+function validateReaderAppearancePackageCss(appearance) {
+  var checks = [
+    compileScopedReaderCss(appearance.article.customCss || '', '.reader-article-css-scope'),
+    compileScopedReaderCss(appearance.phone.customCss || '', '.reader-phone-css-scope'),
+  ]
+  var appSettings = readerPlainRecord(appearance.phone.appSettings)
+  ;['messages', 'forum', 'memo', 'gallery', 'browser', 'shopping', 'contacts'].forEach(function(type) {
+    var settings = readerPlainRecord(appSettings[type])
+    checks.push(compileScopedReaderCss(settings.customCss || '', '.rd-phone-app-' + type))
+  })
+  var invalid = checks.find(function(result) { return !result.ok })
+  if (invalid) throw new TypeError('美化包中的 CSS 无法安全应用：' + invalid.error)
+}
+
+function installReaderAppearancePackage(raw) {
+  var appearance = inspectReaderAppearancePackage(raw)
+  validateReaderAppearancePackageCss(appearance)
+  var article = normalizeReaderAppearance(appearance.article)
+  var phone = normalizePhoneCustom(readerOwnDataRecord(getPhoneCustom(), appearance.phone))
+  var articleKey = 'moirain_readerSettings'
+  var phoneKey = 'moirain_phoneCustom'
+  var previousArticle = localStorage.getItem(articleKey)
+  var previousPhone = localStorage.getItem(phoneKey)
+  try {
+    localStorage.setItem(articleKey, JSON.stringify(article))
+    localStorage.setItem(phoneKey, JSON.stringify(phone))
+  } catch (error) {
+    try {
+      if (previousArticle === null) localStorage.removeItem(articleKey)
+      else localStorage.setItem(articleKey, previousArticle)
+      if (previousPhone === null) localStorage.removeItem(phoneKey)
+      else localStorage.setItem(phoneKey, previousPhone)
+    } catch (_) {}
+    throw error
+  }
+  applyReaderCustomFonts(article)
+  applyCompiledReaderStyle(article.customCss, '.reader-article-css-scope', 'reader-article-user-css')
+  applyCustomFonts()
+  applyPhoneCustomCss(phone)
+  document.querySelectorAll('.article-content').forEach(function(content) {
+    applyReaderSettings(content, article)
+  })
+  return { article: article, phone: phone }
+}
+
+function bindReaderAppearancePackageTransfer(root, options) {
+  var exportButton = root.querySelector('[data-reader-appearance-export]')
+  var importButton = root.querySelector('[data-reader-appearance-import]')
+  var status = root.querySelector('.reader-appearance-transfer-status')
+  var callbacks = options || {}
+  if (exportButton) exportButton.onclick = function() {
+    try {
+      var serialized = serializeReaderAppearancePackage({
+        article: getReaderSettings(),
+        phone: getPhoneCustom(),
+      })
+      downloadBlob(
+        new Blob([serialized], { type:'application/json;charset=utf-8' }),
+        'Tuuru-读者美化包.json',
+      )
+      if (status) status.textContent = '已导出；个人资料与阅读数据未包含在内。'
+    } catch (error) {
+      if (status) status.textContent = error && error.message ? error.message : '美化包导出失败'
+    }
+  }
+  if (importButton) importButton.onclick = function() {
+    var input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json,application/json'
+    input.onchange = function() {
+      var file = input.files && input.files[0]
+      if (!file) return
+      if (file.size > READER_APPEARANCE_PACKAGE_MAX_BYTES) {
+        if (status) status.textContent = '美化包过大，无法导入。'
+        return
+      }
+      var reader = new FileReader()
+      reader.onload = function() {
+        try {
+          var installed = installReaderAppearancePackage(reader.result)
+          if (status) status.textContent = '美化包已导入；现有昵称、头像等个人资料保持不变。'
+          showReaderToast('美化包已导入，个人资料未更改')
+          if (typeof callbacks.onImported === 'function') callbacks.onImported(installed)
+        } catch (error) {
+          if (status) status.textContent = error && error.message ? error.message : '美化包导入失败'
+        }
+      }
+      reader.onerror = function() {
+        if (status) status.textContent = '无法读取美化包，请重新选择文件。'
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  }
 }
 
 function applyReaderCustomFonts(settings) {
@@ -1381,6 +1687,7 @@ function openReaderSettingsPanel(triggerElement) {
   body += '<div class="rs-css-meta"><p class="rs-field-hint" id="rsCssHint">支持普通选择器与属性；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="rsCssCount">' + String((rs.customCss || '').length) + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>'
   body += '<p class="rs-field-error" id="rsCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="rsCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="rsClearCss">清空 CSS</button></div></div>'
 
+  body += readerAppearancePackageTransferMarkup()
   body += '<div class="rs-reset-wrap"><button class="rs-reset-btn" id="rsReset">恢复默认</button></div>'
   body += '</div></div>'
 
@@ -1408,6 +1715,12 @@ function openReaderSettingsPanel(triggerElement) {
   }
   ov.addEventListener('click', function(e) { if (e.target === ov) closePanel() })
   closeButton.onclick = function() { closePanel() }
+  bindReaderAppearancePackageTransfer(ov, {
+    onImported:function() {
+      closePanel({ restoreFocus:false })
+      openReaderSettingsPanel(activeTrigger)
+    }
+  })
   dialog.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -1756,27 +2069,271 @@ function openReaderSettingsPanel(triggerElement) {
   }
 }
 
+function openReaderInteractiveScene(sceneId, options = {}) {
+  var sourceScene = readerInteractiveSceneById(_work, sceneId)
+  if (!sourceScene) return
+  var nodePage = options.nodePage === true
+  var scene = substituteInteractiveSceneText(sourceScene, _work.placeholders || [], {
+    valuesMap:_work.readerPhValues || {},
+    usePlaceholderMode:false,
+  })
+  var returnScrollY = Number(window.scrollY || document.documentElement.scrollTop || 0)
+  var signal = createFaceNearSignal()
+  var cameraDebugEnabled = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    || new URLSearchParams(window.location.search).get('cameraDebug') === '1'
+  var cameraDebugState = {
+    state:'waiting',
+    samples:0,
+    faces:0,
+    span:0,
+    nearEvents:0,
+    hotspotClicks:0,
+    activations:0,
+    armed:false,
+    errors:0,
+    lastError:'',
+  }
+  var sceneCameraState = Object.assign({}, _interactiveCameraState, {
+    subscribe:signal.subscribe,
+  })
+
+  _interactiveSceneCameraSession?.stop()
+  _interactiveSceneCameraSession = null
+  _interactiveSceneController?.destroy()
+  _interactiveSceneController = null
+
+  var html = '<main class="rd-interactive-scene-page">'
+  html += '<button type="button" class="rd-interactive-scene-exit" aria-label="返回文章" title="返回文章">←</button>'
+  html += '<div class="rd-interactive-scene-mount"></div>'
+  html += '<video class="rd-interactive-camera-feed" muted playsinline aria-hidden="true"></video>'
+  if (cameraDebugEnabled) html += '<output class="rd-interactive-camera-debug" aria-live="polite"></output>'
+  html += '</main>'
+  render('app', html)
+  document.body.classList.add('rd-interactive-scene-active')
+
+  var page = document.querySelector('.rd-interactive-scene-page')
+  var mount = page?.querySelector('.rd-interactive-scene-mount')
+  var cameraVideo = page?.querySelector('.rd-interactive-camera-feed')
+  var cameraDebugOutput = page?.querySelector('.rd-interactive-camera-debug')
+  if (!page || !mount) return
+
+  function renderCameraDebug(patch) {
+    if (!cameraDebugOutput) return
+    Object.assign(cameraDebugState, patch || {})
+    var spanLabel = Number.isFinite(cameraDebugState.span)
+      ? Math.round(cameraDebugState.span * 1000) / 10 + '%'
+      : '无'
+    cameraDebugOutput.textContent = [
+      '摄像头：' + cameraDebugState.state,
+      '采样 ' + cameraDebugState.samples
+        + '｜人脸 ' + cameraDebugState.faces
+        + '｜占屏 ' + spanLabel,
+      '靠近事件 ' + cameraDebugState.nearEvents
+        + '｜热区点击 ' + cameraDebugState.hotspotClicks
+        + '｜成功触发 ' + cameraDebugState.activations,
+      '组合状态：' + (cameraDebugState.armed ? '已识别靠近，等待点击' : '未解锁'),
+      cameraDebugState.lastError ? '异常：' + cameraDebugState.lastError : '',
+    ].filter(Boolean).join('\n')
+  }
+
+  _interactiveSceneController = mountInteractiveScene(mount, scene, {
+    documentObject:document,
+    cameraState:sceneCameraState,
+    onInteraction:function() {
+      renderCameraDebug({activations:cameraDebugState.activations + 1})
+    },
+    onSceneComplete:nodePage ? function() {
+      closeScene({completed:true})
+    } : undefined,
+  })
+  renderCameraDebug({
+    state:sceneCameraState.granted && sceneCameraState.detectorAvailable
+      ? '准备启动'
+      : '权限或检测器不可用',
+  })
+  if (cameraDebugOutput) {
+    page.addEventListener('click', function(event) {
+      var hotspot = event.target instanceof Element
+        ? event.target.closest('.interactive-scene-hotspot')
+        : null
+      if (!hotspot) return
+      cameraDebugState.hotspotClicks += 1
+      queueMicrotask(function() {
+        renderCameraDebug({
+          armed:mount.querySelector('.interactive-scene')?.dataset.faceArmed === 'true',
+        })
+      })
+    }, true)
+  }
+  requestAnimationFrame(function() { page.classList.add('is-visible') })
+
+  function closeScene(closeOptions) {
+    var completed = closeOptions?.completed === true
+    _interactiveSceneCameraSession?.stop()
+    _interactiveSceneCameraSession = null
+    _interactiveSceneController?.destroy()
+    _interactiveSceneController = null
+    signal.clear()
+    document.removeEventListener('keydown', handleSceneKeydown)
+    document.body.classList.remove('rd-interactive-scene-active')
+    if (nodePage) {
+      var scenePathIndex = _articlePath.length - 1
+      var sceneNodeId = _articlePath[scenePathIndex] || ''
+      var branchSourcePathIndex = -1
+      for (var pathIndex = scenePathIndex - 1; pathIndex >= 0; pathIndex--) {
+        var pathNodeId = _articlePath[pathIndex] || ''
+        var pathNode = ((_work && _work.nodes) || []).find(function(candidate) {
+          return String(candidate?.id || '') === String(pathNodeId)
+        })
+        if (pathNode?.kind === 'conditional') continue
+        if ((pathNode?.choices || []).some(function(choice) {
+          return choice.mode !== 'interaction' && String(choice.targetId || '') === String(sceneNodeId)
+        })) branchSourcePathIndex = pathIndex
+        break
+      }
+      if (!completed && branchSourcePathIndex >= 0) {
+        replaceArticlePath(_articlePath.slice(0, branchSourcePathIndex + 1))
+        _nodeId = _articlePath[_articlePath.length - 1]
+        _visitedNodes = _articlePath.slice(0, -1)
+        renderArticleReader()
+        return
+      }
+      var sceneNodes = (_work && _work.nodes) || []
+      var explicitNextNodeId = String(scene?.nextNodeId || "")
+      var sceneTransition = explicitNextNodeId
+        ? appendArticleChoice(
+          sceneNodes,
+          _articlePath,
+          scenePathIndex,
+          explicitNextNodeId,
+          articleRuntimeOptions(),
+        )
+        : continueArticleChapterPath(
+          sceneNodes,
+          _articlePath,
+          scenePathIndex,
+          articleRuntimeOptions(),
+        )
+      if (sceneTransition.ok && sceneTransition.path.length > _articlePath.length) {
+        replaceArticlePath(sceneTransition.path)
+        _nodeId = _articlePath[_articlePath.length - 1]
+        _visitedNodes = _articlePath.slice(0, -1)
+        renderArticleReader()
+      } else if (explicitNextNodeId) {
+        render('app', '<div class="drop-zone"><p>互动图片的后续跳转节点已失效，请联系作者修复。</p><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>')
+        var homeButton = document.querySelector('[data-reader-home]')
+        if (homeButton) homeButton.onclick = renderHome
+      } else {
+        renderHome()
+      }
+      return
+    }
+    renderArticleReader()
+    requestAnimationFrame(function() { window.scrollTo({top:returnScrollY, left:0, behavior:'auto'}) })
+  }
+  function handleSceneKeydown(event) {
+    if (event.key === 'Escape') closeScene()
+  }
+  page.querySelector('.rd-interactive-scene-exit').onclick = closeScene
+  document.addEventListener('keydown', handleSceneKeydown)
+
+  if (workUsesCameraInteractions({interactiveScenes:[scene]})
+      && sceneCameraState.granted
+      && sceneCameraState.detectorAvailable) {
+    startInteractiveFaceNearSession({
+      documentObject:document,
+      videoElement:cameraVideo,
+      onSample:function(sample) {
+        renderCameraDebug({
+          state:'正在识别',
+          samples:cameraDebugState.samples + 1,
+          faces:sample.faceCount,
+          span:sample.faceSpanRatio,
+        })
+      },
+      onDetectionError:function(error) {
+        renderCameraDebug({
+          state:'检测异常',
+          errors:cameraDebugState.errors + 1,
+          lastError:String(error?.message || error || 'unknown').slice(0, 160),
+        })
+      },
+      onNear:function() {
+        cameraDebugState.nearEvents += 1
+        signal.emit()
+        renderCameraDebug({
+          state:'已判定靠近',
+          armed:mount.querySelector('.interactive-scene')?.dataset.faceArmed === 'true',
+        })
+      },
+    }).then(function(session) {
+      if (!page.isConnected) {
+        session.stop()
+        return
+      }
+      _interactiveSceneCameraSession = session
+      renderCameraDebug({state:'正在识别'})
+    }).catch(function() {
+      sceneCameraState.detectorAvailable = false
+      sceneCameraState.reason = 'camera-unavailable'
+      renderCameraDebug({state:'启动失败', errors:cameraDebugState.errors + 1})
+      _interactiveSceneController?.goToStage(_interactiveSceneController.stage.id)
+    })
+  }
+}
+
 function renderArticleReader() {
   if (!_work || _work.type === 'phone') return renderPhoneReader()
   var nodes = _work.nodes || []
   if (!_articlePath.length) {
-    var initialNodeId = _work.startNode || (nodes.length ? nodes[0].id : null)
+    var initialNodeId = resolveAutomaticArticleStartNodeId(_work)
     if (initialNodeId) _articlePath = [initialNodeId]
   }
+  replaceArticlePath(expandArticleChapterPath(nodes, _articlePath, articleRuntimeOptions()))
   _nodeId = _articlePath[_articlePath.length - 1] || null
   var node = nodes.find(function(n) { return n.id === _nodeId })
   if (!node) {
     render('app', '<div class="drop-zone"><p>作品内容为空</p><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>')
     return
   }
-
-  var phs = _work.placeholders || []
   var chapterEntries = currentArticleChapterEntries(nodes, _articlePath)
   if (!chapterEntries.length) chapterEntries = [{node:node, pathIndex:_articlePath.length - 1}]
+  var sceneEntryPending = false
+  var pendingScene = null
+  if (isInteractiveSceneNode(node)) {
+    var nodeScene = interactiveSceneForNode(_work, node)
+    if (!nodeScene) {
+      render('app', '<div class="drop-zone"><p>互动页数据不存在</p><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>')
+      return
+    }
+    var sceneEntryCandidates = chapterEntries.filter(function(entry) {
+      return entry.pathIndex < _articlePath.length - 1
+    })
+    var lastBranchBarrierIndex = -1
+    sceneEntryCandidates.forEach(function(entry, index) {
+      if ((entry.node?.choices || []).some(function(choice) {
+        return choice.mode !== 'interaction'
+      })) lastBranchBarrierIndex = index
+    })
+    var hasPreScenePage = sceneEntryCandidates
+      .slice(lastBranchBarrierIndex + 1)
+      .some(function(entry) {
+        return !isInteractiveSceneNode(entry.node)
+      })
+    if (hasPreScenePage) {
+      sceneEntryPending = true
+      pendingScene = nodeScene
+    } else {
+      openReaderInteractiveScene(nodeScene.id, {nodePage:true})
+      return
+    }
+  }
+
+  var phs = _work.placeholders || []
   var currentChapterId = String(node.chapterId || '')
   var chapters = Array.isArray(_work.chapters) ? _work.chapters : []
   var currentChapter = chapters.find(function(chapter) { return String(chapter.id || '') === currentChapterId })
-  var chapterTitle = currentChapter?.name || chapterEntries[0].node.title || _work.title || ''
+  var chapterTitle = typeof currentChapter?.name === 'string' ? currentChapter.name : ''
 
   // Progress dots
   var visitedSet = {}
@@ -1825,11 +2382,13 @@ function renderArticleReader() {
   h += '<div class="article-meta">' + esc(_work.author || '') + '</div>'
   chapterEntries.forEach(function(entry, entryIndex) {
     var entryNode = entry.node
+    if (isInteractiveSceneNode(entryNode)) return
     var content = entryNode.content || ''
     if (phs.length > 0 && _work.readerPhValues) {
       content = substitutePlaceholders(content, phs, {valuesMap:_work.readerPhValues, usePlaceholderMode:false})
     }
-    var cleanContent = content.replace(/<div class="pm-inline-card"[^>]*>[\s\S]*?<\/div>/gi, '<span class="rd-pm-marker"></span>')
+    var cleanContent = replaceInteractiveSceneCards(content, _work)
+    cleanContent = cleanContent.replace(/<div class="pm-inline-card"[^>]*>[\s\S]*?<\/div>/gi, '<span class="rd-pm-marker"></span>')
     var pmCards = content.match(/<div class="pm-inline-card"[^>]*data-pm-id="([^"]*)"[^>]*data-pm-type="([^"]*)"[^>]*>/gi) || []
     var entryTriggers = []
     pmCards.forEach(function(card) {
@@ -1847,32 +2406,58 @@ function renderArticleReader() {
 
     var isActive = entryIndex === chapterEntries.length - 1
     h += '<section class="article-node' + (isActive ? ' is-active' : ' is-resolved') + '" data-article-path-index="' + entry.pathIndex + '">'
-    if (entryNode.title && (chapterEntries.length > 1 || entryNode.title !== chapterTitle)) {
-      h += '<h2 class="article-node-title">' + esc(entryNode.title) + '</h2>'
-    }
     h += '<div class="article-content"' + (isActive ? ' data-active="true"' : '') + '>' + cleanContent + '</div>'
     var choices = entryNode.choices || []
     if (choices.length > 0) {
-      var selectedTarget = _articlePath[entry.pathIndex + 1] || ''
-      var interactionGroup = choices.every(function(choice) { return choice.mode === 'interaction' })
+        var interactionGroup = choices.every(function(choice) { return choice.mode === 'interaction' })
       var selectedInteraction = _articleInteractionSelections[entryNode.id] || ''
       h += '<div class="article-choices' + (interactionGroup ? ' is-interaction' : '') + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '">'
       choices.forEach(function(c, ci) {
         var interaction = c.mode === 'interaction'
         var targetState = interaction ? { ok:true } : resolveArticleChoiceTarget(nodes, c.targetId)
-        var selected = interaction ? selectedInteraction === String(c.id) : Boolean(selectedTarget && selectedTarget === c.targetId)
+        var selected = interaction
+          ? selectedInteraction === String(c.id)
+          : _articleChoiceMemory[entryNode.id] === String(c.id)
         var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
         var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
         h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '" data-choice-id="' + escapeHtmlAttribute(c.id || '') + '" data-choice-mode="' + (interaction ? 'interaction' : 'branch') + '" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
+        if (interaction && selected) {
+          var hasAuthoredSelectedText = Object.prototype.hasOwnProperty.call(c || {}, 'selectedText')
+          var selectedResponse = hasAuthoredSelectedText
+            ? (c.selectedText == null ? '' : String(c.selectedText))
+            : (c.text || '选项')
+          if (selectedResponse !== '') {
+            var responseParagraphs = selectedResponse.replace(/\r\n?/g, '\n').split('\n')
+            h += '<div class="article-interaction-response article-content">'
+            responseParagraphs.forEach(function(line) {
+              h += '<p>' + (line === '' ? '<br>' : esc(line)) + '</p>'
+            })
+            h += '</div>'
+          }
+        }
       })
       h += '</div>'
     }
     h += '</section>'
   })
+  if (sceneEntryPending) {
+    h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-enter-interactive-scene aria-label="进入互动场景">进入互动场景</button></div>'
+  }
   var frontierChoices = chapterEntries[chapterEntries.length - 1].node.choices || []
   var frontierBranchChoices = frontierChoices.filter(function(choice) { return choice.mode !== 'interaction' })
-  if (frontierBranchChoices.length === 0) {
-    h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>'
+  var interactionCanContinue = false
+  if (frontierChoices.length > 0 && frontierBranchChoices.length === 0) {
+    var frontierPathIndex = chapterEntries[chapterEntries.length - 1].pathIndex
+    var continuation = continueArticleInteraction(nodes, _articlePath, frontierPathIndex, articleRuntimeOptions())
+    interactionCanContinue = continuation.ok && continuation.path.length > _articlePath.length
+  }
+  var nextChapter = nextArticleChapterPath(nodes, chapters, _articlePath, articleRuntimeOptions())
+  if (!sceneEntryPending && frontierBranchChoices.length === 0 && !interactionCanContinue) {
+    if (nextChapter.ok) {
+      h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-next aria-label="阅读下一章">NEXT</button></div>'
+    } else {
+      h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-home>返回首页</button></div>'
+    }
   }
   h += '</div>'
 
@@ -1885,6 +2470,10 @@ function renderArticleReader() {
   var ac = document.querySelector('.article-content[data-active="true"]')
   var sb = document.querySelector('.reader-settings-btn')
   if (sb) sb.onclick = function() { openReaderSettingsPanel(sb) }
+  if (sceneEntryPending) {
+    var enterScene = document.querySelector('[data-reader-enter-interactive-scene]')
+    if (enterScene) enterScene.onclick = function() { openReaderInteractiveScene(pendingScene.id, {nodePage:true}) }
+  }
 
   // Keep the optional typing effect delayed so layout and settings are already stable.
   setTimeout(function() {
@@ -1916,27 +2505,66 @@ function renderArticleReader() {
     }
   }, 0)
 
+  document.querySelectorAll('.rd-interactive-scene-trigger').forEach(function(trigger) {
+    trigger.onclick = function() {
+      openReaderInteractiveScene(trigger.dataset.interactiveScene)
+    }
+  })
+
   // Bind choices
   var btns = document.querySelectorAll('.article-choice-btn')
   btns.forEach(function(btn) {
     btn.onclick = function() {
       if (btn.dataset.choiceMode === 'interaction') {
         var nodeId = btn.dataset.choiceNodeId || ''
-        _articleInteractionSelections[nodeId] = btn.dataset.choiceId || ''
-        document.querySelectorAll('.article-choice-btn[data-choice-mode="interaction"]').forEach(function(option) {
-          if (String(option.dataset.choiceNodeId || '') !== String(nodeId)) return
-          var selected = option === btn
-          option.classList.toggle('is-selected', selected)
-          option.setAttribute('aria-pressed', String(selected))
-        })
+        var interactionChoiceId = btn.dataset.choiceId || ''
+        var interactionSourcePathIndex = Number(btn.dataset.sourcePathIndex)
+        var interactionSelection = selectionPrefixState(interactionSourcePathIndex, nodeId)
+        if (!interactionSelection) return
+        var interactionMemory = candidateReaderArticleChoiceMemory(interactionSelection.state.memory, nodeId, interactionChoiceId)
+        if (!interactionMemory) {
+          delete interactionSelection.state.memory[nodeId]
+          delete interactionSelection.state.interactionSelections[nodeId]
+          applyArticleRouteState(interactionSelection.path, interactionSelection.state)
+          _nodeId = _articlePath[_articlePath.length - 1]
+          _visitedNodes = _articlePath.slice(0, -1)
+          renderArticleReader()
+          return
+        }
+        var interactionTransition = continueArticleInteraction(nodes, interactionSelection.path, interactionSourcePathIndex, articleRuntimeOptions(interactionMemory))
+        if (!interactionTransition.ok) return
+        interactionSelection.state.memory = interactionMemory
+        interactionSelection.state.interactionSelections[nodeId] = interactionChoiceId
+        applyArticleRouteState(interactionTransition.path, interactionSelection.state)
+        _nodeId = _articlePath[_articlePath.length - 1]
+        _visitedNodes = _articlePath.slice(0, -1)
+        renderArticleReader()
+        var interactionActiveNode = document.querySelector('.article-node.is-active')
+        if (interactionActiveNode && typeof interactionActiveNode.scrollIntoView === 'function') {
+          interactionActiveNode.scrollIntoView({block:'start'})
+        }
+        return
+      }
+      var sourcePathIndex = Number(btn.dataset.sourcePathIndex)
+      var sourceNodeId = btn.dataset.choiceNodeId || ''
+      var branchSelection = selectionPrefixState(sourcePathIndex, sourceNodeId)
+      if (!branchSelection) return
+      var branchMemory = candidateReaderArticleChoiceMemory(branchSelection.state.memory, sourceNodeId, btn.dataset.choiceId || '')
+      if (!branchMemory) {
+        delete branchSelection.state.memory[sourceNodeId]
+        delete branchSelection.state.interactionSelections[sourceNodeId]
+        applyArticleRouteState(branchSelection.path, branchSelection.state)
+        _nodeId = _articlePath[_articlePath.length - 1]
+        _visitedNodes = _articlePath.slice(0, -1)
+        renderArticleReader()
         return
       }
       var targetState = resolveArticleChoiceTarget(nodes, btn.dataset.target)
       if (targetState.ok) {
-        var sourcePathIndex = Number(btn.dataset.sourcePathIndex)
-        var transition = appendArticleChoice(nodes, _articlePath, sourcePathIndex, targetState.targetId)
+        var transition = appendArticleChoice(nodes, branchSelection.path, sourcePathIndex, targetState.targetId, articleRuntimeOptions(branchMemory))
         if (!transition.ok) return
-        _articlePath = transition.path
+        branchSelection.state.memory = branchMemory
+        applyArticleRouteState(transition.path, branchSelection.state)
         _nodeId = _articlePath[_articlePath.length - 1]
         _visitedNodes = _articlePath.slice(0, -1)
         renderArticleReader()
@@ -2509,7 +3137,6 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     else showConnectionPicker()
     return
   }
-
   if (type === 'messages') {
     var chats = pd.chats || []
     var phoneChoiceSession = readerPhoneChoiceSession(w)
@@ -4345,6 +4972,7 @@ function openReaderCustomizePanel(triggerElement) {
   body += '<textarea id="cuCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="cuCssHint cuCssError" placeholder=".phone-profile { box-shadow: none; }">' + esc(ct.customCss || '') + '</textarea>'
   body += '<div class="rs-css-meta"><p class="rs-field-hint" id="cuCssHint">支持普通选择器与属性；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="cuCssCount">' + (ct.customCss || '').length + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>'
   body += '<p class="rs-field-error" id="cuCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="cuCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="cuClearCss">清空 CSS</button></div></section>'
+  body += readerAppearancePackageTransferMarkup()
   body += '<div class="phone-appearance-reset"><button type="button" class="rs-reset-btn" id="cuAppearanceReset">恢复手机外观默认值</button></div>'
   body += '</div></div>'
 
@@ -4366,6 +4994,14 @@ function openReaderCustomizePanel(triggerElement) {
   var cancelButton = ov.querySelector('#cuModalCancel')
   saveButton.id = 'cuSave'
   cancelButton.id = 'cuCancel'
+  bindReaderAppearancePackageTransfer(ov, {
+    onImported:function() {
+      ov.closeReaderModal()
+      renderCustomPage()
+      var nextTrigger = document.querySelector('[data-reader-phone-control="appearance"]')
+      openReaderCustomizePanel(nextTrigger)
+    }
+  })
 
   function renderFontList() {
     var select = ov.querySelector('#cuFontFamily')

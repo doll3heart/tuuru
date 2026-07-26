@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Tuuru 共用底层 · 读者状态 Demo</title>
+  <link rel="stylesheet" href="../../css/styles.css">
+  <link rel="stylesheet" href="./demo.css">
+</head>
+<body>
+  <main class="shared-demo" data-shared-demo data-mode="reader" data-view="article">
+    <header class="demo-toolbar" aria-label="Demo 对照工具栏">
+      <div class="demo-toolbar-copy">
+        <strong>共用底层对照</strong>
+        <span>工具栏仅用于切换状态，下面的组件来自现有作者端。</span>
+      </div>
+
+      <div class="demo-switches">
+        <div class="demo-segment" role="group" aria-label="界面状态">
+          <button type="button" data-set-mode="author" aria-pressed="false">作者态</button>
+          <button type="button" data-set-mode="reader" aria-pressed="true">读者态</button>
+        </div>
+        <div class="demo-segment" role="group" aria-label="共用模块">
+          <button type="button" data-view-target="article" aria-pressed="true">文章底层</button>
+          <button type="button" data-view-target="phone" aria-pressed="false">小手机底层</button>
+          <button type="button" data-view-target="forum" aria-pressed="false">论坛交互</button>
+        </div>
+      </div>
+    </header>
+
+    <p class="mode-explanation" aria-live="polite">
+      <strong data-mode-title>读者态：</strong>
+      <span data-mode-copy>沿用作者设置好的排版与组件，隐藏编辑入口，保留剧情选择和作品内交互。</span>
+    </p>
+
+    <section class="shared-stage">
+      <section class="shared-view shared-article-view is-active" data-demo-view="article" aria-label="共用文章组件">
+        <div class="shared-work-shell">
+          <header class="shared-work-header">
+            <button type="button" class="btn ghost" data-author-only>作品信息</button>
+            <div>
+              <strong>薄荷色的晚风</strong>
+              <small>第一章 · 开始</small>
+            </div>
+            <button type="button" class="btn ghost" data-author-only>正文工具</button>
+            <button type="button" class="reader-back-control" data-reader-only aria-label="返回作品目录">←</button>
+          </header>
+
+          <div class="editor-content">
+            <div
+              class="content-editable"
+              contenteditable="false"
+              data-shared-content
+              style="font-family:var(--font);font-size:16px;line-height:1.9;letter-spacing:0;padding:32px"
+            >
+              <h2>天台见面的那一晚</h2>
+              <p>晚风从教学楼背后绕过来，吹动围栏上那条已经褪色的蓝丝带。</p>
+              <p>顾逢川站在天台门边，没有催她。他只是把手里的热饮向前递了一点，杯沿冒出的白汽很快散进夜色里。</p>
+              <p>“你上次说，等天气晴了，就把那件事告诉我。”</p>
+              <p>手机在口袋里轻轻震了一下。屏幕上跳出一条新消息，来自那个许久没有亮起的头像。</p>
+            </div>
+
+            <div class="choice-card">
+              <div class="choice-card-head">
+                <span class="choice-card-title" data-author-only>选项</span>
+                <span class="choice-card-title" data-reader-only>接下来怎么做？</span>
+              </div>
+              <div class="choice-card-btns">
+                <button class="choice-btn" type="button" data-reader-choice>先回复那条消息</button>
+                <button class="choice-btn" type="button" data-reader-choice>继续问顾逢川</button>
+                <button class="choice-btn" type="button" data-author-only>＋ 添加选项</button>
+              </div>
+            </div>
+          </div>
+
+          <footer class="shared-work-footer">
+            <span data-author-only>已保存 · 168 字</span>
+            <span data-reader-only>阅读进度 42%</span>
+          </footer>
+        </div>
+      </section>
+
+      <section class="shared-view shared-phone-view" data-demo-view="phone access messages chat forum contacts memo gallery browser shopping" aria-label="共用小手机组件">
+        <div class="phone-editor-wrap">
+          <div
+            class="phone-frame phone-default-wallpaper"
+            data-shared-phone
+            style="--phone-bg:#eee6e7;--phone-radius:18px;--phone-font:'Noto Sans SC',sans-serif;--phone-fontsize:12px;--phone-frame:#8f7b81"
+          >
+            <div class="phone-panel is-active" data-phone-panel="phone">
+              <div class="phone-island"><div class="phone-island-pill"></div></div>
+
+              <div class="phone-profile">
+                <div class="phone-profile-overlay"></div>
+                <div class="phone-widget-copy">
+                  <div class="phone-widget-kicker">MY POCKET / READER</div>
+                  <div class="phone-profile-id">裴亦惜</div>
+                  <div class="phone-widget-status"><span></span> LOCAL PROFILE</div>
+                </div>
+                <div class="phone-avatar">裴</div>
+              </div>
+
+              <div class="phone-desktop" tabindex="-1" style="--phone-grid-origin-x:clamp(0px,max(calc(50% - 156px),calc(100% - 330px)),20px)">
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="messages"
+                  style="--phone-grid-x:0px;--phone-grid-y:36px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#d7b2bc"><span class="phone-icon-char">信</span></span>
+                  <span class="phone-icon-label">消息</span>
+                </button>
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="forum"
+                  style="--phone-grid-x:80px;--phone-grid-y:36px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#c7a1aa"><span class="phone-icon-char">谈</span></span>
+                  <span class="phone-icon-label">论坛</span>
+                </button>
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="contacts"
+                  style="--phone-grid-x:160px;--phone-grid-y:36px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#dbc9cd"><span class="phone-icon-char">人</span></span>
+                  <span class="phone-icon-label">联系人</span>
+                </button>
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="memo"
+                  style="--phone-grid-x:240px;--phone-grid-y:36px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#f0e3e5"><span class="phone-icon-char">记</span></span>
+                  <span class="phone-icon-label">备忘录</span>
+                </button>
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="gallery"
+                  style="--phone-grid-x:0px;--phone-grid-y:131px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#d5adb7"><span class="phone-icon-char">图</span></span>
+                  <span class="phone-icon-label">相册</span>
+                </button>
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="browser"
+                  style="--phone-grid-x:80px;--phone-grid-y:131px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#d9c6cb"><span class="phone-icon-char">览</span></span>
+                  <span class="phone-icon-label">浏览器</span>
+                </button>
+                <button
+                  type="button"
+                  class="phone-app-icon"
+                  data-app-type="shopping"
+                  style="--phone-grid-x:160px;--phone-grid-y:131px;border:none!important;box-shadow:none!important"
+                >
+                  <span class="phone-icon-body icon-shadow" style="background:#caa0aa"><span class="phone-icon-char">购</span></span>
+                  <span class="phone-icon-label">购物</span>
+                </button>
+              </div>
+
+              <div class="phone-home-bar"><div class="phone-home-indicator"></div></div>
+            </div>
+
+            <div class="phone-panel character-access-demo-panel" data-phone-panel="access">
+              <div class="cu-panel cu-panel-embedded character-access-panel" data-author-only>
+                <header class="cu-header character-access-header">
+                  <button type="button" class="cu-close-btn" data-phone-back aria-label="返回小手机桌面">←</button>
+                  <strong class="cu-title" data-access-title>备忘录 · 接入设置</strong>
+                  <span class="character-access-header-spacer" aria-hidden="true"></span>
+                </header>
+                <div class="cu-body character-access-body">
+                  <div class="character-access-intro">
+                    <span>ROLE SOURCE / AUTHOR</span>
+                    <strong>这次接入谁的手机？</strong>
+                    <p>指定角色后，读者打开 App 会先确认，再进入对应内容。</p>
+                  </div>
+                  <div class="character-access-list" role="group" aria-label="选择接入角色">
+                    <button type="button" class="character-access-option selected" data-access-contact="顾逢川" data-access-avatar="顾" aria-pressed="true">
+                      <span class="character-access-avatar">顾</span>
+                      <span class="character-access-copy"><strong>顾逢川</strong><small>2 条内容 · 当前接入对象</small></span>
+                      <span class="character-access-check" aria-hidden="true">✓</span>
+                    </button>
+                    <button type="button" class="character-access-option" data-access-contact="林晚" data-access-avatar="林" aria-pressed="false">
+                      <span class="character-access-avatar">林</span>
+                      <span class="character-access-copy"><strong>林晚</strong><small>2 条内容 · 可设为接入对象</small></span>
+                      <span class="character-access-check" aria-hidden="true">→</span>
+                    </button>
+                    <button type="button" class="character-access-option" data-access-contact="裴亦惜" data-access-avatar="裴" aria-pressed="false">
+                      <span class="character-access-avatar">裴</span>
+                      <span class="character-access-copy"><strong>裴亦惜</strong><small>1 条内容 · 可设为接入对象</small></span>
+                      <span class="character-access-check" aria-hidden="true">→</span>
+                    </button>
+                  </div>
+                  <label class="character-access-prompt">
+                    <span>接入前剧情提示</span>
+                    <textarea data-access-prompt maxlength="160" placeholder="例如：这段信号似乎来自刚才在车站遇见的人。">天台附近捕捉到一段来自对方设备的信号。</textarea>
+                    <small>读者确认前会先看到这句话。</small>
+                  </label>
+                  <div class="character-access-actions">
+                    <button type="button" data-phone-back>暂时不设置</button>
+                    <button type="button" data-access-continue>保存并编辑内容</button>
+                  </div>
+                </div>
+              </div>
+
+              <section class="rd-connection-gate" aria-label="确认接入角色手机" data-reader-only>
+                <div class="rd-connection-status"><span>UNKNOWN LINK</span><span><span data-connection-app-label>备忘录</span> / WAITING</span></div>
+                <div class="rd-connection-card">
+                  <div class="rd-connection-device">
+                    <span class="rd-connection-avatar" data-connection-avatar>顾</span>
+                    <span><strong data-connection-device-name>顾逢川的手机</strong><small>来源已由剧情指定</small></span>
+                  </div>
+                  <div class="rd-connection-prompt" data-connection-prompt>天台附近捕捉到一段来自对方设备的信号。</div>
+                  <p data-connection-description>设备中包含一组可查看的备忘记录。<br>对方似乎没有察觉这次连接。</p>
+                  <div class="rd-connection-actions">
+                    <button type="button" class="rd-connection-action" data-connection-cancel>暂时不要</button>
+                    <button type="button" class="rd-connection-action primary" data-connection-confirm>接入看看</button>
+                  </div>
+                </div>
+                <div class="rd-connection-footer"><span>× DISCONNECT</span><span>✓ CONNECT</span></div>
+              </section>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="messages">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title">消息</strong>
+                <span class="cu-header-spacer" aria-hidden="true"></span>
+              </header>
+              <div class="cu-body message-list-body" data-message-section-root></div>
+              <nav class="shop-tabs messages-tabs" role="tablist" aria-label="消息内容">
+                <button class="shop-tab active" type="button" role="tab" aria-selected="true" data-message-tab="chats">消息</button>
+                <button class="shop-tab" type="button" role="tab" aria-selected="false" data-message-tab="contacts">联系人</button>
+                <button class="shop-tab" type="button" role="tab" aria-selected="false" data-message-tab="moments">动态</button>
+              </nav>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="chat">
+              <header class="cu-header" data-reader-only>
+                <button class="cu-close-btn" type="button" data-view-target="messages" aria-label="返回消息列表">←</button>
+                <strong class="cu-title">顾逢川</strong>
+                <span class="cu-header-spacer"></span>
+              </header>
+              <div class="cu-body chat-panel-flex chat-author-shell">
+                <div class="chat-author-status" data-author-only><span>AUTHOR EDIT</span><span class="chat-save-state">已保存</span></div>
+                <div class="chat-round-header" data-author-only>
+                  <button class="chat-round-control" type="button" data-view-target="messages" aria-label="返回消息列表">‹</button>
+                  <div class="chat-round-title"><strong>顾逢川</strong><span>· 第 1 轮</span></div>
+                  <button class="chat-round-control" type="button">→</button>
+                </div>
+                <div class="chat-msg-area" data-chat-log>
+                  <div class="chat-time-stamp">今天 20:41</div>
+                  <div class="chat-msg other"><div class="chat-avatar" style="background:#7b5963">顾</div><div class="chat-bubble">我到天台了，你慢慢来。</div></div>
+                  <div class="chat-msg self"><div class="chat-bubble">风是不是很大？</div></div>
+                  <div class="chat-msg other"><div class="chat-avatar" style="background:#7b5963">顾</div><div class="chat-bubble">还好。我带了热饮，也替你拿了外套。</div></div>
+                </div>
+                <div class="chat-choices reader-chat-choice-panel" data-reader-chat-choice-panel data-reader-only hidden>
+                    <button class="chat-choice-btn" type="button" data-reader-chat-choice="我马上到。">我马上到。</button>
+                    <button class="chat-choice-btn" type="button" data-reader-chat-choice="你先进去等我吧。">你先进去等我吧。</button>
+                </div>
+                <div class="chat-input-bar chat-composer reader-chat-composer" data-reader-chat-composer data-reader-only>
+                  <input type="text" readonly aria-label="选择一条回复" placeholder="点击选择回复…" data-reader-chat-input>
+                  <button class="chat-send-btn" type="button" aria-label="打开回复选项" data-reader-chat-toggle>▶</button>
+                </div>
+                <div class="chat-author-controls" data-author-only>
+                  <div class="chat-speaker-strip"><button class="chat-speaker-btn active" type="button">顾逢川</button><button class="chat-speaker-btn" type="button">读者</button><button class="chat-speaker-btn add" type="button">＋</button></div>
+                  <div class="chat-input-bar chat-composer"><button id="chatPlusBtn" type="button">＋</button><input id="chatInput" placeholder="输入消息"><button id="chatSendBtn" type="button">发送</button></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="forum">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title">帖子详情</strong>
+                <button class="cu-close-btn" type="button" data-author-only aria-label="帖子设置">≡</button>
+                <span class="cu-header-spacer" data-reader-only></span>
+              </header>
+
+              <div class="cu-body forum-demo-body">
+                <article class="forum-post-full">
+                  <div class="forum-post-head">
+                    <div class="forum-post-avatar" style="background:#b88794">裴</div>
+                    <div class="forum-post-by">
+                      <div class="forum-post-author">裴亦惜 <span class="forum-badge-op">楼主</span></div>
+                      <div class="forum-post-time">今晚 20:32</div>
+                    </div>
+                    <button class="forum-post-action-button" type="button" data-author-only aria-label="帖子操作">×</button>
+                  </div>
+                  <h2 class="forum-post-title">今晚有人看流星吗</h2>
+                  <p class="forum-post-content">天气预报说十点以后云会散。如果有人也去天台，记得多带一件外套。</p>
+                  <div class="forum-post-actions"><span>评论 2</span><span>赞 26</span></div>
+                </article>
+
+                <div class="forum-comments-title">评论 (2)</div>
+
+                <article class="forum-comment" data-forum-comment-id="comment-gu" tabindex="0">
+                  <div class="forum-comment-row">
+                    <div class="forum-comment-avatar" style="background:#7b5963">顾</div>
+                    <div class="forum-comment-body">
+                      <div class="forum-comment-by">
+                        <span class="forum-comment-name">顾逢川</span>
+                        <span class="forum-comment-floor">2楼</span>
+                      </div>
+                      <div class="forum-comment-content">我会去。天台风大，记得带件外套。</div>
+                      <div class="forum-comment-footer">
+                        <div class="forum-comment-context">
+                          <button class="forum-comment-time forum-comment-time-button" type="button" data-author-control>3分钟前</button>
+                          <button class="forum-reply-hint reader-reply-button" type="button" data-reader-only>回复</button>
+                        </div>
+                        <div class="forum-comment-utilities">
+                          <button class="forum-comment-like-author" type="button" data-author-only aria-label="编辑点赞数"><span class="forum-like-heart">♡</span><span>12</span></button>
+                          <button class="forum-comment-like-author" type="button" data-reader-only data-reader-like aria-pressed="false" aria-label="点赞"><span class="forum-like-heart">♡</span><span data-like-count>12</span></button>
+                          <button class="forum-comment-action-button" type="button" data-author-only aria-label="评论操作"><span>×</span></button>
+                        </div>
+                      </div>
+
+                      <div class="forum-replies">
+                        <article class="forum-reply-item" data-forum-comment-id="reply-pei" data-parent-id="comment-gu" tabindex="0">
+                          <div class="forum-reply-line">
+                            <div class="forum-reply-avatar" style="background:#b88794">裴</div>
+                            <div class="forum-reply-copy">
+                              <div class="forum-reply-meta">
+                                <span class="forum-reply-name">裴亦惜</span>
+                                <span class="forum-reply-relation">回复</span>
+                                <span class="forum-reply-target">顾逢川</span>
+                              </div>
+                              <div class="forum-reply-content">好，我会带上。你到了告诉我。</div>
+                              <div class="forum-comment-footer">
+                                <div class="forum-comment-context">
+                                  <button class="forum-comment-time forum-comment-time-button" type="button" data-author-control>刚刚</button>
+                                  <button class="forum-reply-hint reader-reply-button" type="button" data-reader-only>回复</button>
+                                </div>
+                                <div class="forum-comment-utilities">
+                                  <button class="forum-comment-like-author" type="button" data-author-only aria-label="编辑点赞数"><span class="forum-like-heart">♡</span><span>3</span></button>
+                                  <button class="forum-comment-like-author" type="button" data-reader-only data-reader-like aria-pressed="false" aria-label="点赞"><span class="forum-like-heart">♡</span><span data-like-count>3</span></button>
+                                  <button class="forum-comment-action-button" type="button" data-author-only aria-label="回复操作"><span>×</span></button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="forum-comment" data-forum-comment-id="comment-lin" tabindex="0">
+                  <div class="forum-comment-row">
+                    <div class="forum-comment-avatar" style="background:#9b7d86">林</div>
+                    <div class="forum-comment-body">
+                      <div class="forum-comment-by"><span class="forum-comment-name">林晚</span><span class="forum-comment-floor">3楼</span></div>
+                      <div class="forum-comment-content">我带相机，十点在楼梯口见。</div>
+                      <div class="forum-comment-footer">
+                        <div class="forum-comment-context"><span class="forum-comment-time">1分钟前</span><button class="forum-reply-hint reader-reply-button" type="button" data-reader-only>回复</button></div>
+                        <div class="forum-comment-utilities">
+                          <button class="forum-comment-like-author" type="button" data-author-only><span class="forum-like-heart">♡</span><span>8</span></button>
+                          <button class="forum-comment-like-author" type="button" data-reader-only data-reader-like aria-pressed="false"><span class="forum-like-heart">♡</span><span data-like-count>8</span></button>
+                          <button class="forum-comment-action-button" type="button" data-author-only><span>×</span></button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="contacts">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title">联系人</strong>
+                <button class="cu-close-btn" type="button" data-author-only aria-label="新增联系人">＋</button>
+                <span class="cu-header-spacer" data-reader-only></span>
+              </header>
+              <div class="cu-body">
+                <div class="ct-list" data-contact-book>
+                  <div class="ct-head">
+                    <label class="ct-search">
+                      <span class="sr-only">搜索联系人</span>
+                      <input class="form-input" type="search" placeholder="搜索联系人" data-reader-contact-search>
+                      <span class="ct-search-status" aria-live="polite"></span>
+                    </label>
+                    <select class="ct-sort" data-author-only aria-label="联系人排序"><option>自定义</option><option>A–Z</option></select>
+                    <span class="ct-count" data-reader-contact-count aria-live="polite">3 人</span>
+                  </div>
+                  <div data-contact-list></div>
+                  <div class="ct-search-empty" data-reader-contact-empty hidden>没有匹配的联系人</div>
+                  <div class="ct-add-bar" data-author-only><input class="ct-add-input" placeholder="联系人姓名"><button class="ct-add-btn" type="button">添加</button></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="memo">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title" data-scoped-app-title>顾逢川 · 备忘录</strong>
+                <button class="cu-close-btn" type="button" data-author-only aria-label="新建备忘录">＋</button>
+                <span class="cu-header-spacer" data-reader-only></span>
+              </header>
+              <div class="memo-toolbar" data-author-only>
+                <button type="button">☐ 清单</button><button type="button">1. 序号</button><span class="tb-divider"></span><button type="button">加粗</button>
+              </div>
+              <div class="cu-body">
+                <article class="memo-card" style="--memo-accent:#b88794">
+                  <div class="memo-card-inner">
+                    <div class="memo-editor" contenteditable="false" data-reader-editable>
+                      <div class="check-line"><span class="check-dot">✓</span><span class="line-text">带外套</span></div>
+                      <div class="check-line"><span class="check-dot">✓</span><span class="line-text">给相机充电</span></div>
+                      <div class="check-line"><span class="check-dot"></span><span class="line-text">把那封信交给顾逢川</span></div>
+                    </div>
+                    <div class="memo-card-foot"><input class="memo-time-input" value="今天 19:26" data-author-control><span class="memo-time-reader" data-reader-only>今天 19:26</span><button type="button" data-author-only>× 删除</button></div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="gallery">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title" data-scoped-app-title>顾逢川 · 相册</strong>
+                <button class="cu-close-btn" type="button" data-author-only aria-label="添加照片">＋</button>
+                <span class="cu-header-spacer" data-reader-only></span>
+              </header>
+              <div class="cu-body">
+                <div class="gallery-bar"><span class="gallery-bar-title">最近项目 (6)</span></div>
+                <div class="gallery-grid">
+                  <button class="gallery-photo-card" type="button" data-reader-photo aria-pressed="false"><span class="gallery-photo-placeholder gallery-demo-one"><span class="gallery-photo-text">天台晚霞</span></span><span class="gallery-photo-cap">今晚</span><span class="gallery-photo-edit" data-author-only>编辑</span><span class="gallery-photo-del" data-author-only>×</span></button>
+                  <button class="gallery-photo-card" type="button" data-reader-photo aria-pressed="false"><span class="gallery-photo-placeholder gallery-demo-two"><span class="gallery-photo-text">蓝丝带</span></span><span class="gallery-photo-cap">昨天</span><span class="gallery-photo-edit" data-author-only>编辑</span><span class="gallery-photo-del" data-author-only>×</span></button>
+                  <button class="gallery-photo-card" type="button" data-reader-photo aria-pressed="false"><span class="gallery-photo-placeholder gallery-demo-three"><span class="gallery-photo-text">薄荷苏打</span></span><span class="gallery-photo-cap">7 月 20 日</span><span class="gallery-photo-edit" data-author-only>编辑</span><span class="gallery-photo-del" data-author-only>×</span></button>
+                  <button class="gallery-photo-card" type="button" data-reader-photo aria-pressed="false"><span class="gallery-photo-placeholder"><span class="gallery-photo-text">夜空</span></span><span class="gallery-photo-cap">7 月 18 日</span></button>
+                  <button class="gallery-photo-card" type="button" data-reader-photo aria-pressed="false"><span class="gallery-photo-placeholder"><span class="gallery-photo-text">相机</span></span><span class="gallery-photo-cap">7 月 17 日</span></button>
+                  <button class="gallery-photo-card" type="button" data-reader-photo aria-pressed="false"><span class="gallery-photo-placeholder"><span class="gallery-photo-text">来信</span></span><span class="gallery-photo-cap">7 月 12 日</span></button>
+                </div>
+              </div>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="browser">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title" data-scoped-app-title>顾逢川 · 浏览记录</strong>
+                <button class="cu-close-btn" type="button" data-author-only aria-label="新增记录">＋</button>
+                <span class="cu-header-spacer" data-reader-only></span>
+              </header>
+              <div class="browser-search-bar">
+                <span class="browser-search-icon">⌕</span>
+                <span class="browser-search-placeholder">搜索或输入网址</span>
+              </div>
+              <div class="cu-body browser-demo-body">
+                <div class="browser-row" data-reader-toast="打开：今晚观星天气">
+                  <span class="browser-dot" style="background:#b88794"></span>
+                  <span class="browser-info"><input class="browser-title" value="今晚观星天气" data-author-control><input class="browser-url" value="weather.local/tonight" data-author-control></span>
+                  <span class="browser-right"><input class="browser-time browser-time-input" value="20:14" data-author-control aria-label="浏览记录日期与时间"><button class="browser-del" type="button" data-author-only>×</button></span>
+                </div>
+                <div class="browser-row" data-reader-toast="打开：夏季大三角">
+                  <span class="browser-dot" style="background:#7b5963"></span>
+                  <span class="browser-info"><input class="browser-title" value="夏季大三角" data-author-control><input class="browser-url" value="stars.local/guide" data-author-control></span>
+                  <span class="browser-right"><input class="browser-time browser-time-input" value="昨天" data-author-control aria-label="浏览记录日期与时间"><button class="browser-del" type="button" data-author-only>×</button></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="phone-panel cu-panel cu-panel-embedded" data-phone-panel="shopping">
+              <header class="cu-header">
+                <button class="cu-close-btn" type="button" data-phone-back aria-label="返回小手机桌面">←</button>
+                <strong class="cu-title" data-scoped-app-title>顾逢川 · 购物清单</strong>
+                <button class="cu-close-btn" type="button" data-author-only aria-label="新增商品">＋</button>
+                <span class="cu-header-spacer" data-reader-only></span>
+              </header>
+              <div class="shop-tabs"><button class="shop-tab active" type="button">购物车</button><button class="shop-tab" type="button">我的订单</button></div>
+              <div class="shop-body-inner">
+                <div class="shop-list-area">
+                  <div class="shop-group">
+                    <div class="shop-group-head">星光便利店 (2)</div>
+                    <article class="shop-card-block">
+                      <div class="shop-card-row">
+                        <div class="shop-card-img"><div class="shop-card-img-placeholder">杯</div></div>
+                        <div class="shop-card-info"><div class="shop-card-name">便携保温杯</div><div class="shop-card-price">¥69</div><div class="shop-card-meta">雾粉 · 420ml</div></div>
+                        <button class="shop-circle" type="button" role="checkbox" aria-checked="false" data-shop-toggle aria-label="选择便携保温杯"></button>
+                      </div>
+                    </article>
+                    <article class="shop-card-block">
+                      <div class="shop-card-row">
+                        <div class="shop-card-img"><div class="shop-card-img-placeholder">暖</div></div>
+                        <div class="shop-card-info"><div class="shop-card-name">夜间暖手贴</div><div class="shop-card-price">¥12.8</div><div class="shop-card-meta">8 小时恒温 · 5 片</div></div>
+                        <button class="shop-circle" type="button" role="checkbox" aria-checked="false" data-shop-toggle aria-label="选择夜间暖手贴"></button>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+                <div class="shop-bottom-bar"><button class="shop-sel-all" type="button" data-reader-toast="可全选购物车商品"><span class="shop-circle"></span>全选</button><button class="shop-checkout" type="button" data-reader-toast="结算属于作品内交互">结算 ¥0</button></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <div class="demo-toast" role="status" aria-live="polite" hidden></div>
+  </main>
+
+  <script src="./demo.js"></script>
+</body>
+</html>

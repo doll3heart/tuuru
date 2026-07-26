@@ -65,13 +65,13 @@ test("reader disables a dangling article choice instead of silently restarting",
   assert.equal(choices[0].disabled, false)
   assert.equal(choices[1].disabled, true)
   assert.match(choices[1].textContent, /去向已失效/)
-  assert.equal(document.querySelector(".article-title").textContent, "Start")
+  assert.equal(document.querySelector(".article-title").textContent, "")
 
   choices[1].click()
-  assert.equal(document.querySelector(".article-title").textContent, "Start")
+  assert.equal(document.querySelector(".article-title").textContent, "")
 
   choices[0].click()
-  assert.equal(document.querySelector(".article-title").textContent, "Start")
+  assert.equal(document.querySelector(".article-title").textContent, "")
   assert.equal(document.querySelectorAll(".article-node").length, 2)
   assert.match(document.querySelector(".article-reader").textContent, /Opening[\s\S]*Done/)
   assert.equal(document.querySelector('.article-choice-btn[data-target="ending"]').getAttribute("aria-pressed"), "true")

@@ -1,6 +1,6 @@
 export const ARTICLE_EDITOR_MOBILE_QUERY = "(max-width: 480px), (max-height: 480px) and (pointer: coarse)"
 
-const VALID_PANES = new Set(["editor", "outline"])
+const VALID_PANES = new Set(["editor", "notes", "outline"])
 
 export function applyEditorMobilePane(root, pane) {
   if (!root || !VALID_PANES.has(pane) || typeof root.querySelectorAll !== "function") {

@@ -208,6 +208,24 @@ test("outline creation controls are named and touch-safe", () => {
   assert.match(boundedButton, /min-height\s*:\s*44px/)
 })
 
+test("desktop reuses the resizable right panel for structure and private settings", () => {
+  const root = render()
+  const sidePanel = root.querySelector(".world-tree")
+  const tabs = [...sidePanel.querySelectorAll(':scope > .editor-side-tabs [data-a="side-pane"]')]
+
+  assert.deepEqual(tabs.map(tab => tab.textContent.trim()), ["结构", "设定"])
+  assert.equal(tabs[0].getAttribute("aria-pressed"), "true")
+  assert.equal(tabs[1].getAttribute("aria-controls"), "articleNotesPane")
+  assert.ok(sidePanel.querySelector("#articleOutlinePane"))
+  assert.ok(sidePanel.querySelector("#articleNotesPane"))
+
+  tabs[1].click()
+  assert.equal(sidePanel.dataset.sidePane, "notes")
+  assert.equal(sidePanel.querySelector("#articleOutlinePane").hidden, true)
+  assert.equal(sidePanel.querySelector("#articleNotesPane").hidden, false)
+  assert.equal(tabs[1].getAttribute("aria-pressed"), "true")
+})
+
 test("chapter disclosure controls one container for nodes and choices", () => {
   const root = render()
   const chapter = root.querySelector(".wt-chapter")
@@ -251,6 +269,34 @@ test("chapter disclosure controls one container for nodes and choices", () => {
   assert.equal(localStorage.getItem("tuuru_works"), before)
 
   assert.doesNotMatch(editorSource, /<div class="wt-chapter-title" data-a="ts"/)
+})
+
+test("last node, chapter state, and jump-list state survive leaving the work", () => {
+  const otherWork = JSON.parse(JSON.stringify(work))
+  otherWork.id = "outline-state-other"
+  localStorage.removeItem("tuuru_article_editor_view")
+  localStorage.setItem("tuuru_works", JSON.stringify({ works: [work, otherWork], contacts: [], groups: [] }))
+
+  let root = render()
+  root.querySelector('.wt-node-select[data-n="node-b"]').click()
+  root = document.getElementById("app")
+  const choiceToggle = root.querySelector('.wt-choice-toggle[data-n="node-a"]')
+  const chapterToggle = root.querySelector(".wt-chapter-toggle")
+  choiceToggle.click()
+  chapterToggle.click()
+
+  root.innerHTML = renderEditor(otherWork.id)
+  root.innerHTML = renderEditor(work.id)
+
+  assert.ok(root.querySelector("#ce_node-b"))
+  assert.equal(root.querySelector(".wt-chapter-toggle").getAttribute("aria-expanded"), "false")
+  assert.equal(root.querySelector(".wt-chapter-content").hidden, true)
+  assert.equal(root.querySelector('.wt-choice-toggle[data-n="node-a"]').getAttribute("aria-expanded"), "false")
+  assert.equal(root.querySelector(".wt-choice-list").hidden, true)
+
+  localStorage.removeItem("tuuru_article_editor_view")
+  localStorage.setItem("tuuru_works", JSON.stringify({ works: [work], contacts: [], groups: [] }))
+  render()
 })
 
 test("chapter disclosure has visible focus and a bounded coarse-pointer target", () => {
@@ -323,7 +369,7 @@ test("outline actions expose one named disclosure and one sibling panel per item
   const chapterButtons = [...chapterRows[0].querySelectorAll(":scope > .chapter-actions > button")]
   assert.deepEqual(
     chapterButtons.map(button => button.dataset.a),
-    ["chapter-add-node", "chapter-rename", "chapter-delete"],
+    ["chapter-add-node", "chapter-add-conditional", "chapter-add-interactive", "chapter-rename", "chapter-delete"],
   )
   for (const button of chapterButtons) {
     assert.equal(button.type, "button")

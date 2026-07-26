@@ -238,7 +238,7 @@ test("the pure builder reproduces article defaults from only prepared values", (
     content: "",
     choices: [],
     scene: "scene-a",
-    chapterId: "",
+    chapterId: "chapter-a",
   }])
   assert.equal(first.startNode, "start")
   assert.deepEqual(first.phoneModules, [])
