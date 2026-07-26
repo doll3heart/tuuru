@@ -142,7 +142,7 @@ test("current article and phone exports have identical JSON and PNG reader seman
       assert.deepEqual(conditionalNode.displayCondition, {
         all: [{ anyChoiceIds:["choice-remember"] }, { anyChoiceIds:["choice-react"] }],
       })
-      assert.equal(sourceNode.choices[1].selectedText, "第一行\n第二行")
+      assert.equal(sourceNode.interactionGroups[0].choices[0].selectedText, "第一行\n第二行")
       assert.equal(jsonWork.interactiveScenes[0].stages[0].hotspots[0].trigger, "face-near")
       assert.equal(jsonWork.interactiveScenes[0].stages[0].image, "https://example.test/hand.gif")
     }

@@ -71,7 +71,10 @@ const { renderEditor } = await import("../js/pages/editor.js")
 function render(choices = null) {
   document.querySelectorAll(".modal-overlay").forEach(overlay => overlay.remove())
   const snapshot = structuredClone(work)
-  if (choices) snapshot.nodes[0].choices = choices
+  if (choices) {
+    snapshot.schemaVersion = 4
+    snapshot.nodes[0].choices = choices
+  }
   localStorage.setItem("tuuru_works", JSON.stringify({ works: [snapshot], contacts: [], groups: [] }))
   document.getElementById("app").innerHTML = renderEditor(work.id)
   return document.getElementById("app")

@@ -66,7 +66,7 @@ const baseWork = {
 }
 
 localStorage.setItem("tuuru_works", JSON.stringify({ works: [baseWork], contacts: [], groups: [] }))
-const { getWork, deleteChoice } = await import("../js/data.js")
+const { getWork, updateWork } = await import("../js/data.js")
 const { renderEditor } = await import("../js/pages/editor.js")
 
 function render() {
@@ -131,7 +131,18 @@ test("condition editor saves AND-of-OR stable choice ids and warns on deleted re
   })
   assert.match(document.querySelector(`.wt-node[data-node-id="${created.id}"]`).textContent, /且/)
 
-  deleteChoice(baseWork.id, "source", "choice-refuse")
+  const current = getWork(baseWork.id)
+  updateWork(baseWork.id, {
+    nodes:current.nodes.map(node => node.id === "source"
+      ? {
+          ...node,
+          interactionGroups:node.interactionGroups.map(group => ({
+            ...group,
+            choices:group.choices.filter(choice => choice.id !== "choice-refuse"),
+          })),
+        }
+      : node),
+  })
   render()
   document.querySelector('[data-a="edit-display-condition"]').click()
   panel = document.querySelector(".condition-panel")

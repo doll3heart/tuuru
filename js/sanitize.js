@@ -5,7 +5,8 @@ const ALLOWED_TAGS = [
   "p", "div", "br", "b", "strong", "i", "em", "u", "span", "img", "button", "small",
 ]
 const ALLOWED_ATTRIBUTES = [
-  "class", "style", "src", "alt", "title", "align", "type", "data-pm-id", "data-pm-type", "data-is-id",
+  "class", "style", "src", "alt", "title", "align", "type", "contenteditable",
+  "data-pm-id", "data-pm-type", "data-is-id", "data-article-interaction-group",
 ]
 const ALIGNMENTS = new Set(["left", "center", "right", "justify"])
 const PHONE_MODULE_TYPES = new Set([
@@ -23,6 +24,7 @@ const ARTICLE_CLASSES = new Map([
   ["interactive-scene-card-actions", "SPAN"],
   ["interactive-scene-card-edit", "BUTTON"],
   ["interactive-scene-card-delete", "BUTTON"],
+  ["article-interaction-anchor", "DIV"],
 ])
 const MEMO_CLASSES = new Map([
   ["check-line", "DIV"],
@@ -122,6 +124,20 @@ function cleanElementPolicy(element, profile) {
     }
   } else {
     element.removeAttribute("data-is-id")
+  }
+
+  if (element.classList.contains("article-interaction-anchor")) {
+    const id = element.getAttribute("data-article-interaction-group") || ""
+    const validId = /^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(id)
+    if (!validId || element.getAttribute("contenteditable") !== "false") {
+      element.classList.remove("article-interaction-anchor")
+      if (!element.classList.length) element.removeAttribute("class")
+      element.removeAttribute("data-article-interaction-group")
+      element.removeAttribute("contenteditable")
+    }
+  } else {
+    element.removeAttribute("data-article-interaction-group")
+    element.removeAttribute("contenteditable")
   }
 }
 

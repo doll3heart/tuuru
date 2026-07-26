@@ -211,3 +211,67 @@ test("article inspection blocks missing and invalid interactive-picture continua
   })
   assert.equal(valid.issues.some(issue => issue.code.startsWith("interactive-scene-next-node-")), false)
 })
+
+test("article inspection accepts placed ordinary interaction groups and their independent response text", () => {
+  const report = inspectWorkBeforePublish({
+    schemaVersion:4,
+    id:"article-inline-interactions",
+    type:"article",
+    title:"正文普通互动",
+    chapters:[{ id:"chapter", name:"第一章" }],
+    nodes:[{
+      id:"start",
+      chapterId:"chapter",
+      title:"开始",
+      content:'<p>正文前段</p><div class="article-interaction-anchor" data-article-interaction-group="group-1" contenteditable="false"></div><p>正文后段</p>',
+      interactionGroups:[{
+        id:"group-1",
+        label:"要怎么回应？",
+        choices:[
+          { id:"group-1-a", text:"点头", selectedText:"你轻轻点头。\n她笑了。" },
+          { id:"group-1-b", text:"摇头", selectedText:"你摇了摇头。" },
+        ],
+      }],
+      choices:[],
+    }],
+    placeholders:[],
+    phoneModules:[],
+  })
+
+  assert.deepEqual(report.counts, { error:0, warning:0 })
+})
+
+test("article inspection reports unplaced, duplicated, undersized, and orphaned ordinary interactions", () => {
+  const report = inspectWorkBeforePublish({
+    schemaVersion:4,
+    id:"article-broken-inline-interactions",
+    type:"article",
+    title:"异常普通互动",
+    chapters:[{ id:"chapter", name:"第一章" }],
+    nodes:[{
+      id:"start",
+      chapterId:"chapter",
+      title:"开始",
+      content:'<p>正文</p><div class="article-interaction-anchor" data-article-interaction-group="orphan" contenteditable="false"></div>',
+      interactionGroups:[{
+        id:"group-1",
+        label:"",
+        choices:[{ id:"only-choice", text:"", selectedText:"" }],
+      }],
+      choices:[],
+    }],
+    placeholders:[],
+    phoneModules:[],
+  })
+
+  assert.deepEqual(
+    report.issues.map(issue => issue.code),
+    [
+      "article-interaction-group-marker-missing",
+      "article-interaction-group-too-small",
+      "article-interaction-choice-text-empty",
+      "article-interaction-marker-orphaned",
+    ],
+  )
+  assert.deepEqual(report.counts, { error:3, warning:1 })
+})

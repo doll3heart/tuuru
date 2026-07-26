@@ -30,6 +30,12 @@ import {
   interactiveSceneForNode,
   isInteractiveSceneNode,
 } from "../interactive-scene-node.js"
+import {
+  ARTICLE_INTERACTION_MARKER_CLASS,
+  articleInteractionMarkerHTML,
+  articleInteractionMarkerIds,
+  reconcileArticleInteractionGroup,
+} from "../article-interaction-group-model.js"
 
 // State
 var _workId = null
@@ -41,6 +47,7 @@ var _phoneModuleDragController = null
 var _nodeDragController = null
 var _articleTargetPick = null
 var _articleTargetInspect = null
+var _movingInteractionGroup = null
 var _splitPaneController = null
 var _editorPersistence = createEditorPersistenceBuffer()
 var FORMAT_COMMANDS = { bold:'bold', italic:'italic', underline:'underline', left:'justifyLeft', center:'justifyCenter', right:'justifyRight' }
@@ -290,7 +297,10 @@ function buildMobileCommandbar(wid, nid) {
   h += '<div class="editor-mobile-tool-head"><strong>插入内容</strong><button type="button" data-a="mobile-tools-close" data-panel="insert">完成</button></div>'
   h += '<div class="editor-mobile-insert-grid">'
   h += '<button type="button" data-a="ph" data-w="' + wid + '"><span aria-hidden="true">{}</span><span>占位符</span></button>'
-  if (!conditional) h += '<button type="button" data-a="ch" data-w="' + wid + '"><span aria-hidden="true">⇄</span><span>选项</span></button>'
+  if (!conditional) {
+    h += '<button type="button" data-a="ig" data-w="' + wid + '"><span aria-hidden="true">◇</span><span>普通互动</span></button>'
+    h += '<button type="button" data-a="ch" data-w="' + wid + '"><span aria-hidden="true">⇄</span><span>剧情分支</span></button>'
+  }
   h += '<button type="button" data-a="im"><span aria-hidden="true">＋</span><span>图片</span></button>'
   if (!conditional) h += '<button type="button" data-a="is"><span aria-hidden="true">◎</span><span>互动页</span></button>'
   h += '<button type="button" data-a="pa-msg" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.messages.icon + '</span><span>消息</span></button>'
@@ -405,7 +415,10 @@ function buildIconbar(wid, nid) {
   var conditional = articleNodeIsConditional(node)
   var h = '<div class="editor-iconbar">'
   h += '<button type="button" data-a="ph" data-w="' + wid + '" title="占位符" aria-label="插入占位符">{}</button>'
-  if (!conditional) h += '<button type="button" data-a="ch" data-w="' + wid + '" title="选项" aria-label="编辑选项">⇄</button>'
+  if (!conditional) {
+    h += '<button type="button" data-a="ig" data-w="' + wid + '" title="普通互动" aria-label="在正文中插入普通互动">◇</button>'
+    h += '<button type="button" data-a="ch" data-w="' + wid + '" title="剧情分支" aria-label="编辑末尾剧情分支">⇄</button>'
+  }
   h += '<div class="divider"></div>'
   h += '<button type="button" data-a="im" title="图片" aria-label="插入图片">+</button>'
   if (!conditional) h += '<button type="button" data-a="is" title="互动页" aria-label="在本章添加互动页">◎</button>'
@@ -613,8 +626,21 @@ function buildContent(n) {
     style += 'text-indent:2em;'
   }
   var hasChoices = !articleNodeIsConditional(n) && (n.choices || []).length > 0
+  var groups = articleNodeIsConditional(n) ? [] : (n.interactionGroups || [])
+  var markerIds = articleInteractionMarkerIds(n.content || '')
+  var placedGroupIds = new Set(markerIds)
+  var editorContent = buildInteractionEditorContent(n.content || '', groups)
   var h = '<div class="editor-content' + (hasChoices ? ' has-choices' : '') + '">'
-  h += '<div class="content-editable" id="ce_' + n.id + '" contenteditable="true" data-a="ce" data-n="' + n.id + '" style="' + esc(style) + '">' + (n.content || '') + '</div>'
+  h += '<div class="content-editable" id="ce_' + n.id + '" contenteditable="true" data-a="ce" data-n="' + n.id + '" style="' + esc(style) + '">' + editorContent + '</div>'
+  var unplacedGroups = groups.filter(function(group) { return !placedGroupIds.has(group.id) })
+  if (unplacedGroups.length) {
+    h += '<section class="interaction-unplaced" aria-label="未放置的普通互动"><div><strong>未放置的普通互动</strong><small>内容仍已保存，可放回正文光标处。</small></div>'
+    for (var gi = 0; gi < unplacedGroups.length; gi++) {
+      var unplaced = unplacedGroups[gi]
+      h += '<div class="interaction-unplaced-row" data-unplaced-interaction-group="' + escAttr(unplaced.id) + '"><span>' + esc(unplaced.label || ('普通互动 ' + (gi + 1))) + '</span><button type="button" data-a="place-ig" data-gid="' + escAttr(unplaced.id) + '">放到光标处</button><button type="button" data-a="delete-ig" data-gid="' + escAttr(unplaced.id) + '" aria-label="删除这组普通互动">删除</button></div>'
+    }
+    h += '</section>'
+  }
   // Choice card at bottom
   if (hasChoices) {
     h += '<div class="choice-card" data-a="choice-card" data-w="' + _workId + '" data-n="' + n.id + '">'
@@ -630,6 +656,269 @@ function buildContent(n) {
   }
   h += '</div>'
   return h
+}
+
+function interactionGroupById(node, groupId) {
+  var matches = (node?.interactionGroups || []).filter(function(group) { return group?.id === groupId })
+  return matches.length === 1 ? matches[0] : null
+}
+
+function buildInteractionEditorCardHTML(group, index) {
+  var count = (group?.choices || []).length
+  var label = group?.label || ('普通互动 ' + (index + 1))
+  var h = '<div class="' + ARTICLE_INTERACTION_MARKER_CLASS + ' article-interaction-editor-card" contenteditable="false" data-article-interaction-group="' + escAttr(group.id) + '" data-interaction-group-card>'
+  h += '<span class="interaction-card-mark" aria-hidden="true">◇</span>'
+  h += '<span class="interaction-card-copy"><strong>' + esc(label) + '</strong><small>' + count + ' 个选项 · 阅读时显示在这里</small></span>'
+  h += '<span class="interaction-card-actions">'
+  h += '<button type="button" data-a="edit-ig" data-gid="' + escAttr(group.id) + '">编辑</button>'
+  h += '<button type="button" data-a="move-ig" data-gid="' + escAttr(group.id) + '">移动</button>'
+  h += '<button type="button" data-a="delete-ig" data-gid="' + escAttr(group.id) + '" aria-label="删除' + escAttr(label) + '">删除</button>'
+  h += '</span></div>'
+  return h
+}
+
+function buildInteractionEditorContent(content, groups) {
+  var template = document.createElement('template')
+  template.innerHTML = String(content || '')
+  var groupsById = new Map((groups || []).map(function(group, index) { return [group.id, {group:group, index:index}] }))
+  var seen = new Set()
+  template.content.querySelectorAll('.' + ARTICLE_INTERACTION_MARKER_CLASS).forEach(function(marker) {
+    var groupId = marker.getAttribute('data-article-interaction-group') || ''
+    var entry = groupsById.get(groupId)
+    if (!entry || seen.has(groupId)) {
+      marker.remove()
+      return
+    }
+    seen.add(groupId)
+    var holder = document.createElement('template')
+    holder.innerHTML = buildInteractionEditorCardHTML(entry.group, entry.index)
+    marker.replaceWith(holder.content.firstElementChild)
+  })
+  return template.innerHTML
+}
+
+function serializeInteractionEditorContent(editable) {
+  if (!editable) return ''
+  var clone = editable.cloneNode(true)
+  clone.querySelectorAll('.article-interaction-editor-card').forEach(function(card) {
+    var marker = document.createElement('template')
+    marker.innerHTML = articleInteractionMarkerHTML(card.dataset.articleInteractionGroup || '')
+    if (marker.content.firstElementChild) card.replaceWith(marker.content.firstElementChild)
+    else card.remove()
+  })
+  return clone.innerHTML
+}
+
+function rangeInsideEditable(editable) {
+  var selection = typeof window.getSelection === 'function' ? window.getSelection() : null
+  if (selection && selection.rangeCount > 0) {
+    var selectedRange = selection.getRangeAt(0)
+    if (editable.contains(selectedRange.commonAncestorContainer)) return {selection:selection, range:selectedRange}
+  }
+  if (!selection) return null
+  var range = document.createRange()
+  range.selectNodeContents(editable)
+  range.collapse(false)
+  selection.removeAllRanges()
+  selection.addRange(range)
+  return {selection:selection, range:range}
+}
+
+function insertInteractionCardAtRange(editable, group, groupIndex, selectedRange) {
+  var holder = document.createElement('template')
+  holder.innerHTML = buildInteractionEditorCardHTML(group, groupIndex)
+  var card = holder.content.firstElementChild
+  selectedRange.range.deleteContents()
+  selectedRange.range.insertNode(card)
+  selectedRange.range.setStartAfter(card)
+  selectedRange.range.collapse(true)
+  selectedRange.selection.removeAllRanges()
+  selectedRange.selection.addRange(selectedRange.range)
+  return card
+}
+
+function insertArticleInteractionGroup(wid, nid) {
+  var work = getWork(wid)
+  var node = getNode(wid, nid)
+  var editable = document.getElementById('ce_' + nid)
+  if (!work || !node || !editable || articleNodeIsConditional(node) || isInteractiveSceneNode(node)) return
+  var selectedRange = rangeInsideEditable(editable)
+  if (!selectedRange) {
+    showToast('请先把光标放在正文中', 'error')
+    return
+  }
+  var group = {
+    id:uid(),
+    label:'普通互动 ' + ((node.interactionGroups || []).length + 1),
+    choices:[
+      {id:uid(), text:'', selectedText:''},
+      {id:uid(), text:'', selectedText:''},
+    ],
+    legacyAdvanceOnSelect:false,
+  }
+  var groups = (node.interactionGroups || []).concat([group])
+  insertInteractionCardAtRange(editable, group, groups.length - 1, selectedRange)
+  updateNode(wid, nid, {
+    content:serializeInteractionEditorContent(editable),
+    interactionGroups:groups,
+  })
+  refreshEditor(wid)
+  openInteractionGroupPanel(wid, nid, group.id)
+}
+
+function removeInteractionMarkers(content, groupId) {
+  var template = document.createElement('template')
+  template.innerHTML = String(content || '')
+  template.content.querySelectorAll('.' + ARTICLE_INTERACTION_MARKER_CLASS).forEach(function(marker) {
+    if (marker.getAttribute('data-article-interaction-group') === groupId) marker.remove()
+  })
+  return template.innerHTML
+}
+
+function placeArticleInteractionGroupAtSelection(wid, nid, groupId) {
+  var node = getNode(wid, nid)
+  var group = interactionGroupById(node, groupId)
+  var editable = document.getElementById('ce_' + nid)
+  if (!node || !group || !editable) return
+  var selectedRange = rangeInsideEditable(editable)
+  if (!selectedRange) return
+  editable.querySelectorAll('.article-interaction-editor-card').forEach(function(card) {
+    if (card.dataset.articleInteractionGroup === groupId) card.remove()
+  })
+  insertInteractionCardAtRange(
+    editable,
+    group,
+    (node.interactionGroups || []).findIndex(function(candidate) { return candidate.id === groupId }),
+    selectedRange,
+  )
+  updateNode(wid, nid, {content:serializeInteractionEditorContent(editable)})
+  refreshEditor(wid)
+  showToast('普通互动已移动')
+}
+
+function deleteArticleInteractionGroup(wid, nid, groupId) {
+  var node = getNode(wid, nid)
+  var group = interactionGroupById(node, groupId)
+  if (!node || !group) return
+  showConfirm('删除普通互动', '确定删除“' + (group.label || '这组普通互动') + '”？选项记忆条件也会失效。', function() {
+    updateNode(wid, nid, {
+      content:removeInteractionMarkers(node.content, groupId),
+      interactionGroups:(node.interactionGroups || []).filter(function(candidate) { return candidate.id !== groupId }),
+    })
+    refreshEditor(wid)
+    showToast('普通互动已删除')
+  })
+}
+
+function interactionChoiceRowHTML(choice, index) {
+  var h = '<div class="interaction-group-choice-row" data-choice-id="' + escAttr(choice?.id || '') + '">'
+  h += '<span class="interaction-choice-order" aria-hidden="true">' + (index + 1) + '</span>'
+  h += '<label><span>选项文本</span><input type="text" value="' + escAttr(choice?.text || '') + '" data-interaction-choice-text placeholder="显示在按钮上"></label>'
+  h += '<label><span>选择后内容</span><textarea rows="3" data-interaction-selected-text placeholder="选择后插入正文，可分行">' + esc(choice?.selectedText || '') + '</textarea></label>'
+  h += '<span class="interaction-choice-actions"><button type="button" data-interaction-action="up" aria-label="上移这个选项">↑</button><button type="button" data-interaction-action="down" aria-label="下移这个选项">↓</button><button type="button" data-interaction-action="remove" aria-label="删除这个选项">删除</button></span>'
+  h += '</div>'
+  return h
+}
+
+function reindexInteractionChoiceRows(list) {
+  list.querySelectorAll('.interaction-group-choice-row').forEach(function(row, index) {
+    var order = row.querySelector('.interaction-choice-order')
+    if (order) order.textContent = String(index + 1)
+    var up = row.querySelector('[data-interaction-action="up"]')
+    var down = row.querySelector('[data-interaction-action="down"]')
+    if (up) up.disabled = index === 0
+    if (down) down.disabled = index === list.children.length - 1
+  })
+}
+
+function openInteractionGroupPanel(wid, nid, groupId) {
+  var node = getNode(wid, nid)
+  var group = interactionGroupById(node, groupId)
+  if (!node || !group) return
+  var body = '<div class="interaction-group-panel" data-group-id="' + escAttr(group.id) + '">'
+  body += '<header class="interaction-group-head"><div><strong>普通互动</strong><small>放在正文当前位置；每组记住一个选择，不负责剧情跳转。</small></div><label><span>组名称</span><input type="text" data-interaction-group-label value="' + escAttr(group.label || '') + '" placeholder="例如：听到消息后的反应"></label></header>'
+  body += '<div class="interaction-group-choice-list">'
+  for (var index = 0; index < (group.choices || []).length; index++) {
+    body += interactionChoiceRowHTML(group.choices[index], index)
+  }
+  body += '</div><footer class="interaction-group-footer"><button type="button" class="btn btn-sm btn-outline" data-interaction-action="add">＋ 添加选项</button><span></span><button type="button" class="btn btn-sm btn-ghost" data-interaction-action="move">移动位置</button><button type="button" class="btn btn-sm btn-primary" data-interaction-action="save">保存</button></footer></div>'
+  var overlay = modal('', body, '')
+  var title = overlay.querySelector('.modal-title')
+  if (title) title.parentElement.style.display = 'none'
+  var panel = overlay.querySelector('.interaction-group-panel')
+  var list = panel.querySelector('.interaction-group-choice-list')
+  reindexInteractionChoiceRows(list)
+
+  panel.onclick = function(event) {
+    var button = event.target.closest('[data-interaction-action]')
+    if (!button) return
+    var action = button.dataset.interactionAction
+    if (action === 'add') {
+      var holder = document.createElement('template')
+      holder.innerHTML = interactionChoiceRowHTML({id:'', text:'', selectedText:''}, list.children.length)
+      list.appendChild(holder.content.firstElementChild)
+      reindexInteractionChoiceRows(list)
+      list.lastElementChild.querySelector('[data-interaction-choice-text]')?.focus()
+      return
+    }
+    var row = button.closest('.interaction-group-choice-row')
+    if (action === 'remove' && row) {
+      if (list.children.length <= 2) {
+        showToast('每组普通互动至少需要 2 个选项', 'error')
+        return
+      }
+      row.remove()
+      reindexInteractionChoiceRows(list)
+      return
+    }
+    if ((action === 'up' || action === 'down') && row) {
+      var sibling = action === 'up' ? row.previousElementSibling : row.nextElementSibling
+      if (!sibling) return
+      if (action === 'up') list.insertBefore(row, sibling)
+      else list.insertBefore(sibling, row)
+      reindexInteractionChoiceRows(list)
+      row.querySelector('[data-interaction-choice-text]')?.focus()
+      return
+    }
+    if (action === 'move') {
+      overlay.remove()
+      _movingInteractionGroup = {workId:wid, nodeId:nid, groupId:groupId}
+      showToast('请在正文中点击新的放置位置；按 Esc 取消', 'info')
+      return
+    }
+    if (action !== 'save') return
+    var drafts = Array.from(list.querySelectorAll('.interaction-group-choice-row')).map(function(choiceRow) {
+      return {
+        id:choiceRow.dataset.choiceId || '',
+        text:choiceRow.querySelector('[data-interaction-choice-text]')?.value?.trim() || '',
+        selectedText:choiceRow.querySelector('[data-interaction-selected-text]')?.value || '',
+      }
+    })
+    var emptyIndex = drafts.findIndex(function(choice) { return !choice.text })
+    if (emptyIndex >= 0) {
+      showToast('选项 #' + (emptyIndex + 1) + ' 未填写文字', 'error')
+      return
+    }
+    var reconciled = reconcileArticleInteractionGroup(group, {
+      id:group.id,
+      label:panel.querySelector('[data-interaction-group-label]')?.value?.trim() || '',
+      choices:drafts,
+      legacyAdvanceOnSelect:false,
+    }, uid)
+    if (!reconciled.ok) {
+      showToast('普通互动保存失败，请重新打开后再试', 'error')
+      return
+    }
+    var latestNode = getNode(wid, nid)
+    updateNode(wid, nid, {
+      interactionGroups:(latestNode.interactionGroups || []).map(function(candidate) {
+        return candidate.id === groupId ? reconciled.group : candidate
+      }),
+    })
+    overlay.remove()
+    refreshEditor(wid)
+    showToast('普通互动已保存')
+  }
 }
 
 function buildWorldTree(w) {
@@ -863,7 +1152,7 @@ document.addEventListener("click", handleClick)
 document.addEventListener("change", handleChange)
 document.addEventListener("pointerdown", function(event) {
   var button = event.target.closest?.('[data-a]')
-  if (button && FORMAT_COMMANDS[button.dataset.a]) event.preventDefault()
+  if (button && (FORMAT_COMMANDS[button.dataset.a] || button.dataset.a === "ig" || button.dataset.a === "place-ig")) event.preventDefault()
 })
 document.addEventListener("selectionchange", syncEditorFormatButtons)
 document.addEventListener("keyup", function(event) { if (event.target.closest?.('.content-editable')) syncEditorFormatButtons() })
@@ -890,6 +1179,24 @@ function syncEditorFormatButtons() {
 
 function handleClick(e) {
   _editorPersistence.flush()
+  if (_movingInteractionGroup) {
+    var placementEditor = e.target.closest?.(".content-editable")
+    if (placementEditor && !e.target.closest(".article-interaction-editor-card")) {
+      e.preventDefault()
+      placeArticleInteractionGroupAtSelection(
+        _movingInteractionGroup.workId,
+        _movingInteractionGroup.nodeId,
+        _movingInteractionGroup.groupId,
+      )
+      _movingInteractionGroup = null
+      return
+    }
+  }
+  var interactionCard = e.target.closest?.(".article-interaction-editor-card")
+  if (interactionCard && !e.target.closest("[data-a]")) {
+    openInteractionGroupPanel(_workId, interactionCard.closest(".content-editable")?.dataset.n || _nodeId, interactionCard.dataset.articleInteractionGroup)
+    return
+  }
   var phoneModuleCard = e.target.closest(".pm-inline-card")
   if (phoneModuleCard && !e.target.closest(".pm-card-hamburger")) {
     if (_phoneModuleDragController?.consumeClick(phoneModuleCard, e)) {
@@ -1108,6 +1415,31 @@ function handleClick(e) {
       return
     }
     openChoicePanel(w, _nodeId)
+    return
+  }
+  if (a === "ig") {
+    if (articleNodeIsConditional(getNode(w, _nodeId))) {
+      showToast("隐藏节点不能设置普通互动", "error")
+      return
+    }
+    insertArticleInteractionGroup(w, _nodeId)
+    return
+  }
+  if (a === "edit-ig") {
+    openInteractionGroupPanel(w, n, b.dataset.gid)
+    return
+  }
+  if (a === "move-ig") {
+    _movingInteractionGroup = {workId:w, nodeId:n, groupId:b.dataset.gid}
+    showToast("请在正文中点击新的放置位置；按 Esc 取消", "info")
+    return
+  }
+  if (a === "place-ig") {
+    placeArticleInteractionGroupAtSelection(w, n, b.dataset.gid)
+    return
+  }
+  if (a === "delete-ig") {
+    deleteArticleInteractionGroup(w, n, b.dataset.gid)
     return
   }
   if (a === "im") {
@@ -1811,8 +2143,8 @@ function openChoicePanel(wid, nid, options) {
   var allNodes = w.nodes || []
   var choiceMode = choices.length > 0 && choices.every(function(choice) { return choice.mode === 'interaction' }) ? 'interaction' : 'branch'
 
-  var body = '<div class="ch-panel" id="chPanel">'
-  body += '<div class="ch-header"><span class="ch-header-title">选项编辑 -- ' + esc(node.title || '节点') + '</span><label class="ch-mode-row"><span>选项类型</span><select id="chMode" class="form-select"><option value="branch"' + (choiceMode === 'branch' ? ' selected' : '') + '>剧情分支</option><option value="interaction"' + (choiceMode === 'interaction' ? ' selected' : '') + '>普通互动（不跳转）</option></select></label><small class="ch-mode-hint">普通互动只记录读者当次选择，不改变剧情路径。</small></div>'
+  var body = '<div class="ch-panel" id="chPanel" data-choice-mode="branch">'
+  body += '<div class="ch-header"><span class="ch-header-title">剧情分支 -- ' + esc(node.title || '节点') + '</span><select id="chMode" hidden aria-hidden="true" tabindex="-1"><option value="branch"' + (choiceMode === 'branch' ? ' selected' : '') + '>剧情分支</option><option value="interaction"' + (choiceMode === 'interaction' ? ' selected' : '') + '>旧版普通互动</option></select><small class="ch-mode-hint">剧情分支固定显示在节点正文末尾，每个选项都必须连接目标节点。正文中的普通互动请使用“普通互动”工具添加。</small></div>'
   body += '<div class="ch-list" id="chList">'
 
   for (var i = 0; i < choices.length; i++) {
@@ -1823,7 +2155,7 @@ function openChoicePanel(wid, nid, options) {
   body += '<div class="ch-footer">'
   body += '<button class="btn btn-sm btn-outline" data-ch-a="add-choice">+ 添加选项</button>'
   body += '<button class="btn btn-sm btn-primary" data-ch-a="save">保存</button>'
-  body += '<button class="btn btn-sm btn-ghost" data-ch-a="delete-all">删除选项组</button>'
+  body += '<button class="btn btn-sm btn-ghost" data-ch-a="delete-all">删除剧情分支</button>'
   body += '</div>'
   body += '</div>'
 
@@ -1928,7 +2260,7 @@ function openChoicePanel(wid, nid, options) {
         return
       }
       if (act === 'delete-all') {
-        showConfirm('删除选项组', '确定删除此节点的选项组？', function() {
+        showConfirm('删除剧情分支', '确定删除此节点末尾的剧情分支？', function() {
           updateNode(wid, nid, {choices: []})
           ov.remove()
           refreshEditor(wid)
@@ -2091,7 +2423,10 @@ function openDisplayConditionPanel(wid, nid) {
   }
 
   function choiceLabel(item) {
-    return item.chapterName + " · " + item.sourceNodeTitle + " · " + item.choiceText
+    var source = item.choiceMode === "interaction"
+      ? "普通互动「" + (item.interactionGroupLabel || "未命名") + "」"
+      : "剧情分支"
+    return item.chapterName + " · " + item.sourceNodeTitle + " · " + source + " · " + item.choiceText
   }
 
   function resultHTML(item, groupIndex) {
@@ -2395,6 +2730,12 @@ function fmt(cmd, val) {
 // Handle backspace/delete for hr elements
 document.addEventListener("keydown", function(e) {
   if (e.key === "Escape") {
+    if (_movingInteractionGroup) {
+      _movingInteractionGroup = null
+      showToast("已取消移动普通互动", "info")
+      e.preventDefault()
+      return
+    }
     var mobileShell = document.querySelector('.editor-body-area[data-mobile-tools]')
     if (mobileShell && closeMobileToolPanels(mobileShell, true)) e.preventDefault()
     return
@@ -2935,7 +3276,7 @@ document.addEventListener("input", function(e) {
   var nid = ce.dataset.n
   if (!nid || !_workId) return
   var contentWorkId = _workId
-  var contentValue = ce.innerHTML
+  var contentValue = serializeInteractionEditorContent(ce)
   _editorPersistence.schedule("node:" + contentWorkId + ":" + nid, function() {
     updateNode(contentWorkId, nid, {content:contentValue})
   })

@@ -237,6 +237,7 @@ test("the pure builder reproduces article defaults from only prepared values", (
     title: "开始",
     content: "",
     choices: [],
+    interactionGroups: [],
     scene: "scene-a",
     chapterId: "chapter-a",
   }])

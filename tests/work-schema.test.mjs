@@ -113,7 +113,7 @@ test("article normalization repairs a dangling start node to the first valid nod
   assert.equal(result.work.startNode, "node-a")
 })
 
-test("version 3 normalizes conditional nodes without materializing legacy interaction selected prose", () => {
+test("version 3 ordinary choices migrate into a version 4 anchored interaction group", () => {
   const result = validateWorkForImport({
     schemaVersion: 3,
     type: "article",
@@ -136,14 +136,75 @@ test("version 3 normalizes conditional nodes without materializing legacy intera
   })
 
   assert.equal(result.ok, true)
-  assert.equal(result.work.schemaVersion, 3)
-  assert.deepEqual(result.work.nodes[0].choices[0], {
-    id: "choice-a", mode: "interaction", text: "Choose", targetId: "",
+  assert.equal(result.work.schemaVersion, 4)
+  assert.deepEqual(result.work.nodes[0].choices, [])
+  assert.equal(result.work.nodes[0].interactionGroups.length, 1)
+  assert.deepEqual(result.work.nodes[0].interactionGroups[0].choices[0], {
+    id: "choice-a", text: "Choose", selectedText: "Choose",
   })
+  assert.equal(result.work.nodes[0].interactionGroups[0].legacyAdvanceOnSelect, true)
+  assert.match(result.work.nodes[0].content, /data-article-interaction-group=/)
   assert.deepEqual(result.work.nodes[1].choices, [])
   assert.deepEqual(result.work.nodes[1].displayCondition, { all: [{ anyChoiceIds: ["choice-a"] }] })
   assert.deepEqual(result.work.nodes[1].futureConditionalMetadata, { keep: true })
   assert.deepEqual(result.work.nodes[0].futureNodeMetadata, { keep: true })
+})
+
+test("version 3 mixed choices preserve branch targets and ordinary stable ids separately", () => {
+  const result = validateWorkForImport({
+    schemaVersion: 3,
+    type: "article",
+    chapters: [{id:"chapter-a", name:"第一章"}],
+    nodes: [
+      {
+        id:"start",
+        chapterId:"chapter-a",
+        content:"<p>正文</p>",
+        choices:[
+          {id:"ordinary-a", mode:"interaction", text:"点头", selectedText:"你点了点头。", targetId:"", extra:{keep:true}},
+          {id:"branch-a", text:"离开", targetId:"target", extra:{keep:true}},
+        ],
+      },
+      {id:"target", chapterId:"chapter-a", content:"<p>后续</p>", choices:[]},
+    ],
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.work.schemaVersion, 4)
+  assert.deepEqual(result.work.nodes[0].choices, [
+    {id:"branch-a", text:"离开", targetId:"target", extra:{keep:true}},
+  ])
+  assert.equal(result.work.nodes[0].interactionGroups[0].choices[0].id, "ordinary-a")
+  assert.deepEqual(result.work.nodes[0].interactionGroups[0].choices[0].extra, {keep:true})
+  assert.equal(result.work.nodes[0].interactionGroups[0].legacyAdvanceOnSelect, true)
+})
+
+test("version 4 rejects interaction groups on hidden and interactive-scene nodes", () => {
+  for (const node of [
+    {
+      id:"hidden",
+      kind:"conditional",
+      displayCondition:{all:[{anyChoiceIds:["choice-a"]}]},
+      interactionGroups:[{id:"group-a", choices:[{id:"choice-a", text:"A"}]}],
+    },
+    {
+      id:"scene",
+      kind:"interactive-scene",
+      interactiveSceneId:"scene-a",
+      interactionGroups:[{id:"group-a", choices:[{id:"choice-a", text:"A"}]}],
+    },
+  ]) {
+    const result = validateWorkForImport({
+      schemaVersion: 4,
+      type:"article",
+      nodes:[node],
+      interactiveScenes:node.kind === "interactive-scene"
+        ? [{id:"scene-a", nodeId:"scene", stages:[]}]
+        : [],
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.code, "invalid-article")
+  }
 })
 
 test("version 2 quarantines conditional-shaped unknown kinds without overwriting metadata", () => {
@@ -175,7 +236,7 @@ test("version 2 quarantines conditional-shaped unknown kinds without overwriting
     const first = validateWorkForImport(input)
 
     assert.equal(first.ok, true, fixture.name)
-    assert.equal(first.work.schemaVersion, 3, fixture.name)
+    assert.equal(first.work.schemaVersion, 4, fixture.name)
     assert.equal(Object.hasOwn(first.work.nodes[0], "kind"), false, fixture.name)
     assert.deepEqual(first.work.nodes[0].legacySchemaV2, fixture.metadata, fixture.name)
     assert.deepEqual(first.work.nodes[0].choices, input.nodes[0].choices, fixture.name)

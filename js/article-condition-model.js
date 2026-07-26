@@ -1,3 +1,5 @@
+import { articleInteractionMarkerIds } from "./article-interaction-group-model.js"
+
 export function normalizeArticleDisplayCondition(value) {
   const groups = Array.isArray(value?.all) ? value.all : []
   return {
@@ -155,6 +157,9 @@ export function buildArticleChoiceCatalog(work, options = {}) {
     const nodeId = authoredId(node?.id)
     addCount(sourceNodeIds, nodeId.key)
     addCount(nodeIds, nodeId.key)
+    for (const group of asArray(node?.interactionGroups)) {
+      for (const choice of asArray(group?.choices)) addCount(choiceIds, authoredId(choice?.id).key)
+    }
     for (const choice of asArray(node?.choices)) addCount(choiceIds, authoredId(choice?.id).key)
   }
   const nodesByChapterId = new Map()
@@ -178,18 +183,22 @@ export function buildArticleChoiceCatalog(work, options = {}) {
     const chapterName = displayText(chapter?.name, fallbackChapterName)
     const sourceNodeTitle = displayText(node?.title, "Untitled node")
 
-    for (const choice of asArray(node?.choices)) {
+    const appendChoice = (choice, interactionGroup = null) => {
       const choiceId = authoredId(choice?.id)
       const choiceText = displayText(choice?.text, "Untitled choice")
       const selectedText = typeof choice?.selectedText === "string" ? choice.selectedText : ""
-      const mode = choiceMode(choice)
+      const mode = interactionGroup ? {value:"interaction", reason:""} : choiceMode(choice)
       const targetId = authoredId(choice?.targetId)
       const invalidReason = sourceReferenceReason(choiceId, sourceNodeId, sourceNodeIds, chapterId, chapterIds, targetId, nodeIds, mode)
       const ambiguous = choiceId.key && (choiceIds.get(choiceId.key) || 0) > 1
-      const searchText = [chapterName, sourceNodeTitle, choiceText, selectedText, sourceNodeId.display, choiceId.display]
+      const interactionGroupId = interactionGroup ? authoredId(interactionGroup.id) : {display:"", key:"", issue:""}
+      const interactionGroupLabel = interactionGroup
+        ? displayText(interactionGroup.label, "未命名")
+        : ""
+      const searchText = [chapterName, sourceNodeTitle, interactionGroupLabel, choiceText, selectedText, sourceNodeId.display, choiceId.display]
         .filter(Boolean)
         .join(" ")
-      const searchableDetails = [chapterName, sourceNodeTitle, choiceText, selectedText, sourceNodeId.key]
+      const searchableDetails = [chapterName, sourceNodeTitle, interactionGroupLabel, choiceText, selectedText, sourceNodeId.key]
         .filter(Boolean)
         .join(" ")
 
@@ -202,6 +211,8 @@ export function buildArticleChoiceCatalog(work, options = {}) {
         sourceNodeTitle,
         chapterId: chapterId.display,
         chapterName,
+        interactionGroupId: interactionGroupId.display,
+        interactionGroupLabel,
         searchText,
         disabled: Boolean(ambiguous || invalidReason),
         reason: ambiguous ? "ambiguous-choice-id" : invalidReason,
@@ -209,6 +220,30 @@ export function buildArticleChoiceCatalog(work, options = {}) {
         _exactChoiceId: choiceId.key,
       })
     }
+    const storedGroups = asArray(node?.interactionGroups)
+    const groupsById = new Map()
+    for (const group of storedGroups) {
+      const groupId = authoredId(group?.id)
+      if (groupId.key && !groupsById.has(groupId.key)) groupsById.set(groupId.key, group)
+    }
+    const orderedGroups = []
+    const seenGroupIds = new Set()
+    for (const groupId of articleInteractionMarkerIds(node?.content || "")) {
+      const group = groupsById.get(groupId)
+      if (!group || seenGroupIds.has(groupId)) continue
+      seenGroupIds.add(groupId)
+      orderedGroups.push(group)
+    }
+    for (const group of storedGroups) {
+      const groupId = authoredId(group?.id).key
+      if (!groupId || seenGroupIds.has(groupId)) continue
+      seenGroupIds.add(groupId)
+      orderedGroups.push(group)
+    }
+    for (const group of orderedGroups) {
+      for (const choice of asArray(group?.choices)) appendChoice(choice, group)
+    }
+    for (const choice of asArray(node?.choices)) appendChoice(choice)
   }
 
   const visitedChapterIds = new Set()

@@ -183,7 +183,7 @@ export function createWorkRecord(data, {
     updatedAt:updatedAt,
     password:data.password||"",
     locked:data.locked||false,
-    nodes:rawType===WORK_TYPE.ARTICLE?[{id:firstNodeId,title:"开始",content:"",choices:[],scene:"",chapterId:firstChapterId}]:[],
+    nodes:rawType===WORK_TYPE.ARTICLE?[{id:firstNodeId,title:"开始",content:"",choices:[],interactionGroups:[],scene:"",chapterId:firstChapterId}]:[],
     chapters:rawType===WORK_TYPE.ARTICLE?[{id:firstChapterId,name:"第一章"}]:[],
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
@@ -286,10 +286,10 @@ function addPreparedArticleNode(workId,{afterId,chapterId,node,requireOrdinaryNo
   ensureArticleStartNode(w)
   w.updatedAt=Date.now();wr(db);return n
 }
-export function addNode(workId,afterId,chapterId){return addPreparedArticleNode(workId,{afterId,chapterId,node:{id:uid(),title:"新节点",content:"",choices:[],scene:""}})}
+export function addNode(workId,afterId,chapterId){return addPreparedArticleNode(workId,{afterId,chapterId,node:{id:uid(),title:"新节点",content:"",choices:[],interactionGroups:[],scene:""}})}
 export function createConditionalArticleNode(workId,chapterId,afterId){
   return addPreparedArticleNode(workId,{afterId,chapterId,node:{
-    id:uid(),title:"隐藏节点",content:"",choices:[],scene:"",kind:"conditional",displayCondition:{all:[]},
+    id:uid(),title:"隐藏节点",content:"",choices:[],interactionGroups:[],scene:"",kind:"conditional",displayCondition:{all:[]},
   },requireOrdinaryNode:true})
 }
 export function updateNode(wid,nid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const n=w.nodes.find(x=>x.id===nid);if(!n)return null;Object.assign(n,data);w.updatedAt=Date.now();wr(db);return n}

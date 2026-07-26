@@ -1,6 +1,7 @@
 import { resolvePhoneReadingFlowStep } from "./phone-reading-flow.js"
 import { safeMessageCardUrl } from "./message-card-links.js"
 import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
+import { articleInteractionMarkerIds } from "./article-interaction-group-model.js"
 
 function items(value) {
   return Array.isArray(value) ? value : []
@@ -82,6 +83,24 @@ function inspectArticle(work, issues) {
       .filter(([id, count]) => id && count === 1)
       .map(([id]) => id),
   )
+  const interactionGroupIdCounts = new Map()
+  const articleChoiceIdCounts = new Map()
+  for (const node of nodes) {
+    for (const choice of items(node?.choices)) {
+      const id = String(choice?.id || "")
+      if (id) articleChoiceIdCounts.set(id, (articleChoiceIdCounts.get(id) || 0) + 1)
+    }
+    for (const group of items(node?.interactionGroups)) {
+      const groupId = String(group?.id || "")
+      if (groupId) {
+        interactionGroupIdCounts.set(groupId, (interactionGroupIdCounts.get(groupId) || 0) + 1)
+      }
+      for (const choice of items(group?.choices)) {
+        const id = String(choice?.id || "")
+        if (id) articleChoiceIdCounts.set(id, (articleChoiceIdCounts.get(id) || 0) + 1)
+      }
+    }
+  }
 
   if (!uniqueNodeIds.has(resolveAutomaticArticleStartNodeId(work))) {
     addIssue(
@@ -121,7 +140,9 @@ function inspectArticle(work, issues) {
     }
 
     const choices = items(node?.choices)
-    if (!plainText(node?.content) && !choices.length) {
+    const interactionGroups = items(node?.interactionGroups)
+    const interactionMarkerIds = articleInteractionMarkerIds(String(node?.content || ""))
+    if (!plainText(node?.content) && !choices.length && !interactionGroups.length) {
       addIssue(
         issues,
         "article-node-content-empty",
@@ -129,6 +150,103 @@ function inspectArticle(work, issues) {
         "节点没有正文或选项",
         location,
         "补充正文、互动选项或删除这个空节点。",
+      )
+    }
+
+    if (
+      interactionGroups.length
+      && (node?.kind === "conditional" || node?.kind === "interactive-scene")
+    ) {
+      addIssue(
+        issues,
+        "article-interaction-group-node-kind-invalid",
+        "error",
+        "当前节点不能放置普通互动",
+        location,
+        "把普通互动移动到普通正文节点中。",
+      )
+    }
+
+    for (const [groupIndex, group] of interactionGroups.entries()) {
+      const groupId = String(group?.id || "")
+      const groupLabel = plainText(group?.label) || `第 ${groupIndex + 1} 组普通互动`
+      const groupLocation = `${location} · ${groupLabel}`
+      const markerCount = interactionMarkerIds.filter(id => id === groupId).length
+      if (!groupId || interactionGroupIdCounts.get(groupId) !== 1) {
+        addIssue(
+          issues,
+          "article-interaction-group-id-invalid",
+          "error",
+          "普通互动的稳定标识重复或缺失",
+          groupLocation,
+          "删除异常互动组后重新插入，系统会生成新的稳定标识。",
+        )
+      }
+      if (markerCount === 0) {
+        addIssue(
+          issues,
+          "article-interaction-group-marker-missing",
+          "error",
+          "普通互动还没有放进正文",
+          groupLocation,
+          "回到正文编辑器，在提示卡片中选择“放到光标处”。",
+        )
+      } else if (markerCount > 1) {
+        addIssue(
+          issues,
+          "article-interaction-group-marker-duplicate",
+          "error",
+          "同一组普通互动在正文中出现了多次",
+          groupLocation,
+          "只保留一个位置；需要重复提问时请新建另一组普通互动。",
+        )
+      }
+      const groupChoices = items(group?.choices)
+      if (groupChoices.length < 2) {
+        addIssue(
+          issues,
+          "article-interaction-group-too-small",
+          "error",
+          "普通互动至少需要两个选项",
+          groupLocation,
+          "补足两个可供读者选择的选项。",
+        )
+      }
+      for (const [choiceIndex, choice] of groupChoices.entries()) {
+        const choiceLocation = `${groupLocation} · 第 ${choiceIndex + 1} 个选项`
+        if (!plainText(choice?.text)) {
+          addIssue(
+            issues,
+            "article-interaction-choice-text-empty",
+            "warning",
+            "普通互动的选项文字为空",
+            choiceLocation,
+            "填写读者在按钮上看到的选项文字。",
+          )
+        }
+        const choiceId = String(choice?.id || "")
+        if (!choiceId || articleChoiceIdCounts.get(choiceId) !== 1) {
+          addIssue(
+            issues,
+            "article-choice-id-invalid",
+            "error",
+            "选项的稳定标识重复或缺失",
+            choiceLocation,
+            "删除异常选项后重新添加，让系统生成新的稳定标识。",
+          )
+        }
+      }
+    }
+
+    for (const markerId of new Set(interactionMarkerIds)) {
+      if (interactionGroups.some(group => String(group?.id || "") === markerId)) continue
+      addIssue(
+        issues,
+        "article-interaction-marker-orphaned",
+        "error",
+        "正文中留有失效的普通互动位置",
+        location,
+        "删除这张失效位置卡片，或重新插入对应的普通互动。",
       )
     }
 
@@ -142,6 +260,17 @@ function inspectArticle(work, issues) {
           "选项文字为空",
           choiceLocation,
           "填写读者可以理解的选项文字。",
+        )
+      }
+      const choiceId = String(choice?.id || "")
+      if (!choiceId || articleChoiceIdCounts.get(choiceId) !== 1) {
+        addIssue(
+          issues,
+          "article-choice-id-invalid",
+          "error",
+          "选项的稳定标识重复或缺失",
+          choiceLocation,
+          "删除异常选项后重新添加，让系统生成新的稳定标识。",
         )
       }
       if (choice?.mode === "interaction") continue

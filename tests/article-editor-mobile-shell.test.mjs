@@ -472,32 +472,30 @@ test("outline selection returns to editing while an editor choice does not steal
   assert.notEqual(document.activeElement, paneButton("editor"))
 })
 
-test("ordinary interaction preview selects one response without navigation or a work write", async () => {
-  const work = article("interaction-preview-work", [{
-    id:"interaction-node",
+test("ordinary interaction card opens its editor without navigation or a work write", async () => {
+  const work = article("interaction-preview-work", [{ id:"interaction-node" }])
+  work.schemaVersion = 4
+  work.nodes[0].content = '<p>正文</p><div class="article-interaction-anchor" data-article-interaction-group="interaction-group" contenteditable="false"></div>'
+  work.nodes[0].interactionGroups = [{
+    id:"interaction-group",
+    label:"回应",
     choices:[
-      {id:"interaction-a", text:"点点头", mode:"interaction"},
-      {id:"interaction-b", text:"摇摇头", mode:"interaction"},
+      {id:"interaction-a", text:"点点头", selectedText:"你点了点头。"},
+      {id:"interaction-b", text:"摇摇头", selectedText:"你摇了摇头。"},
     ],
-  }])
+  }]
   seed(work)
   const root = await render(work.id)
-  const options = [...root.querySelectorAll('[data-choice-mode="interaction"]')]
+  const card = root.querySelector(".article-interaction-editor-card")
   const before = localStorage.getItem("tuuru_works")
 
-  assert.equal(options.length, 2)
+  assert.ok(card)
+  assert.match(card.textContent, /回应/)
+  assert.match(card.textContent, /2 个选项/)
   assert.ok(root.querySelector("#ce_interaction-node"))
-  options[1].click()
-  assert.equal(options[0].getAttribute("aria-pressed"), "false")
-  assert.equal(options[1].getAttribute("aria-pressed"), "true")
-  assert.equal(options[1].classList.contains("is-selected"), true)
-  assert.equal(root.querySelectorAll('.choice-btn.is-selected').length, 1)
+  card.querySelector('[data-a="edit-ig"]').click()
+  assert.ok(document.querySelector(".interaction-group-panel"))
   assert.ok(root.querySelector("#ce_interaction-node"))
-
-  options[0].click()
-  assert.equal(options[0].getAttribute("aria-pressed"), "true")
-  assert.equal(options[1].getAttribute("aria-pressed"), "false")
-  assert.equal(root.querySelectorAll('.choice-btn.is-selected').length, 1)
   assert.equal(localStorage.getItem("tuuru_works"), before)
 })
 

@@ -1,4 +1,4 @@
-export const CURRENT_WORK_SCHEMA_VERSION = 3
+export const CURRENT_WORK_SCHEMA_VERSION = 4
 
 import { isSafeCssColor, isSafeIconValue, isSafeIdentifier } from "./safe-values.js"
 import { normalizeWorkWatermark } from "./work-watermark.js"
@@ -12,6 +12,10 @@ import {
   normalizeArticleDisplayCondition,
 } from "./article-condition-model.js"
 import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
+import {
+  migrateLegacyArticleInteractions,
+  normalizeArticleInteractionGroups,
+} from "./article-interaction-group-model.js"
 
 const SUPPORTED_WORK_TYPES = new Set(["article", "phone"])
 const ARTICLE_COLLECTIONS = ["chapters", "phoneModules", "placeholders", "scenes", "interactiveScenes"]
@@ -236,6 +240,22 @@ function canonicalArticleNodeId(value) {
   return String(value || "")
 }
 
+function legacyInteractionGroupId(node, nodeIndex, usedIds) {
+  const source = String(node?.id || `node-${nodeIndex + 1}`)
+  const stem = source
+    .replace(/[^a-z0-9._:-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96) || `node-${nodeIndex + 1}`
+  let candidate = `interaction-${stem}`
+  let suffix = 2
+  while (usedIds.has(candidate)) {
+    candidate = `interaction-${stem}-${suffix}`
+    suffix += 1
+  }
+  usedIds.add(candidate)
+  return candidate
+}
+
 function validateAuthoredConditionalArticleInvariants(work, path) {
   const conditionalNodeIds = new Set()
   const normalizedInteractiveScenes = work.interactiveScenes.map(normalizeInteractiveScene)
@@ -243,6 +263,13 @@ function validateAuthoredConditionalArticleInvariants(work, path) {
     const node = work.nodes[nodeIndex]
     if (!articleNodeIsConditional(node)) continue
     conditionalNodeIds.add(canonicalArticleNodeId(node.id))
+    if (node.interactionGroups?.length) {
+      return conditionalInvariantFailure(
+        "conditional-interaction-groups",
+        `${path}.nodes[${nodeIndex}].interactionGroups`,
+        "隐藏节点不能包含普通互动组。",
+      )
+    }
     if (node.interactiveSceneId !== undefined && node.interactiveSceneId !== "") {
       return conditionalInvariantFailure(
         "conditional-interactive-scene",
@@ -250,6 +277,15 @@ function validateAuthoredConditionalArticleInvariants(work, path) {
         "条件节点不能是互动场景节点。",
       )
     }
+  }
+  for (let nodeIndex = 0; nodeIndex < work.nodes.length; nodeIndex += 1) {
+    const node = work.nodes[nodeIndex]
+    if (node?.kind !== "interactive-scene" || !node.interactionGroups?.length) continue
+    return conditionalInvariantFailure(
+      "interactive-scene-interaction-groups",
+      `${path}.nodes[${nodeIndex}].interactionGroups`,
+      "互动场景节点不能包含普通互动组。",
+    )
   }
   if (conditionalNodeIds.has(canonicalArticleNodeId(work.startNode))) {
     return conditionalInvariantFailure(
@@ -304,6 +340,12 @@ function normalizeArticle(input, path, sourceVersion) {
     if (!result.ok) return asWorkFailure(result, "invalid-article", "文章作品结构无效。")
     work[key] = result.value
   }
+  const usedInteractionGroupIds = new Set()
+  for (const sourceNode of work.nodes) {
+    for (const group of Array.isArray(sourceNode?.interactionGroups) ? sourceNode.interactionGroups : []) {
+      if (typeof group?.id === "string") usedInteractionGroupIds.add(group.id)
+    }
+  }
   for (let index = 0; index < work.nodes.length; index += 1) {
     const result = recordArray(input.nodes[index].choices, `${path}.nodes[${index}].choices`)
     if (!result.ok) return asWorkFailure(result, "invalid-article", "文章作品结构无效。")
@@ -320,9 +362,66 @@ function normalizeArticle(input, path, sourceVersion) {
       delete work.nodes[index].kind
     }
     if (sourceVersion >= 3 && articleNodeIsConditional(work.nodes[index])) {
+      if (sourceVersion >= 4 && Array.isArray(input.nodes[index].interactionGroups) && input.nodes[index].interactionGroups.length) {
+        return conditionalInvariantFailure(
+          "conditional-interaction-groups",
+          `${path}.nodes[${index}].interactionGroups`,
+          "隐藏节点不能包含普通互动组。",
+        )
+      }
       work.nodes[index].choices = []
       work.nodes[index].displayCondition = normalizeArticleDisplayCondition(
         input.nodes[index].displayCondition,
+      )
+    }
+    if (sourceVersion >= 4) {
+      const groupsResult = recordArray(
+        input.nodes[index].interactionGroups,
+        `${path}.nodes[${index}].interactionGroups`,
+      )
+      if (!groupsResult.ok) return asWorkFailure(groupsResult, "invalid-article", "普通互动组结构无效。")
+      for (let groupIndex = 0; groupIndex < groupsResult.value.length; groupIndex += 1) {
+        const choicesResult = recordArray(
+          input.nodes[index].interactionGroups[groupIndex].choices,
+          `${path}.nodes[${index}].interactionGroups[${groupIndex}].choices`,
+        )
+        if (!choicesResult.ok) return asWorkFailure(choicesResult, "invalid-article", "普通互动组选项结构无效。")
+        groupsResult.value[groupIndex].choices = choicesResult.value
+      }
+      const normalizedGroups = normalizeArticleInteractionGroups(groupsResult.value)
+      if (!normalizedGroups.ok) {
+        return conditionalInvariantFailure(
+          normalizedGroups.reason,
+          `${path}.nodes[${index}].interactionGroups`,
+          "普通互动组包含无效或重复的稳定 ID。",
+        )
+      }
+      work.nodes[index].interactionGroups = normalizedGroups.groups
+    } else if (!articleNodeIsConditional(work.nodes[index])) {
+      const migrated = migrateLegacyArticleInteractions(
+        work.nodes[index],
+        () => legacyInteractionGroupId(work.nodes[index], index, usedInteractionGroupIds),
+      )
+      if (!migrated.ok) {
+        return conditionalInvariantFailure(
+          migrated.reason,
+          `${path}.nodes[${index}].choices`,
+          "旧版普通互动选项无法安全迁移。",
+        )
+      }
+      work.nodes[index] = migrated.node
+    } else {
+      work.nodes[index].interactionGroups = []
+    }
+    if (
+      sourceVersion >= 4
+      && work.nodes[index]?.kind === "interactive-scene"
+      && work.nodes[index].interactionGroups.length
+    ) {
+      return conditionalInvariantFailure(
+        "interactive-scene-interaction-groups",
+        `${path}.nodes[${index}].interactionGroups`,
+        "互动场景节点不能包含普通互动组。",
       )
     }
   }

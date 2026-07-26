@@ -15,6 +15,13 @@ import {
   recordArticleChoice,
   selectedArticleChoiceIds,
 } from '../js/article-choice-memory.js'
+import {
+  pruneArticleInteractionSelections,
+  recordArticleInteractionSelection,
+  selectedArticleInteractionChoice,
+  selectedArticleInteractionChoiceIds,
+} from '../js/article-interaction-memory.js'
+import { ARTICLE_INTERACTION_MARKER_CLASS } from '../js/article-interaction-group-model.js'
 import { articleDisplayConditionMatches } from '../js/article-condition-model.js'
 import { resolveAutomaticArticleStartNodeId } from '../js/article-start-node.js'
 import {
@@ -386,8 +393,13 @@ function resetArticleReaderSession() {
   _articleInteractionSelections = Object.create(null)
 }
 
-function articleRuntimeOptions(memory) {
-  var selectedIds = selectedArticleChoiceIds(memory === undefined ? _articleChoiceMemory : memory)
+function articleRuntimeOptions(memory, interactionSelections) {
+  var selectedIds = new Set([
+    ...selectedArticleChoiceIds(memory === undefined ? _articleChoiceMemory : memory),
+    ...selectedArticleInteractionChoiceIds(
+      interactionSelections === undefined ? _articleInteractionSelections : interactionSelections,
+    ),
+  ])
   return {
     selectedChoiceIds:selectedIds,
     isNodeVisible:function(node) {
@@ -408,15 +420,11 @@ function articleRouteStateForPath(previousPath, nextPath) {
   var previousCounts = articlePathIdCounts(previousPath)
   var retainedCounts = articlePathIdCounts(nextPath)
   var memory = pruneArticleChoiceMemory(_articleChoiceMemory, nextPath)
-  var interactionSelections = Object.assign({}, _articleInteractionSelections)
+  var interactionSelections = pruneArticleInteractionSelections(_articleInteractionSelections, nextPath)
   var retained = new Set(nextPath)
   Object.keys(previousCounts).forEach(function(sourceNodeId) {
     if (previousCounts[sourceNodeId] <= (retainedCounts[sourceNodeId] || 0)) return
     delete memory[sourceNodeId]
-    delete interactionSelections[sourceNodeId]
-  })
-  Object.keys(interactionSelections).forEach(function(sourceNodeId) {
-    if (!retained.has(sourceNodeId)) delete interactionSelections[sourceNodeId]
   })
   return {memory:memory, interactionSelections:interactionSelections}
 }
@@ -465,6 +473,35 @@ function canRecordArticleChoice(sourceNodeId, choiceId) {
 function candidateReaderArticleChoiceMemory(memory, sourceNodeId, choiceId) {
   if (!canRecordArticleChoice(sourceNodeId, choiceId)) return null
   return recordArticleChoice(memory, sourceNodeId, choiceId)
+}
+
+function readerArticleInteractionGroup(sourceNodeId, groupId) {
+  if (!isExactArticleChoiceId(sourceNodeId) || !isExactArticleChoiceId(groupId)) return null
+  var sourceMatches = ((_work && _work.nodes) || []).filter(function(node) {
+    return node?.id === sourceNodeId
+  })
+  if (sourceMatches.length !== 1) return null
+  var matches = []
+  ;((_work && _work.nodes) || []).forEach(function(node) {
+    ;(node?.interactionGroups || []).forEach(function(group) {
+      if (group?.id === groupId) matches.push({node:node, group:group})
+    })
+  })
+  return matches.length === 1 && matches[0].node === sourceMatches[0] ? matches[0].group : null
+}
+
+function canRecordArticleInteraction(sourceNodeId, groupId, choiceId) {
+  var group = readerArticleInteractionGroup(sourceNodeId, groupId)
+  if (!group || !isExactArticleChoiceId(choiceId)) return false
+  var matches = []
+  ;((_work && _work.nodes) || []).forEach(function(node) {
+    ;(node?.interactionGroups || []).forEach(function(candidateGroup) {
+      ;(candidateGroup?.choices || []).forEach(function(choice) {
+        if (choice?.id === choiceId) matches.push({group:candidateGroup, choice:choice})
+      })
+    })
+  })
+  return matches.length === 1 && matches[0].group === group
 }
 function getReaderCollections() {
   var collections = lsGet('collections')
@@ -2282,6 +2319,60 @@ function openReaderInteractiveScene(sceneId, options = {}) {
   }
 }
 
+function readerInteractionResponseHTML(choice) {
+  if (!choice) return ''
+  var hasAuthoredSelectedText = Object.prototype.hasOwnProperty.call(choice, 'selectedText')
+  var selectedResponse = hasAuthoredSelectedText
+    ? (choice.selectedText == null ? '' : String(choice.selectedText))
+    : (choice.text || '选项')
+  if (selectedResponse === '') return ''
+  var h = '<div class="article-interaction-response article-content">'
+  selectedResponse.replace(/\r\n?/g, '\n').split('\n').forEach(function(line) {
+    h += '<p>' + (line === '' ? '<br>' : esc(line)) + '</p>'
+  })
+  h += '</div>'
+  return h
+}
+
+function readerInteractionGroupHTML(group, sourceNodeId, sourcePathIndex) {
+  var selectedChoiceId = selectedArticleInteractionChoice(_articleInteractionSelections, group.id)
+  var h = '<div class="article-interaction-group article-choices is-interaction" data-interaction-group="' + escapeHtmlAttribute(group.id) + '">'
+  if (group.label) h += '<div class="article-interaction-label">' + esc(group.label) + '</div>'
+  ;(group.choices || []).forEach(function(choice, choiceIndex) {
+    var selected = selectedChoiceId === String(choice.id || '')
+    h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + sourcePathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(sourceNodeId) + '" data-interaction-group-id="' + escapeHtmlAttribute(group.id) + '" data-choice-id="' + escapeHtmlAttribute(choice.id || '') + '" data-choice-mode="interaction" aria-pressed="' + (selected ? 'true' : 'false') + '"><span class="label">' + (choiceIndex + 1) + '.</span><span>' + esc(choice.text || '选项') + '</span></button>'
+  })
+  if (selectedChoiceId) {
+    var selectedChoice = (group.choices || []).find(function(choice) {
+      return String(choice?.id || '') === selectedChoiceId
+    })
+    h += readerInteractionResponseHTML(selectedChoice)
+  }
+  h += '</div>'
+  return h
+}
+
+function replaceArticleInteractionAnchors(content, node, sourcePathIndex) {
+  if (typeof content !== 'string' || !content.includes(ARTICLE_INTERACTION_MARKER_CLASS)) return content
+  var template = document.createElement('template')
+  template.innerHTML = content
+  var groups = new Map((node?.interactionGroups || []).map(function(group) { return [group.id, group] }))
+  var seen = new Set()
+  template.content.querySelectorAll('.' + ARTICLE_INTERACTION_MARKER_CLASS).forEach(function(marker) {
+    var groupId = marker.getAttribute('data-article-interaction-group') || ''
+    var group = groups.get(groupId)
+    if (!group || seen.has(groupId)) {
+      marker.remove()
+      return
+    }
+    seen.add(groupId)
+    var holder = document.createElement('template')
+    holder.innerHTML = readerInteractionGroupHTML(group, node.id, sourcePathIndex)
+    marker.replaceWith(holder.content.firstElementChild)
+  })
+  return template.innerHTML
+}
+
 function renderArticleReader() {
   if (!_work || _work.type === 'phone') return renderPhoneReader()
   var nodes = _work.nodes || []
@@ -2403,38 +2494,20 @@ function renderArticleReader() {
       var def = PH_APP_DEFS[pt.type] || PH_APP_DEFS.messages
       return buildReaderPhoneModuleTrigger({pmid:pt.pmid, type:pt.type, label:def.label, trustedIconHtml:def.icon, hasUnread:!visitedPm[pt.pmid]})
     })
+    cleanContent = replaceArticleInteractionAnchors(cleanContent, entryNode, entry.pathIndex)
 
     var isActive = entryIndex === chapterEntries.length - 1
     h += '<section class="article-node' + (isActive ? ' is-active' : ' is-resolved') + '" data-article-path-index="' + entry.pathIndex + '">'
     h += '<div class="article-content"' + (isActive ? ' data-active="true"' : '') + '>' + cleanContent + '</div>'
-    var choices = entryNode.choices || []
+    var choices = (entryNode.choices || []).filter(function(choice) { return choice.mode !== 'interaction' })
     if (choices.length > 0) {
-        var interactionGroup = choices.every(function(choice) { return choice.mode === 'interaction' })
-      var selectedInteraction = _articleInteractionSelections[entryNode.id] || ''
-      h += '<div class="article-choices' + (interactionGroup ? ' is-interaction' : '') + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '">'
+      h += '<div class="article-choices is-branch" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '">'
       choices.forEach(function(c, ci) {
-        var interaction = c.mode === 'interaction'
-        var targetState = interaction ? { ok:true } : resolveArticleChoiceTarget(nodes, c.targetId)
-        var selected = interaction
-          ? selectedInteraction === String(c.id)
-          : _articleChoiceMemory[entryNode.id] === String(c.id)
+        var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
+        var selected = _articleChoiceMemory[entryNode.id] === String(c.id)
         var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
         var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
-        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '" data-choice-id="' + escapeHtmlAttribute(c.id || '') + '" data-choice-mode="' + (interaction ? 'interaction' : 'branch') + '" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
-        if (interaction && selected) {
-          var hasAuthoredSelectedText = Object.prototype.hasOwnProperty.call(c || {}, 'selectedText')
-          var selectedResponse = hasAuthoredSelectedText
-            ? (c.selectedText == null ? '' : String(c.selectedText))
-            : (c.text || '选项')
-          if (selectedResponse !== '') {
-            var responseParagraphs = selectedResponse.replace(/\r\n?/g, '\n').split('\n')
-            h += '<div class="article-interaction-response article-content">'
-            responseParagraphs.forEach(function(line) {
-              h += '<p>' + (line === '' ? '<br>' : esc(line)) + '</p>'
-            })
-            h += '</div>'
-          }
-        }
+        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '" data-choice-id="' + escapeHtmlAttribute(c.id || '') + '" data-choice-mode="branch" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
       })
       h += '</div>'
     }
@@ -2517,8 +2590,49 @@ function renderArticleReader() {
     btn.onclick = function() {
       if (btn.dataset.choiceMode === 'interaction') {
         var nodeId = btn.dataset.choiceNodeId || ''
+        var interactionGroupId = btn.dataset.interactionGroupId || ''
         var interactionChoiceId = btn.dataset.choiceId || ''
         var interactionSourcePathIndex = Number(btn.dataset.sourcePathIndex)
+        if (interactionGroupId) {
+          if (!canRecordArticleInteraction(nodeId, interactionGroupId, interactionChoiceId)) return
+          var group = readerArticleInteractionGroup(nodeId, interactionGroupId)
+          if (group?.legacyAdvanceOnSelect === true) {
+            var legacySelection = selectionPrefixState(interactionSourcePathIndex, nodeId)
+            if (!legacySelection) return
+            var nextInteractionSelections = recordArticleInteractionSelection(
+              legacySelection.state.interactionSelections,
+              interactionGroupId,
+              nodeId,
+              interactionChoiceId,
+            )
+            legacySelection.state.interactionSelections = nextInteractionSelections
+            var legacyTransition = continueArticleInteraction(
+              nodes,
+              legacySelection.path,
+              interactionSourcePathIndex,
+              articleRuntimeOptions(legacySelection.state.memory, nextInteractionSelections),
+            )
+            if (!legacyTransition.ok) return
+            applyArticleRouteState(legacyTransition.path, legacySelection.state)
+          } else {
+            _articleInteractionSelections = recordArticleInteractionSelection(
+              _articleInteractionSelections,
+              interactionGroupId,
+              nodeId,
+              interactionChoiceId,
+            )
+          }
+          _nodeId = _articlePath[_articlePath.length - 1]
+          _visitedNodes = _articlePath.slice(0, -1)
+          renderArticleReader()
+          var selectedGroup = Array.from(document.querySelectorAll('[data-interaction-group]')).find(function(element) {
+            return element.dataset.interactionGroup === interactionGroupId
+          })
+          if (selectedGroup && typeof selectedGroup.scrollIntoView === 'function') {
+            selectedGroup.scrollIntoView({block:'nearest'})
+          }
+          return
+        }
         var interactionSelection = selectionPrefixState(interactionSourcePathIndex, nodeId)
         if (!interactionSelection) return
         var interactionMemory = candidateReaderArticleChoiceMemory(interactionSelection.state.memory, nodeId, interactionChoiceId)

@@ -141,7 +141,7 @@ test("pure database helpers validate and serialize normalized unknown JSON field
   assert.deepEqual(inspectLocalDatabaseRaw(raw), { ok: true, raw, data: database })
 })
 
-test("a pushed version 1 article stays untouched on read and preserves content when later saved as version 3", () => {
+test("a pushed version 1 article stays untouched on read and preserves content when later saved as version 4", () => {
   const database = {
     works: [{
       id: "pushed-version-1-work",
@@ -171,7 +171,7 @@ test("a pushed version 1 article stays untouched on read and preserves content w
 
   const loaded = readLocalDatabase(storage)
 
-  assert.equal(loaded.works[0].schemaVersion, 3)
+  assert.equal(loaded.works[0].schemaVersion, 4)
   assert.deepEqual(loaded.works[0].interactiveScenes, [])
   assert.equal(loaded.works[0].nodes[0].content, "<p>Keep this prose</p>")
   assert.equal(loaded.works[0].nodes[0].choices[0].text, "Keep this choice")
@@ -182,7 +182,7 @@ test("a pushed version 1 article stays untouched on read and preserves content w
 
   writeLocalDatabase(loaded, storage)
   const saved = JSON.parse(storage.peek(LOCAL_DATABASE_KEY)).works[0]
-  assert.equal(saved.schemaVersion, 3)
+  assert.equal(saved.schemaVersion, 4)
   assert.deepEqual(saved.interactiveScenes, [])
   assert.equal(saved.nodes[0].content, "<p>Keep this prose</p>")
   assert.equal(saved.nodes[0].choices[0].text, "Keep this choice")

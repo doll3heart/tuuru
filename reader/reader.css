@@ -530,6 +530,28 @@ body.rd-reading-active .article-meta {
   padding-top: 24px;
   border-top: 1px solid var(--c-border);
 }
+.article-interaction-group.article-choices {
+  gap: 8px;
+  margin: calc(var(--rd-paragraph-spacing, 1em) * 1.2) 0;
+  padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--rd-reading-accent, var(--c-primary)) 34%, var(--c-border));
+  border-bottom: 1px solid color-mix(in srgb, var(--rd-reading-accent, var(--c-primary)) 22%, var(--c-border));
+}
+.article-interaction-label {
+  margin-bottom: 2px;
+  color: var(--rd-reading-accent, var(--c-primary-hover));
+  font-size: .76rem;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+.article-interaction-group .article-choice-btn {
+  padding: 11px 16px;
+}
+.article-interaction-group .article-interaction-response {
+  margin-top: 4px;
+  padding: 9px 12px 2px;
+  background: color-mix(in srgb, var(--rd-reading-accent, var(--c-primary)) 7%, transparent);
+}
 .article-choice-btn {
   padding: 14px 20px;
   background: var(--c-surface);

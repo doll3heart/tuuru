@@ -270,6 +270,59 @@ test("searches choice details and exact stable choice IDs without mutating work"
   assert.deepEqual(catalogWork, before)
 })
 
+test("catalog includes inline ordinary groups in body-marker order before tail branches", () => {
+  const work = {
+    chapters:[{id:"chapter-a", name:"第一章"}],
+    nodes:[{
+      id:"node-a",
+      chapterId:"chapter-a",
+      title:"开场",
+      content:[
+        '<div class="article-interaction-anchor" data-article-interaction-group="group-b" contenteditable="false"></div>',
+        '<div class="article-interaction-anchor" data-article-interaction-group="group-a" contenteditable="false"></div>',
+      ].join(""),
+      interactionGroups:[
+        {id:"group-a", label:"第一反应", choices:[{id:"ordinary-a", text:"点头", selectedText:"你点头。"}]},
+        {id:"group-b", label:"第二反应", choices:[{id:"ordinary-b", text:"追问", selectedText:"你追问。"}]},
+      ],
+      choices:[{id:"branch-a", text:"离开", targetId:"target"}],
+    }, {
+      id:"target",
+      chapterId:"chapter-a",
+      title:"结尾",
+      choices:[],
+    }],
+  }
+
+  const catalog = buildArticleChoiceCatalog(work)
+  assert.deepEqual(catalog.map(choice => choice.choiceId), [
+    "ordinary-b", "ordinary-a", "branch-a",
+  ])
+  assert.equal(catalog[0].choiceMode, "interaction")
+  assert.equal(catalog[0].interactionGroupId, "group-b")
+  assert.equal(catalog[0].interactionGroupLabel, "第二反应")
+  assert.match(catalog[0].searchText, /第二反应.*追问.*你追问/)
+})
+
+test("duplicate ids across inline ordinary and tail branch choices are ambiguous", () => {
+  const work = {
+    chapters:[{id:"chapter-a", name:"第一章"}],
+    nodes:[
+      {
+        id:"source",
+        chapterId:"chapter-a",
+        content:'<div class="article-interaction-anchor" data-article-interaction-group="group-a" contenteditable="false"></div>',
+        interactionGroups:[{id:"group-a", choices:[{id:"same", text:"普通"}]}],
+        choices:[{id:"same", text:"分支", targetId:"target"}],
+      },
+      {id:"target", chapterId:"chapter-a", choices:[]},
+    ],
+  }
+  const catalog = buildArticleChoiceCatalog(work)
+  assert.equal(catalog.length, 2)
+  assert.ok(catalog.every(choice => choice.disabled && choice.reason === "ambiguous-choice-id"))
+})
+
 test("keeps malformed authored IDs distinct, disabled, and unsearchable as stable references", () => {
   const work = {
     chapters: [

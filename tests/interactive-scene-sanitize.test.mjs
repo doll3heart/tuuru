@@ -24,6 +24,26 @@ test("article sanitizer preserves only valid interactive scene entry markers", (
   dom.window.close()
 })
 
+test("article sanitizer preserves only exact ordinary interaction anchors", () => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>")
+  const safe = sanitizeRichHtml(
+    '<div class="article-interaction-anchor" data-article-interaction-group="group-a" contenteditable="false"></div>',
+    { windowObject: dom.window },
+  )
+  const invalid = sanitizeRichHtml(
+    '<div class="article-interaction-anchor" data-article-interaction-group=" bad " contenteditable="true"></div>',
+    { windowObject: dom.window },
+  )
+
+  assert.match(safe, /class="article-interaction-anchor"/)
+  assert.match(safe, /data-article-interaction-group="group-a"/)
+  assert.match(safe, /contenteditable="false"/)
+  assert.doesNotMatch(invalid, /article-interaction-anchor/)
+  assert.doesNotMatch(invalid, /data-article-interaction-group/)
+  assert.doesNotMatch(invalid, /contenteditable/)
+  dom.window.close()
+})
+
 test("import sanitizer removes unsafe scene media but keeps HTTPS and GIF data images", () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>")
   const result = sanitizeImportedWork({
