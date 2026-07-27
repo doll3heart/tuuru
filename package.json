@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.ts",
-    "build": "tsc -b && vite build --config vite.config.ts && node scripts/prepare-sites-build.mjs",
+    "build": "tsc -b && vite build --config vite.config.ts",
     "build:verify": "tsc -b --pretty false && node scripts/verify-builds.mjs",
     "verify": "npm test && npm run build:verify",
     "test": "node --test",
