@@ -92,6 +92,11 @@ import {
   mergeReaderDataPackage,
   serializeReaderDataPackage,
 } from './reader-data-package.js'
+import {
+  installReaderCacheWithRescue,
+  isReaderStorageQuotaError,
+  readerStorageRescueCandidates,
+} from './reader-storage-rescue.js'
 import { workUsesCameraInteractions } from '../js/interactive-scene-model.js'
 import { mountInteractiveScene } from '../js/interactive-scene-renderer.js'
 import { substituteInteractiveSceneText } from '../js/interactive-scene-placeholders.js'
@@ -2823,6 +2828,131 @@ function importWorkCollection(payload, root) {
   }
 }
 
+function serializedReaderWorkCache(work) {
+  var cachedWork = Object.assign({}, work)
+  delete cachedWork.readerPhValues
+  return JSON.stringify(cachedWork)
+}
+
+function renderReaderStorageRescue(work, root, serialized, loadOptions) {
+  root = root && typeof root.querySelector === 'function' ? root : _readerImportOverlay
+  if (!root) return false
+  var dropInner = root.querySelector('#dropInner')
+  var review = root.querySelector('.rd-import-review')
+  if (!dropInner || !review) return false
+  var analysis = readerStorageRescueCandidates(localStorage, getReaderLibraryState(), {
+    excludeWorkId:work.id,
+    incomingSerialized:serialized,
+  })
+  var selectedBytes = 0
+  var candidateRows = ''
+  analysis.candidates.forEach(function(candidate) {
+    var checked = selectedBytes < analysis.suggestedBytes
+    if (checked) selectedBytes += candidate.bytes
+    candidateRows += '<label class="rd-storage-rescue-row">' +
+      '<input type="checkbox" data-reader-rescue-work value="' + escapeHtmlAttribute(candidate.id) + '"' +
+      (checked ? ' checked' : '') + '>' +
+      '<span class="rd-storage-rescue-copy"><strong>' + esc(candidate.title) + '</strong>' +
+      '<small>' + (candidate.lastOpenedAt ? esc(timeAgo(candidate.lastOpenedAt)) + '读过' : '很久未读') +
+      ' · 只清理正文</small></span>' +
+      '<span class="rd-storage-rescue-size">' + esc(formatReaderStorageSize(candidate.bytes)) + '</span></label>'
+  })
+  dropInner.hidden = true
+  review.hidden = false
+  review.innerHTML = '<section class="rd-storage-rescue" data-reader-storage-rescue aria-labelledby="rdStorageRescueTitle">' +
+    '<p class="rd-import-review-label">本地存储</p>' +
+    '<h3 id="rdStorageRescueTitle">存储空间不足</h3>' +
+    '<p class="rd-storage-rescue-intro">这次作品正文约 ' + esc(formatReaderStorageSize(analysis.incomingBytes)) +
+    '。可以清理久未阅读作品的正文缓存，再继续刚才的导入。</p>' +
+    '<p class="rd-storage-rescue-safe">阅读进度、身份、占位符和书签都会保留；被清理的旧作下次打开时需要重新导入原文件。</p>' +
+    (analysis.candidates.length
+      ? '<div class="rd-storage-rescue-list" aria-label="可清理的作品正文">' + candidateRows + '</div>'
+      : '<p class="rd-storage-rescue-empty">当前没有可清理的旧作品正文，可以选择仅在本次打开。</p>') +
+    '<p class="rd-storage-rescue-total" data-reader-rescue-total></p>' +
+    '<p class="rd-storage-rescue-status" data-reader-rescue-status role="status" aria-live="polite"></p>' +
+    '<div class="rd-storage-rescue-actions">' +
+    '<button type="button" class="rd-book-secondary" data-reader-rescue-memory>仅本次阅读</button>' +
+    '<button type="button" class="rd-book-primary" data-reader-rescue-continue>清理并继续</button></div></section>'
+  setReaderImportStatus(root, 'idle', '')
+
+  var rescue = review.querySelector('[data-reader-storage-rescue]')
+  var checkboxes = Array.from(rescue.querySelectorAll('[data-reader-rescue-work]'))
+  var total = rescue.querySelector('[data-reader-rescue-total]')
+  var status = rescue.querySelector('[data-reader-rescue-status]')
+  var memoryButton = rescue.querySelector('[data-reader-rescue-memory]')
+  var continueButton = rescue.querySelector('[data-reader-rescue-continue]')
+  function selectedCandidates() {
+    return checkboxes.filter(function(checkbox) { return checkbox.checked })
+  }
+  function refreshSelection() {
+    var selected = selectedCandidates()
+    var bytes = selected.reduce(function(sum, checkbox) {
+      var candidate = analysis.candidates.find(function(item) { return item.id === checkbox.value })
+      return sum + (candidate?.bytes || 0)
+    }, 0)
+    continueButton.disabled = selected.length === 0
+    total.textContent = selected.length
+      ? '已选择约 ' + formatReaderStorageSize(bytes) + '；建议至少释放约 ' +
+        formatReaderStorageSize(analysis.suggestedBytes) + '。'
+      : '尚未选择要清理的正文缓存。'
+    status.textContent = ''
+  }
+  checkboxes.forEach(function(checkbox) { checkbox.onchange = refreshSelection })
+  refreshSelection()
+
+  memoryButton.onclick = function() {
+    closeReaderImportDialog({restoreFocus:false})
+    loadWork(work, Object.assign({}, loadOptions, {skipCache:true}))
+    showReaderToast('这次正文不会保存；关闭后需重新导入')
+  }
+  continueButton.onclick = function() {
+    var selectedIds = selectedCandidates().map(function(checkbox) { return checkbox.value })
+    if (!selectedIds.length) return
+    memoryButton.disabled = true
+    continueButton.disabled = true
+    status.textContent = '正在释放正文缓存并继续导入…'
+    var result = installReaderCacheWithRescue(localStorage, {
+      library:getReaderLibraryState(),
+      incomingWorkId:work.id,
+      incomingSerialized:serialized,
+      clearWorkIds:selectedIds,
+    })
+    if (!result.ok) {
+      memoryButton.disabled = false
+      continueButton.disabled = false
+      status.textContent = result.rollbackOk
+        ? '空间仍然不足，刚才选择的正文缓存已经恢复。请再多选一些后重试。'
+        : '空间仍然不足，且部分正文缓存未能恢复；请先导出阅读数据备份。'
+      return
+    }
+    closeReaderImportDialog({restoreFocus:false})
+    loadWork(work, Object.assign({}, loadOptions, {cachePrepared:true}))
+    showReaderToast('已释放 ' + formatReaderStorageSize(result.clearedBytes) + '，阅读记录仍保留')
+  }
+  var initialFocus = checkboxes[0] || memoryButton
+  if (initialFocus) initialFocus.focus()
+  return true
+}
+
+function openImportedReaderWork(work, root, loadOptions) {
+  var serialized
+  try {
+    serialized = serializedReaderWorkCache(work)
+    localStorage.setItem('moirain_work_' + work.id, serialized)
+  } catch (error) {
+    if (isReaderStorageQuotaError(error) && renderReaderStorageRescue(work, root, serialized || '', loadOptions)) {
+      return false
+    }
+    warnReaderStorageFailure()
+    closeReaderImportDialog({restoreFocus:false})
+    loadWork(work, Object.assign({}, loadOptions, {skipCache:true}))
+    return true
+  }
+  closeReaderImportDialog({restoreFocus:false})
+  loadWork(work, Object.assign({}, loadOptions, {cachePrepared:true}))
+  return true
+}
+
 function canResumeReaderImport(work, book) {
   if (!work || !book || !book.progress || String(work.password || '').trim()) return false
   var savedValues = book.placeholderValues || {}
@@ -2874,8 +3004,7 @@ function reviewReaderWorkImport(work, root) {
   }
   confirmButton.onclick = function() {
     var skipLanding = canResumeReaderImport(work, existingBook)
-    closeReaderImportDialog({restoreFocus:false})
-    loadWork(work, {resume:true, skipLanding:skipLanding})
+    openImportedReaderWork(work, root, {resume:true, skipLanding:skipLanding})
   }
   confirmButton.focus()
   return true
@@ -2897,8 +3026,7 @@ function importWork(work, root) {
     return
   }
   if (reviewReaderWorkImport(result.work, root)) return
-  closeReaderImportDialog({restoreFocus:false})
-  loadWork(result.work)
+  openImportedReaderWork(result.work, root)
 }
 
 // ====== Landing Page (work info + password + placeholders) ======
@@ -3210,11 +3338,12 @@ function loadWork(work, options) {
     _readerPendingReadingPosition = rememberedBook.progress.readingPosition
   }
   if (rememberWork) {
-    var cached = tryReaderStorageWrite(function() {
-      var cachedWork = Object.assign({}, work)
-      delete cachedWork.readerPhValues
-      localStorage.setItem('moirain_work_' + work.id, JSON.stringify(cachedWork))
-    })
+    var cached = !!options?.cachePrepared
+    if (!cached && !options?.skipCache) {
+      cached = tryReaderStorageWrite(function() {
+        localStorage.setItem('moirain_work_' + work.id, serializedReaderWorkCache(work))
+      })
+    }
     if (cached) {
       tryReaderStorageWrite(function() { addRecent(work) })
     }
@@ -3230,6 +3359,7 @@ function loadWork(work, options) {
     showLandingPage(Object.assign({}, work, {password:"", placeholders:[]}), startReading)
   } else if (options && options.skipLanding) startReading()
   else showLandingPage(work, startReading)
+  return true
 }
 
 function timeAgo(ts) {

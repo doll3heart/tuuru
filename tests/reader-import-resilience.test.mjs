@@ -310,8 +310,8 @@ test("reader imports remain usable when local persistence is unavailable", async
 
   assert.ok(document.getElementById("rdStartBtn"))
   assert.deepEqual(storage.writes, [
-    "moirain_readerLibrary",
     "moirain_work_reader-memory-only-work",
+    "moirain_readerLibrary",
   ])
   assert.equal(storage.writes.includes("moirain_recent"), false)
   assert.equal(alerts.length, 1)
@@ -365,8 +365,8 @@ test("reader keeps its cached work when only the recent list exceeds quota", asy
 
   assert.ok(document.getElementById("rdStartBtn"))
   assert.deepEqual(storage.writes, [
-    "moirain_readerLibrary",
     "moirain_work_reader-recent-quota-work",
+    "moirain_readerLibrary",
     "moirain_recent",
   ])
   assert.equal(storage.values.get("moirain_work_reader-recent-quota-work"), normalizedSerializedWork)

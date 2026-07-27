@@ -741,6 +741,25 @@ body.rd-import-open { overflow: hidden; }
   outline: 2px solid var(--c-primary-hover);
   outline-offset: 2px;
 }
+.rd-storage-rescue{width:100%}
+.rd-storage-rescue-intro{max-width:62ch;margin-top:9px;color:var(--c-text);font-size:.78rem;line-height:1.6;text-wrap:pretty}
+.rd-storage-rescue-safe{max-width:62ch;margin-top:7px;color:var(--c-text2);font-size:.7rem;line-height:1.6;text-wrap:pretty}
+.rd-storage-rescue-list{margin-top:16px;border-top:1px solid var(--c-border)}
+.rd-storage-rescue-row{display:grid;min-height:58px;align-items:center;border-bottom:1px solid var(--c-border);grid-template-columns:22px minmax(0,1fr) auto;gap:10px;cursor:pointer}
+.rd-storage-rescue-row:hover{background:color-mix(in srgb,var(--c-surface2) 48%,transparent)}
+.rd-storage-rescue-row:focus-within{background:color-mix(in srgb,var(--c-surface2) 68%,transparent);outline:2px solid var(--c-primary-hover);outline-offset:-2px}
+.rd-storage-rescue-row input{width:17px;height:17px;accent-color:var(--c-primary-hover)}
+.rd-storage-rescue-copy{display:flex;min-width:0;flex-direction:column;gap:2px}
+.rd-storage-rescue-copy strong{overflow:hidden;font-size:.76rem;text-overflow:ellipsis;white-space:nowrap}
+.rd-storage-rescue-copy small{color:var(--c-text2);font-size:.66rem;line-height:1.45}
+.rd-storage-rescue-size{color:var(--c-text2);font-size:.68rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rd-storage-rescue-empty{margin-top:16px;padding:13px 0;border-top:1px solid var(--c-border);border-bottom:1px solid var(--c-border);color:var(--c-text2);font-size:.72rem;line-height:1.55}
+.rd-storage-rescue-total{min-height:1.5em;margin-top:11px;color:var(--c-text2);font-size:.68rem;line-height:1.5}
+.rd-storage-rescue-status{min-height:1.5em;margin-top:3px;color:var(--c-accent3);font-size:.68rem;line-height:1.5}
+.rd-storage-rescue-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:15px}
+.rd-storage-rescue-actions button{min-height:44px;padding:8px 14px;border-radius:4px;font:650 .76rem var(--font);cursor:pointer}
+.rd-storage-rescue-actions button:disabled{cursor:not-allowed;opacity:.52}
+.rd-storage-rescue-actions button:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:2px}
 
 @media (max-width: 480px) {
   .rd-import-overlay {
@@ -759,6 +778,8 @@ body.rd-import-open { overflow: hidden; }
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
+  .rd-storage-rescue-actions{display:grid;grid-template-columns:1fr}
+  .rd-storage-rescue-actions button{width:100%}
 }
 
 /* ====== Article reader ====== */
