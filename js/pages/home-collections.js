@@ -10,6 +10,7 @@ import {
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
 import { compressEditorImage } from "../image-compression.js"
+import { encryptWorkPackage } from "../work-package.js"
 
 export const COLLECTION_LONG_PRESS_MS = 550
 export const COLLECTION_LONG_PRESS_MOVE_PX = 10
@@ -58,8 +59,8 @@ export function renderCollectionCards(collections, works) {
           <button type="button" class="btn btn-sm btn-ghost work-card-more-btn" data-collection-menu="${attr(collection.id)}" aria-expanded="false">更多</button>
           <div class="work-card-more-popover" data-collection-popover="${attr(collection.id)}">
             <button type="button" class="btn btn-sm btn-ghost" data-collection-manage="${attr(collection.id)}">作品集信息</button>
-            <button type="button" class="btn btn-sm btn-ghost" data-collection-export-json="${attr(collection.id)}">导出 JSON</button>
-            <button type="button" class="btn btn-sm btn-ghost" data-collection-export-png="${attr(collection.id)}">导出 PNG</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-collection-export-json="${attr(collection.id)}">导出加密作品集</button>
+            <button type="button" class="btn btn-sm btn-ghost" data-collection-export-png="${attr(collection.id)}">导出加密 PNG</button>
             <button type="button" class="btn btn-sm btn-ghost btn-danger-text" data-collection-delete="${attr(collection.id)}">删除作品集</button>
           </div>
         </div>
@@ -248,19 +249,21 @@ function closeCollectionMenus(exceptId = "") {
   })
 }
 
-function downloadCollectionJson(id) {
+async function downloadCollectionJson(id) {
   const collection = getWorkCollections().find(candidate => candidate.id === id)
   const json = exportWorkCollectionAsJSON(id)
   if (!collection || !json) throw new TypeError("作品集不存在")
-  downloadBlob(new Blob([json], { type: "application/json;charset=utf-8" }), `${safeFilename(collection.title)}.tuuru.json`)
-  showToast("作品集 JSON 已导出", "success")
+  const encrypted = await encryptWorkPackage(json)
+  downloadBlob(new Blob([encrypted], { type: "application/vnd.tuuru.work" }), `${safeFilename(collection.title)}.tuuru`)
+  showToast("加密作品集已导出", "success")
 }
 
-function downloadCollectionPng(id) {
+async function downloadCollectionPng(id) {
   const collection = getWorkCollections().find(candidate => candidate.id === id)
   const json = exportWorkCollectionAsJSON(id)
   if (!collection || !json) throw new TypeError("作品集不存在")
-  encodeSteganoPNG(json, collection.coverImage || "", dataUrl => {
+  const encrypted = await encryptWorkPackage(json)
+  encodeSteganoPNG(encrypted, collection.coverImage || "", dataUrl => {
     const anchor = document.createElement("a")
     anchor.href = dataUrl
     anchor.download = `${safeFilename(collection.title)}.png`
@@ -309,7 +312,7 @@ export function bindCollectionShelf({ refresh } = {}) {
     suppressCardClickUntil = Date.now() + 300
     enterSelection(card.dataset.id)
   })
-  list.addEventListener("click", event => {
+  list.addEventListener("click", async event => {
     const select = event.target.closest("[data-collection-select]")
     if (select) {
       event.preventDefault()
@@ -343,8 +346,8 @@ export function bindCollectionShelf({ refresh } = {}) {
     const remove = event.target.closest("[data-collection-delete]")
     try {
       if (manage) openCollectionEditor(getWorkCollections().find(item => item.id === manage.dataset.collectionManage))
-      else if (exportJson) downloadCollectionJson(exportJson.dataset.collectionExportJson)
-      else if (exportPng) downloadCollectionPng(exportPng.dataset.collectionExportPng)
+      else if (exportJson) await downloadCollectionJson(exportJson.dataset.collectionExportJson)
+      else if (exportPng) await downloadCollectionPng(exportPng.dataset.collectionExportPng)
       else if (remove) {
         const collection = getWorkCollections().find(item => item.id === remove.dataset.collectionDelete)
         if (collection && confirm(`删除作品集《${collection.title}》？其中的原作品不会被删除。`)) {

@@ -51,7 +51,7 @@ test("an oversized PNG export restores its button and reports the limit", async 
     document.createElement = createElement
   })
 
-  exportButton.onclick()
+  await exportButton.onclick()
 
   assert.equal(canvasCreations, 0)
   assert.equal(exportButton.disabled, false)
@@ -116,7 +116,7 @@ test("an asynchronous cover encoding failure restores the PNG export", async t =
     value: [{ name: "cover.png" }],
   })
   fileInput.onchange()
-  exportButton.onclick()
+  await exportButton.onclick()
   await new Promise(resolve => setTimeout(resolve, 10))
 
   assert.deepEqual(asyncThrows, [])

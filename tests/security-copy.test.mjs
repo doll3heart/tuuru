@@ -6,9 +6,9 @@ const homeSource = await readFile(new URL("../js/pages/home.js", import.meta.url
 const previewSource = await readFile(new URL("../reader/reader.js", import.meta.url), "utf8")
 const securityCopy = homeSource + "\n" + previewSource
 
-test("reading-password UI never claims that works are encrypted", () => {
-  assert.doesNotMatch(securityCopy, /已加密|此作品已加密/)
-  assert.match(homeSource, /需阅读密码/)
-  assert.match(previewSource, /阅读密码/)
-  assert.match(homeSource, /不会加密导出的 JSON 或 PNG 文件/)
+test("reading-password UI accurately describes encrypted and legacy exports", () => {
+  assert.doesNotMatch(securityCopy, /无法破解|绝对安全/)
+  assert.match(homeSource, /新导出的 \.tuuru 和 PNG 会隐藏密码与正文/)
+  assert.match(homeSource, /旧 JSON、旧 PNG 不受保护/)
+  assert.match(homeSource, /不等同于 DRM/)
 })

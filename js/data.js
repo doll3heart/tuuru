@@ -408,13 +408,14 @@ export function exportWorkAsJSON(wid) {
 }
 
 export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback) {
-  // jsonStr: JSON string to hide
+  // jsonStr: JSON string or encrypted binary package to hide
   // coverImageUrl: optional cover image data URL
   // callback: function(dataUrl) called with the result PNG data URL
   // errorCallback: optional function(error) for asynchronous encoding failures
   
-  var encoder = new TextEncoder()
-  var data = encoder.encode(jsonStr)
+  var data = typeof jsonStr === 'string'
+    ? new TextEncoder().encode(jsonStr)
+    : (jsonStr instanceof Uint8Array ? jsonStr : new Uint8Array(jsonStr))
   assertSteganoPayloadSize(data.length)
   var totalBytes = 4 + data.length
   var pixelCount = Math.ceil(totalBytes / 3)

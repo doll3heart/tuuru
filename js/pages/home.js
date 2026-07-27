@@ -5,6 +5,7 @@ import { orderedWorks } from "../work-order.js"
 import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
+import { encryptWorkPackage } from "../work-package.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
 import { serializeLocalDatabaseBackup } from "../storage.js"
 import { inspectLocalProfile, mergeLocalProfile, serializeLocalProfile } from "../local-profile-transport.js"
@@ -119,8 +120,8 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();pinShelfWork('${w.id}',${w.pinned ? "false" : "true"});closeWorkMenu('${w.id}')">${w.pinned ? "取消置顶" : "置顶作品"}</button>
             <button class="btn btn-sm btn-ghost" data-work-preflight="${w.id}" onclick="event.stopPropagation();openWorkPreflight('${w.id}');closeWorkMenu('${w.id}')">发布前体检</button>
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
-            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出 JSON</button>
-            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出 PNG</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出加密作品</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出加密 PNG</button>
           </div>
         </div>
       </div>
@@ -605,11 +606,12 @@ window.expPNG = function(id){
       exportButton.disabled = false
       alert('导出失败：' + (error instanceof Error ? error.message : '未知错误'))
     }
-    exportButton.onclick = function() {
+    exportButton.onclick = async function() {
       exportButton.textContent = '编码中...'
       exportButton.disabled = true
       try {
-        encodeSteganoPNG(json, coverUrl, function(dataUrl) {
+        var encrypted = await encryptWorkPackage(json)
+        encodeSteganoPNG(encrypted, coverUrl, function(dataUrl) {
           var a = document.createElement('a')
           a.href = dataUrl
           a.download = title + '.png'
@@ -626,19 +628,15 @@ window.expPNG = function(id){
   }
 }
 
-window.expWork = function(id){
+window.expWork = async function(id){
   try {
     var json = exportWorkAsJSON(id)
     if (!json) { alert('导出失败'); return }
-    var blob = new Blob([json], { type: 'application/json' })
-    var url = URL.createObjectURL(blob)
-    var a = document.createElement('a')
-    a.href = url
     var w = getWorks().find(function(x) { return x.id === id })
-    a.download = (w ? w.title : '作品') + '.json'
-    a.click()
-    URL.revokeObjectURL(url)
-    showToast('已导出', 'success')
+    var encrypted = await encryptWorkPackage(json)
+    var blob = new Blob([encrypted], { type: 'application/vnd.tuuru.work' })
+    downloadBlob(blob, (w ? w.title : '作品') + '.tuuru')
+    showToast('加密作品已导出', 'success')
   } catch(e) {
     alert('导出失败：' + e.message)
   }
@@ -743,7 +741,7 @@ window.editWorkInfo = function(id){
   body += '<div class="wi-row"><label class="wi-label">作品描述</label><textarea class="wi-textarea" id="wiDesc" rows="3" placeholder="简单介绍这部作品...">' + escHtml(w.desc || '') + '</textarea></div>'
   body += '<div class="wi-row"><label class="wi-label">作者署名</label><input class="wi-input" id="wiAuthor" value="' + escHtml(w.author || '') + '" placeholder="作者署名"></div>'
   body += '<div class="wi-row"><label class="wi-label">作者有话说</label><textarea class="wi-textarea" id="wiNote" rows="3" placeholder="想对读者说的话...">' + escHtml(w.authorNote || '') + '</textarea></div>'
-  body += '<div class="wi-row"><label class="wi-label">阅读密码（选填）</label><input class="wi-input" id="wiPwd" value="' + escHtml(w.password || '') + '" placeholder="设置后读者需输入密码"><div class="wi-help">阅读密码仅限制通过阅读界面进入，不会加密导出的 JSON 或 PNG 文件。</div></div>'
+  body += '<div class="wi-row"><label class="wi-label">阅读密码（选填）</label><input class="wi-input" id="wiPwd" value="' + escHtml(w.password || '') + '" placeholder="设置后读者需输入密码"><div class="wi-help">新导出的 .tuuru 和 PNG 会隐藏密码与正文；旧 JSON、旧 PNG 不受保护。离线加密用于防止直接查看，不等同于 DRM。</div></div>'
   body += workWatermarkSettingsHtml(watermarkDraft)
   body += '</div>'
   var ov = document.createElement('div')

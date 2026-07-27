@@ -66,6 +66,14 @@ test("the article editor route can collapse secondary global navigation on phone
   assert.match(css, /\.app-header-editor\s+\.app-header-actions\s*>\s*nav:not\(\.app-mode-switch\)/)
 })
 
+test("the editor brand uses the same Tuuru mascot as the app splash", () => {
+  const logo = rule(".app-header .logo::before")
+  assert.match(logo, /background\s*:\s*url\("\/icons\/tuuru-rabbit-v2-192\.png"\) center\/contain no-repeat/)
+  assert.match(logo, /width\s*:\s*30px/)
+  assert.match(logo, /height\s*:\s*30px/)
+  assert.doesNotMatch(logo, /mask\s*:/)
+})
+
 test("the shared header compacts before a 500px viewport can overflow", () => {
   assert.match(css, /@media\(max-width:600px\)[\s\S]*\.app-header \.logo span\{display:none\}/)
   assert.match(css, /@media\(max-width:600px\)[\s\S]*\.app-header nav a\{white-space:nowrap\}/)

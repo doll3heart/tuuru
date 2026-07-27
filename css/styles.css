@@ -66,7 +66,7 @@ ul,ol{list-style:none}
 
 .app-header{background:color-mix(in srgb,var(--c-surface) 94%,transparent);border-bottom:1px solid var(--c-border2);padding:0 20px;height:var(--app-header-height);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:var(--ui-raised-shadow);backdrop-filter:blur(10px)}
 .app-header .logo{font-size:1.05rem;font-weight:700;color:var(--c-primary-hover);display:flex;align-items:center;gap:7px;letter-spacing:.08em;text-transform:uppercase}
-.app-header .logo::before{content:"";display:inline-block;width:20px;height:20px;background:var(--c-primary);-webkit-mask:var(--icon-wing) center/contain no-repeat;mask:var(--icon-wing) center/contain no-repeat}
+.app-header .logo::before{content:"";display:block;width:30px;height:30px;flex:0 0 30px;background:url("/icons/tuuru-rabbit-v2-192.png") center/contain no-repeat}
 .app-header nav{display:flex;gap:4px}
 .app-header nav a{display:inline-flex;height:44px;align-items:center;justify-content:center;padding:0 12px;color:var(--c-text2);font-size:.8rem;line-height:1;transition:.15s;border:1px solid transparent;border-radius:3px}
 .app-header nav a:hover,.app-header nav a.active{background:var(--c-surface2);color:var(--c-text);border-color:var(--c-border);box-shadow:1px 1px 0 color-mix(in srgb,var(--c-primary-hover) 24%,transparent);text-decoration:none}

@@ -3,6 +3,7 @@ import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
+import { decryptWorkPackage, isEncryptedWorkPackage } from '../js/work-package.js'
 import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 import { parsePngDimensionsFromDataUrl, readerPngDimensionError } from './png-import-policy.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
@@ -783,9 +784,9 @@ function renderImportPanel() {
   h += '<div class="drop-zone-inner" id="dropInner">'
   h += '<div class="drop-icon">&#128196;</div>'
   h += '<div class="drop-title">导入 Tuuru 作品</div>'
-  h += '<div class="drop-desc">拖放 .json 或 .png 文件到此处，或点击下方按钮选择文件</div>'
+  h += '<div class="drop-desc">拖放 .tuuru、.json 或 .png 文件到此处，或点击下方按钮选择文件</div>'
   h += '<button class="drop-btn" id="pickFileBtn">选择文件</button>'
-  h += '<input type="file" id="fileInput" accept=".json,.png" style="display:none">'
+  h += '<input type="file" id="fileInput" accept=".tuuru,.json,.png" style="display:none">'
   h += '</div>'
   h += '</div>'
   return h
@@ -799,8 +800,8 @@ function readerImportFileError(file, ext) {
     return '无法确认文件大小，请重新选择文件'
   }
   if (file.size === 0) return '文件为空，请选择有效的作品文件'
-  if (ext === 'json' && file.size > MAX_READER_JSON_IMPORT_BYTES) {
-    return 'JSON 文件超过 10 MB 安全读取上限'
+  if ((ext === 'tuuru' || ext === 'json') && file.size > MAX_READER_JSON_IMPORT_BYTES) {
+    return '作品文件超过 10 MB 安全读取上限'
   }
   if (ext === 'png' && file.size > MAX_READER_PNG_IMPORT_BYTES) {
     return 'PNG 文件超过 25 MB 安全读取上限'
@@ -821,8 +822,8 @@ function setupImport() {
     if (!file) return
     var name = typeof file.name === 'string' ? file.name : ''
     var ext = name.split('.').pop().toLowerCase()
-    if (ext !== 'json' && ext !== 'png') {
-      alert('请选择 .json 或 .png 文件')
+    if (ext !== 'tuuru' && ext !== 'json' && ext !== 'png') {
+      alert('请选择 .tuuru、.json 或 .png 文件')
       resetFileInput()
       return
     }
@@ -848,9 +849,17 @@ function setupImport() {
       if (message) alert(message)
       return true
     }
-    reader.onload = function() {
+    reader.onload = async function() {
       if (!finishRead()) return
-      if (ext === 'json') {
+      if (ext === 'tuuru') {
+        try {
+          var encryptedBytes = new Uint8Array(reader.result)
+          var serialized = await decryptWorkPackage(encryptedBytes)
+          importPayload(JSON.parse(serialized))
+        } catch (e) {
+          alert('Tuuru 作品包读取失败：' + e.message)
+        }
+      } else if (ext === 'json') {
         try {
           var work = JSON.parse(reader.result)
           importPayload(work)
@@ -874,7 +883,8 @@ function setupImport() {
       finishRead('文件读取已取消，请重新选择')
     }
     try {
-      if (ext === 'json') reader.readAsText(file)
+      if (ext === 'tuuru') reader.readAsArrayBuffer(file)
+      else if (ext === 'json') reader.readAsText(file)
       else reader.readAsDataURL(file)
     } catch (error) {
       finishRead('无法读取文件，请确认文件仍可访问后重试')
@@ -913,6 +923,13 @@ function setupImport() {
   }
 }
 
+function parseSteganoWork(bytes) {
+  if (isEncryptedWorkPackage(bytes)) {
+    return decryptWorkPackage(bytes).then(function(json) { return JSON.parse(json) })
+  }
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
+
 function decodeSteganoFromDataUrl(dataUrl) {
   var img = new Image()
   img.onload = function() {
@@ -923,9 +940,14 @@ function decodeSteganoFromDataUrl(dataUrl) {
     var bytes = readSteganoPayload(pixels)
     if (!bytes) { alert('未检测到隐写数据'); return }
     try {
-      var json = new TextDecoder().decode(bytes)
-      var work = JSON.parse(json)
-      importPayload(work)
+      var work = parseSteganoWork(bytes)
+      if (work && typeof work.then === 'function') {
+        work.then(importPayload).catch(function(error) {
+          alert('隐写数据解析失败：' + error.message)
+        })
+      } else {
+        importPayload(work)
+      }
     } catch(e) {
       alert('隐写数据解析失败：' + e.message)
     }
