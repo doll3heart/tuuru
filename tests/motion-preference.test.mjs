@@ -34,5 +34,5 @@ test("optional motion requires both a feature opt-in and system permission", () 
 })
 
 test("reader typing is gated by the shared motion preference", () => {
-  assert.match(readerSource, /if\s*\(ac\s*&&\s*shouldUseMotion\(rs\.typingEffect\)\)/)
+  assert.match(readerSource, /if\s*\(ac\s*&&\s*!savedPassage\s*&&\s*shouldUseMotion\(rs\.typingEffect\)\)/)
 })

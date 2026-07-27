@@ -29,6 +29,83 @@ function phoneWork() {
   }
 }
 
+function articleWork(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: "reader-recovery-article",
+    type: "article",
+    title: "雾灯来信",
+    author: "测试作者",
+    password: "",
+    placeholders: [],
+    chapters: [{ id:"chapter-a", name:"第一章" }],
+    nodes: [
+      {
+        id:"start",
+        chapterId:"chapter-a",
+        title:"起点",
+        content:"<p>开头正文</p>",
+        choices:[{ id:"go", text:"继续", targetId:"ending" }],
+      },
+      {
+        id:"ending",
+        chapterId:"chapter-a",
+        title:"旧位置",
+        content:"<p>上次停在这里</p>",
+        choices:[],
+      },
+    ],
+    scenes: [],
+    phoneModules: [],
+    startNode:"start",
+    ...overrides,
+  }
+}
+
+function seedMissingArticleBook(work, progress = {}) {
+  localStorage.setItem("moirain_readerLibrary", JSON.stringify({
+    version:1,
+    identities:[{
+      id:"identity-a",
+      name:"夜间阅读",
+      values:{ 姓名:"云枝" },
+      createdAt:1,
+      updatedAt:2,
+    }],
+    books:[{
+      id:work.id,
+      type:"article",
+      title:work.title,
+      author:work.author,
+      coverColor:"",
+      addedAt:1,
+      lastOpenedAt:2,
+      placeholderDefinitions:[],
+      placeholderValues:{},
+      progress:{
+        kind:"article",
+        path:["start", "ending"],
+        choiceMemory:{ start:"go" },
+        interactionSelections:{},
+        checkpoints:[],
+        savedAt:3,
+        ...progress,
+      },
+      completedAt:0,
+      bookmarks:[{
+        id:"bookmark-a",
+        kind:"article",
+        label:"旧位置",
+        note:"保留这条备注",
+        savedAt:4,
+        path:["start", "ending"],
+        choiceMemory:{ start:"go" },
+        interactionSelections:{},
+      }],
+    }],
+  }))
+}
+
 function unavailableStorage() {
   const values = new Map([["sentinel", "preserve me"]])
   const writes = []
@@ -113,6 +190,22 @@ function dropFile(dom, file) {
   Object.defineProperty(drop, "dataTransfer", { value: { files: [file] } })
   document.getElementById("dropInner").dispatchEvent(drop)
   return drop
+}
+
+function openImportDialog() {
+  const libraryTab = document.querySelector('[data-tab="library"]')
+  assert.ok(libraryTab)
+  libraryTab.click()
+  const trigger = document.querySelector("[data-reader-open-import]")
+  assert.ok(trigger)
+  trigger.click()
+  assert.ok(document.querySelector(".rd-import-dialog"))
+}
+
+function importStatus() {
+  const status = document.querySelector("[data-reader-import-status]")
+  assert.ok(status)
+  return status
 }
 
 function encodeRgbPayload(text) {
@@ -207,7 +300,7 @@ test("reader imports remain usable when local persistence is unavailable", async
   }
 
   await import(`../reader/reader.js?reader-import-storage=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
 
   const drop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(drop, "dataTransfer", {
@@ -216,7 +309,10 @@ test("reader imports remain usable when local persistence is unavailable", async
   document.getElementById("dropInner").dispatchEvent(drop)
 
   assert.ok(document.getElementById("rdStartBtn"))
-  assert.deepEqual(storage.writes, ["moirain_work_reader-memory-only-work"])
+  assert.deepEqual(storage.writes, [
+    "moirain_readerLibrary",
+    "moirain_work_reader-memory-only-work",
+  ])
   assert.equal(storage.writes.includes("moirain_recent"), false)
   assert.equal(alerts.length, 1)
   assert.doesNotMatch(alerts[0], /JSON/)
@@ -229,7 +325,8 @@ test("reader imports remain usable when local persistence is unavailable", async
   assert.ok(document.getElementById("phoneDesktopReader"))
   assert.equal(alerts.length, 1)
   assert.equal(storage.writes.includes("moirain_recent"), false)
-  assert.equal(storage.writes.includes("moirain_readerPhValues"), true)
+  assert.equal(storage.writes.includes("moirain_readerLibrary"), true)
+  assert.equal(storage.writes.includes("moirain_readerPhValues"), false)
   assert.deepEqual(storage.removals, [])
   assert.equal(storage.values.get("sentinel"), "preserve me")
 })
@@ -258,7 +355,7 @@ test("reader keeps its cached work when only the recent list exceeds quota", asy
   }
 
   await import(`../reader/reader.js?reader-import-recent-quota=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
 
   const drop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(drop, "dataTransfer", {
@@ -268,6 +365,7 @@ test("reader keeps its cached work when only the recent list exceeds quota", asy
 
   assert.ok(document.getElementById("rdStartBtn"))
   assert.deepEqual(storage.writes, [
+    "moirain_readerLibrary",
     "moirain_work_reader-recent-quota-work",
     "moirain_recent",
   ])
@@ -297,7 +395,7 @@ test("reader rejects unsafe import sizes before creating a FileReader", async t 
   }
 
   await import(`../reader/reader.js?reader-import-limits=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
 
   const MiB = 1024 * 1024
   for (const file of [
@@ -307,15 +405,19 @@ test("reader rejects unsafe import sizes before creating a FileReader", async t 
     { name: "too-large.png", size: 25 * MiB + 1 },
   ]) {
     dropFile(dom, file)
+    assert.equal(importStatus().dataset.state, "error")
+    assert.ok(importStatus().textContent.trim())
   }
 
   assert.equal(constructions.length, 0)
   assert.deepEqual(reads, [])
-  assert.equal(alerts.length, 4)
+  assert.equal(alerts.length, 0)
 
   const jsonAtLimit = { name: "limit.json", size: 10 * MiB }
   const pngAtLimit = { name: "limit.png", size: 25 * MiB }
   dropFile(dom, jsonAtLimit)
+  assert.equal(importStatus().dataset.state, "loading")
+  assert.equal(document.getElementById("pickFileBtn").disabled, true)
   dropFile(dom, pngAtLimit)
 
   assert.equal(constructions.length, 2)
@@ -341,7 +443,7 @@ test("reader reports FileReader errors and cancellations without parsing", async
   }
 
   await import(`../reader/reader.js?reader-import-read-failure=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
 
   const input = document.getElementById("fileInput")
   Object.defineProperty(input, "files", {
@@ -355,15 +457,16 @@ test("reader reports FileReader errors and cancellations without parsing", async
   })
   input.onchange()
   assert.equal(input.value, "")
+  assert.equal(importStatus().dataset.state, "error")
+  assert.match(importStatus().textContent, /无法读取/)
 
   mode = "abort"
   dropFile(dom, { name: "cancelled.json", size: 100 })
 
-  assert.equal(alerts.length, 2)
-  assert.match(alerts[0], /无法读取/)
-  assert.match(alerts[1], /取消/)
+  assert.equal(alerts.length, 0)
+  assert.equal(importStatus().dataset.state, "error")
+  assert.match(importStatus().textContent, /取消/)
   assert.equal(document.getElementById("rdStartBtn"), null)
-  assert.equal(alerts.some(message => /JSON 解析失败/.test(message)), false)
 })
 
 test("reader decodes the four-byte PNG header from RGB channels", async t => {
@@ -377,7 +480,7 @@ test("reader decodes the four-byte PNG header from RGB channels", async t => {
   installPngReadFakes(t, imageData)
 
   await import(`../reader/reader.js?reader-import-rgb-header=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
   dropFile(dom, { name: "editor-export.png", size: imageData.pixels.byteLength })
 
   assert.ok(document.getElementById("rdStartBtn"))
@@ -404,12 +507,14 @@ test("reader rejects PNG payload lengths that overlap the four-byte header", asy
   t.after(() => { globalThis.TextDecoder = OriginalTextDecoder })
 
   await import(`../reader/reader.js?reader-import-header-capacity=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
   dropFile(dom, { name: "truncated.png", size: pixels.byteLength })
 
   assert.equal(decodeCalls, 0)
   assert.equal(document.getElementById("rdStartBtn"), null)
-  assert.equal(alerts.length, 1)
+  assert.equal(alerts.length, 0)
+  assert.equal(importStatus().dataset.state, "error")
+  assert.ok(importStatus().textContent.trim())
 })
 
 test("reader validates PNG dimensions before constructing an Image", async t => {
@@ -435,7 +540,7 @@ test("reader validates PNG dimensions before constructing an Image", async t => 
   }
 
   await import(`../reader/reader.js?reader-png-dimensions=${Date.now()}`)
-  document.querySelector('[data-tab="import"]').click()
+  openImportDialog()
   const createElement = document.createElement.bind(document)
   document.createElement = function(tagName, options) {
     if (String(tagName).toLowerCase() !== "canvas") return createElement(tagName, options)
@@ -464,8 +569,172 @@ test("reader validates PNG dimensions before constructing an Image", async t => 
 
   assert.equal(imageConstructions, 1)
   assert.equal(canvasConstructions, 1)
-  assert.equal(alerts.length, 4)
-  assert.match(alerts[1], /4096/)
-  assert.match(alerts[2], /像素/)
-  assert.match(alerts[3], /PNG/)
+  assert.equal(alerts.length, 0)
+  assert.equal(importStatus().dataset.state, "error")
+  assert.match(importStatus().textContent, /PNG/)
+})
+
+test("reader reviews a same-work update before replacing cached content and preserves progress", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const previousWork = phoneWork()
+  previousWork.id = "reader-duplicate-work"
+  previousWork.title = "Old title"
+  const updatedWork = phoneWork()
+  updatedWork.id = previousWork.id
+  updatedWork.title = "Updated title"
+  for (const candidate of [previousWork, updatedWork]) {
+    candidate.phoneData.memos = [
+      {id:"memo-1", content:"第一条"},
+      {id:"memo-2", content:"第二条"},
+      {id:"memo-3", content:"第三条"},
+    ]
+    candidate.phoneData.apps = [
+      {id:"memo-app", type:"memo", name:"备忘录", enabled:true},
+    ]
+    candidate.phoneData.readingFlow = {
+      enabled:true,
+      sequence:[
+        {type:"memo", itemId:"memo-1"},
+        {type:"memo", itemId:"memo-2"},
+        {type:"memo", itemId:"memo-3"},
+      ],
+    }
+  }
+  const serializedWork = JSON.stringify(updatedWork)
+  const previousCached = JSON.stringify(previousWork)
+  localStorage.setItem(`moirain_work_${previousWork.id}`, previousCached)
+  localStorage.setItem("moirain_readerLibrary", JSON.stringify({
+    version:1,
+    books:[{
+      id:previousWork.id,
+      type:"phone",
+      title:previousWork.title,
+      author:"",
+      coverColor:"",
+      addedAt:1,
+      lastOpenedAt:2,
+      placeholderDefinitions:[],
+      placeholderValues:{},
+      progress:{kind:"phone", flowIndex:2, savedAt:3},
+    }],
+  }))
+
+  globalThis.FileReader = class {
+    readAsText() {
+      this.result = serializedWork
+      this.onload?.()
+    }
+    readAsDataURL() { throw new Error("unexpected PNG read") }
+  }
+
+  await import(`../reader/reader.js?reader-import-duplicate=${Date.now()}`)
+  openImportDialog()
+  dropFile(dom, {name:"updated.json", size:serializedWork.length})
+
+  const review = document.querySelector(".rd-import-review")
+  assert.ok(review)
+  assert.equal(review.hidden, false)
+  assert.match(review.textContent, /检测到已有作品/)
+  assert.match(review.textContent, /保留存档、身份、占位符与书签/)
+  assert.equal(document.getElementById("rdStartBtn"), null)
+  assert.equal(localStorage.getItem(`moirain_work_${previousWork.id}`), previousCached)
+
+  const confirmUpdate = review.querySelector("[data-reader-import-confirm]")
+  assert.equal(document.activeElement, confirmUpdate)
+  confirmUpdate.dispatchEvent(new dom.window.KeyboardEvent("keydown", {key:"Tab", bubbles:true}))
+  assert.equal(document.activeElement, document.querySelector(".rd-import-close"))
+  confirmUpdate.focus()
+  confirmUpdate.click()
+
+  assert.equal(document.getElementById("rdStartBtn"), null)
+  assert.ok(document.getElementById("phoneDesktopReader"))
+  assert.equal(
+    JSON.parse(localStorage.getItem(`moirain_work_${previousWork.id}`)).title,
+    updatedWork.title,
+  )
+  const savedLibrary = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+  const savedBook = savedLibrary.books.find(book => book.id === previousWork.id)
+  assert.equal(savedBook.progress.kind, "phone")
+  assert.equal(savedBook.progress.flowIndex, 2)
+  assert.equal(alerts.length, 0)
+})
+
+test("cache recovery rejects a different work instead of importing it as a new book", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const expectedWork = articleWork()
+  const wrongWork = articleWork({
+    id:"different-reader-work",
+    title:"另一封信",
+  })
+  seedMissingArticleBook(expectedWork)
+  const serializedWrongWork = JSON.stringify(wrongWork)
+
+  globalThis.FileReader = class {
+    readAsText() {
+      this.result = serializedWrongWork
+      this.onload?.()
+    }
+    readAsDataURL() { throw new Error("unexpected PNG read") }
+  }
+
+  await import(`../reader/reader.js?reader-import-recovery-mismatch=${Date.now()}`)
+  document.querySelector('.rd-tab[data-tab="library"]').click()
+  document.querySelector(".rd-book-cover").click()
+
+  const dialog = document.querySelector(".rd-import-dialog")
+  assert.ok(dialog)
+  assert.match(dialog.textContent, /雾灯来信/)
+  assert.match(dialog.textContent, /重新导入/)
+
+  dropFile(dom, {name:"wrong.json", size:serializedWrongWork.length})
+
+  assert.ok(document.querySelector(".rd-import-dialog"))
+  assert.equal(document.getElementById("rdStartBtn"), null)
+  assert.equal(importStatus().dataset.state, "error")
+  assert.match(importStatus().textContent, /雾灯来信/)
+  assert.equal(localStorage.getItem(`moirain_work_${wrongWork.id}`), null)
+  assert.equal(alerts.length, 0)
+})
+
+test("cache recovery reconnects the exact work and resumes its saved article position", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const expectedWork = articleWork()
+  seedMissingArticleBook(expectedWork)
+  const serializedWork = JSON.stringify(expectedWork)
+
+  globalThis.FileReader = class {
+    readAsText() {
+      this.result = serializedWork
+      this.onload?.()
+    }
+    readAsDataURL() { throw new Error("unexpected PNG read") }
+  }
+
+  await import(`../reader/reader.js?reader-import-recovery-resume=${Date.now()}`)
+  document.querySelector('.rd-tab[data-tab="library"]').click()
+  document.querySelector(".rd-book-cover").click()
+  dropFile(dom, {name:"same-work.json", size:serializedWork.length})
+
+  const review = document.querySelector(".rd-import-review")
+  assert.ok(review)
+  assert.equal(review.hidden, false)
+  assert.match(review.textContent, /恢复书架内容/)
+  assert.match(review.textContent, /存档、身份、占位符与书签/)
+  assert.equal(review.querySelector("[data-reader-import-confirm]").textContent, "恢复并继续")
+  assert.equal(localStorage.getItem(`moirain_work_${expectedWork.id}`), null)
+
+  review.querySelector("[data-reader-import-confirm]").click()
+
+  assert.equal(document.getElementById("rdStartBtn"), null)
+  assert.ok(document.querySelector(".article-reader"))
+  assert.equal(document.querySelector('.article-content[data-active="true"]').textContent.trim(), "上次停在这里")
+  assert.ok(localStorage.getItem(`moirain_work_${expectedWork.id}`))
+  const savedLibrary = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+  const savedBook = savedLibrary.books.find(book => book.id === expectedWork.id)
+  assert.equal(savedBook.bookmarks[0].note, "保留这条备注")
+  assert.equal(savedLibrary.identities[0].name, "夜间阅读")
+  assert.equal(alerts.length, 0)
 })

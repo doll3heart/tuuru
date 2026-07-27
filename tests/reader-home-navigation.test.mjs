@@ -88,6 +88,8 @@ test("reader home controls navigate without relying on module globals", async t 
 
   const tabs = [...tabList.querySelectorAll(".rd-tab")]
   assert.equal(tabs.length, 3)
+  assert.equal(tabs[1].dataset.tab, "library")
+  assert.equal(tabs[1].textContent, "书架")
   assert.equal(new Set(tabs.map(tab => tab.id)).size, tabs.length)
 
   tabs.forEach(tab => {
@@ -144,18 +146,21 @@ test("reader home controls navigate without relying on module globals", async t 
   assert.match(readerSource, /data-reader-home/)
   assert.doesNotMatch(readerSource, /onclick=["']reimportRecent\(/)
   assert.doesNotMatch(readerSource, /data-reader-recent-id/)
-  assert.match(readerSource, /data-reader-recent-index/)
+  assert.match(readerSource, /data-reader-book-index/)
 
-  const recentButtons = [...document.querySelectorAll(".rd-recent-item")]
-  assert.equal(recentButtons.length, cachedWorks.length)
+  tabs[1].click()
+  assertActiveTab(1)
+  const recentButtons = [...document.querySelectorAll(".rd-book-cover")]
+  const shelfWorks = [cachedWorks[0], cachedWorks[3]]
+  assert.equal(recentButtons.length, shelfWorks.length)
   for (const [index, recent] of recentButtons.entries()) {
     assert.equal(recent.tagName, "BUTTON")
     assert.equal(recent.type, "button")
     assert.equal(recent.getAttribute("onclick"), null)
-    assert.equal(recent.dataset.readerRecentIndex, String(index))
+    assert.equal(recent.dataset.readerBookIndex, String(index))
     recent.click()
     assert.equal(window.__readerInjected, undefined)
-    assert.equal(document.querySelector(".rd-landing-title").textContent, cachedWorks[index].title)
+    assert.equal(document.querySelector(".rd-landing-title").textContent, shelfWorks[index].title)
     document.querySelector(".modal-overlay").remove()
   }
 
@@ -166,7 +171,8 @@ test("reader home controls navigate without relying on module globals", async t 
   document.querySelector("[data-reader-home]").click()
 
   assert.ok(document.querySelector(".rd-home"))
-  assert.ok(document.querySelector("#tabImport"))
+  assert.equal(document.querySelector("#tabImport"), null)
+  assert.equal(document.querySelector('[data-tab="import"]'), null)
 
   for (let index = 0; index < 2; index += 1) {
     document.getElementById("app").innerHTML = `
@@ -188,9 +194,16 @@ test("reader home controls navigate without relying on module globals", async t 
   assert.equal(outsideDrop.defaultPrevented, false)
   assert.equal(reads, 0)
 
-  document.querySelector('.rd-tabs .rd-tab[data-tab="import"]').click()
-  assert.equal(document.getElementById("tabImport").style.display, "block")
-  assertActiveTab(2)
+  document.querySelector('.rd-tab[data-tab="library"]').click()
+  const importTrigger = document.querySelector("[data-reader-open-import]")
+  importTrigger.focus()
+  importTrigger.click()
+  const importDialog = document.querySelector(".rd-import-dialog")
+  assert.ok(importDialog)
+  assert.equal(importDialog.getAttribute("role"), "dialog")
+  assert.equal(importDialog.getAttribute("aria-modal"), "true")
+  assert.equal(document.querySelectorAll(".rd-import-overlay").length, 1)
+  assertActiveTab(1)
   const importDrop = new dom.window.Event("drop", { bubbles: true, cancelable: true })
   Object.defineProperty(importDrop, "dataTransfer", {
     value: { files: [{ name: "work.json", size: 1 }] },
@@ -199,4 +212,8 @@ test("reader home controls navigate without relying on module globals", async t 
 
   assert.equal(importDrop.defaultPrevented, true)
   assert.equal(reads, 1)
+
+  importDialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+  assert.equal(document.querySelector(".rd-import-overlay"), null)
+  assert.equal(document.activeElement, importTrigger)
 })

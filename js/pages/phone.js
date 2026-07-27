@@ -33,6 +33,8 @@ import { renderPhoneShoppingList, renderPhoneShoppingTabs } from "../phone-shopp
 import { renderPhoneForumComment, renderPhoneForumPost } from "../phone-forum-view.js"
 import { mergeNpcPack, readNpcPacks, saveNpcPack } from "../npc-bundles.js"
 import { referencedMessageContactIds } from "../phone-module-draft.js"
+import { findWorkReferences } from "../work-references.js"
+import { openDeletionImpactDialog } from "../deletion-impact-ui.js"
 
 var _workId = null
 var _dragState = null
@@ -46,6 +48,30 @@ function esc(s) {
   var d = document.createElement("div")
   d.textContent = s
   return d.innerHTML
+}
+
+function confirmPhoneReferencedDeletion({
+  wid,
+  kind,
+  id,
+  title,
+  itemName,
+  onConfirm,
+}) {
+  var references = findWorkReferences(getWork(wid), {kind:kind, id:id})
+  if (!references.length) {
+    onConfirm()
+    return null
+  }
+  return openDeletionImpactDialog({
+    title:title,
+    itemName:itemName,
+    references:references,
+    onConfirm:onConfirm,
+    onLocate:function(reference) {
+      if (reference.appType) openPhoneAppModal(wid, reference.appType)
+    },
+  })
 }
 
 function escAttr(s) {
@@ -693,8 +719,20 @@ function renderContactsModal(frame, wid, pd) {
         flushFields()
         var idx = parseInt(btn.dataset.ctIdx)
         if (idx >= 0 && idx < contacts.length) {
-          contacts.splice(idx, 1)
-          saveAndRefresh()
+          var deletingContact = contacts[idx]
+          confirmPhoneReferencedDeletion({
+            wid:wid,
+            kind:"contact",
+            id:deletingContact.id,
+            title:"删除联系人",
+            itemName:"联系人“" + (deletingContact.name || "未命名联系人") + "”",
+            onConfirm:function() {
+              var currentIndex = contacts.findIndex(function(contact) { return contact.id === deletingContact.id })
+              if (currentIndex < 0) return
+              contacts.splice(currentIndex, 1)
+              saveAndRefresh()
+            },
+          })
         }
       }
     })
@@ -2282,11 +2320,24 @@ function bindCtEvents(desktop, wid, contacts) {
   var delBtns = panel.querySelectorAll('[data-ct-del]')
   for (var di = 0; di < delBtns.length; di++) {
     delBtns[di].onclick = function() {
+      flushNames()
       var idx = parseInt(this.dataset.ctIdx)
       if (idx >= 0 && idx < contacts.length) {
-        contacts.splice(idx, 1)
-        setCtAt(contacts)
-        reloadCt()
+        var deletingContact = contacts[idx]
+        confirmPhoneReferencedDeletion({
+          wid:wid,
+          kind:"contact",
+          id:deletingContact.id,
+          title:"删除联系人",
+          itemName:"联系人“" + (deletingContact.name || "未命名联系人") + "”",
+          onConfirm:function() {
+            var currentIndex = contacts.findIndex(function(contact) { return contact.id === deletingContact.id })
+            if (currentIndex < 0) return
+            contacts.splice(currentIndex, 1)
+            setCtAt(contacts)
+            reloadCt()
+          },
+        })
       }
     }
   }
@@ -3480,9 +3531,20 @@ function openForumEditor(frame, wid, contact, pd) {
   }
 
   function deleteNpc(npcId) {
-    npcs = npcs.filter(function(x) { return x.id !== npcId })
-    saveData()
-    renderForum()
+    var deletingNpc = npcs.find(function(candidate) { return candidate.id === npcId })
+    if (!deletingNpc) return
+    confirmPhoneReferencedDeletion({
+      wid:wid,
+      kind:"npc",
+      id:npcId,
+      title:"删除论坛 NPC",
+      itemName:"NPC“" + (deletingNpc.name || "未命名 NPC") + "”",
+      onConfirm:function() {
+        npcs = npcs.filter(function(x) { return x.id !== npcId })
+        saveData()
+        renderForum()
+      },
+    })
   }
 
   function saveCurrentNpcPack() {

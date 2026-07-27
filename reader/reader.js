@@ -86,6 +86,12 @@ import {
   inspectReaderAppearancePackage,
   serializeReaderAppearancePackage,
 } from './appearance-package.js'
+import {
+  READER_DATA_PACKAGE_MAX_BYTES,
+  inspectReaderDataPackage,
+  mergeReaderDataPackage,
+  serializeReaderDataPackage,
+} from './reader-data-package.js'
 import { workUsesCameraInteractions } from '../js/interactive-scene-model.js'
 import { mountInteractiveScene } from '../js/interactive-scene-renderer.js'
 import { substituteInteractiveSceneText } from '../js/interactive-scene-placeholders.js'
@@ -102,6 +108,40 @@ import {
   readerInteractiveSceneById,
   replaceInteractiveSceneCards,
 } from './interactive-scene-entry.js'
+import { createBookCoverHold } from './book-cover-hold.js'
+import {
+  compareReaderSlots,
+  readerJourneyDirectory,
+} from './reader-journey-insights.js'
+import {
+  applyReaderIdentity,
+  appendReaderCheckpoint,
+  clearReaderProgress,
+  createReaderSlot,
+  readReaderLibrary,
+  readerActiveSlot,
+  readerBook,
+  readerBookStatus,
+  rememberReaderWork,
+  removeReaderBook,
+  removeReaderBookmark,
+  removeReaderIdentity,
+  removeReaderSlot,
+  renameReaderSlot,
+  restoreArticleReadingState,
+  saveReaderIdentity,
+  saveReaderPlaceholders,
+  saveReaderProgress,
+  setReaderCompletion,
+  switchReaderSlot,
+  toggleReaderBookmark,
+  updateReaderBookmark,
+  writeReaderLibrary,
+} from './reader-library-state.js'
+import {
+  buildUnlockedReaderSearchIndex,
+  searchUnlockedReaderIndex,
+} from './reader-unlocked-search.js'
 
 // Tuuru Reader
 // 支持导入 .json / .png 文件，阅读文章或体验手机模拟器
@@ -272,16 +312,40 @@ var _visitedNodes = []
 var _articlePath = []
 var _articleChoiceMemory = {}
 var _articleInteractionSelections = Object.create(null)
+var _articleCheckpoints = []
 var _renderedRecentIds = []
+var _renderedBookIds = []
 var _renderedCollectionIds = []
 var _activeReaderCollectionId = ''
 var _readerCollectionValues = Object.create(null)
 var _readerPhoneChoiceSession = null
 var _readerPhoneFlowSession = null
 var _editorPreviewMode = false
+var _readerPersistenceEnabled = true
+var _readerImportOverlay = null
+var _readerImportInvoker = null
+var _readerShelfQuery = ''
+var _readerShelfSort = 'recent'
+var _readerDataPanelOpen = false
+var _readerDataStatusMessage = ''
 var _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
 var _interactiveSceneCameraSession = null
 var _interactiveSceneController = null
+var _articleChoiceUndoBar = null
+var _articleChoiceUndoTimer = null
+var _articleImmersiveScrollHandler = null
+var _articleImmersiveKeydownHandler = null
+var _readerUnlockedSearchPanel = null
+var _readerUnlockedSearchPreview = null
+var _readerUnlockedSearchInvoker = null
+var _readerUnlockedSearchPosition = null
+var _readerPendingReadingPosition = null
+var _readerPhoneLocation = null
+var _readerPositionSaveTimer = null
+var ARTICLE_READING_ANCHOR_SELECTOR = '.article-content > *, .article-choices, [data-interaction-group]'
+var ARTICLE_CHOICE_UNDO_DURATION = 5000
+var ARTICLE_CHOICE_COMMIT_GUARD_DURATION = 280
+var READER_POSITION_SAVE_DELAY = 420
 
 function readerPhoneText(value) {
   return substitutePlaceholders(String(value || ''), _work && _work.placeholders || [], {
@@ -377,6 +441,155 @@ function tryReaderStorageWrite(write) {
   }
 }
 
+function getReaderLibraryState() {
+  return readReaderLibrary(localStorage)
+}
+
+function commitReaderLibraryState(library) {
+  var saved = writeReaderLibrary(localStorage, library)
+  if (!saved) warnReaderStorageFailure()
+  return saved
+}
+
+function rememberReaderWorkState(work, openedAt) {
+  var next = rememberReaderWork(getReaderLibraryState(), work, openedAt || Date.now())
+  commitReaderLibraryState(next)
+  return readerBook(next, work && work.id)
+}
+
+function cloneReaderPlaceholderValues(values) {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return {}
+  var cloned = {}
+  Object.keys(values).forEach(function(id) {
+    var source = values[id]
+    var first = Array.isArray(source) ? source[0] : source
+    if (typeof first === 'string') cloned[id] = [first]
+  })
+  return cloned
+}
+
+function savedReaderBook(workId) {
+  return readerBook(getReaderLibraryState(), workId)
+}
+
+function saveReaderWorkPlaceholders(work, values) {
+  if (!_readerPersistenceEnabled || !work || !work.id) return !_readerPersistenceEnabled
+  var next = saveReaderPlaceholders(getReaderLibraryState(), work.id, values, Date.now())
+  return commitReaderLibraryState(next)
+}
+
+function saveCurrentReaderProgress() {
+  if (!_readerPersistenceEnabled || !_work || !_work.id) return false
+  var readingPosition = currentReaderReadingPosition()
+  var progress = _work.type === 'phone'
+    ? {
+      kind:'phone',
+      flowIndex:readerPhoneFlowSession(_work).index,
+      readingPosition:readingPosition,
+    }
+    : {
+      kind:'article',
+      path:_articlePath,
+      choiceMemory:_articleChoiceMemory,
+      interactionSelections:_articleInteractionSelections,
+      checkpoints:_articleCheckpoints,
+      readingPosition:readingPosition,
+    }
+  var next = saveReaderProgress(getReaderLibraryState(), _work.id, progress, Date.now())
+  return commitReaderLibraryState(next)
+}
+
+function clearReaderWorkProgress(workId) {
+  var next = clearReaderProgress(getReaderLibraryState(), workId, Date.now())
+  return commitReaderLibraryState(next)
+}
+
+function setReaderWorkCompletion(workId, completed) {
+  if (!_readerPersistenceEnabled || !workId) return false
+  return commitReaderLibraryState(setReaderCompletion(
+    getReaderLibraryState(),
+    workId,
+    completed,
+    Date.now(),
+  ))
+}
+
+function articleBookmarkSignature(bookmark) {
+  return JSON.stringify([
+    bookmark?.path || [],
+    bookmark?.choiceMemory || {},
+    bookmark?.interactionSelections || {},
+  ])
+}
+
+function currentArticleBookmark(book) {
+  if (!book || _work?.type === 'phone' || !_articlePath.length) return null
+  var signature = articleBookmarkSignature({
+    path:_articlePath,
+    choiceMemory:_articleChoiceMemory,
+    interactionSelections:_articleInteractionSelections,
+  })
+  return (book.bookmarks || []).find(function(bookmark) {
+    return bookmark.kind === 'article' && articleBookmarkSignature(bookmark) === signature
+  }) || null
+}
+
+function toggleCurrentArticleBookmark(label) {
+  if (!_readerPersistenceEnabled || !_work?.id || _work.type === 'phone' || !_articlePath.length) return null
+  var bookmark = {
+    id:['reader-bookmark', Date.now().toString(36), _articlePath.length].join('-'),
+    kind:'article',
+    label:label || '阅读位置',
+    path:_articlePath,
+    choiceMemory:_articleChoiceMemory,
+    interactionSelections:_articleInteractionSelections,
+  }
+  var next = toggleReaderBookmark(getReaderLibraryState(), _work.id, bookmark, Date.now())
+  commitReaderLibraryState(next)
+  return readerBook(next, _work.id)
+}
+
+function captureArticleCheckpoint(sourceNodeId, label, path, memory, interactionSelections) {
+  if (!_work || _work.type === 'phone' || !sourceNodeId || !Array.isArray(path) || !path.length) return
+  var checkpointId = [
+    'reader-checkpoint',
+    Date.now().toString(36),
+    String(_articleCheckpoints.length + 1),
+  ].join('-')
+  var progress = appendReaderCheckpoint({
+    kind:'article',
+    path:_articlePath,
+    choiceMemory:_articleChoiceMemory,
+    interactionSelections:_articleInteractionSelections,
+    checkpoints:_articleCheckpoints,
+  }, {
+    id:checkpointId,
+    sourceNodeId:sourceNodeId,
+    label:label || '选择点',
+    path:path,
+    choiceMemory:memory,
+    interactionSelections:interactionSelections,
+  }, Date.now())
+  if (progress) _articleCheckpoints = progress.checkpoints
+}
+
+function syncLegacyReaderBooks() {
+  var library = getReaderLibraryState()
+  var known = new Set(library.books.map(function(book) { return book.id }))
+  var changed = false
+  getRecents().slice().reverse().forEach(function(recent) {
+    if (!recent || typeof recent.id !== 'string' || !recent.id || known.has(recent.id)) return
+    var cached = null
+    try { cached = JSON.parse(localStorage.getItem('moirain_work_' + recent.id)) } catch (_) {}
+    if (!cached) return
+    library = rememberReaderWork(library, cached, recent.importedAt || Date.now())
+    known.add(recent.id)
+    changed = true
+  })
+  if (changed) commitReaderLibraryState(library)
+  return library
+}
+
 function getProfile() {
   return lsGet('profile') || { readerId: '', readerAvatar: '', bio: '' }
 }
@@ -387,12 +600,572 @@ function getRecents() {
   return lsGet('recent') || []
 }
 
+function currentReaderScrollY() {
+  return Number(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0)
+}
+
+function captureArticleReadingPosition() {
+  if (!document.querySelector('.article-reader')) return null
+  var scrollY = currentReaderScrollY()
+  var viewportHeight = Number(window.innerHeight || document.documentElement.clientHeight || 0)
+  var candidates = Array.from(document.querySelectorAll('.article-node[data-article-path-index]'))
+    .flatMap(function(articleNode) {
+      return Array.from(articleNode.querySelectorAll(ARTICLE_READING_ANCHOR_SELECTOR))
+    })
+  var visibleCandidates = candidates.filter(function(candidate) {
+    var rect = candidate.getBoundingClientRect()
+    return rect.bottom >= 0 && (!viewportHeight || rect.top <= viewportHeight)
+  })
+  var anchor = (visibleCandidates.length ? visibleCandidates : candidates).sort(function(left, right) {
+    return Math.abs(left.getBoundingClientRect().top) - Math.abs(right.getBoundingClientRect().top)
+  })[0]
+  if (!anchor) return {scrollY:scrollY, pathIndex:null, anchorIndex:null, viewportTop:0, element:null}
+  var articleNode = anchor.closest('.article-node[data-article-path-index]')
+  var nodeAnchors = articleNode
+    ? Array.from(articleNode.querySelectorAll(ARTICLE_READING_ANCHOR_SELECTOR))
+    : []
+  return {
+    scrollY:scrollY,
+    pathIndex:articleNode ? Number(articleNode.dataset.articlePathIndex) : null,
+    anchorIndex:nodeAnchors.indexOf(anchor),
+    viewportTop:Number(anchor.getBoundingClientRect().top || 0),
+    element:anchor,
+  }
+}
+
+function restoreArticleReadingPosition(position) {
+  if (!position) return
+  requestAnimationFrame(function() {
+    var anchor = position.element && position.element.isConnected ? position.element : null
+    if (!anchor && Number.isInteger(position.pathIndex) && Number.isInteger(position.anchorIndex)) {
+      var articleNode = document.querySelector(
+        '.article-node[data-article-path-index="' + position.pathIndex + '"]',
+      )
+      if (articleNode) {
+        anchor = articleNode.querySelectorAll(ARTICLE_READING_ANCHOR_SELECTOR)[position.anchorIndex] || null
+      }
+    }
+    var nextScrollY = Number(position.scrollY || 0)
+    if (anchor) {
+      nextScrollY = currentReaderScrollY()
+        + Number(anchor.getBoundingClientRect().top || 0)
+        - Number(position.viewportTop || 0)
+    }
+    if (Math.abs(nextScrollY - currentReaderScrollY()) < 0.5) return
+    window.scrollTo({top:Math.max(0, nextScrollY), left:0, behavior:'auto'})
+  })
+}
+
+function persistedArticleReadingPosition() {
+  var position = captureArticleReadingPosition()
+  if (!position || !Number.isInteger(position.pathIndex) || !Number.isInteger(position.anchorIndex)) return null
+  return {
+    kind:'article',
+    pathIndex:position.pathIndex,
+    anchorIndex:position.anchorIndex,
+    viewportTop:Number(position.viewportTop || 0),
+    scrollY:Number(position.scrollY || 0),
+  }
+}
+
+function phoneReadingScrollContainer() {
+  if (_readerPhoneLocation?.view === 'chat') return document.querySelector('#chatMsgArea')
+  return document.querySelector('.rd-phone-app-body')
+}
+
+function phoneReadingAnchor(container) {
+  if (!container || _readerPhoneLocation?.view !== 'chat') return null
+  var containerRect = container.getBoundingClientRect()
+  var candidates = Array.from(container.querySelectorAll('[data-message-id]'))
+  var visible = candidates.filter(function(candidate) {
+    var rect = candidate.getBoundingClientRect()
+    return rect.bottom >= containerRect.top && rect.top <= containerRect.bottom
+  })
+  return (visible.length ? visible : candidates).sort(function(left, right) {
+    return Math.abs(left.getBoundingClientRect().top - containerRect.top)
+      - Math.abs(right.getBoundingClientRect().top - containerRect.top)
+  })[0] || null
+}
+
+function persistedPhoneReadingPosition() {
+  if (!_readerPhoneLocation?.appType) return null
+  var container = phoneReadingScrollContainer()
+  var anchor = phoneReadingAnchor(container)
+  var containerTop = container ? Number(container.getBoundingClientRect().top || 0) : 0
+  return {
+    kind:'phone',
+    appType:_readerPhoneLocation.appType,
+    view:_readerPhoneLocation.view === 'chat' ? 'chat' : 'app',
+    itemId:_readerPhoneLocation.itemId || '',
+    contactIndex:Number.isInteger(_readerPhoneLocation.contactIndex)
+      ? _readerPhoneLocation.contactIndex
+      : -1,
+    scrollTop:container ? Number(container.scrollTop || 0) : 0,
+    anchorId:String(anchor?.dataset?.messageId || ''),
+    anchorOffset:anchor ? Number(anchor.getBoundingClientRect().top || 0) - containerTop : 0,
+  }
+}
+
+function currentReaderReadingPosition() {
+  if (!_work) return null
+  var captured = _work.type === 'phone'
+    ? persistedPhoneReadingPosition()
+    : persistedArticleReadingPosition()
+  if (captured) return captured
+  if (_readerPendingReadingPosition?.kind === (_work.type === 'phone' ? 'phone' : 'article')) {
+    return _readerPendingReadingPosition
+  }
+  return null
+}
+
+function restorePhoneReadingScroll(position, container) {
+  if (!position || !container) return
+  requestAnimationFrame(function() {
+    var anchor = position.anchorId
+      ? Array.from(container.querySelectorAll('[data-message-id]')).find(function(candidate) {
+        return candidate.dataset.messageId === position.anchorId
+      })
+      : null
+    var nextScrollTop = Number(position.scrollTop || 0)
+    if (anchor) {
+      var containerTop = Number(container.getBoundingClientRect().top || 0)
+      nextScrollTop = Number(container.scrollTop || 0)
+        + Number(anchor.getBoundingClientRect().top || 0)
+        - containerTop
+        - Number(position.anchorOffset || 0)
+    }
+    container.scrollTop = Math.max(0, nextScrollTop)
+  })
+}
+
+function scheduleReaderPositionSave() {
+  if (!_readerPersistenceEnabled || !_work?.id) return
+  if (_readerPositionSaveTimer) clearTimeout(_readerPositionSaveTimer)
+  _readerPositionSaveTimer = setTimeout(function() {
+    _readerPositionSaveTimer = null
+    saveCurrentReaderProgress()
+  }, READER_POSITION_SAVE_DELAY)
+  if (_readerPositionSaveTimer && typeof _readerPositionSaveTimer.unref === 'function') {
+    _readerPositionSaveTimer.unref()
+  }
+}
+
+function flushReaderPositionSave() {
+  if (_readerPositionSaveTimer) clearTimeout(_readerPositionSaveTimer)
+  _readerPositionSaveTimer = null
+  if (!_work || !document.querySelector('.article-reader, .phone-reader')) return false
+  return saveCurrentReaderProgress()
+}
+
+function bindPhoneReadingPosition(container) {
+  if (!container || container.dataset.readerPositionBound === 'true') return
+  container.dataset.readerPositionBound = 'true'
+  container.addEventListener('scroll', scheduleReaderPositionSave, {passive:true})
+}
+
+window.addEventListener('scroll', function() {
+  if (_work?.type !== 'phone' && document.querySelector('.article-reader')) scheduleReaderPositionSave()
+}, {passive:true})
+window.addEventListener('pagehide', flushReaderPositionSave)
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') flushReaderPositionSave()
+})
+
+function closeReaderUnlockedSearchPreview(restoreFocus) {
+  if (!_readerUnlockedSearchPreview) return
+  var resultButton = _readerUnlockedSearchPreview._resultButton || null
+  _readerUnlockedSearchPreview.remove()
+  _readerUnlockedSearchPreview = null
+  if (restoreFocus !== false && resultButton && resultButton.isConnected && resultButton.focus) {
+    resultButton.focus()
+  }
+}
+
+function closeReaderUnlockedSearch(options) {
+  var settings = options || {}
+  closeReaderUnlockedSearchPreview(false)
+  if (_readerUnlockedSearchPanel) _readerUnlockedSearchPanel.remove()
+  _readerUnlockedSearchPanel = null
+  var invoker = _readerUnlockedSearchInvoker
+  var readingPosition = _readerUnlockedSearchPosition
+  _readerUnlockedSearchInvoker = null
+  _readerUnlockedSearchPosition = null
+  if (settings.restorePosition !== false) restoreArticleReadingPosition(readingPosition)
+  if (settings.restoreFocus !== false && invoker && invoker.isConnected && invoker.focus) invoker.focus()
+}
+
+function setArticleImmersiveToolbarVisible(visible) {
+  var toolbar = document.querySelector('[data-reader-immersive-toolbar]')
+  var reveal = document.querySelector('[data-reader-immersive-reveal]')
+  if (!toolbar || !reveal) return
+  toolbar.classList.toggle('is-visible', !!visible)
+  toolbar.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  reveal.hidden = !!visible
+  reveal.setAttribute('aria-expanded', visible ? 'true' : 'false')
+  toolbar.querySelectorAll('button, [href], input, select, textarea, [tabindex]').forEach(function(control) {
+    control.tabIndex = visible ? 0 : -1
+  })
+}
+
+function cleanupArticleImmersiveToolbar() {
+  if (_articleImmersiveScrollHandler) {
+    window.removeEventListener('scroll', _articleImmersiveScrollHandler)
+    _articleImmersiveScrollHandler = null
+  }
+  if (_articleImmersiveKeydownHandler) {
+    document.removeEventListener('keydown', _articleImmersiveKeydownHandler)
+    _articleImmersiveKeydownHandler = null
+  }
+  closeReaderUnlockedSearch({restoreFocus:false, restorePosition:false})
+}
+
+function substitutedReaderSearchWork(sourceWork, sourceValuesMap) {
+  var placeholders = sourceWork && Array.isArray(sourceWork.placeholders) ? sourceWork.placeholders : []
+  var valuesMap = sourceValuesMap || {}
+  function replaceText(value) {
+    return typeof value === 'string'
+      ? substitutePlaceholders(value, placeholders, {valuesMap:valuesMap, usePlaceholderMode:false})
+      : value
+  }
+  return Object.assign({}, sourceWork, {
+    nodes:(sourceWork && Array.isArray(sourceWork.nodes) ? sourceWork.nodes : []).map(function(node) {
+      return Object.assign({}, node, {
+        title:replaceText(node.title),
+        content:replaceText(node.content),
+        choices:(Array.isArray(node.choices) ? node.choices : []).map(function(choice) {
+          return Object.assign({}, choice, {
+            text:replaceText(choice.text),
+            selectedText:replaceText(choice.selectedText),
+          })
+        }),
+        interactionGroups:(Array.isArray(node.interactionGroups) ? node.interactionGroups : []).map(function(group) {
+          return Object.assign({}, group, {
+            choices:(Array.isArray(group.choices) ? group.choices : []).map(function(choice) {
+              return Object.assign({}, choice, {
+                text:replaceText(choice.text),
+                selectedText:replaceText(choice.selectedText),
+              })
+            }),
+          })
+        }),
+      })
+    }),
+    phoneModules:(sourceWork && Array.isArray(sourceWork.phoneModules) ? sourceWork.phoneModules : []).map(function(module) {
+      return Object.assign({}, module, {
+        data:substitutePhoneTextData(module.data || {}, placeholders, {
+          valuesMap:valuesMap,
+          usePlaceholderMode:false,
+        }),
+      })
+    }),
+  })
+}
+
+function substitutedUnlockedSearchWork() {
+  return substitutedReaderSearchWork(_work, _work && _work.readerPhValues || {})
+}
+
+function appendReaderSearchSnippet(container, snippet) {
+  container.appendChild(document.createTextNode(snippet.before || ''))
+  var mark = document.createElement('mark')
+  mark.textContent = snippet.match || ''
+  container.appendChild(mark)
+  container.appendChild(document.createTextNode(snippet.after || ''))
+}
+
+function openReaderUnlockedSearchPreview(entry, resultButton) {
+  closeReaderUnlockedSearchPreview(false)
+  var overlay = document.createElement('div')
+  overlay.className = 'rd-reader-search-preview'
+  overlay.setAttribute('role', 'dialog')
+  overlay.setAttribute('aria-modal', 'true')
+  overlay.setAttribute('aria-labelledby', 'rdReaderSearchPreviewTitle')
+  overlay._resultButton = resultButton
+
+  var card = document.createElement('section')
+  card.className = 'rd-reader-search-preview-card'
+  var header = document.createElement('header')
+  var heading = document.createElement('div')
+  var location = document.createElement('span')
+  location.className = 'rd-reader-search-preview-location'
+  location.textContent = [entry.kindLabel, entry.location].filter(Boolean).join(' · ')
+  var title = document.createElement('h2')
+  title.id = 'rdReaderSearchPreviewTitle'
+  title.textContent = entry.title || entry.kindLabel || '搜索结果'
+  heading.append(location, title)
+  var closeButton = document.createElement('button')
+  closeButton.type = 'button'
+  closeButton.className = 'rd-reader-search-close'
+  closeButton.dataset.readerSearchPreviewClose = ''
+  closeButton.setAttribute('aria-label', '关闭预览')
+  closeButton.textContent = '×'
+  header.append(heading, closeButton)
+
+  var body = document.createElement('div')
+  body.className = 'rd-reader-search-preview-body'
+  body.textContent = entry.text || ''
+  var note = document.createElement('p')
+  note.className = 'rd-reader-search-preview-note'
+  note.textContent = '仅供回看，不会改变当前路线'
+  card.append(header, body, note)
+  overlay.appendChild(card)
+  document.body.appendChild(overlay)
+  _readerUnlockedSearchPreview = overlay
+  closeButton.onclick = function() { closeReaderUnlockedSearchPreview(true) }
+  overlay.onclick = function(event) {
+    if (event.target === overlay) closeReaderUnlockedSearchPreview(true)
+  }
+  overlay.onkeydown = function(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeReaderUnlockedSearchPreview(true)
+      return
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      closeButton.focus()
+    }
+  }
+  closeButton.focus()
+}
+
+function openReaderUnlockedSearch(trigger) {
+  if (!_work || _work.type !== 'article' || !document.querySelector('.article-reader')) return
+  if (_readerUnlockedSearchPanel) {
+    setArticleImmersiveToolbarVisible(true)
+    var existingInput = _readerUnlockedSearchPanel.querySelector('[data-reader-unlocked-search-input]')
+    if (existingInput) existingInput.focus()
+    return
+  }
+  _readerUnlockedSearchInvoker = trigger && trigger.isConnected
+    ? trigger
+    : document.querySelector('[data-reader-search]')
+  _readerUnlockedSearchPosition = captureArticleReadingPosition()
+  setArticleImmersiveToolbarVisible(true)
+
+  var panel = document.createElement('section')
+  panel.className = 'rd-reader-search-panel'
+  panel.setAttribute('aria-label', '搜索已解锁内容')
+  panel.innerHTML = [
+    '<header class="rd-reader-search-header">',
+    '<div><strong>搜索已解锁内容</strong><small>不会显示未走过的剧情</small></div>',
+    '<button type="button" class="rd-reader-search-close" data-reader-search-close aria-label="关闭搜索">×</button>',
+    '</header>',
+    '<label class="rd-reader-search-field">',
+    '<span class="sr-only">搜索关键词</span>',
+    '<input type="search" data-reader-unlocked-search-input autocomplete="off" placeholder="搜索正文、消息、论坛和备忘录">',
+    '</label>',
+    '<p class="rd-reader-search-status" role="status" aria-live="polite">输入关键词开始搜索</p>',
+    '<div class="rd-reader-search-results"></div>',
+  ].join('')
+  document.body.appendChild(panel)
+  _readerUnlockedSearchPanel = panel
+
+  var index = buildUnlockedReaderSearchIndex(substitutedUnlockedSearchWork(), _articlePath, {
+    choiceMemory:_articleChoiceMemory,
+    interactionSelections:_articleInteractionSelections,
+  })
+  var input = panel.querySelector('[data-reader-unlocked-search-input]')
+  var status = panel.querySelector('.rd-reader-search-status')
+  var results = panel.querySelector('.rd-reader-search-results')
+  panel.querySelector('[data-reader-search-close]').onclick = function() {
+    closeReaderUnlockedSearch({restoreFocus:true, restorePosition:true})
+  }
+  input.oninput = function() {
+    var query = input.value.trim()
+    results.replaceChildren()
+    if (!query) {
+      status.textContent = '输入关键词开始搜索'
+      return
+    }
+    var matches = searchUnlockedReaderIndex(index, query)
+    if (!matches.length) {
+      status.textContent = '已解锁内容中没有找到“' + query + '”'
+      return
+    }
+    status.textContent = '找到 ' + matches.length + ' 处已解锁内容'
+    matches.forEach(function(entry) {
+      var button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'rd-reader-search-result'
+      button.dataset.readerSearchResult = ''
+      var meta = document.createElement('span')
+      meta.className = 'rd-reader-search-result-meta'
+      meta.textContent = [entry.kindLabel, entry.location].filter(Boolean).join(' · ')
+      var heading = document.createElement('strong')
+      heading.textContent = entry.title || entry.kindLabel
+      var snippet = document.createElement('span')
+      snippet.className = 'rd-reader-search-result-snippet'
+      appendReaderSearchSnippet(snippet, entry.snippet || {})
+      button.append(meta, heading, snippet)
+      button.onclick = function() { openReaderUnlockedSearchPreview(entry, button) }
+      results.appendChild(button)
+    })
+  }
+  input.focus()
+}
+
+function bindArticleImmersiveToolbar() {
+  cleanupArticleImmersiveToolbar()
+  var articleReader = document.querySelector('.article-reader')
+  var toolbar = document.querySelector('[data-reader-immersive-toolbar]')
+  var reveal = document.querySelector('[data-reader-immersive-reveal]')
+  if (!articleReader || !toolbar || !reveal) return
+  setArticleImmersiveToolbarVisible(true)
+  articleReader.onclick = function(event) {
+    var selection = window.getSelection && window.getSelection()
+    if (selection && String(selection).trim()) return
+    if (event.target.closest('button, a, input, textarea, select, label, [role="button"], [contenteditable="true"], .rd-pm-trigger, .rd-interactive-scene-trigger')) return
+    setArticleImmersiveToolbarVisible(toolbar.getAttribute('aria-hidden') === 'false' ? false : true)
+  }
+  reveal.onclick = function() {
+    setArticleImmersiveToolbarVisible(true)
+    var firstControl = toolbar.querySelector('button')
+    if (firstControl) firstControl.focus()
+  }
+  _articleImmersiveScrollHandler = function() {
+    if (!_readerUnlockedSearchPanel && !_readerUnlockedSearchPreview) {
+      setArticleImmersiveToolbarVisible(false)
+    }
+  }
+  window.addEventListener('scroll', _articleImmersiveScrollHandler, {passive:true})
+  _articleImmersiveKeydownHandler = function(event) {
+    if ((event.ctrlKey || event.metaKey) && String(event.key).toLowerCase() === 'f') {
+      event.preventDefault()
+      setArticleImmersiveToolbarVisible(true)
+      openReaderUnlockedSearch(document.querySelector('[data-reader-search]'))
+      return
+    }
+    if (event.key !== 'Escape') return
+    if (_readerUnlockedSearchPreview) {
+      event.preventDefault()
+      closeReaderUnlockedSearchPreview(true)
+      return
+    }
+    if (_readerUnlockedSearchPanel) {
+      event.preventDefault()
+      closeReaderUnlockedSearch({restoreFocus:true, restorePosition:true})
+      return
+    }
+    setArticleImmersiveToolbarVisible(false)
+  }
+  document.addEventListener('keydown', _articleImmersiveKeydownHandler)
+}
+
+function cloneArticleReaderValue(value, fallback) {
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch (_) {
+    return fallback
+  }
+}
+
+function captureArticleChoiceUndoSnapshot(choiceButton) {
+  return {
+    workId:String(_work?.id || ''),
+    path:_articlePath.slice(),
+    choiceMemory:cloneArticleReaderValue(_articleChoiceMemory, {}),
+    interactionSelections:cloneArticleReaderValue(_articleInteractionSelections, {}),
+    checkpoints:cloneArticleReaderValue(_articleCheckpoints, []),
+    readingPosition:captureArticleReadingPosition(),
+    choiceId:String(choiceButton?.dataset.choiceId || ''),
+    choiceNodeId:String(choiceButton?.dataset.choiceNodeId || ''),
+    choiceMode:String(choiceButton?.dataset.choiceMode || ''),
+  }
+}
+
+function articleChoiceStateChanged(snapshot) {
+  if (!snapshot) return false
+  return JSON.stringify([
+    snapshot.path,
+    snapshot.choiceMemory,
+    snapshot.interactionSelections,
+  ]) !== JSON.stringify([
+    _articlePath,
+    _articleChoiceMemory,
+    _articleInteractionSelections,
+  ])
+}
+
+function clearArticleChoiceUndo() {
+  if (_articleChoiceUndoTimer) clearTimeout(_articleChoiceUndoTimer)
+  _articleChoiceUndoTimer = null
+  if (_articleChoiceUndoBar) _articleChoiceUndoBar.remove()
+  _articleChoiceUndoBar = null
+}
+
+function beginArticleChoiceCommit(choiceButton) {
+  if (!choiceButton || choiceButton.dataset.choiceCommitLocked === 'true') return false
+  choiceButton.dataset.choiceCommitLocked = 'true'
+  var releaseTimer = setTimeout(function() {
+    if (choiceButton) delete choiceButton.dataset.choiceCommitLocked
+  }, ARTICLE_CHOICE_COMMIT_GUARD_DURATION)
+  if (releaseTimer && typeof releaseTimer.unref === 'function') {
+    releaseTimer.unref()
+  }
+  return true
+}
+
+function offerArticleChoiceUndo(snapshot, rawLabel) {
+  if (!articleChoiceStateChanged(snapshot)) {
+    _articleCheckpoints = cloneArticleReaderValue(snapshot?.checkpoints, [])
+    saveCurrentReaderProgress()
+    return
+  }
+  clearArticleChoiceUndo()
+  var label = String(rawLabel || '这个选择').replace(/\s+/g, ' ').replace(/^\d+\.\s*/, '').trim()
+  var bar = document.createElement('div')
+  bar.className = 'rd-article-choice-undo'
+  bar.setAttribute('role', 'status')
+  bar.setAttribute('aria-live', 'polite')
+  var message = document.createElement('span')
+  message.className = 'rd-article-choice-undo-message'
+  message.textContent = label ? '已选择“' + label + '”' : '选择已记录'
+  var undoButton = document.createElement('button')
+  undoButton.type = 'button'
+  undoButton.className = 'rd-article-choice-undo-action'
+  undoButton.textContent = '撤回'
+  bar.append(message, undoButton)
+  document.body.appendChild(bar)
+  _articleChoiceUndoBar = bar
+  requestAnimationFrame(function() {
+    if (bar.isConnected) bar.classList.add('is-visible')
+  })
+  undoButton.onclick = function() {
+    if (!_work || String(_work.id || '') !== snapshot.workId) return clearArticleChoiceUndo()
+    _articlePath = snapshot.path.slice()
+    _articleChoiceMemory = cloneArticleReaderValue(snapshot.choiceMemory, {})
+    _articleInteractionSelections = cloneArticleReaderValue(snapshot.interactionSelections, {})
+    _articleCheckpoints = cloneArticleReaderValue(snapshot.checkpoints, [])
+    _nodeId = _articlePath[_articlePath.length - 1] || null
+    _visitedNodes = _articlePath.slice(0, -1)
+    clearArticleChoiceUndo()
+    renderArticleReader()
+    restoreArticleReadingPosition(snapshot.readingPosition)
+    requestAnimationFrame(function() {
+      var restoredChoice = Array.from(document.querySelectorAll('.article-choice-btn')).find(function(candidate) {
+        return candidate.dataset.choiceNodeId === snapshot.choiceNodeId
+          && candidate.dataset.choiceId === snapshot.choiceId
+      })
+      if (restoredChoice && restoredChoice.focus) restoredChoice.focus()
+    })
+    showReaderToast('已撤回刚才的选择')
+  }
+  _articleChoiceUndoTimer = setTimeout(clearArticleChoiceUndo, ARTICLE_CHOICE_UNDO_DURATION)
+  if (_articleChoiceUndoTimer && typeof _articleChoiceUndoTimer.unref === 'function') {
+    _articleChoiceUndoTimer.unref()
+  }
+}
+
 function resetArticleReaderSession() {
+  cleanupArticleImmersiveToolbar()
+  clearArticleChoiceUndo()
   _nodeId = null
   _visitedNodes = []
   _articlePath = []
   _articleChoiceMemory = {}
   _articleInteractionSelections = Object.create(null)
+  _articleCheckpoints = []
 }
 
 function articleRuntimeOptions(memory, interactionSelections) {
@@ -517,8 +1290,12 @@ function addRecent(work) {
   lsSet('recent', recents)
 }
 
-// ====== HOME (tabs: personal page + import) ======
+// ====== HOME ======
 function renderHome() {
+  flushReaderPositionSave()
+  _readerPendingReadingPosition = null
+  _readerPhoneLocation = null
+  _readerPersistenceEnabled = true
   resetArticleReaderSession()
   var h = '<div class="rd-home">'
   h += '<header class="rd-product-header">'
@@ -530,17 +1307,18 @@ function renderHome() {
   // Tabs
   h += '<div class="rd-tabs" role="tablist" aria-label="首页栏目">'
   h += '<button type="button" class="rd-tab active" id="rdTabPersonal" role="tab" aria-controls="tabPersonal" aria-selected="true" tabindex="0" data-tab="personal">个人主页</button>'
+  h += '<button type="button" class="rd-tab" id="rdTabLibrary" role="tab" aria-controls="tabLibrary" aria-selected="false" tabindex="-1" data-tab="library">书架</button>'
   h += '<button type="button" class="rd-tab" id="rdTabCustom" role="tab" aria-controls="tabCustom" aria-selected="false" tabindex="-1" data-tab="custom">美化</button>'
-  h += '<button type="button" class="rd-tab" id="rdTabImport" role="tab" aria-controls="tabImport" aria-selected="false" tabindex="-1" data-tab="import">导入</button>'
   h += '</div>'
   // Tab panels
   h += '<div class="rd-panel" id="tabPersonal" role="tabpanel" aria-labelledby="rdTabPersonal">' + renderPersonalPage() + '</div>'
+  h += '<div class="rd-panel" style="display:none" id="tabLibrary" role="tabpanel" aria-labelledby="rdTabLibrary" hidden>' + renderBookshelfPage() + '</div>'
   h += '<div class="rd-panel" style="display:none" id="tabCustom" role="tabpanel" aria-labelledby="rdTabCustom" hidden>' + renderCustomPage() + '</div>'
-  h += '<div class="rd-panel" style="display:none" id="tabImport" role="tabpanel" aria-labelledby="rdTabImport" hidden>' + renderImportPanel() + '</div>'
   h += '<div style="text-align:center;padding:16px;margin-top:20px;font-size:.6rem;color:var(--c-text2);opacity:.3"><a href="https://tuuru.chat" target="_blank" style="color:inherit;text-decoration:none">tuuru.chat</a></div>'
   h += '</div>'
   render('app', h)
   bindPersonalPage(document)
+  bindBookshelfPage(document)
 
   // Tab switching
   var tabs = document.querySelectorAll('.rd-tabs .rd-tab')
@@ -559,6 +1337,7 @@ function renderHome() {
     var tab = t.dataset.tab
     if (moveFocus) t.focus()
     if (tab === 'personal') refreshPersonalPage()
+    if (tab === 'library') refreshBookshelfPage()
     if (tab === 'custom') renderCustomPage()
   }
   tabs.forEach(function(t, index) {
@@ -574,9 +1353,6 @@ function renderHome() {
       activateTab(tabs[nextIndex], true)
     }
   })
-
-  // Setup import
-  setupImport()
 }
 
 document.addEventListener('click', function(event) {
@@ -612,6 +1388,7 @@ document.addEventListener('click', function(event) {
     event.preventDefault()
     var previousPath = previousArticleChapterPath((_work && _work.nodes) || [], _articlePath)
     if (previousPath.length && previousPath.length < _articlePath.length) {
+      clearArticleChoiceUndo()
       replaceArticlePath(previousPath)
       _nodeId = _articlePath[_articlePath.length - 1]
       _visitedNodes = _articlePath.slice(0, -1)
@@ -630,6 +1407,7 @@ document.addEventListener('click', function(event) {
       articleRuntimeOptions(),
     )
     if (nextChapter.ok) {
+      clearArticleChoiceUndo()
       replaceArticlePath(nextChapter.path)
       _nodeId = _articlePath[_articlePath.length - 1]
       _visitedNodes = _articlePath.slice(0, -1)
@@ -653,6 +1431,7 @@ document.addEventListener('click', function(event) {
 
   var recentTrigger = target.closest('[data-reader-recent-index]')
   if (!recentTrigger) return
+  if (recentTrigger.hasAttribute('data-reader-book-index')) return
   var recentIndex = Number(recentTrigger.dataset.readerRecentIndex)
   if (!Number.isInteger(recentIndex) || recentIndex < 0 || recentIndex >= _renderedRecentIds.length) return
   event.preventDefault()
@@ -662,10 +1441,6 @@ document.addEventListener('click', function(event) {
 // ====== Personal Page ======
 function renderPersonalPage() {
   var profile = getProfile()
-  var recents = getRecents()
-  var collections = getReaderCollections()
-  _renderedRecentIds = recents.map(function(r) { return r.id })
-  _renderedCollectionIds = collections.map(function(collection) { return collection.id })
   var h = '<div class="rd-personal">'
   // Profile card
   h += '<div class="rd-profile-card">'
@@ -689,37 +1464,6 @@ function renderPersonalPage() {
   h += '<div class="rd-preset-actions"><button type="button" class="rd-preset-save" id="rdPresetSave">保存到本地</button><span class="rd-preset-status" id="rdPresetStatus" role="status" aria-live="polite"></span></div>'
   h += '</div>'
 
-  // Imported collections
-  h += '<div class="rd-section rd-collection-section">'
-  h += '<div class="rd-section-title">我的作品集</div>'
-  if (collections.length === 0) {
-    h += '<div class="rd-empty">导入作品集后会显示在这里</div>'
-  } else {
-    collections.forEach(function(collection, collectionIndex) {
-      var count = Array.isArray(collection.workIds) ? collection.workIds.length : 0
-      h += '<button type="button" class="rd-recent-item rd-collection-item" data-reader-collection-index="' + collectionIndex + '">'
-      h += '<span class="rd-collection-item-copy"><span class="rd-recent-title">' + esc(collection.title || '未命名作品集') + '</span>'
-      h += '<span class="rd-collection-summary">' + esc(collection.description || collection.author || '作品集') + '</span></span>'
-      h += '<span class="rd-recent-meta">' + count + ' 篇 · ' + (collection.accessMode === 'unified' ? '统一进入' : '各篇独立') + '</span>'
-      h += '</button>'
-    })
-  }
-  h += '</div>'
-
-  // Recents
-  h += '<div class="rd-section">'
-  h += '<div class="rd-section-title">最近阅读</div>'
-  if (recents.length === 0) {
-    h += '<div class="rd-empty">还没有阅读记录</div>'
-  } else {
-    recents.forEach(function(r, recentIndex) {
-      h += '<button type="button" class="rd-recent-item" data-reader-recent-index="' + recentIndex + '">'
-      h += '<span class="rd-recent-title">' + esc(r.title) + '</span>'
-      h += '<span class="rd-recent-meta">' + (r.type === 'phone' ? '小手机' : '互动文章') + ' · ' + timeAgo(r.importedAt) + '</span>'
-      h += '</button>'
-    })
-  }
-  h += '</div>'
   h += '</div>'
   return h
 }
@@ -767,27 +1511,1090 @@ window.savePlaceholderPreset = function() {
   if (status) status.textContent = '已保存到本地'
 }
 
+function cachedReaderWork(workId) {
+  try { return JSON.parse(localStorage.getItem('moirain_work_' + workId)) } catch (_) { return null }
+}
+
+function readerBookProgressLabel(book) {
+  if (!book || !book.progress) return '开始阅读'
+  if (book.progress.kind === 'phone') {
+    return book.progress.flowIndex > 0 ? '继续第 ' + (book.progress.flowIndex + 1) + ' 步' : '继续阅读'
+  }
+  var visited = Array.isArray(book.progress.path) ? book.progress.path.length : 0
+  return visited > 1 ? '继续阅读 · 已走过 ' + visited + ' 段' : '继续阅读'
+}
+
+function readerBookStatusLabel(book) {
+  return ({
+    unread:'未开始',
+    reading:'阅读中',
+    completed:'已完成',
+  })[readerBookStatus(book)] || '未开始'
+}
+
+function sortedReaderBooks(books) {
+  var sorted = (books || []).slice()
+  if (_readerShelfSort === 'title') {
+    sorted.sort(function(a, b) {
+      return String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN')
+    })
+  } else if (_readerShelfSort === 'added') {
+    sorted.sort(function(a, b) { return (b.addedAt || 0) - (a.addedAt || 0) })
+  } else if (_readerShelfSort === 'status') {
+    var order = {reading:0, unread:1, completed:2}
+    sorted.sort(function(a, b) {
+      return order[readerBookStatus(a)] - order[readerBookStatus(b)]
+        || (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)
+    })
+  }
+  return sorted
+}
+
+function currentReaderDataPackageInput() {
+  return {
+    library:getReaderLibraryState(),
+    profile:getProfile(),
+    placeholderPresets:getPlaceholders(),
+    appearance:{
+      article:getReaderSettings(),
+      phone:getPhoneCustom(),
+    },
+  }
+}
+
+function installReaderDataPackage(candidate) {
+  var merged = mergeReaderDataPackage(currentReaderDataPackageInput(), candidate)
+  var values = new Map([
+    ['moirain_readerLibrary', JSON.stringify(merged.library)],
+    ['moirain_profile', JSON.stringify(merged.profile)],
+    ['moirain_placeholders', JSON.stringify(merged.placeholderPresets)],
+    ['moirain_readerSettings', JSON.stringify(merged.appearance.article)],
+    ['moirain_phoneCustom', JSON.stringify(merged.appearance.phone)],
+  ])
+  var previous = new Map()
+  values.forEach(function(_, key) { previous.set(key, localStorage.getItem(key)) })
+  try {
+    values.forEach(function(value, key) { localStorage.setItem(key, value) })
+  } catch (error) {
+    previous.forEach(function(value, key) {
+      try {
+        if (value === null) localStorage.removeItem(key)
+        else localStorage.setItem(key, value)
+      } catch (_) {}
+    })
+    throw error
+  }
+  applyReaderCustomFonts(merged.appearance.article)
+  applyCompiledReaderStyle(
+    merged.appearance.article.customCss,
+    '.reader-article-css-scope',
+    'reader-article-user-css',
+  )
+  applyCustomFonts()
+  applyPhoneCustomCss(merged.appearance.phone)
+  return merged
+}
+
+function readerDataPanelMarkup() {
+  return '<section id="rdReaderDataPanel" class="rd-reader-data-panel" data-reader-data-panel aria-labelledby="rdReaderDataTitle"' +
+    (_readerDataPanelOpen ? '' : ' hidden') + '>' +
+    '<div class="rd-reader-data-intro"><div><h3 id="rdReaderDataTitle">阅读数据备份</h3>' +
+    '<p>备份阅读进度、身份组、占位符、书签和便携外观设置。</p></div>' +
+    '<p class="rd-reader-data-private">不包含作品正文、密码、图片、头像、字体或缓存。</p></div>' +
+    '<div class="rd-reader-data-actions">' +
+    '<button type="button" class="rd-reader-data-action primary" data-reader-data-export>导出备份</button>' +
+    '<button type="button" class="rd-reader-data-action" data-reader-data-import>选择备份</button>' +
+    '<input type="file" data-reader-data-file accept=".json,application/json" hidden>' +
+    '</div>' +
+    '<div class="rd-reader-data-preview" data-reader-data-preview hidden>' +
+    '<div><strong data-reader-data-books>0</strong><span>本书</span></div>' +
+    '<div><strong data-reader-data-slots>0</strong><span>个存档</span></div>' +
+    '<div><strong data-reader-data-identities>0</strong><span>组身份</span></div>' +
+    '<div><strong data-reader-data-bookmarks>0</strong><span>个书签</span></div>' +
+    '<p>同一存档会保留更新时间较新的版本；昵称、预设与便携外观按备份恢复。</p>' +
+    '<button type="button" class="rd-reader-data-action primary" data-reader-data-apply hidden>合并恢复</button>' +
+    '</div>' +
+    '<p class="rd-reader-data-status" data-reader-data-status role="status" aria-live="polite">' +
+    esc(_readerDataStatusMessage) + '</p></section>'
+}
+
+function renderBookshelfPage() {
+  var library = syncLegacyReaderBooks()
+  var collections = getReaderCollections()
+  var books = sortedReaderBooks(library.books)
+  var normalizedQuery = String(_readerShelfQuery || '').trim().toLocaleLowerCase('zh-CN')
+  _renderedBookIds = books.map(function(book) { return book.id })
+  _renderedRecentIds = _renderedBookIds.slice()
+  _renderedCollectionIds = collections.map(function(collection) { return collection.id })
+  var h = '<div class="rd-bookshelf">'
+  h += '<div class="rd-bookshelf-head"><div><h2>我的书架</h2><p>阅读进度与本书占位符只保存在这台设备。</p></div>'
+  h += '<div class="rd-bookshelf-head-actions">'
+  h += '<button type="button" class="rd-reader-data-toggle" data-reader-data-toggle aria-controls="rdReaderDataPanel" aria-expanded="' +
+    (_readerDataPanelOpen ? 'true' : 'false') + '">阅读数据</button>'
+  h += '<button type="button" class="rd-bookshelf-import" data-reader-open-import>导入作品</button></div></div>'
+  h += readerDataPanelMarkup()
+
+  if (library.books.length === 0) {
+    h += '<div class="rd-bookshelf-empty"><span class="rd-bookshelf-empty-mark" aria-hidden="true">◇</span>'
+    h += '<strong>书架还是空的</strong><p>导入作品后，它会连同阅读进度一起留在这里。</p>'
+    h += '<button type="button" class="drop-btn" data-reader-open-import>导入第一本作品</button></div>'
+  } else {
+    h += '<p class="rd-bookshelf-hint">点按继续阅读；长按封面或使用封面右上角按钮，可修改本书的占位符与进度。</p>'
+    if (library.books.length > 6) {
+      h += '<div class="rd-bookshelf-tools">'
+      h += '<label class="rd-bookshelf-search"><span class="sr-only">搜索书架</span><input type="search" data-reader-shelf-search value="' + escapeHtmlAttribute(_readerShelfQuery) + '" placeholder="搜索书名或作者" autocomplete="off"></label>'
+      h += '<label class="rd-bookshelf-sort"><span>排序</span><select data-reader-shelf-sort>'
+      ;[
+        ['recent', '最近阅读'],
+        ['title', '书名'],
+        ['added', '导入时间'],
+        ['status', '阅读状态'],
+      ].forEach(function(option) {
+        h += '<option value="' + option[0] + '"' + (_readerShelfSort === option[0] ? ' selected' : '') + '>' + option[1] + '</option>'
+      })
+      h += '</select></label></div>'
+    }
+    h += '<div class="rd-bookshelf-grid">'
+    books.forEach(function(book, bookIndex) {
+      var cached = !!cachedReaderWork(book.id)
+      var title = book.title || '无标题作品'
+      var searchText = [title, book.author || ''].join(' ').toLocaleLowerCase('zh-CN')
+      var hidden = normalizedQuery && !searchText.includes(normalizedQuery)
+      h += '<article class="rd-book' + (cached ? '' : ' is-missing') + '" data-reader-book-search="' + escapeHtmlAttribute(searchText) + '"' + (hidden ? ' hidden' : '') + '>'
+      h += '<div class="rd-book-cover-wrap">'
+      h += '<button type="button" class="rd-book-cover rd-recent-item" data-reader-book-index="' + bookIndex + '" data-reader-recent-index="' + bookIndex + '" aria-label="' + escapeHtmlAttribute((book.progress ? '继续阅读《' : '打开《') + title + '》') + '">'
+      h += '<span class="rd-book-cover-type">' + (book.type === 'phone' ? '小手机' : '互动文章') + '</span>'
+      h += '<span class="rd-book-cover-title">' + esc(title) + '</span>'
+      h += '<span class="rd-book-cover-author">' + esc(book.author || '佚名') + '</span>'
+      h += '<span class="rd-book-cover-rule" aria-hidden="true"></span></button>'
+      h += '<button type="button" class="rd-book-manage" data-reader-book-manage="' + bookIndex + '" aria-label="' + escapeHtmlAttribute('管理《' + title + '》') + '" title="管理本书">•••</button>'
+      h += '</div>'
+      h += '<div class="rd-book-meta"><strong>' + esc(title) + '</strong>'
+      h += '<span class="rd-book-status" data-status="' + readerBookStatus(book) + '">' + readerBookStatusLabel(book) + '</span>'
+      h += '<span>' + (cached ? readerBookProgressLabel(book) : '正文已清理 · 重新导入') + '</span>'
+      h += '<time>' + esc(timeAgo(book.lastOpenedAt)) + '</time></div></article>'
+    })
+    h += '</div>'
+    h += '<p class="rd-bookshelf-no-results"' + (normalizedQuery && !books.some(function(book) {
+      return [book.title || '', book.author || ''].join(' ').toLocaleLowerCase('zh-CN').includes(normalizedQuery)
+    }) ? '' : ' hidden') + '>没有找到这本书，换个关键词试试。</p>'
+  }
+
+  if (collections.length > 0) {
+    h += '<section class="rd-bookshelf-collections"><h3>我的作品集</h3><div class="rd-collection-directory-list">'
+    collections.forEach(function(collection, collectionIndex) {
+      var count = Array.isArray(collection.workIds) ? collection.workIds.length : 0
+      h += '<button type="button" class="rd-collection-directory-item" data-reader-collection-index="' + collectionIndex + '">'
+      h += '<span class="rd-collection-number">' + String(collectionIndex + 1).padStart(2, '0') + '</span>'
+      h += '<span><strong>' + esc(collection.title || '未命名作品集') + '</strong><small>' + esc(collection.description || collection.author || '作品集') + '</small></span>'
+      h += '<span>' + count + ' 篇</span></button>'
+    })
+    h += '</div></section>'
+  }
+  h += '</div>'
+  return h
+}
+
+function refreshBookshelfPage() {
+  var panel = document.getElementById('tabLibrary')
+  if (!panel) return
+  panel.innerHTML = renderBookshelfPage()
+  bindBookshelfPage(panel)
+}
+
+function closeReaderImportDialog(options) {
+  options = options || {}
+  var overlay = _readerImportOverlay
+  var invoker = _readerImportInvoker
+  _readerImportOverlay = null
+  _readerImportInvoker = null
+  if (overlay) overlay.remove()
+  document.body.classList.remove('rd-import-open')
+  if (options.restoreFocus !== false && invoker && document.contains(invoker)) invoker.focus()
+}
+
+function readerImportDialogFocusables(dialog) {
+  if (!dialog) return []
+  return Array.prototype.filter.call(
+    dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'),
+    function(control) { return !control.hidden && !control.closest('[hidden]') && control.tabIndex !== -1 },
+  )
+}
+
+function openReaderImportDialog(invoker, options) {
+  closeReaderImportDialog({restoreFocus:false})
+  _readerImportInvoker = invoker && typeof invoker.focus === 'function'
+    ? invoker
+    : document.activeElement
+  var recoveryBook = options && options.recoveryBook && options.recoveryBook.id
+    ? options.recoveryBook
+    : null
+
+  var overlay = document.createElement('div')
+  overlay.className = 'modal-overlay rd-import-overlay'
+  overlay.dataset.readerRecoveryWorkId = recoveryBook ? recoveryBook.id : ''
+  overlay.innerHTML = '<section class="rd-import-dialog" role="dialog" aria-modal="true" aria-labelledby="rdImportTitle" aria-describedby="rdImportDescription" tabindex="-1">' +
+    '<header class="rd-import-head"><div><span>' + (recoveryBook ? '恢复书架内容' : '添加到书架') + '</span><h2 id="rdImportTitle">' +
+    (recoveryBook ? '重新导入 ' + esc(recoveryBook.title || '无标题作品') : '导入 Tuuru 作品') + '</h2></div>' +
+    '<button type="button" class="rd-import-close" aria-label="关闭导入作品">×</button></header>' +
+    renderImportPanel(recoveryBook) +
+    '</section>'
+  document.body.appendChild(overlay)
+  document.body.classList.add('rd-import-open')
+  _readerImportOverlay = overlay
+  setupImport(overlay)
+
+  var dialog = overlay.querySelector('.rd-import-dialog')
+  var closeButton = overlay.querySelector('.rd-import-close')
+  function close() { closeReaderImportDialog() }
+  closeButton.onclick = close
+  overlay.addEventListener('click', function(event) {
+    if (event.target === overlay) close()
+  })
+  dialog.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      close()
+      return
+    }
+    if (event.key !== 'Tab') return
+    var focusables = readerImportDialogFocusables(dialog)
+    if (!focusables.length) {
+      event.preventDefault()
+      dialog.focus()
+      return
+    }
+    var first = focusables[0]
+    var last = focusables[focusables.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  })
+
+  var primaryAction = overlay.querySelector('#pickFileBtn')
+  if (primaryAction) primaryAction.focus()
+  else dialog.focus()
+}
+
+function openReaderBookById(workId, options) {
+  var work = cachedReaderWork(workId)
+  if (!work) {
+    var missingBook = savedReaderBook(workId)
+    showReaderToast('作品正文未保存在浏览器中，请重新导入同一个文件后继续')
+    openReaderImportDialog(document.activeElement, {recoveryBook:missingBook})
+    return false
+  }
+  var prepared = prepareImportedWork(work)
+  if (!prepared.ok) {
+    alert(prepared.message)
+    return false
+  }
+  work = prepared.work
+  var book = savedReaderBook(workId)
+  if (book && Object.keys(book.placeholderValues || {}).length) {
+    work.readerPhValues = cloneReaderPlaceholderValues(book.placeholderValues)
+  }
+  var restart = options && options.restart
+  if (restart) clearReaderWorkProgress(workId)
+  var hasReaderState = !!(book && (
+    book.progress
+    || Object.keys(book.placeholderValues || {}).length
+  ))
+  var canSkipLanding = !String(work.password || '').trim() && hasReaderState
+  loadWork(work, {
+    skipLanding:canSkipLanding,
+    resume:!restart,
+  })
+  return true
+}
+
+function readerBookByRenderedIndex(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= _renderedBookIds.length) return null
+  return savedReaderBook(_renderedBookIds[index])
+}
+
+function readerBookManagerValues(root, definitions) {
+  var values = {}
+  definitions.forEach(function(definition) {
+    var input = Array.from(root.querySelectorAll('[data-reader-book-placeholder]')).find(function(candidate) {
+      return candidate.dataset.readerBookPlaceholder === definition.id
+    })
+    values[definition.id] = [input ? input.value : '']
+  })
+  return values
+}
+
+function readerCachedWorkSize(workId) {
+  var raw = localStorage.getItem('moirain_work_' + workId)
+  if (!raw) return 0
+  try { return new Blob([raw]).size } catch (_) { return raw.length * 2 }
+}
+
+function formatReaderStorageSize(bytes) {
+  if (!bytes) return '未缓存正文'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0) + ' KB'
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+function readerLocalStateId(prefix) {
+  return [prefix, Date.now().toString(36), Math.random().toString(36).slice(2, 9)].join('-')
+}
+
+function readerSlotDisplayName(slot, index) {
+  return String(slot?.name || '').trim() || ('存档 ' + (index + 1))
+}
+
+function readerSlotStatusLabel(slot) {
+  if (slot?.completedAt) return '已完成'
+  return slot?.progress ? '阅读中' : '未开始'
+}
+
+function readerIdentityValues(root, definitions) {
+  var values = {}
+  definitions.forEach(function(definition) {
+    var key = definition.key || definition.label || definition.id
+    var input = Array.from(root.querySelectorAll('[data-reader-identity-value]')).find(function(candidate) {
+      return candidate.dataset.readerIdentityValue === key
+    })
+    values[key] = input ? input.value : ''
+  })
+  return values
+}
+
+function readerRouteComparisonHtml(work, book, leftSlotId, rightSlotId) {
+  var leftSlot = (book.slots || []).find(function(slot) { return slot.id === leftSlotId })
+  var rightSlot = (book.slots || []).find(function(slot) { return slot.id === rightSlotId })
+  var rows = compareReaderSlots(work, leftSlot, rightSlot)
+  if (!rows.length) {
+    return '<p class="rd-book-manager-empty">这两条路线目前没有可比较的不同选择。</p>'
+  }
+  var h = '<div class="rd-route-differences">'
+  rows.forEach(function(row) {
+    h += '<div class="rd-route-difference"><strong>' + esc(row.location || '选择点') + '</strong>'
+    h += '<div><span>' + esc(row.leftText) + '</span><span>' + esc(row.rightText) + '</span></div></div>'
+  })
+  return h + '</div>'
+}
+
+function openReaderBookManager(workId, invoker) {
+  var book = savedReaderBook(workId)
+  if (!book) return
+  var work = cachedReaderWork(workId)
+  var definitions = book.placeholderDefinitions || []
+  var cacheBytes = readerCachedWorkSize(workId)
+  var statusKey = readerBookStatus(book)
+  var libraryState = getReaderLibraryState()
+  var identities = libraryState.identities || []
+  var activeSlot = readerActiveSlot(book)
+  var activeSlotIndex = (book.slots || []).findIndex(function(slot) { return slot.id === activeSlot?.id })
+  var activeIdentity = identities.find(function(identity) { return identity.id === activeSlot?.identityId }) || null
+  var journeyDirectory = readerJourneyDirectory(work, activeSlot)
+  var journeyPreviewByNodeId = new Map()
+  if (work && activeSlot?.progress?.kind === 'article') {
+    buildUnlockedReaderSearchIndex(
+      substitutedReaderSearchWork(work, book.placeholderValues || {}),
+      activeSlot.progress.path,
+      {
+        choiceMemory:activeSlot.progress.choiceMemory,
+        interactionSelections:activeSlot.progress.interactionSelections,
+      },
+    ).forEach(function(entry) {
+      if (entry.kind === 'article' && !journeyPreviewByNodeId.has(entry.nodeId)) {
+        journeyPreviewByNodeId.set(entry.nodeId, entry)
+      }
+    })
+  }
+  var h = '<section class="rd-book-manager" role="dialog" aria-modal="true" aria-labelledby="rdBookManagerTitle">'
+  h += '<header class="rd-book-manager-head"><div><span>书架管理</span><h2 id="rdBookManagerTitle">' + esc(book.title || '无标题作品') + '</h2></div>'
+  h += '<button type="button" class="rd-book-manager-close" aria-label="关闭">×</button></header>'
+  h += '<div class="rd-book-manager-body">'
+  h += '<section class="rd-book-manager-section"><div class="rd-book-manager-section-head"><h3>阅读存档</h3><span>' + book.slots.length + ' / 5</span></div>'
+  h += '<div class="rd-reader-slot-toolbar"><label><span class="sr-only">当前阅读存档</span><select data-reader-slot-select>'
+  book.slots.forEach(function(slot, index) {
+    h += '<option value="' + escapeHtmlAttribute(slot.id) + '"' + (slot.id === activeSlot?.id ? ' selected' : '') + '>' + esc(readerSlotDisplayName(slot, index)) + ' · ' + readerSlotStatusLabel(slot) + '</option>'
+  })
+  h += '</select></label><button type="button" class="rd-book-secondary" data-reader-slot-manage aria-expanded="false">管理存档</button></div>'
+  h += '<div class="rd-reader-slot-manage" hidden><div class="rd-reader-slot-manage-actions">'
+  h += '<button type="button" class="rd-book-secondary" data-reader-slot-rename>重命名</button>'
+  h += '<button type="button" class="rd-book-secondary" data-reader-slot-create' + (book.slots.length >= 5 ? ' disabled' : '') + '>新建周目</button>'
+  h += '<button type="button" class="rd-book-danger" data-reader-slot-remove' + (book.slots.length <= 1 ? ' disabled' : '') + '>删除当前存档</button></div>'
+  h += '<div class="rd-reader-slot-state"><span>当前状态：<strong class="rd-book-manager-state-label" data-status="' + statusKey + '">' + readerBookStatusLabel(book) + '</strong></span>'
+  h += '<button type="button" class="rd-book-secondary" data-reader-book-completion>' + (statusKey === 'completed' ? '恢复为阅读中' : '标记已完成') + '</button></div>'
+  h += '<div class="rd-reader-slot-editor" data-reader-slot-rename-panel hidden><label><span>存档名称</span><input type="text" data-reader-slot-name value="' + escapeHtmlAttribute(activeSlot?.name || '') + '" maxlength="500" placeholder="存档名称（可留空）"></label><div><button type="button" class="rd-book-secondary" data-reader-slot-edit-cancel>取消</button><button type="button" class="rd-book-primary" data-reader-slot-rename-save>保存</button></div></div>'
+  h += '<div class="rd-reader-slot-editor" data-reader-slot-create-panel hidden><label><span>新周目名称</span><input type="text" data-reader-slot-new-name value="" maxlength="500" placeholder="存档名称（可留空）"></label><div><button type="button" class="rd-book-secondary" data-reader-slot-create-cancel>取消</button><button type="button" class="rd-book-primary" data-reader-slot-create-save>创建并切换</button></div></div>'
+  h += '<div class="rd-book-remove-confirm" data-reader-slot-remove-confirm hidden><p>删除这个存档会移除它的进度、书签与足迹，其他存档不会受影响。</p><div><button type="button" class="rd-book-secondary" data-reader-slot-remove-cancel>取消</button><button type="button" class="rd-book-danger" data-reader-slot-remove-save>确认删除</button></div></div></div></section>'
+  if (definitions.length) {
+    h += '<section class="rd-book-manager-section"><div class="rd-book-manager-section-head"><h3>本书占位符</h3><span>自动保存到这本书</span></div>'
+    h += '<div class="rd-reader-identity-toolbar">'
+    h += '<label><span>阅读身份</span><select data-reader-identity-select><option value="">选择身份组</option>'
+    identities.forEach(function(identity) {
+      h += '<option value="' + escapeHtmlAttribute(identity.id) + '"' + (identity.id === activeIdentity?.id ? ' selected' : '') + '>' + esc(identity.name) + '</option>'
+    })
+    h += '<option value="__new__">＋ 新建身份组</option></select></label>'
+    if (activeIdentity) {
+      h += '<button type="button" class="rd-book-secondary" data-reader-identity-edit>编辑</button>'
+    }
+    h += '</div>'
+    h += '<div class="rd-reader-identity-editor" hidden><label class="rd-book-manager-field"><span>身份组名称</span><input type="text" data-reader-identity-name value="" maxlength="500" placeholder="输入身份组名称"></label>'
+    definitions.forEach(function(definition) {
+      h += '<label class="rd-book-manager-field"><span>' + esc(definition.label || definition.id) + '</span><input type="text" data-reader-identity-value="' + escapeHtmlAttribute(definition.key || definition.label || definition.id) + '" value="" maxlength="500" placeholder="' + escapeHtmlAttribute(definition.prompt || '') + '"></label>'
+    })
+    h += '<div class="rd-reader-identity-editor-actions">'
+    if (activeIdentity) h += '<button type="button" class="rd-book-danger" data-reader-identity-remove>删除身份组</button>'
+    h += '<button type="button" class="rd-book-secondary" data-reader-identity-cancel>取消</button><button type="button" class="rd-book-primary" data-reader-identity-save>保存并应用</button></div></div>'
+    definitions.forEach(function(definition) {
+      var saved = book.placeholderValues?.[definition.id]?.[0]
+      var value = typeof saved === 'string' ? saved : definition.default
+      h += '<label class="rd-book-manager-field"><span>' + esc(definition.label || definition.id) + '</span>'
+      h += '<input type="text" data-reader-book-placeholder="' + escapeHtmlAttribute(definition.id) + '" value="' + escapeHtmlAttribute(value || '') + '" placeholder="' + escapeHtmlAttribute(definition.prompt || '') + '"></label>'
+    })
+    h += '</section>'
+  }
+  if (book.bookmarks?.length) {
+    h += '<section class="rd-book-manager-section"><div class="rd-book-manager-section-head"><h3>场景书签</h3><span>' + book.bookmarks.length + ' 个位置</span></div>'
+    h += '<div class="rd-book-bookmarks">'
+    book.bookmarks.forEach(function(bookmark) {
+      h += '<div class="rd-book-bookmark-row"><button type="button" data-reader-book-bookmark="' + escapeHtmlAttribute(bookmark.id) + '"><span><strong>' + esc(bookmark.label || '阅读位置') + '</strong>' + (bookmark.note ? '<small>' + esc(bookmark.note) + '</small>' : '') + '</span><time>' + esc(timeAgo(bookmark.savedAt)) + '</time></button>'
+      h += '<button type="button" class="rd-book-bookmark-edit" data-reader-book-bookmark-edit="' + escapeHtmlAttribute(bookmark.id) + '" aria-label="' + escapeHtmlAttribute('编辑书签：' + (bookmark.label || '阅读位置')) + '">编辑</button>'
+      h += '<button type="button" class="rd-book-bookmark-remove" data-reader-book-bookmark-remove="' + escapeHtmlAttribute(bookmark.id) + '" aria-label="' + escapeHtmlAttribute('删除书签：' + (bookmark.label || '阅读位置')) + '">×</button></div>'
+      h += '<div class="rd-book-bookmark-editor" data-reader-book-bookmark-editor="' + escapeHtmlAttribute(bookmark.id) + '" hidden><label><span>书签名称</span><input type="text" data-reader-bookmark-label value="' + escapeHtmlAttribute(bookmark.label || '') + '" maxlength="500"></label><label><span>备注</span><textarea data-reader-bookmark-note maxlength="500" placeholder="写下想记住的内容">' + esc(bookmark.note || '') + '</textarea></label><div><button type="button" class="rd-book-secondary" data-reader-bookmark-edit-cancel>取消</button><button type="button" class="rd-book-primary" data-reader-bookmark-edit-save>保存备注</button></div></div>'
+    })
+    h += '</div></section>'
+  }
+  if (book.type === 'article') {
+    var footprintCount = book.progress?.checkpoints?.length || 0
+    var pathCount = book.progress?.path?.length || 0
+    var hasRouteComparison = book.slots.length >= 2
+    if (pathCount || journeyDirectory.length || hasRouteComparison) {
+      h += '<section class="rd-book-manager-section"><details class="rd-reader-record">'
+      h += '<summary><span><strong>阅读记录</strong><small>走过 ' + pathCount + ' 段 · ' + footprintCount + ' 个选择 · ' + journeyDirectory.length + ' 个片段</small></span><span aria-hidden="true">查看</span></summary>'
+      h += '<div class="rd-reader-record-body">'
+      if (footprintCount) {
+        h += '<section><h4>返回选择点</h4><div class="rd-book-checkpoints">'
+        book.progress.checkpoints.slice().reverse().forEach(function(checkpoint, index) {
+          h += '<button type="button" data-reader-book-checkpoint="' + index + '"><span>' + esc(checkpoint.label || '选择点') + '</span><small>' + esc(timeAgo(checkpoint.savedAt)) + '</small></button>'
+        })
+        h += '</div></section>'
+      }
+      if (journeyDirectory.length) {
+        h += '<section><h4>互动目录</h4><p class="rd-reader-record-note">只回看当前存档已经走过的片段，不会切换路线。</p>'
+        h += '<ol class="rd-reader-journey-directory">'
+        journeyDirectory.forEach(function(entry, index) {
+          var locationLabel = [entry.chapterTitle || '未分章', entry.title].filter(Boolean).join(' · ')
+          var decisionText = entry.decisions.map(function(decision) { return decision.label }).join(' · ')
+          h += '<li><button type="button" class="rd-reader-journey-entry" data-reader-journey-entry="' + index + '" aria-label="' + escapeHtmlAttribute('回看第 ' + (index + 1) + ' 段：' + locationLabel) + '">'
+          h += '<span class="rd-reader-journey-index" aria-hidden="true">' + String(index + 1).padStart(2, '0') + '</span>'
+          h += '<span class="rd-reader-journey-copy"><span>' + esc(entry.chapterTitle || '未分章') + '</span><strong>' + esc(entry.title) + '</strong>'
+          if (decisionText) h += '<small>当时选择：' + esc(decisionText) + '</small>'
+          h += '</span><span class="rd-reader-journey-open" aria-hidden="true">回看</span></button></li>'
+        })
+        h += '</ol></section>'
+      }
+      if (hasRouteComparison) {
+        var compareLeft = book.slots[0]
+        var compareRight = book.slots[1]
+        h += '<section><h4>路线差异</h4><p class="rd-reader-record-note">只比较两条路线已经做过的选择。</p>'
+        h += '<div class="rd-route-compare-controls"><label><span>路线一</span><select data-reader-compare-left>'
+        book.slots.forEach(function(slot, index) {
+          h += '<option value="' + escapeHtmlAttribute(slot.id) + '"' + (slot.id === compareLeft.id ? ' selected' : '') + '>' + esc(readerSlotDisplayName(slot, index)) + '</option>'
+        })
+        h += '</select></label><label><span>路线二</span><select data-reader-compare-right>'
+        book.slots.forEach(function(slot, index) {
+          h += '<option value="' + escapeHtmlAttribute(slot.id) + '"' + (slot.id === compareRight.id ? ' selected' : '') + '>' + esc(readerSlotDisplayName(slot, index)) + '</option>'
+        })
+        h += '</select></label></div><div data-reader-route-comparison>'
+        h += readerRouteComparisonHtml(work, book, compareLeft.id, compareRight.id)
+        h += '</div></section>'
+      }
+      h += '</div></details></section>'
+    }
+  }
+  h += '<section class="rd-book-manager-section"><details class="rd-reader-storage"><summary><strong>本地数据</strong><span data-reader-cache-size>' + esc(formatReaderStorageSize(cacheBytes)) + '</span></summary><div class="rd-reader-storage-body">'
+  h += '<div class="rd-book-manager-storage"><p>清除正文缓存会保留进度、占位符和书签；下次阅读前需要重新导入原文件。</p>'
+  h += '<div><button type="button" class="rd-book-secondary" data-reader-book-clear-cache' + (cacheBytes ? '' : ' disabled') + '>清除正文缓存</button>'
+  h += '<button type="button" class="rd-book-danger" data-reader-book-remove>从书架移除</button></div></div>'
+  h += '<div class="rd-book-remove-confirm" hidden><p>这会同时删除本书的进度、占位符、书签和正文缓存，无法撤销。</p><div><button type="button" class="rd-book-secondary" data-reader-book-remove-cancel>取消</button><button type="button" class="rd-book-danger" data-reader-book-remove-confirm>确认移除</button></div></div></div></details></section>'
+  h += '<p class="rd-book-manager-status rd-book-manager-global-status" role="status" aria-live="polite"></p>'
+  h += '</div><footer class="rd-book-manager-actions">'
+  if (book.progress) h += '<button type="button" class="rd-book-secondary" data-reader-book-restart>从头开始</button>'
+  if (definitions.length) h += '<button type="button" class="rd-book-secondary" data-reader-book-save>保存修改</button>'
+  h += '<button type="button" class="rd-book-primary" data-reader-book-continue>' + (book.progress ? '继续阅读' : '开始阅读') + '</button>'
+  h += '</footer></section>'
+  var overlay = document.createElement('div')
+  overlay.className = 'modal-overlay rd-book-manager-overlay'
+  overlay.innerHTML = h
+  document.body.appendChild(overlay)
+
+  var status = overlay.querySelector('.rd-book-manager-status')
+  function close() {
+    closeReaderUnlockedSearchPreview(false)
+    overlay.remove()
+    if (invoker && invoker.isConnected) invoker.focus()
+  }
+  function saveValues() {
+    if (!definitions.length) return true
+    var values = readerBookManagerValues(overlay, definitions)
+    var sourcePlaceholders = Array.isArray(work?.placeholders) ? work.placeholders : []
+    var invalidLabel = ''
+    sourcePlaceholders.forEach(function(placeholder) {
+      var value = values[placeholder.id]?.[0] || ''
+      if (!invalidLabel && placeholderForbiddenWord(placeholder, value, work?.globalForbidden)) {
+        invalidLabel = placeholder.label || placeholder.key || placeholder.id
+      }
+    })
+    if (invalidLabel) {
+      if (status) status.textContent = '“' + invalidLabel + '”包含作者设置的违禁词，请修改后保存。'
+      return false
+    }
+    if (!saveReaderWorkPlaceholders({id:workId}, values)) {
+      if (status) status.textContent = '浏览器未能保存修改，请检查存储空间。'
+      return false
+    }
+    if (status) status.textContent = '已保存；下次打开会自动使用。'
+    return true
+  }
+  function reopenManager() {
+    overlay.remove()
+    openReaderBookManager(workId, invoker)
+  }
+  overlay.querySelector('.rd-book-manager-close').onclick = close
+  overlay.addEventListener('click', function(event) { if (event.target === overlay) close() })
+  overlay.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      close()
+    }
+  })
+  var slotManageButton = overlay.querySelector('[data-reader-slot-manage]')
+  var slotManagePanel = overlay.querySelector('.rd-reader-slot-manage')
+  slotManageButton.onclick = function() {
+    var expanded = slotManageButton.getAttribute('aria-expanded') === 'true'
+    slotManageButton.setAttribute('aria-expanded', String(!expanded))
+    slotManagePanel.hidden = expanded
+    if (!expanded) slotManagePanel.querySelector('button:not([disabled])')?.focus()
+  }
+  var slotSelect = overlay.querySelector('[data-reader-slot-select]')
+  slotSelect.onchange = function() {
+    if (!saveValues()) {
+      slotSelect.value = activeSlot?.id || ''
+      return
+    }
+    commitReaderLibraryState(switchReaderSlot(
+      getReaderLibraryState(),
+      workId,
+      slotSelect.value,
+      Date.now(),
+    ))
+    reopenManager()
+  }
+  var renamePanel = overlay.querySelector('[data-reader-slot-rename-panel]')
+  var createPanel = overlay.querySelector('[data-reader-slot-create-panel]')
+  overlay.querySelector('[data-reader-slot-rename]').onclick = function() {
+    createPanel.hidden = true
+    renamePanel.hidden = false
+    renamePanel.querySelector('[data-reader-slot-name]').focus()
+  }
+  overlay.querySelector('[data-reader-slot-edit-cancel]').onclick = function() {
+    renamePanel.hidden = true
+  }
+  overlay.querySelector('[data-reader-slot-rename-save]').onclick = function() {
+    var input = renamePanel.querySelector('[data-reader-slot-name]')
+    commitReaderLibraryState(renameReaderSlot(
+      getReaderLibraryState(),
+      workId,
+      activeSlot.id,
+      input.value,
+      Date.now(),
+    ))
+    reopenManager()
+  }
+  overlay.querySelector('[data-reader-slot-create]').onclick = function() {
+    renamePanel.hidden = true
+    createPanel.hidden = false
+    var input = createPanel.querySelector('[data-reader-slot-new-name]')
+    input.value = ''
+    input.focus()
+  }
+  overlay.querySelector('[data-reader-slot-create-cancel]').onclick = function() {
+    createPanel.hidden = true
+  }
+  overlay.querySelector('[data-reader-slot-create-save]').onclick = function() {
+    if (!saveValues()) return
+    var input = createPanel.querySelector('[data-reader-slot-new-name]')
+    commitReaderLibraryState(createReaderSlot(
+      getReaderLibraryState(),
+      workId,
+      {
+        id:readerLocalStateId('reader-slot'),
+        name:input.value,
+      },
+      Date.now(),
+    ))
+    reopenManager()
+  }
+  var slotRemoveConfirm = overlay.querySelector('[data-reader-slot-remove-confirm]')
+  overlay.querySelector('[data-reader-slot-remove]').onclick = function() {
+    slotRemoveConfirm.hidden = false
+    overlay.querySelector('[data-reader-slot-remove-save]').focus()
+  }
+  overlay.querySelector('[data-reader-slot-remove-cancel]').onclick = function() {
+    slotRemoveConfirm.hidden = true
+    overlay.querySelector('[data-reader-slot-remove]').focus()
+  }
+  overlay.querySelector('[data-reader-slot-remove-save]').onclick = function() {
+    commitReaderLibraryState(removeReaderSlot(
+      getReaderLibraryState(),
+      workId,
+      activeSlot.id,
+      Date.now(),
+    ))
+    reopenManager()
+  }
+  var identityEditor = overlay.querySelector('.rd-reader-identity-editor')
+  var identitySelect = overlay.querySelector('[data-reader-identity-select]')
+  function openIdentityEditor(identity) {
+    if (!identityEditor) return
+    identityEditor.hidden = false
+    identityEditor.dataset.identityId = identity?.id || ''
+    var nameInput = identityEditor.querySelector('[data-reader-identity-name]')
+    nameInput.value = identity?.name || ''
+    identityEditor.querySelectorAll('[data-reader-identity-value]').forEach(function(input) {
+      input.value = identity?.values?.[input.dataset.readerIdentityValue] || ''
+    })
+    nameInput.focus()
+  }
+  if (identitySelect) identitySelect.onchange = function() {
+    if (identitySelect.value === '__new__') {
+      openIdentityEditor(null)
+      identitySelect.value = activeIdentity?.id || ''
+      return
+    }
+    if (!identitySelect.value || !saveValues()) return
+    commitReaderLibraryState(applyReaderIdentity(
+      getReaderLibraryState(),
+      workId,
+      identitySelect.value,
+      Date.now(),
+    ))
+    reopenManager()
+  }
+  var identityEdit = overlay.querySelector('[data-reader-identity-edit]')
+  if (identityEdit) identityEdit.onclick = function() { openIdentityEditor(activeIdentity) }
+  var identityCancel = overlay.querySelector('[data-reader-identity-cancel]')
+  if (identityCancel) identityCancel.onclick = function() { identityEditor.hidden = true }
+  var identitySave = overlay.querySelector('[data-reader-identity-save]')
+  if (identitySave) identitySave.onclick = function() {
+    var nameInput = identityEditor.querySelector('[data-reader-identity-name]')
+    var name = nameInput.value.trim()
+    if (!name) {
+      if (status) status.textContent = '请先填写身份组名称。'
+      nameInput.focus()
+      return
+    }
+    var identityId = identityEditor.dataset.identityId || readerLocalStateId('reader-identity')
+    var next = saveReaderIdentity(getReaderLibraryState(), {
+      id:identityId,
+      name:name,
+      values:readerIdentityValues(identityEditor, definitions),
+    }, Date.now())
+    next = applyReaderIdentity(next, workId, identityId, Date.now())
+    commitReaderLibraryState(next)
+    reopenManager()
+  }
+  var identityRemove = overlay.querySelector('[data-reader-identity-remove]')
+  if (identityRemove) identityRemove.onclick = function() {
+    if (identityRemove.dataset.confirm !== 'true') {
+      identityRemove.dataset.confirm = 'true'
+      identityRemove.textContent = '再次点击确认删除'
+      return
+    }
+    commitReaderLibraryState(removeReaderIdentity(getReaderLibraryState(), activeIdentity.id))
+    reopenManager()
+  }
+  var saveBookButton = overlay.querySelector('[data-reader-book-save]')
+  if (saveBookButton) saveBookButton.onclick = saveValues
+  overlay.querySelector('[data-reader-book-continue]').onclick = function() {
+    if (!saveValues()) return
+    overlay.remove()
+    openReaderBookById(workId)
+  }
+  var restartBookButton = overlay.querySelector('[data-reader-book-restart]')
+  if (restartBookButton) restartBookButton.onclick = function() {
+      if (!saveValues()) return
+      overlay.remove()
+      openReaderBookById(workId, {restart:true})
+    }
+  overlay.querySelector('[data-reader-book-completion]').onclick = function() {
+    var latest = savedReaderBook(workId)
+    if (!latest) return
+    var complete = readerBookStatus(latest) !== 'completed'
+    commitReaderLibraryState(setReaderCompletion(getReaderLibraryState(), workId, complete, Date.now()))
+    var nextBook = savedReaderBook(workId)
+    var nextStatus = readerBookStatus(nextBook)
+    var stateLabel = overlay.querySelector('.rd-book-manager-state-label')
+    var stateButton = overlay.querySelector('[data-reader-book-completion]')
+    if (stateLabel) {
+      stateLabel.dataset.status = nextStatus
+      stateLabel.textContent = readerBookStatusLabel(nextBook)
+    }
+    stateButton.textContent = complete ? '恢复为阅读中' : '标记已完成'
+    if (status) status.textContent = complete ? '已标记为完成。' : '已恢复为阅读中。'
+    refreshBookshelfPage()
+  }
+  var clearCacheButton = overlay.querySelector('[data-reader-book-clear-cache]')
+  clearCacheButton.onclick = function() {
+    try { localStorage.removeItem('moirain_work_' + workId) } catch (_) {}
+    clearCacheButton.disabled = true
+    var size = overlay.querySelector('[data-reader-cache-size]')
+    if (size) size.textContent = '未缓存正文'
+    if (status) status.textContent = '正文缓存已清除；阅读记录和书签仍在。'
+    refreshBookshelfPage()
+  }
+  var removeConfirm = overlay.querySelector('.rd-book-remove-confirm')
+  overlay.querySelector('[data-reader-book-remove]').onclick = function() {
+    removeConfirm.hidden = false
+    overlay.querySelector('[data-reader-book-remove-confirm]').focus()
+  }
+  overlay.querySelector('[data-reader-book-remove-cancel]').onclick = function() {
+    removeConfirm.hidden = true
+    overlay.querySelector('[data-reader-book-remove]').focus()
+  }
+  overlay.querySelector('[data-reader-book-remove-confirm]').onclick = function() {
+    try { localStorage.removeItem('moirain_work_' + workId) } catch (_) {}
+    try {
+      lsSet('recent', getRecents().filter(function(recent) { return recent?.id !== workId }))
+    } catch (_) {}
+    commitReaderLibraryState(removeReaderBook(getReaderLibraryState(), workId))
+    close()
+    refreshBookshelfPage()
+  }
+  overlay.querySelectorAll('[data-reader-book-bookmark-remove]').forEach(function(button) {
+    button.onclick = function() {
+      var latestBook = savedReaderBook(workId)
+      var bookmark = latestBook?.bookmarks?.find(function(candidate) {
+        return candidate.id === button.dataset.readerBookBookmarkRemove
+      })
+      if (!bookmark) return
+      commitReaderLibraryState(removeReaderBookmark(getReaderLibraryState(), workId, bookmark.id))
+      button.closest('.rd-book-bookmark-row')?.remove()
+      if (status) status.textContent = '书签已删除。'
+      refreshBookshelfPage()
+    }
+  })
+  overlay.querySelectorAll('[data-reader-book-bookmark-edit]').forEach(function(button) {
+    button.onclick = function() {
+      var editor = Array.from(overlay.querySelectorAll('[data-reader-book-bookmark-editor]')).find(function(candidate) {
+        return candidate.dataset.readerBookBookmarkEditor === button.dataset.readerBookBookmarkEdit
+      })
+      if (!editor) return
+      editor.hidden = false
+      editor.querySelector('[data-reader-bookmark-label]').focus()
+    }
+  })
+  overlay.querySelectorAll('[data-reader-book-bookmark-editor]').forEach(function(editor) {
+    var cancelButton = editor.querySelector('[data-reader-bookmark-edit-cancel]')
+    var saveButton = editor.querySelector('[data-reader-bookmark-edit-save]')
+    cancelButton.onclick = function() { editor.hidden = true }
+    saveButton.onclick = function() {
+      var bookmarkId = editor.dataset.readerBookBookmarkEditor
+      commitReaderLibraryState(updateReaderBookmark(
+        getReaderLibraryState(),
+        workId,
+        bookmarkId,
+        {
+          label:editor.querySelector('[data-reader-bookmark-label]').value,
+          note:editor.querySelector('[data-reader-bookmark-note]').value,
+        },
+        Date.now(),
+      ))
+      reopenManager()
+    }
+  })
+  overlay.querySelectorAll('[data-reader-book-bookmark]').forEach(function(button) {
+    button.onclick = function() {
+      if (!saveValues()) return
+      var latestBook = savedReaderBook(workId)
+      var bookmark = latestBook?.bookmarks?.find(function(candidate) {
+        return candidate.id === button.dataset.readerBookBookmark
+      })
+      if (!bookmark || bookmark.kind !== 'article') return
+      if (!work) {
+        if (status) status.textContent = '正文缓存已清除，请重新导入原文件后再回到书签。'
+        return
+      }
+      commitReaderLibraryState(saveReaderProgress(getReaderLibraryState(), workId, {
+        kind:'article',
+        path:bookmark.path,
+        choiceMemory:bookmark.choiceMemory,
+        interactionSelections:bookmark.interactionSelections,
+        checkpoints:latestBook?.progress?.checkpoints || [],
+      }, Date.now()))
+      overlay.remove()
+      openReaderBookById(workId)
+    }
+  })
+  overlay.querySelectorAll('[data-reader-book-checkpoint]').forEach(function(button) {
+    button.onclick = function() {
+      if (!saveValues()) return
+      var latestBook = savedReaderBook(workId)
+      var checkpoints = latestBook?.progress?.checkpoints || []
+      var checkpoint = checkpoints.slice().reverse()[Number(button.dataset.readerBookCheckpoint)]
+      if (!checkpoint) return
+      var nextProgress = {
+        kind:'article',
+        path:checkpoint.path,
+        choiceMemory:checkpoint.choiceMemory,
+        interactionSelections:checkpoint.interactionSelections,
+        checkpoints:checkpoints,
+      }
+      commitReaderLibraryState(saveReaderProgress(
+        getReaderLibraryState(),
+        workId,
+        nextProgress,
+        Date.now(),
+      ))
+      overlay.remove()
+      openReaderBookById(workId)
+    }
+  })
+  overlay.querySelectorAll('[data-reader-journey-entry]').forEach(function(button) {
+    button.onclick = function() {
+      var directoryEntry = journeyDirectory[Number(button.dataset.readerJourneyEntry)]
+      var previewEntry = directoryEntry && journeyPreviewByNodeId.get(directoryEntry.nodeId)
+      if (!directoryEntry || !previewEntry) {
+        if (status) status.textContent = '正文缓存已清除；重新导入原作品后即可回看。'
+        return
+      }
+      openReaderUnlockedSearchPreview(Object.assign({}, previewEntry, {
+        kindLabel:'已读片段',
+        title:directoryEntry.title,
+        location:[directoryEntry.chapterTitle, directoryEntry.title].filter(Boolean).join(' · '),
+      }), button)
+    }
+  })
+  var compareLeftSelect = overlay.querySelector('[data-reader-compare-left]')
+  var compareRightSelect = overlay.querySelector('[data-reader-compare-right]')
+  var compareOutput = overlay.querySelector('[data-reader-route-comparison]')
+  function refreshRouteComparison() {
+    if (!compareLeftSelect || !compareRightSelect || !compareOutput) return
+    compareOutput.innerHTML = readerRouteComparisonHtml(
+      work,
+      savedReaderBook(workId),
+      compareLeftSelect.value,
+      compareRightSelect.value,
+    )
+  }
+  if (compareLeftSelect) compareLeftSelect.onchange = refreshRouteComparison
+  if (compareRightSelect) compareRightSelect.onchange = refreshRouteComparison
+  overlay.querySelector('.rd-book-manager-close').focus()
+}
+
+function bindReaderDataPanel(root) {
+  var toggle = root.querySelector('[data-reader-data-toggle]')
+  var panel = root.querySelector('[data-reader-data-panel]')
+  if (!toggle || !panel) return
+  var status = panel.querySelector('[data-reader-data-status]')
+  var preview = panel.querySelector('[data-reader-data-preview]')
+  var applyButton = panel.querySelector('[data-reader-data-apply]')
+  var fileInput = panel.querySelector('[data-reader-data-file]')
+
+  function setStatus(message) {
+    _readerDataStatusMessage = message
+    if (status) status.textContent = message
+  }
+
+  function clearCandidate() {
+    panel._readerDataCandidate = null
+    if (preview) preview.hidden = true
+    if (applyButton) applyButton.hidden = true
+  }
+
+  toggle.onclick = function() {
+    _readerDataPanelOpen = !_readerDataPanelOpen
+    toggle.setAttribute('aria-expanded', _readerDataPanelOpen ? 'true' : 'false')
+    panel.hidden = !_readerDataPanelOpen
+    if (_readerDataPanelOpen) {
+      var firstAction = panel.querySelector('[data-reader-data-export]')
+      if (firstAction) firstAction.focus()
+    }
+  }
+
+  var exportButton = panel.querySelector('[data-reader-data-export]')
+  if (exportButton) exportButton.onclick = function() {
+    try {
+      var serialized = serializeReaderDataPackage(currentReaderDataPackageInput())
+      downloadBlob(
+        new Blob([serialized], {type:'application/json;charset=utf-8'}),
+        'Tuuru-reader-data.json',
+        {urlApi:window.URL},
+      )
+      setStatus('备份已导出；作品、密码与图片未包含在内。')
+    } catch (error) {
+      setStatus(error && error.message ? error.message : '阅读数据导出失败。')
+    }
+  }
+
+  var importButton = panel.querySelector('[data-reader-data-import]')
+  if (importButton) importButton.onclick = function() {
+    if (fileInput) fileInput.click()
+  }
+  if (fileInput) fileInput.onchange = function() {
+    var file = fileInput.files && fileInput.files[0]
+    fileInput.value = ''
+    clearCandidate()
+    if (!file) return
+    if (file.size > READER_DATA_PACKAGE_MAX_BYTES) {
+      setStatus('备份文件过大，无法导入。')
+      return
+    }
+    var reader = new FileReader()
+    reader.onload = function() {
+      try {
+        var candidate = inspectReaderDataPackage(String(reader.result || ''))
+        panel._readerDataCandidate = candidate
+        ;[
+          ['books', '[data-reader-data-books]'],
+          ['slots', '[data-reader-data-slots]'],
+          ['identities', '[data-reader-data-identities]'],
+          ['bookmarks', '[data-reader-data-bookmarks]'],
+        ].forEach(function(entry) {
+          var output = panel.querySelector(entry[1])
+          if (output) output.textContent = String(candidate.summary[entry[0]] || 0)
+        })
+        if (preview) preview.hidden = false
+        if (applyButton) applyButton.hidden = false
+        setStatus('已读取备份，请确认后合并恢复。')
+      } catch (error) {
+        setStatus(error && error.message ? error.message : '无法读取这个备份。')
+      }
+    }
+    reader.onerror = function() { setStatus('备份读取失败，请重新选择。') }
+    reader.readAsText(file)
+  }
+  if (applyButton) applyButton.onclick = function() {
+    var candidate = panel._readerDataCandidate
+    if (!candidate) return
+    try {
+      installReaderDataPackage(candidate)
+      _readerDataPanelOpen = true
+      _readerDataStatusMessage = '阅读数据已恢复；同一存档已保留较新的进度。'
+      refreshBookshelfPage()
+      var refreshedToggle = document.querySelector('[data-reader-data-toggle]')
+      if (refreshedToggle) refreshedToggle.focus()
+      showReaderToast('阅读数据已恢复')
+    } catch (_) {
+      setStatus('恢复失败；浏览器存储空间不足或备份无法写入。')
+    }
+  }
+}
+
+function bindBookshelfPage(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return
+  bindReaderDataPanel(root)
+  var search = root.querySelector('[data-reader-shelf-search]')
+  if (search) {
+    search.oninput = function() {
+      _readerShelfQuery = search.value
+      var query = search.value.trim().toLocaleLowerCase('zh-CN')
+      var visible = 0
+      root.querySelectorAll('[data-reader-book-search]').forEach(function(book) {
+        var matches = !query || String(book.dataset.readerBookSearch || '').includes(query)
+        book.hidden = !matches
+        if (matches) visible += 1
+      })
+      var empty = root.querySelector('.rd-bookshelf-no-results')
+      if (empty) empty.hidden = visible > 0
+    }
+  }
+  var sort = root.querySelector('[data-reader-shelf-sort]')
+  if (sort) {
+    sort.onchange = function() {
+      _readerShelfSort = sort.value
+      refreshBookshelfPage()
+      document.querySelector('[data-reader-shelf-sort]')?.focus()
+    }
+  }
+  root.querySelectorAll('[data-reader-open-import]').forEach(function(button) {
+    button.onclick = function() { openReaderImportDialog(button) }
+  })
+  root.querySelectorAll('[data-reader-book-manage]').forEach(function(button) {
+    button.onclick = function(event) {
+      event.stopPropagation()
+      var book = readerBookByRenderedIndex(Number(button.dataset.readerBookManage))
+      if (book) openReaderBookManager(book.id, button)
+    }
+  })
+  root.querySelectorAll('[data-reader-book-index]').forEach(function(cover) {
+    var index = Number(cover.dataset.readerBookIndex)
+    var hold = createBookCoverHold({
+      onHold:function() {
+        var book = readerBookByRenderedIndex(index)
+        if (book) openReaderBookManager(book.id, cover)
+      },
+    })
+    cover.addEventListener('pointerdown', function(event) {
+      hold.begin(event)
+    })
+    cover.addEventListener('pointermove', function(event) {
+      hold.move(event)
+    })
+    cover.addEventListener('pointerup', function(event) {
+      hold.finish(event)
+    })
+    cover.addEventListener('pointercancel', function(event) {
+      hold.cancel(event.pointerId)
+    })
+    cover.addEventListener('lostpointercapture', function(event) {
+      hold.cancel(event.pointerId)
+    })
+    cover.addEventListener('contextmenu', function(event) {
+      event.preventDefault()
+      var book = readerBookByRenderedIndex(index)
+      if (book) openReaderBookManager(book.id, cover)
+    })
+    cover.addEventListener('click', function(event) {
+      if (hold.consumeClickSuppression()) {
+        event.preventDefault()
+        return
+      }
+      var book = readerBookByRenderedIndex(index)
+      if (book) openReaderBookById(book.id)
+    })
+  })
+}
+
 function reimportRecent(id) {
   // Load work from localStorage
   try {
     var db = JSON.parse(localStorage.getItem('moirain_work_' + id))
     if (!db) { alert('该作品已不在缓存中，请重新导入'); return }
-    importWork(db)
+    openReaderBookById(id) || importWork(db)
   } catch(e) {
     alert('加载失败：' + e.message)
   }
 }
 
-// ====== Import Panel ======
-function renderImportPanel() {
+// ====== Import Dialog ======
+function renderImportPanel(recoveryBook) {
   var h = '<div class="drop-zone">'
   h += '<div class="drop-zone-inner" id="dropInner">'
-  h += '<div class="drop-icon">&#128196;</div>'
-  h += '<div class="drop-title">导入 Tuuru 作品</div>'
-  h += '<div class="drop-desc">拖放 .tuuru、.json 或 .png 文件到此处，或点击下方按钮选择文件</div>'
-  h += '<button class="drop-btn" id="pickFileBtn">选择文件</button>'
+  h += '<div class="drop-icon" aria-hidden="true">↑</div>'
+  h += '<div class="drop-title">把作品文件拖到这里</div>'
+  h += '<div class="drop-desc" id="rdImportDescription">支持 .tuuru、.json 和 .png，也可以直接选择文件。</div>'
+  if (recoveryBook) {
+    h += '<p class="rd-import-recovery-note">请选择这本作品的原文件；识别成功后会接回现有阅读记录。</p>'
+  }
+  h += '<button type="button" class="drop-btn" id="pickFileBtn">选择作品文件</button>'
+  h += '<p class="rd-import-local-note">文件仅在当前设备读取，不会上传。</p>'
+  h += '<div class="rd-import-status" data-reader-import-status data-state="idle" role="status" aria-live="polite"></div>'
   h += '<input type="file" id="fileInput" accept=".tuuru,.json,.png" style="display:none">'
   h += '</div>'
+  h += '<div class="rd-import-review" hidden></div>'
   h += '</div>'
   return h
 }
@@ -809,10 +2616,31 @@ function readerImportFileError(file, ext) {
   return ''
 }
 
-function setupImport() {
-  var inner = document.getElementById('dropInner')
-  var pickBtn = document.getElementById('pickFileBtn')
-  var fileInput = document.getElementById('fileInput')
+function setReaderImportStatus(root, state, message) {
+  root = root && typeof root.querySelector === 'function' ? root : _readerImportOverlay
+  if (!root) return false
+  var status = root.querySelector('[data-reader-import-status]')
+  var picker = root.querySelector('#pickFileBtn')
+  var inner = root.querySelector('#dropInner')
+  var busy = state === 'loading'
+  if (picker) picker.disabled = busy
+  if (inner) inner.setAttribute('aria-busy', busy ? 'true' : 'false')
+  if (!status) return false
+  status.dataset.state = state || 'idle'
+  status.textContent = message || ''
+  return true
+}
+
+function reportReaderImportError(message, root) {
+  if (setReaderImportStatus(root, 'error', message)) return
+  alert(message)
+}
+
+function setupImport(root) {
+  root = root && typeof root.querySelector === 'function' ? root : document
+  var inner = root.querySelector('#dropInner')
+  var pickBtn = root.querySelector('#pickFileBtn')
+  var fileInput = root.querySelector('#fileInput')
 
   function resetFileInput() {
     if (fileInput) fileInput.value = ''
@@ -823,21 +2651,22 @@ function setupImport() {
     var name = typeof file.name === 'string' ? file.name : ''
     var ext = name.split('.').pop().toLowerCase()
     if (ext !== 'tuuru' && ext !== 'json' && ext !== 'png') {
-      alert('请选择 .tuuru、.json 或 .png 文件')
+      reportReaderImportError('请选择 .tuuru、.json 或 .png 文件', root)
       resetFileInput()
       return
     }
     var fileError = readerImportFileError(file, ext)
     if (fileError) {
-      alert(fileError)
+      reportReaderImportError(fileError, root)
       resetFileInput()
       return
     }
+    setReaderImportStatus(root, 'loading', '正在读取作品…')
     var reader
     try {
       reader = new FileReader()
     } catch (error) {
-      alert('无法读取文件，请确认文件仍可访问后重试')
+      reportReaderImportError('无法读取文件，请确认文件仍可访问后重试', root)
       resetFileInput()
       return
     }
@@ -846,34 +2675,35 @@ function setupImport() {
       if (settled) return false
       settled = true
       resetFileInput()
-      if (message) alert(message)
+      if (message) reportReaderImportError(message, root)
       return true
     }
     reader.onload = async function() {
       if (!finishRead()) return
+      setReaderImportStatus(root, 'loading', '正在解析作品…')
       if (ext === 'tuuru') {
         try {
           var encryptedBytes = new Uint8Array(reader.result)
           var serialized = await decryptWorkPackage(encryptedBytes)
-          importPayload(JSON.parse(serialized))
+          importPayload(JSON.parse(serialized), root)
         } catch (e) {
-          alert('Tuuru 作品包读取失败：' + e.message)
+          reportReaderImportError('Tuuru 作品包读取失败：' + e.message, root)
         }
       } else if (ext === 'json') {
         try {
           var work = JSON.parse(reader.result)
-          importPayload(work)
+          importPayload(work, root)
         } catch (e) {
-          alert('JSON 解析失败：' + e.message)
+          reportReaderImportError('JSON 解析失败：' + e.message, root)
         }
       } else {
         // PNG stego decode
         var dimensionError = readerPngDimensionError(parsePngDimensionsFromDataUrl(reader.result))
         if (dimensionError) {
-          alert(dimensionError)
+          reportReaderImportError(dimensionError, root)
           return
         }
-        decodeSteganoFromDataUrl(reader.result)
+        decodeSteganoFromDataUrl(reader.result, root)
       }
     }
     reader.onerror = function() {
@@ -903,7 +2733,7 @@ function setupImport() {
   function onDrop(e) {
     e.preventDefault()
     if (inner) inner.classList.remove('drag-over')
-    var file = e.dataTransfer.files[0]
+    var file = e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files[0] : null
     handleFile(file)
   }
   if (inner) {
@@ -915,7 +2745,7 @@ function setupImport() {
   // Click to pick
   if (pickBtn) {
     pickBtn.onclick = function() {
-      fileInput.click()
+      if (fileInput) fileInput.click()
     }
   }
   if (fileInput) {
@@ -930,7 +2760,7 @@ function parseSteganoWork(bytes) {
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
-function decodeSteganoFromDataUrl(dataUrl) {
+function decodeSteganoFromDataUrl(dataUrl, root) {
   var img = new Image()
   img.onload = function() {
     var canvas = document.createElement('canvas')
@@ -938,63 +2768,136 @@ function decodeSteganoFromDataUrl(dataUrl) {
     var ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0)
     var pixels = ctx.getImageData(0, 0, img.width, img.height).data
     var bytes = readSteganoPayload(pixels)
-    if (!bytes) { alert('未检测到隐写数据'); return }
+    if (!bytes) { reportReaderImportError('未检测到隐写数据', root); return }
     try {
       var work = parseSteganoWork(bytes)
       if (work && typeof work.then === 'function') {
-        work.then(importPayload).catch(function(error) {
-          alert('隐写数据解析失败：' + error.message)
+        work.then(function(payload) { importPayload(payload, root) }).catch(function(error) {
+          reportReaderImportError('隐写数据解析失败：' + error.message, root)
         })
       } else {
-        importPayload(work)
+        importPayload(work, root)
       }
     } catch(e) {
-      alert('隐写数据解析失败：' + e.message)
+      reportReaderImportError('隐写数据解析失败：' + e.message, root)
     }
   }
-  img.onerror = function() { alert('PNG 加载失败') }
+  img.onerror = function() { reportReaderImportError('PNG 加载失败', root) }
   img.src = dataUrl
 }
 
-function importPayload(payload) {
+function importPayload(payload, root) {
   if (payload && payload.type === WORK_COLLECTION_BUNDLE_TYPE) {
-    importWorkCollection(payload)
+    importWorkCollection(payload, root)
     return
   }
-  importWork(payload)
+  importWork(payload, root)
 }
 
-function importWorkCollection(payload) {
+function importWorkCollection(payload, root) {
   var inspected
   try {
     inspected = inspectReaderCollectionBundle(payload, localStorage, window)
   } catch (error) {
-    alert(error instanceof Error ? error.message : '无法检查作品集')
+    reportReaderImportError(error instanceof Error ? error.message : '无法检查作品集', root)
     return
   }
   if (!inspected.ok) {
-    alert(inspected.message)
+    reportReaderImportError(inspected.message, root)
     return
   }
   var replacement = inspected.existingWorkCount
     ? '\n其中 ' + inspected.existingWorkCount + ' 篇会更新同名本地缓存。'
     : ''
   var access = inspected.collection.accessMode === 'unified' ? '统一进入' : '各篇独立进入'
-  if (!confirm('导入作品集《' + inspected.collection.title + '》？\n共 ' + inspected.works.length + ' 篇，' + access + '。' + replacement)) return
+  if (!confirm('导入作品集《' + inspected.collection.title + '》？\n共 ' + inspected.works.length + ' 篇，' + access + '。' + replacement)) {
+    setReaderImportStatus(root, 'idle', '')
+    return
+  }
   try {
     var installed = installReaderCollection(localStorage, inspected)
+    closeReaderImportDialog({restoreFocus:false})
     openReaderCollection(installed.collection.id)
   } catch (error) {
-    alert('作品集导入失败：' + (error instanceof Error ? error.message : '本地存储不可用'))
+    reportReaderImportError('作品集导入失败：' + (error instanceof Error ? error.message : '本地存储不可用'), root)
   }
 }
 
-function importWork(work) {
+function canResumeReaderImport(work, book) {
+  if (!work || !book || !book.progress || String(work.password || '').trim()) return false
+  var savedValues = book.placeholderValues || {}
+  return (work.placeholders || []).every(function(definition) {
+    return definition
+      && typeof definition.id === 'string'
+      && Array.isArray(savedValues[definition.id])
+      && typeof savedValues[definition.id][0] === 'string'
+  })
+}
+
+function reviewReaderWorkImport(work, root) {
+  root = root && typeof root.querySelector === 'function' ? root : _readerImportOverlay
+  var existingBook = work && work.id ? savedReaderBook(work.id) : null
+  var existingCache = work && work.id ? cachedReaderWork(work.id) : null
+  if (!root || (!existingBook && !existingCache)) return false
+  var dropInner = root.querySelector('#dropInner')
+  var review = root.querySelector('.rd-import-review')
+  if (!dropInner || !review) return false
+
+  var recovering = !!existingBook && !existingCache
+  dropInner.hidden = true
+  review.hidden = false
+  review.innerHTML = '<p class="rd-import-review-label">' + (recovering ? '恢复书架内容' : '检测到已有作品') + '</p>' +
+    '<h3>' + esc(work.title || '无标题作品') + '</h3>' +
+    (work.author ? '<p class="rd-import-review-author">' + esc(work.author) + '</p>' : '') +
+    '<dl class="rd-import-review-summary"><div><dt>正文内容</dt><dd>' +
+    (recovering ? '重新保存到这台设备' : '更新为这次导入的版本') + '</dd></div>' +
+    '<div><dt>阅读记录</dt><dd>' +
+    (recovering ? '接回原来的存档、身份、占位符与书签' : '保留存档、身份、占位符与书签') + '</dd></div></dl>' +
+    '<p class="rd-import-review-note">' +
+    (recovering
+      ? '确认后会回到上次阅读位置；如果原位置已失效，会从作品开头继续。'
+      : '如果作者删除了原剧情节点，失效的位置会安全回到开头。') +
+    '</p>' +
+    '<div class="rd-import-review-actions"><button type="button" class="rd-book-secondary" data-reader-import-cancel>返回选择</button>' +
+    '<button type="button" class="rd-book-primary" data-reader-import-confirm>' + (recovering ? '恢复并继续' : '更新作品') + '</button></div>'
+  setReaderImportStatus(root, 'review', '')
+
+  var cancelButton = review.querySelector('[data-reader-import-cancel]')
+  var confirmButton = review.querySelector('[data-reader-import-confirm]')
+  cancelButton.onclick = function() {
+    review.hidden = true
+    review.innerHTML = ''
+    dropInner.hidden = false
+    setReaderImportStatus(root, 'idle', '')
+    var picker = root.querySelector('#pickFileBtn')
+    if (picker) picker.focus()
+  }
+  confirmButton.onclick = function() {
+    var skipLanding = canResumeReaderImport(work, existingBook)
+    closeReaderImportDialog({restoreFocus:false})
+    loadWork(work, {resume:true, skipLanding:skipLanding})
+  }
+  confirmButton.focus()
+  return true
+}
+
+function importWork(work, root) {
   var result = prepareImportedWork(work)
   if (!result.ok) {
-    alert(result.message)
+    reportReaderImportError(result.message, root)
     return
   }
+  var expectedWorkId = root && root.dataset ? String(root.dataset.readerRecoveryWorkId || '') : ''
+  if (expectedWorkId && result.work.id !== expectedWorkId) {
+    var expectedBook = savedReaderBook(expectedWorkId)
+    reportReaderImportError(
+      '所选文件与“' + (expectedBook?.title || '要恢复的作品') + '”不是同一作品，请重新选择。',
+      root,
+    )
+    return
+  }
+  if (reviewReaderWorkImport(result.work, root)) return
+  closeReaderImportDialog({restoreFocus:false})
   loadWork(result.work)
 }
 
@@ -1034,6 +2937,9 @@ async function ensureInteractiveCameraPreflight(statusElement, button) {
 function showLandingPage(work, callback) {
   var phs = work.placeholders || []
   var hasPassword = !!(work.password && work.password.trim())
+  var rememberedValues = cloneReaderPlaceholderValues(
+    savedReaderBook(work.id)?.placeholderValues || work.readerPhValues || {},
+  )
 
   var h = '<div class="rd-landing">'
 
@@ -1060,9 +2966,10 @@ function showLandingPage(work, callback) {
     h += '<div class="rd-landing-section-title">占位符</div>'
     h += '<p class="rd-landing-desc">以下信息将替换作品中对应的占位文字</p>'
     phs.forEach(function(ph) {
+      var rememberedValue = rememberedValues[ph.id]?.[0]
       h += '<div class="rd-landing-field">'
       h += '<label>' + esc(ph.label || ph.key) + '</label>'
-      h += '<input type="text" class="rd-landing-input" data-ph-id="' + escapeHtmlAttribute(ph.id || '') + '" value="' + escapeHtmlAttribute(ph.default || '') + '" placeholder="' + escapeHtmlAttribute(ph.prompt || '') + '">'
+      h += '<input type="text" class="rd-landing-input" data-ph-id="' + escapeHtmlAttribute(ph.id || '') + '" value="' + escapeHtmlAttribute(typeof rememberedValue === 'string' ? rememberedValue : (ph.default || '')) + '" placeholder="' + escapeHtmlAttribute(ph.prompt || '') + '">'
       h += '<div class="rd-placeholder-error" data-ph-error="' + escapeHtmlAttribute(ph.id || '') + '" role="alert" hidden></div>'
       h += '</div>'
     })
@@ -1139,7 +3046,7 @@ function showLandingPage(work, callback) {
     })
     if (forbiddenFound) return
     work.readerPhValues = values
-    tryReaderStorageWrite(function() { lsSet('readerPhValues', values) })
+    saveReaderWorkPlaceholders(work, values)
     function enterWork() {
       if (!overlay.isConnected) return
       overlay.remove()
@@ -1256,21 +3163,57 @@ function openReaderCollectionWork(workId) {
 
 // ====== Load Work ======
 function loadWork(work, options) {
+  flushReaderPositionSave()
   if (!work.type) { alert('无效的作品文件'); return }
+  var rememberWork = !options || options.remember !== false
+  _readerPersistenceEnabled = rememberWork
+  var incomingReaderValues = cloneReaderPlaceholderValues(work.readerPhValues || {})
+  var previousBook = rememberWork && work.id ? savedReaderBook(work.id) : null
+  if (previousBook && Object.keys(previousBook.placeholderValues || {}).length) {
+    work.readerPhValues = cloneReaderPlaceholderValues(previousBook.placeholderValues)
+  }
   _work = work
   resetReaderPhoneChoiceSession(work)
   resetReaderPhoneFlowSession(work)
   resetArticleReaderSession()
+  _readerPendingReadingPosition = null
+  _readerPhoneLocation = null
   _interactiveSceneCameraSession?.stop()
   _interactiveSceneCameraSession = null
   _interactiveSceneController?.destroy()
   _interactiveSceneController = null
   _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
   _activeReaderCollectionId = options && options.collectionId || ''
-  var rememberWork = !options || options.remember !== false
+  var rememberedBook = rememberWork ? rememberReaderWorkState(work) : null
+  if (
+    rememberWork
+    && rememberedBook
+    && !Object.keys(rememberedBook.placeholderValues || {}).length
+    && Object.keys(incomingReaderValues).length
+  ) {
+    saveReaderWorkPlaceholders(work, incomingReaderValues)
+    rememberedBook = savedReaderBook(work.id)
+  }
+  if (rememberWork && options?.resume !== false && rememberedBook?.progress?.kind === 'article') {
+    var restoredArticle = restoreArticleReadingState(work, rememberedBook.progress)
+    if (restoredArticle) {
+      _articlePath = restoredArticle.path
+      _articleChoiceMemory = restoredArticle.choiceMemory
+      _articleInteractionSelections = restoredArticle.interactionSelections
+      _articleCheckpoints = restoredArticle.checkpoints
+      _readerPendingReadingPosition = restoredArticle.readingPosition
+    }
+  }
+  if (rememberWork && options?.resume !== false && rememberedBook?.progress?.kind === 'phone') {
+    var phoneFlow = readerPhoneFlowSession(work)
+    phoneFlow.index = Math.min(rememberedBook.progress.flowIndex, phoneFlow.sequence.length)
+    _readerPendingReadingPosition = rememberedBook.progress.readingPosition
+  }
   if (rememberWork) {
     var cached = tryReaderStorageWrite(function() {
-      localStorage.setItem('moirain_work_' + work.id, JSON.stringify(work))
+      var cachedWork = Object.assign({}, work)
+      delete cachedWork.readerPhValues
+      localStorage.setItem('moirain_work_' + work.id, JSON.stringify(cachedWork))
     })
     if (cached) {
       tryReaderStorageWrite(function() { addRecent(work) })
@@ -1329,6 +3272,8 @@ function advanceReaderPhoneFlow(work) {
   var session = readerPhoneFlowSession(work)
   if (!session.enabled) return null
   session.index = Math.min(session.sequence.length, session.index + 1)
+  saveCurrentReaderProgress()
+  setReaderWorkCompletion(work?.id, session.sequence.length > 0 && session.index >= session.sequence.length)
   return session.sequence[session.index] || null
 }
 
@@ -1622,7 +3567,8 @@ function applyReaderSettingsPreview(root, candidate) {
 }
 
 
-function openReaderSettingsPanel(triggerElement) {
+function openReaderSettingsPanel(triggerElement, panelOptions) {
+  var readingPosition = panelOptions?.readingPosition || captureArticleReadingPosition()
   var rs = getReaderSettings()
   var fonts = [
     { name: '默认', family: "'Noto Sans SC', sans-serif" },
@@ -1768,17 +3714,19 @@ function openReaderSettingsPanel(triggerElement) {
   var closeButton = ov.querySelector('#rsClose')
   function closePanel(options) {
     var restoreFocus = !options || options.restoreFocus !== false
+    var restorePosition = !options || options.restorePosition !== false
     var previewStyle = document.getElementById('reader-article-preview-user-css')
     if (previewStyle) previewStyle.remove()
     ov.remove()
+    if (restorePosition) restoreArticleReadingPosition(readingPosition)
     if (restoreFocus && activeTrigger && activeTrigger.isConnected && activeTrigger.focus) activeTrigger.focus()
   }
   ov.addEventListener('click', function(e) { if (e.target === ov) closePanel() })
   closeButton.onclick = function() { closePanel() }
   bindReaderAppearancePackageTransfer(ov, {
     onImported:function() {
-      closePanel({ restoreFocus:false })
-      openReaderSettingsPanel(activeTrigger)
+      closePanel({ restoreFocus:false, restorePosition:false })
+      openReaderSettingsPanel(activeTrigger, {readingPosition:readingPosition})
     }
   })
   dialog.addEventListener('keydown', function(e) {
@@ -2124,8 +4072,8 @@ function openReaderSettingsPanel(triggerElement) {
   if (resetBtn) resetBtn.onclick = function() {
     rs = Object.assign({}, READER_APPEARANCE_DEFAULTS, { customFonts: rs.customFonts || [] })
     persistAndPreview()
-    closePanel({ restoreFocus: false })
-    openReaderSettingsPanel(activeTrigger)
+    closePanel({ restoreFocus:false, restorePosition:false })
+    openReaderSettingsPanel(activeTrigger, {readingPosition:readingPosition})
   }
 }
 
@@ -2133,11 +4081,12 @@ function openReaderInteractiveScene(sceneId, options = {}) {
   var sourceScene = readerInteractiveSceneById(_work, sceneId)
   if (!sourceScene) return
   var nodePage = options.nodePage === true
+  var returnReadingPosition = captureArticleReadingPosition()
+  var returnFocusSceneId = String(sceneId || '')
   var scene = substituteInteractiveSceneText(sourceScene, _work.placeholders || [], {
     valuesMap:_work.readerPhValues || {},
     usePlaceholderMode:false,
   })
-  var returnScrollY = Number(window.scrollY || document.documentElement.scrollTop || 0)
   var signal = createFaceNearSignal()
   var cameraDebugEnabled = ['localhost', '127.0.0.1'].includes(window.location.hostname)
     || new URLSearchParams(window.location.search).get('cameraDebug') === '1'
@@ -2251,11 +4200,27 @@ function openReaderInteractiveScene(sceneId, options = {}) {
         })) branchSourcePathIndex = pathIndex
         break
       }
-      if (!completed && branchSourcePathIndex >= 0) {
-        replaceArticlePath(_articlePath.slice(0, branchSourcePathIndex + 1))
+      var returnPathIndex = branchSourcePathIndex
+      if (returnPathIndex < 0) {
+        for (var returnIndex = scenePathIndex - 1; returnIndex >= 0; returnIndex--) {
+          var returnNode = ((_work && _work.nodes) || []).find(function(candidate) {
+            return String(candidate?.id || '') === String(_articlePath[returnIndex] || '')
+          })
+          if (returnNode?.kind === 'conditional') continue
+          returnPathIndex = returnIndex
+          break
+        }
+      }
+      if (!completed && returnPathIndex >= 0) {
+        replaceArticlePath(_articlePath.slice(0, returnPathIndex + 1))
         _nodeId = _articlePath[_articlePath.length - 1]
         _visitedNodes = _articlePath.slice(0, -1)
         renderArticleReader()
+        restoreArticleReadingPosition(returnReadingPosition)
+        requestAnimationFrame(function() {
+          var returnTrigger = document.querySelector('[data-reader-enter-interactive-scene]')
+          if (returnTrigger && returnTrigger.focus) returnTrigger.focus()
+        })
         return
       }
       var sceneNodes = (_work && _work.nodes) || []
@@ -2289,7 +4254,13 @@ function openReaderInteractiveScene(sceneId, options = {}) {
       return
     }
     renderArticleReader()
-    requestAnimationFrame(function() { window.scrollTo({top:returnScrollY, left:0, behavior:'auto'}) })
+    restoreArticleReadingPosition(returnReadingPosition)
+    requestAnimationFrame(function() {
+      var returnTrigger = Array.from(document.querySelectorAll('.rd-interactive-scene-trigger')).find(function(trigger) {
+        return trigger.dataset.interactiveScene === returnFocusSceneId
+      })
+      if (returnTrigger && returnTrigger.focus) returnTrigger.focus()
+    })
   }
   function handleSceneKeydown(event) {
     if (event.key === 'Escape') closeScene()
@@ -2464,12 +4435,19 @@ function renderArticleReader() {
   var hasPreviousChapter = previousChapterPath.length > 0 && previousChapterPath.length < _articlePath.length
   var h = '<div class="article-reading-backdrop" aria-hidden="true"></div>'
   h += renderWorkWatermark(_work.watermark, 'article')
+  h += '<nav class="reader-immersive-toolbar is-visible" data-reader-immersive-toolbar aria-label="阅读工具" aria-hidden="false">'
   if (hasPreviousChapter) {
-    h += '<button type="button" class="reader-back" data-reader-previous title="返回上一章" aria-label="返回上一章">←</button>'
+    h += '<button type="button" class="reader-back" data-reader-previous title="返回上一章" aria-label="返回上一章"><span class="reader-immersive-icon" aria-hidden="true">←</span><span class="reader-immersive-label">上一章</span></button>'
   } else {
-    h += '<button type="button" class="reader-back" data-reader-home title="返回首页" aria-label="返回首页">←</button>'
+    h += '<button type="button" class="reader-back" data-reader-home title="返回首页" aria-label="返回首页"><span class="reader-immersive-icon" aria-hidden="true">←</span><span class="reader-immersive-label">返回</span></button>'
   }
-  h += '<button type="button" class="reader-settings-btn" title="文章阅读外观" aria-label="打开文章阅读外观">⚙</button>'
+  h += '<button type="button" class="reader-search-btn" data-reader-search title="搜索已解锁内容" aria-label="搜索已解锁内容"><span class="reader-immersive-icon" aria-hidden="true">⌕</span><span class="reader-immersive-label">搜索</span></button>'
+  var activeBookmark = currentArticleBookmark(savedReaderBook(_work.id))
+  var bookmarkLabel = chapterTitle || String(node.title || '').trim() || ('第 ' + _articlePath.length + ' 段')
+  h += '<button type="button" class="reader-bookmark-btn" data-reader-bookmark-current title="' + (activeBookmark ? '移除场景书签' : '收藏当前场景') + '" aria-label="' + (activeBookmark ? '移除当前场景书签' : '收藏当前场景') + '" aria-pressed="' + (activeBookmark ? 'true' : 'false') + '"><span class="reader-immersive-icon" data-reader-bookmark-icon aria-hidden="true">' + (activeBookmark ? '★' : '☆') + '</span><span class="reader-immersive-label">书签</span></button>'
+  h += '<button type="button" class="reader-settings-btn" title="文章阅读外观" aria-label="打开文章阅读外观"><span class="reader-immersive-icon reader-immersive-aa" aria-hidden="true">Aa</span><span class="reader-immersive-label">外观</span></button>'
+  h += '</nav>'
+  h += '<button type="button" class="reader-immersive-reveal" data-reader-immersive-reveal hidden aria-label="显示阅读工具" aria-expanded="true">•••</button>'
   h += '<div class="article-reader reader-article-css-scope">'
   h += '<div class="article-progress">'
   for (var ni = 0; ni < chapterDots.length; ni++) {
@@ -2558,14 +4536,50 @@ function renderArticleReader() {
   h += '</div>'
 
   render('app', h)
+  saveCurrentReaderProgress()
+  var phoneFlowSession = readerPhoneFlowSession(_work)
+  if (phoneFlowSession.enabled && phoneFlowSession.sequence.length) {
+    setReaderWorkCompletion(
+      _work.id,
+      phoneFlowSession.index >= phoneFlowSession.sequence.length,
+    )
+  }
+  var reachedArticleEnding = !sceneEntryPending
+    && frontierBranchChoices.length === 0
+    && !interactionCanContinue
+    && !nextChapter.ok
+  setReaderWorkCompletion(_work.id, reachedArticleEnding)
 
   // Apply reader settings and bind controls as soon as the article enters the DOM.
   var rs = getReaderSettings()
   var articleContents = Array.from(document.querySelectorAll('.article-content'))
   articleContents.forEach(function(contentElement) { applyReaderSettings(contentElement, rs) })
   var ac = document.querySelector('.article-content[data-active="true"]')
+  var savedPassage = _readerPendingReadingPosition?.kind === 'article'
+    ? _readerPendingReadingPosition
+    : null
+  if (savedPassage) {
+    restoreArticleReadingPosition(savedPassage)
+    _readerPendingReadingPosition = null
+    scheduleReaderPositionSave()
+  }
   var sb = document.querySelector('.reader-settings-btn')
   if (sb) sb.onclick = function() { openReaderSettingsPanel(sb) }
+  var readerSearchButton = document.querySelector('[data-reader-search]')
+  if (readerSearchButton) readerSearchButton.onclick = function() {
+    openReaderUnlockedSearch(readerSearchButton)
+  }
+  var bookmarkButton = document.querySelector('[data-reader-bookmark-current]')
+  if (bookmarkButton) bookmarkButton.onclick = function() {
+    var latestBook = toggleCurrentArticleBookmark(bookmarkLabel)
+    var selected = !!currentArticleBookmark(latestBook)
+    bookmarkButton.setAttribute('aria-pressed', String(selected))
+    bookmarkButton.setAttribute('aria-label', selected ? '移除当前场景书签' : '收藏当前场景')
+    bookmarkButton.title = selected ? '移除场景书签' : '收藏当前场景'
+    var bookmarkIcon = bookmarkButton.querySelector('[data-reader-bookmark-icon]')
+    if (bookmarkIcon) bookmarkIcon.textContent = selected ? '★' : '☆'
+  }
+  bindArticleImmersiveToolbar()
   if (sceneEntryPending) {
     var enterScene = document.querySelector('[data-reader-enter-interactive-scene]')
     if (enterScene) enterScene.onclick = function() { openReaderInteractiveScene(pendingScene.id, {nodePage:true}) }
@@ -2573,7 +4587,7 @@ function renderArticleReader() {
 
   // Keep the optional typing effect delayed so layout and settings are already stable.
   setTimeout(function() {
-    if (ac && shouldUseMotion(rs.typingEffect)) {
+    if (ac && !savedPassage && shouldUseMotion(rs.typingEffect)) {
       var fullHTML = ac.innerHTML
       ac.innerHTML = ''
       var i = 0
@@ -2603,7 +4617,7 @@ function renderArticleReader() {
 
   document.querySelectorAll('.rd-interactive-scene-trigger').forEach(function(trigger) {
     trigger.onclick = function() {
-      openReaderInteractiveScene(trigger.dataset.interactiveScene)
+      openReaderInteractiveScene(trigger.dataset.interactiveScene, {triggerElement:trigger})
     }
   })
 
@@ -2611,6 +4625,9 @@ function renderArticleReader() {
   var btns = document.querySelectorAll('.article-choice-btn')
   btns.forEach(function(btn) {
     btn.onclick = function() {
+      if (!beginArticleChoiceCommit(btn)) return
+      var choiceUndoSnapshot = captureArticleChoiceUndoSnapshot(btn)
+      var choiceUndoLabel = String(btn.textContent || '').replace(/\s+/g, ' ').trim()
       if (btn.dataset.choiceMode === 'interaction') {
         var nodeId = btn.dataset.choiceNodeId || ''
         var interactionGroupId = btn.dataset.interactionGroupId || ''
@@ -2619,6 +4636,16 @@ function renderArticleReader() {
         if (interactionGroupId) {
           if (!canRecordArticleInteraction(nodeId, interactionGroupId, interactionChoiceId)) return
           var group = readerArticleInteractionGroup(nodeId, interactionGroupId)
+          var interactionCheckpoint = selectionPrefixState(interactionSourcePathIndex, nodeId)
+          if (interactionCheckpoint) {
+            captureArticleCheckpoint(
+              nodeId,
+              String(btn.textContent || '互动选择').trim(),
+              interactionCheckpoint.path,
+              interactionCheckpoint.state.memory,
+              interactionCheckpoint.state.interactionSelections,
+            )
+          }
           if (group?.legacyAdvanceOnSelect === true) {
             var legacySelection = selectionPrefixState(interactionSourcePathIndex, nodeId)
             if (!legacySelection) return
@@ -2660,6 +4687,7 @@ function renderArticleReader() {
           _nodeId = _articlePath[_articlePath.length - 1]
           _visitedNodes = _articlePath.slice(0, -1)
           renderArticleReader()
+          offerArticleChoiceUndo(choiceUndoSnapshot, choiceUndoLabel)
           var selectedGroup = Array.from(document.querySelectorAll('[data-interaction-group]')).find(function(element) {
             return element.dataset.interactionGroup === interactionGroupId
           })
@@ -2688,6 +4716,7 @@ function renderArticleReader() {
         _nodeId = _articlePath[_articlePath.length - 1]
         _visitedNodes = _articlePath.slice(0, -1)
         renderArticleReader()
+        offerArticleChoiceUndo(choiceUndoSnapshot, choiceUndoLabel)
         var interactionActiveNode = document.querySelector('.article-node.is-active')
         if (interactionActiveNode && typeof interactionActiveNode.scrollIntoView === 'function') {
           interactionActiveNode.scrollIntoView({block:'start'})
@@ -2712,11 +4741,19 @@ function renderArticleReader() {
       if (targetState.ok) {
         var transition = appendArticleChoice(nodes, branchSelection.path, sourcePathIndex, targetState.targetId, articleRuntimeOptions(branchMemory))
         if (!transition.ok) return
+        captureArticleCheckpoint(
+          sourceNodeId,
+          String(btn.textContent || '分支选择').replace(/\s+/g, ' ').trim(),
+          branchSelection.path,
+          branchSelection.state.memory,
+          branchSelection.state.interactionSelections,
+        )
         branchSelection.state.memory = branchMemory
         applyArticleRouteState(transition.path, branchSelection.state)
         _nodeId = _articlePath[_articlePath.length - 1]
         _visitedNodes = _articlePath.slice(0, -1)
         renderArticleReader()
+        offerArticleChoiceUndo(choiceUndoSnapshot, choiceUndoLabel)
         if (transition.chapterChanged) {
           document.documentElement.scrollTop = 0
           document.body.scrollTop = 0
@@ -2742,6 +4779,7 @@ function renderArticleReader() {
       var pms = _work.phoneModules || []
       for (var i = 0; i < pms.length; i++) { if (pms[i].id === pmid) { pm = pms[i]; break } }
       if (!pm) return
+      var returnReadingPosition = captureArticleReadingPosition()
       var d = pm.data || {}
       var contacts = orderedContacts(visiblePhoneModuleContacts(d), d.contactSortMode)
       var photos = Array.isArray(d.photos) ? d.photos : []
@@ -2810,6 +4848,8 @@ function renderArticleReader() {
           else delete _work.phoneData
         }
         overlay.remove()
+        restoreArticleReadingPosition(returnReadingPosition)
+        if (trig.isConnected && trig.focus) trig.focus()
       }
       backBtn.onclick = closeOverlay
       overlay.appendChild(backBtn)
@@ -3013,17 +5053,26 @@ function renderPhoneReader() {
   var pd = readerPhoneData(_work.phoneData)
   var rc = getPhoneCustom()
   var flowStep = currentReaderPhoneFlowStep(_work)
+  if (_readerPendingReadingPosition?.kind !== 'phone') _readerPhoneLocation = null
   var h = '<button type="button" class="reader-back" data-reader-home title="返回" aria-label="返回首页">←</button>'
   h += '<div class="phone-reader">'
   h += buildPhoneHTML(pd, rc, _work.watermark, flowStep)
   h += '</div>'
   render('app', h)
+  saveCurrentReaderProgress()
 
   var icons = document.querySelectorAll('.phone-app-icon')
-  function openSelectedReaderApp(type) {
+  function openSelectedReaderApp(type, readingPosition) {
     var activeStep = currentReaderPhoneFlowStep(_work)
     var selectedStep = activeStep && phoneReadingFlowAppType(activeStep) === type ? activeStep : null
-    openReaderApp(type, undefined, undefined, selectedStep)
+    openReaderApp(
+      type,
+      Number.isInteger(readingPosition?.contactIndex) && readingPosition.contactIndex >= 0
+        ? readingPosition.contactIndex
+        : undefined,
+      readingPosition ? true : undefined,
+      selectedStep,
+    )
   }
   icons.forEach(function(icon) {
     icon.onclick = function() {
@@ -3034,6 +5083,21 @@ function renderPhoneReader() {
   if (flowNotification) {
     flowNotification.onclick = function() {
       openSelectedReaderApp(flowNotification.dataset.flowNotificationApp)
+    }
+  }
+  var savedPhonePosition = _readerPendingReadingPosition?.kind === 'phone'
+    ? _readerPendingReadingPosition
+    : null
+  if (savedPhonePosition) {
+    var savedAppIcon = Array.from(icons).find(function(icon) {
+      return icon.dataset.appType === savedPhonePosition.appType
+    })
+    if (savedAppIcon) {
+      openSelectedReaderApp(savedPhonePosition.appType, savedPhonePosition)
+    } else {
+      _readerPendingReadingPosition = null
+      _readerPhoneLocation = null
+      saveCurrentReaderProgress()
     }
   }
 }
@@ -3068,6 +5132,12 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
+  _readerPhoneLocation = {
+    appType:String(type || ''),
+    view:'app',
+    itemId:'',
+    contactIndex:Number.isInteger(Number(contactIndex)) ? Number(contactIndex) : -1,
+  }
   applyReaderAppCustomCss(type, getAppSettings(type))
   var pd = readerPhoneData(_work.phoneData)
   var flowTarget = flowStep ? resolvePhoneReadingFlowStep(pd, flowStep) : null
@@ -3139,6 +5209,17 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       backBtn.focus()
     }
     bindReaderPhoneFlowCue(phoneFrame, w)
+    var appBody = phoneFrame.querySelector('.rd-phone-app-body')
+    bindPhoneReadingPosition(appBody)
+    if (
+      _readerPendingReadingPosition?.kind === 'phone'
+      && _readerPendingReadingPosition.appType === type
+      && _readerPendingReadingPosition.view === 'app'
+    ) {
+      restorePhoneReadingScroll(_readerPendingReadingPosition, appBody)
+      _readerPendingReadingPosition = null
+      scheduleReaderPositionSave()
+    }
   }
 
   function contactContextHtml() {
@@ -3440,7 +5521,26 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       })
     }
 
-    if (flowStep && flowStep.type === 'moments') {
+    var savedMessagesPosition = _readerPendingReadingPosition?.kind === 'phone'
+      && _readerPendingReadingPosition.appType === 'messages'
+      ? _readerPendingReadingPosition
+      : null
+    var savedChatIndex = savedMessagesPosition?.view === 'chat'
+      ? chats.findIndex(function(chat) {
+        return String(chat.id || '') === String(savedMessagesPosition.itemId || '')
+      })
+      : -1
+    if (savedMessagesPosition?.view === 'chat' && savedChatIndex < 0) {
+      _readerPendingReadingPosition = Object.assign({}, savedMessagesPosition, {
+        view:'app',
+        itemId:'',
+        anchorId:'',
+        anchorOffset:0,
+      })
+    }
+    if (savedChatIndex >= 0) {
+      openReaderChat(phoneFrame, w, pd, chats[savedChatIndex], savedChatIndex, flowStep)
+    } else if (flowStep && flowStep.type === 'moments') {
       renderMessagesHome('moments')
     } else if (flowTarget && flowTarget.chat) {
       var flowChatIndex = chats.findIndex(function(chat) { return String(chat.id) === String(flowTarget.chat.id) })
@@ -3720,6 +5820,12 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
 
 // ---- Chat reader ----
 function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
+  _readerPhoneLocation = {
+    appType:'messages',
+    view:'chat',
+    itemId:String(ch && ch.id || ''),
+    contactIndex:-1,
+  }
   var contacts = pd.contacts || []
   var readerCustom = getPhoneCustom()
   var readerChatName = readerThreadDisplayName(pd, readerCustom)
@@ -4263,6 +6369,17 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     frame.innerHTML = h
     var chatMessageArea = frame.querySelector('#chatMsgArea')
     if (chatMessageArea) chatMessageArea.scrollTop = chatMessageArea.scrollHeight
+    bindPhoneReadingPosition(chatMessageArea)
+    if (
+      _readerPendingReadingPosition?.kind === 'phone'
+      && _readerPendingReadingPosition.appType === 'messages'
+      && _readerPendingReadingPosition.view === 'chat'
+      && _readerPendingReadingPosition.itemId === String(ch && ch.id || '')
+    ) {
+      restorePhoneReadingScroll(_readerPendingReadingPosition, chatMessageArea)
+      _readerPendingReadingPosition = null
+      scheduleReaderPositionSave()
+    }
 
     if (autoCall) {
       openCallScene(autoCall.message, autoCall.key)

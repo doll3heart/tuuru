@@ -28,3 +28,24 @@ test("the report uses accessible, responsive list styling", () => {
   assert.match(authorCss, /\.work-preflight-level-error/)
   assert.match(authorCss, /@media\(max-width:480px\)[\s\S]*\.work-preflight-summary/s)
 })
+
+test("article reports offer an on-demand deep route inspection in the same dialog", () => {
+  assert.match(preflightUiSource, /深度路线检查/)
+  assert.match(preflightUiSource, /开始路线试跑/)
+  assert.match(preflightUiSource, /inspectArticleRoutes/)
+  assert.match(preflightUiSource, /data-route-preflight-node/)
+  assert.match(preflightUiSource, /writeArticleEditorViewState/)
+  assert.match(authorCss, /\.work-route-preflight/)
+  assert.match(authorCss, /\.work-route-preflight-coverage/)
+})
+
+test("publish inspection shows package size risk and locatable embedded assets", () => {
+  assert.match(preflightUiSource, /inspectWorkSize/)
+  assert.match(preflightUiSource, /work-size-report/)
+  assert.match(preflightUiSource, /data-work-size-locate/)
+  assert.match(preflightUiSource, /encryptedPackageBytes/)
+  assert.match(preflightUiSource, /1\.5 MiB/)
+  assert.match(preflightUiSource, /2 MiB/)
+  assert.match(authorCss, /\.work-size-report/)
+  assert.match(authorCss, /\.work-size-asset-list/)
+})

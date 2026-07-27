@@ -36,6 +36,8 @@ import {
   articleInteractionMarkerIds,
   reconcileArticleInteractionGroup,
 } from "../article-interaction-group-model.js"
+import { findWorkReferences } from "../work-references.js"
+import { openDeletionImpactDialog } from "../deletion-impact-ui.js"
 
 // State
 var _workId = null
@@ -137,6 +139,49 @@ function showConfirm(title, msg, cb, onCancel) {
   document.getElementById("cK").onclick = function() { cb(true); ov.remove() }
   document.getElementById("cN").onclick = function() { ov.remove(); onCancel?.() }
   document.getElementById("cN")?.focus()
+}
+
+function locateEditorReference(wid, reference) {
+  if (reference?.sourceNodeId) {
+    _nodeId = reference.sourceNodeId
+    writeArticleEditorViewState(wid, {
+      nodeId:reference.sourceNodeId,
+      collapsedChapterIds:[],
+    }, globalThis.localStorage)
+    prepareMobilePaneRefresh("editor", true)
+    refreshEditor(wid)
+    return
+  }
+  if (reference?.appType) openPhoneAppModal(wid, reference.appType)
+}
+
+function confirmReferencedDeletion({
+  wid,
+  kind,
+  id,
+  title,
+  itemName,
+  fallbackMessage,
+  onConfirm,
+  onCancel,
+  onLocate,
+}) {
+  const references = findWorkReferences(getWork(wid), {kind, id})
+  if (!references.length) {
+    showConfirm(title, fallbackMessage, onConfirm, onCancel)
+    return null
+  }
+  return openDeletionImpactDialog({
+    title,
+    itemName,
+    references,
+    onConfirm,
+    onCancel,
+    onLocate:reference => {
+      if (onLocate) onLocate(reference)
+      else locateEditorReference(wid, reference)
+    },
+  })
 }
 
 function openEditorFontManager(workId) {
@@ -1374,12 +1419,22 @@ function handleClick(e) {
   }
   if (a === "sl") { _nodeId = n; _splitPaneController?.closeOverlay(mobileShell); prepareMobilePaneRefresh("editor", true); refreshEditor(w); return }
   if (a === "dl") {
-    showConfirm("删除节点", "确定删除此节点？", function() {
+    var deletingNode = getNode(w, n)
+    confirmReferencedDeletion({
+      wid:w,
+      kind:"node",
+      id:n,
+      title:"删除节点",
+      itemName:"节点“" + (deletingNode?.title || "未命名节点") + "”",
+      fallbackMessage:"确定删除此节点？",
+      onConfirm:function() {
       deleteNode(w, n)
       var remainingNodes = (getWork(w)?.nodes || []).length
       if (remainingNodes === 0) prepareMobilePaneRefresh("outline", true)
       refreshEditor(w)
-    }, function() { restoreOutlineActionFocus(outlineActionTrigger, b) })
+      },
+      onCancel:function() { restoreOutlineActionFocus(outlineActionTrigger, b) },
+    })
     return
   }
   if (a === "rn2") {
@@ -2251,8 +2306,31 @@ function openChoicePanel(wid, nid, options) {
             showToast('至少需要 2 个选项', 'error')
             return
           }
-          item.remove()
-          reindexChRows(listEl)
+          var removeChoiceRow = function() {
+            item.remove()
+            reindexChRows(listEl)
+          }
+          var deletingChoiceId = item.dataset.choiceId || ''
+          if (!deletingChoiceId) {
+            removeChoiceRow()
+            return
+          }
+          var deletingChoiceText = item.querySelector('.ch-text')?.value?.trim() || '未命名选项'
+          var choiceReferences = findWorkReferences(getWork(wid), {kind:"choice", id:deletingChoiceId})
+          if (!choiceReferences.length) {
+            removeChoiceRow()
+            return
+          }
+          openDeletionImpactDialog({
+            title:'删除选项',
+            itemName:'选项“' + deletingChoiceText + '”',
+            references:choiceReferences,
+            onConfirm:removeChoiceRow,
+            onLocate:function(reference) {
+              ov.remove()
+              locateEditorReference(wid, reference)
+            },
+          })
         }
         return
       }
@@ -2928,10 +3006,18 @@ function openInteractiveSceneForNode(wid, nid) {
       showToast('互动页已保存')
     },
     onDelete:function() {
-      showConfirm("删除互动页", "确定删除这个互动节点和它的全部画面吗？", function() {
-        deleteNode(wid, nid)
-        refreshEditor(wid)
-        showToast('互动页已删除')
+      confirmReferencedDeletion({
+        wid:wid,
+        kind:"node",
+        id:nid,
+        title:"删除互动页",
+        itemName:"互动页“" + (scene.title || node.title || "未命名互动页") + "”",
+        fallbackMessage:"确定删除这个互动节点和它的全部画面吗？",
+        onConfirm:function() {
+          deleteNode(wid, nid)
+          refreshEditor(wid)
+          showToast('互动页已删除')
+        },
       })
     },
   })

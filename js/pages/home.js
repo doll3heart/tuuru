@@ -1,6 +1,7 @@
 ﻿import { getWorks, getWorksByType, createWork, deleteWork, duplicateWork, updateWork, exportWorkAsJSON, encodeSteganoPNG, WORK_TYPE, uid } from "../data.js"
 import { navigate } from "../router.js"
 import { moveWorkByOffset, setWorkPinned } from "../data.js"
+import { getWork } from "../data.js"
 import { orderedWorks } from "../work-order.js"
 import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
@@ -14,10 +15,16 @@ import {
   deleteHomeWork,
   describeHomeMutationFailure,
   duplicateHomeWork,
+  replaceHomeWorkText,
   requireVerifiedHomeMutation,
+  restoreHomeWorkSnapshot,
+  shiftHomeWorkTimes,
   updateHomeWorkInfo,
 } from "../home-work-mutations.js"
 import { createJsonToken } from "../local-database-mutation.js"
+import { replaceWorkText } from "../work-text-replace.js"
+import { shiftPhoneTimes } from "../work-time-shift.js"
+import { homeBulkUndoStore } from "../home-bulk-undo.js"
 import {
   WORK_WATERMARK_IMAGE_MAX_BYTES,
   hasRenderableWorkWatermark,
@@ -31,6 +38,8 @@ import {
   resetCollectionSelection,
 } from "./home-collections.js"
 import { openWorkPreflight } from "./home-preflight.js"
+import { openWorkFindReplace as openWorkFindReplaceDialog } from "./home-find-replace.js"
+import { openWorkTimeShift as openWorkTimeShiftDialog } from "./home-time-shift.js"
 
 const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请稍后刷新查看，不要重复操作。"
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
@@ -119,6 +128,9 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();editWorkInfo('${w.id}');closeWorkMenu('${w.id}')">作品信息</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();pinShelfWork('${w.id}',${w.pinned ? "false" : "true"});closeWorkMenu('${w.id}')">${w.pinned ? "取消置顶" : "置顶作品"}</button>
             <button class="btn btn-sm btn-ghost" data-work-preflight="${w.id}" onclick="event.stopPropagation();openWorkPreflight('${w.id}');closeWorkMenu('${w.id}')">发布前体检</button>
+            <button class="btn btn-sm btn-ghost" data-work-find-replace="${w.id}" onclick="event.stopPropagation();openWorkFindReplace('${w.id}');closeWorkMenu('${w.id}')">全作品查找替换</button>
+            ${w.phoneData ? `<button class="btn btn-sm btn-ghost" data-work-time-shift="${w.id}" onclick="event.stopPropagation();openWorkTimeShift('${w.id}');closeWorkMenu('${w.id}')">批量顺延时间</button>` : ""}
+            ${homeBulkUndoStore.peek(w.id) ? `<button class="btn btn-sm btn-ghost work-bulk-undo" id="workBulkUndo-${w.id}" data-work-bulk-undo="${w.id}" onclick="event.stopPropagation();undoLastBulkWork('${w.id}');closeWorkMenu('${w.id}')">撤销上次批量操作</button>` : ""}
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出加密作品</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出加密 PNG</button>
@@ -152,14 +164,38 @@ export function createHomeWriteController({
   duplicateLegacy,
   deleteLegacy,
   updateReliable,
+  replaceTextLegacy,
+  replaceTextReliable,
+  shiftTimeLegacy,
+  shiftTimeReliable,
+  restoreLegacy,
+  restoreReliable,
   duplicateReliable,
   deleteReliable,
   notify,
   refresh,
   publish = () => {},
+  captureWork = () => null,
+  registerBulkUndo = () => null,
+  peekBulkUndo = () => null,
+  consumeBulkUndo = () => null,
 }) {
   const pending = new Map()
   const blocked = new Map()
+
+  function captureUndo(workId, expectedWorkToken, label) {
+    const beforeWork = captureWork(workId)
+    if (!beforeWork || createJsonToken(beforeWork) !== expectedWorkToken) return null
+    return {workId, label, beforeWork}
+  }
+
+  function registerUndo(captured, updatedWork) {
+    if (!captured || !updatedWork) return null
+    return registerBulkUndo({
+      ...captured,
+      expectedWorkToken:createJsonToken(updatedWork),
+    })
+  }
 
   function runReliable(action, workId, mutation, onSuccess) {
     const key = `${action}:${workId}`
@@ -266,6 +302,134 @@ export function createHomeWriteController({
     )
   }
 
+  function replaceText({
+    workId,
+    expectedWorkToken,
+    search,
+    replacement,
+    caseSensitive,
+    selectedMatchIds,
+    close = () => {},
+  }) {
+    const capturedUndo = captureUndo(workId, expectedWorkToken, "全作品查找替换")
+    const args = {
+      workId,
+      expectedWorkToken,
+      search,
+      replacement,
+      caseSensitive,
+      selectedMatchIds,
+    }
+    if (!flags.reliableLocalWrites) {
+      const updated = replaceTextLegacy(args)
+      if (!updated) {
+        publish("replaceText", workId, {
+          status:"error",
+          pending:false,
+          persistent:true,
+          message:"作品已变化或没有可替换内容，请重新检查。",
+        })
+        return updated
+      }
+      registerUndo(capturedUndo, updated)
+      notify("已完成全作品替换")
+      close()
+      refresh()
+      return updated
+    }
+    return runReliable(
+      "replaceText",
+      workId,
+      () => replaceTextReliable(args),
+      outcome => {
+        registerUndo(capturedUndo, outcome.work)
+        notify("已完成全作品替换")
+        close()
+        refresh()
+      },
+    )
+  }
+
+  function shiftTime({
+    workId,
+    expectedWorkToken,
+    offsetMinutes,
+    selectedMatchIds,
+    close = () => {},
+  }) {
+    const capturedUndo = captureUndo(workId, expectedWorkToken, "批量顺延时间")
+    const args = {
+      workId,
+      expectedWorkToken,
+      offsetMinutes,
+      selectedMatchIds,
+    }
+    if (!flags.reliableLocalWrites) {
+      const updated = shiftTimeLegacy(args)
+      if (!updated) {
+        publish("shiftTime", workId, {
+          status:"error",
+          pending:false,
+          persistent:true,
+          message:"作品已变化或没有可调整的时间，请重新检查。",
+        })
+        return updated
+      }
+      registerUndo(capturedUndo, updated)
+      notify("已完成时间顺延")
+      close()
+      refresh()
+      return updated
+    }
+    return runReliable(
+      "shiftTime",
+      workId,
+      () => shiftTimeReliable(args),
+      outcome => {
+        registerUndo(capturedUndo, outcome.work)
+        notify("已完成时间顺延")
+        close()
+        refresh()
+      },
+    )
+  }
+
+  function undoBulk({workId}) {
+    const record = peekBulkUndo(workId)
+    if (!record) return undefined
+    const args = {
+      workId,
+      expectedWorkToken:record.expectedWorkToken,
+      snapshot:record.beforeWork,
+    }
+    if (!flags.reliableLocalWrites) {
+      const restored = restoreLegacy(args)
+      if (!restored) {
+        publish("undoBulk", workId, {
+          status:"error",
+          pending:false,
+          persistent:true,
+          message:"作品在批量操作后又发生了变化，不能安全撤销。",
+        })
+        return restored
+      }
+      consumeBulkUndo(workId)
+      notify("已撤销“" + record.label + "”")
+      refresh()
+      return restored
+    }
+    return runReliable(
+      "undoBulk",
+      workId,
+      () => restoreReliable(args),
+      () => {
+        consumeBulkUndo(workId)
+        notify("已撤销“" + record.label + "”")
+        refresh()
+      },
+    )
+  }
+
   function remove({ workId, expectedWorkToken, confirmed, close = () => {} }) {
     if (!confirmed) return undefined
     if (!flags.reliableLocalWrites) {
@@ -286,7 +450,7 @@ export function createHomeWriteController({
     )
   }
 
-  return Object.freeze({ update, duplicate, remove })
+  return Object.freeze({ update, replaceText, shiftTime, undoBulk, duplicate, remove })
 }
 
 function refreshHomeWorkList() {
@@ -373,6 +537,24 @@ function homeWriteElements(action, workId) {
       status: document.getElementById("wiStatus"),
     }
   }
+  if (action === "replaceText") {
+    return {
+      button: document.getElementById("workFindReplaceConfirm"),
+      status: document.getElementById("workFindReplaceStatus"),
+    }
+  }
+  if (action === "shiftTime") {
+    return {
+      button: document.getElementById("workTimeShiftConfirm"),
+      status: document.getElementById("workTimeShiftStatus"),
+    }
+  }
+  if (action === "undoBulk") {
+    return {
+      button: document.getElementById(`workBulkUndo-${workId}`),
+      status: document.getElementById(`workWriteStatus-${workId}`),
+    }
+  }
   if (action === "delete") {
     return {
       button: document.getElementById(`deleteWorkConfirm-${workId}`),
@@ -398,11 +580,39 @@ const homeWriteController = createHomeWriteController({
   duplicateLegacy: duplicateWork,
   deleteLegacy: deleteWork,
   updateReliable: updateHomeWorkInfo,
+  replaceTextLegacy(args) {
+    const current = getWork(args.workId)
+    if (!current || createJsonToken(current) !== args.expectedWorkToken) return null
+    const result = replaceWorkText(current, args)
+    return result.changed ? updateWork(args.workId, result.work) : null
+  },
+  replaceTextReliable: replaceHomeWorkText,
+  shiftTimeLegacy(args) {
+    const current = getWork(args.workId)
+    if (!current || createJsonToken(current) !== args.expectedWorkToken) return null
+    const result = shiftPhoneTimes(current, args)
+    return result.changed ? updateWork(args.workId, result.work) : null
+  },
+  shiftTimeReliable: shiftHomeWorkTimes,
+  restoreLegacy(args) {
+    const current = getWork(args.workId)
+    if (
+      !current
+      || createJsonToken(current) !== args.expectedWorkToken
+      || args.snapshot?.id !== args.workId
+    ) return null
+    return updateWork(args.workId, args.snapshot)
+  },
+  restoreReliable: restoreHomeWorkSnapshot,
   duplicateReliable: duplicateHomeWork,
   deleteReliable: deleteHomeWork,
   notify: showToast,
   refresh: refreshHomeWorkList,
   publish: publishHomeWriteState,
+  captureWork: getWork,
+  registerBulkUndo: record => homeBulkUndoStore.register(record),
+  peekBulkUndo: workId => homeBulkUndoStore.peek(workId),
+  consumeBulkUndo: workId => homeBulkUndoStore.consume(workId),
 })
 
 // Global handlers for inline onclick
@@ -920,6 +1130,24 @@ window.closeWorkMenu = function(id) {
     menu.classList.remove('open')
     menu.closest('.work-card')?.classList.remove('menu-open')
   }
+}
+
+window.openWorkFindReplace = function(id) {
+  return openWorkFindReplaceDialog(id, {
+    save: args => homeWriteController.replaceText(args),
+  })
+}
+
+window.openWorkTimeShift = function(id) {
+  return openWorkTimeShiftDialog(id, {
+    save: args => homeWriteController.shiftTime(args),
+  })
+}
+
+window.undoLastBulkWork = function(id) {
+  const result = homeWriteController.undoBulk({workId:id})
+  if (result instanceof Promise) result.catch(() => {})
+  return result
 }
 
 // Close dropdown when clicking outside

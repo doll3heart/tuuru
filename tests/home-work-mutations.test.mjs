@@ -11,12 +11,17 @@ import {
   createHomeWork,
   deleteHomeWork,
   duplicateHomeWork,
+  replaceHomeWorkText,
   requireVerifiedHomeMutation,
+  restoreHomeWorkSnapshot,
+  shiftHomeWorkTimes,
   updateHomeWorkInfo,
 } from "../js/home-work-mutations.js"
 import { createJsonToken } from "../js/local-database-mutation.js"
 import { DATABASE_WRITE_LOCK_NAME, createWebLocksAdapter } from "../js/local-locks.js"
 import { LOCAL_DATABASE_KEY } from "../js/storage.js"
+import { findWorkTextMatches } from "../js/work-text-replace.js"
+import { findPhoneTimeEntries } from "../js/work-time-shift.js"
 import { openWorkEditSession } from "../js/work-edit-session.js"
 import { createFakeLockManager } from "./helpers/fake-lock-manager.mjs"
 import { createKeyedStorage } from "./helpers/keyed-storage.mjs"
@@ -154,12 +159,190 @@ function failSessionCleanupAfterCommit(fixture, cause) {
   })
 }
 
-test("exports the pure builder and four guarded home mutations", () => {
+test("exports the pure builder and guarded home mutations", () => {
   assert.equal(typeof createWorkRecord, "function")
   assert.equal(typeof createHomeWork, "function")
   assert.equal(typeof updateHomeWorkInfo, "function")
+  assert.equal(typeof replaceHomeWorkText, "function")
+  assert.equal(typeof shiftHomeWorkTimes, "function")
+  assert.equal(typeof restoreHomeWorkSnapshot, "function")
   assert.equal(typeof duplicateHomeWork, "function")
   assert.equal(typeof deleteHomeWork, "function")
+})
+
+test("bulk phone time shifting commits only selected supported timestamps", async () => {
+  const source = articleRecord({ id:"work-a" })
+  source.phoneData = {
+    chats:[{
+      id:"chat-1",
+      groupName:"夜谈",
+      rounds:[{id:"round-1", messages:[
+        {id:"message-1", time:"2026/7/22 21:30", text:"一"},
+        {id:"message-2", time:"2026/7/22 22:30", text:"二"},
+      ]}],
+    }],
+    moments:[{id:"moment-1", time:"刚刚", content:"不猜"}],
+  }
+  const selected = findPhoneTimeEntries(source).matches[0]
+  const fixture = createFixture({database:databaseWith([source])})
+
+  const outcome = await shiftHomeWorkTimes({
+    workId:source.id,
+    expectedWorkToken:createJsonToken(source),
+    offsetMinutes:60,
+    selectedMatchIds:[selected.id],
+  }, fixture.dependencies())
+
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.work.phoneData.chats[0].rounds[0].messages[0].time, "2026/7/22 22:30")
+  assert.equal(outcome.work.phoneData.chats[0].rounds[0].messages[1].time, "2026/7/22 22:30")
+  assert.equal(outcome.work.phoneData.moments[0].time, "刚刚")
+  assert.equal(outcome.work.updatedAt, 2_000)
+  assert.deepEqual(outcome.work.futureWork, {preserved:true})
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+})
+
+test("bulk phone time shifting rejects stale previews and empty changes without writing", async () => {
+  const source = articleRecord({id:"work-a"})
+  source.phoneData = {moments:[{id:"moment-1", time:"2026/7/22 21:30"}]}
+
+  const staleFixture = createFixture({database:databaseWith([source])})
+  await assert.rejects(
+    shiftHomeWorkTimes({
+      workId:source.id,
+      expectedWorkToken:createJsonToken({...source, title:"旧快照"}),
+      offsetMinutes:60,
+    }, staleFixture.dependencies()),
+    error => error?.code === "mutation-conflict",
+  )
+  assert.equal(staleFixture.storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+
+  const emptyFixture = createFixture({database:databaseWith([source])})
+  await assert.rejects(
+    shiftHomeWorkTimes({
+      workId:source.id,
+      expectedWorkToken:createJsonToken(source),
+      offsetMinutes:60,
+      selectedMatchIds:[],
+    }, emptyFixture.dependencies()),
+    error => error?.code === "mutation-invalid",
+  )
+  assert.equal(emptyFixture.storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+})
+
+test("bulk undo restores the exact prior snapshot under the post-operation token", async () => {
+  const before = articleRecord({id:"work-a", title:"修改前"})
+  before.nodes[0].content = "<p>旧正文</p>"
+  const after = structuredClone(before)
+  after.title = "修改后"
+  after.nodes[0].content = "<p>新正文</p>"
+  after.updatedAt = 1_500
+  const fixture = createFixture({database:databaseWith([after])})
+
+  const outcome = await restoreHomeWorkSnapshot({
+    workId:after.id,
+    expectedWorkToken:createJsonToken(after),
+    snapshot:before,
+  }, fixture.dependencies())
+
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.work.title, "修改前")
+  assert.equal(outcome.work.nodes[0].content, "<p>旧正文</p>")
+  assert.equal(outcome.work.id, after.id)
+  assert.equal(outcome.work.updatedAt, 2_000)
+  assert.deepEqual(outcome.work.futureWork, {preserved:true})
+  assert.deepEqual(savedDatabase(fixture).futureRoot, {preserved:true})
+  assert.equal(before.updatedAt, 100)
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+})
+
+test("bulk undo rejects stale post-operation state and mismatched snapshots", async () => {
+  const current = articleRecord({id:"work-a", title:"后来又编辑过"})
+  const snapshot = articleRecord({id:"work-a", title:"批量操作前"})
+  const staleFixture = createFixture({database:databaseWith([current])})
+
+  await assert.rejects(
+    restoreHomeWorkSnapshot({
+      workId:current.id,
+      expectedWorkToken:createJsonToken({...current, title:"刚完成批量操作"}),
+      snapshot,
+    }, staleFixture.dependencies()),
+    error => error?.code === "mutation-conflict",
+  )
+  assert.equal(staleFixture.storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+
+  await assert.rejects(
+    restoreHomeWorkSnapshot({
+      workId:current.id,
+      expectedWorkToken:createJsonToken(current),
+      snapshot:{...snapshot, id:"other"},
+    }, staleFixture.dependencies()),
+    /snapshot id/i,
+  )
+  assert.equal(staleFixture.storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+})
+
+test("whole-work text replacement commits only selected visible fields and preserves unrelated data", async () => {
+  const source = articleRecord({ id: "work-a", title: "Alice 的故事" })
+  source.nodes[0].title = "Alice 节点"
+  source.nodes[0].content = '<p>Alice <a href="https://example.test/Alice">Alice</a></p>'
+  source.nodes[0].choices = [{ id:"choice-Alice", text:"询问 Alice", targetId:"node-Alice" }]
+  const bodyMatch = findWorkTextMatches(source, { search:"Alice" })
+    .find(match => match.category === "文章正文" && match.field === "正文")
+  const fixture = createFixture({ database:databaseWith([source]) })
+
+  const outcome = await replaceHomeWorkText({
+    workId: source.id,
+    expectedWorkToken: createJsonToken(source),
+    search: "Alice",
+    replacement: "白榆",
+    caseSensitive: false,
+    selectedMatchIds: [bodyMatch.id],
+  }, fixture.dependencies())
+
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.work.title, "Alice 的故事")
+  assert.equal(outcome.work.nodes[0].title, "Alice 节点")
+  assert.equal(
+    outcome.work.nodes[0].content,
+    '<p>白榆 <a href="https://example.test/Alice">白榆</a></p>',
+  )
+  assert.equal(outcome.work.nodes[0].choices[0].id, "choice-Alice")
+  assert.equal(outcome.work.nodes[0].choices[0].targetId, "node-Alice")
+  assert.equal(outcome.work.updatedAt, 2_000)
+  assert.deepEqual(outcome.work.futureWork, { preserved:true })
+  assert.deepEqual(savedDatabase(fixture).futureRoot, { preserved:true })
+  assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), 1)
+})
+
+test("whole-work replacement rejects stale previews and empty results without writing", async () => {
+  const source = articleRecord({ id: "work-a", title: "Alice" })
+
+  const staleFixture = createFixture({ database:databaseWith([source]) })
+  await assert.rejects(
+    replaceHomeWorkText({
+      workId: source.id,
+      expectedWorkToken: createJsonToken({ ...source, title:"旧快照" }),
+      search: "Alice",
+      replacement: "白榆",
+      selectedMatchIds: undefined,
+    }, staleFixture.dependencies()),
+    error => error?.code === "mutation-conflict",
+  )
+  assert.equal(staleFixture.storage.count("setItem", LOCAL_DATABASE_KEY), 0)
+
+  const emptyFixture = createFixture({ database:databaseWith([source]) })
+  await assert.rejects(
+    replaceHomeWorkText({
+      workId: source.id,
+      expectedWorkToken: createJsonToken(source),
+      search: "不存在",
+      replacement: "白榆",
+      selectedMatchIds: undefined,
+    }, emptyFixture.dependencies()),
+    error => error?.code === "mutation-invalid",
+  )
+  assert.equal(emptyFixture.storage.count("setItem", LOCAL_DATABASE_KEY), 0)
 })
 
 test("the UI success guard requires a real commit and action-specific work shape", () => {
@@ -539,7 +722,7 @@ test("delete compares its confirmation token and removes only the selected work"
   assert.equal(fixture.storage.count("setItem", LOCAL_DATABASE_KEY), 1)
 })
 
-test("an active editor blocks update, duplicate, and delete with zero database writes", async t => {
+test("an active editor blocks update, replacement, time shifting, undo, duplicate, and delete with zero database writes", async t => {
   const source = articleRecord({ id: "source" })
   const fixture = createFixture({ database: databaseWith([source]) })
   const blocker = await openWorkEditSession({
@@ -559,6 +742,22 @@ test("an active editor blocks update, duplicate, and delete with zero database w
       workId: source.id,
       expectedWorkToken,
       patch: { title: "blocked" },
+    }, fixture.dependencies()),
+    () => replaceHomeWorkText({
+      workId: source.id,
+      expectedWorkToken,
+      search: source.title,
+      replacement: "blocked",
+    }, fixture.dependencies()),
+    () => shiftHomeWorkTimes({
+      workId:source.id,
+      expectedWorkToken,
+      offsetMinutes:60,
+    }, fixture.dependencies()),
+    () => restoreHomeWorkSnapshot({
+      workId:source.id,
+      expectedWorkToken,
+      snapshot:source,
     }, fixture.dependencies()),
     () => duplicateHomeWork({ workId: source.id }, fixture.dependencies()),
     () => deleteHomeWork({ workId: source.id, expectedWorkToken }, fixture.dependencies()),

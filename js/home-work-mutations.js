@@ -12,6 +12,8 @@ import {
 import { createWebLocksAdapter } from "./local-locks.js"
 import { readLocalDatabase } from "./storage.js"
 import { runWithWorkEditSession } from "./work-edit-session.js"
+import { replaceWorkText } from "./work-text-replace.js"
+import { shiftPhoneTimes } from "./work-time-shift.js"
 import { normalizeWorkWatermark } from "./work-watermark.js"
 
 const HOME_INFO_FIELDS = Object.freeze([
@@ -105,6 +107,12 @@ function assertRecord(value, name) {
 function assertIdentifier(value, name) {
   if (typeof value !== "string" || value.length === 0) {
     throw new TypeError(`${name} must be a non-empty string`)
+  }
+}
+
+function assertString(value, name, { allowEmpty = true } = {}) {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
+    throw new TypeError(`${name} must be ${allowEmpty ? "a string" : "a non-empty string"}`)
   }
 }
 
@@ -298,6 +306,159 @@ export async function updateHomeWorkInfo(args, dependencies = {}) {
           ...database,
           works: database.works.map(work => work.id === args.workId
             ? { ...work, ...patch, updatedAt: timestamp }
+            : work),
+        }),
+      ),
+      commitDependencies(session, resolved),
+    ),
+  )
+  return mapSessionResult(sessionRun, database => uniqueWork(database, args.workId))
+}
+
+export async function replaceHomeWorkText(args, dependencies = {}) {
+  assertRecord(args, "args")
+  assertIdentifier(args.workId, "workId")
+  assertIdentifier(args.expectedWorkToken, "expectedWorkToken")
+  assertString(args.search, "search", { allowEmpty:false })
+  assertString(args.replacement, "replacement")
+  if (args.caseSensitive !== undefined && typeof args.caseSensitive !== "boolean") {
+    throw new TypeError("caseSensitive must be a boolean")
+  }
+  if (
+    args.selectedMatchIds !== undefined
+    && (
+      !Array.isArray(args.selectedMatchIds)
+      || args.selectedMatchIds.some(id => typeof id !== "string" || id.length === 0)
+    )
+  ) {
+    throw new TypeError("selectedMatchIds must be an array of non-empty strings")
+  }
+  const selectedMatchIds = args.selectedMatchIds === undefined
+    ? undefined
+    : [...new Set(args.selectedMatchIds)]
+  const resolved = resolveDependencies(dependencies)
+  const operationId = createPreparedId(resolved.createId, "operation")
+  const timestamp = readTimestamp(resolved.now)
+
+  const sessionRun = await runHomeMutationSession(
+    args.workId,
+    resolved,
+    session => commitLocalDatabaseMutation(
+      commitArgs(
+        session,
+        operationId,
+        args.workId,
+        args.expectedWorkToken,
+        database => {
+          const source = uniqueWork(database, args.workId)
+          const result = replaceWorkText(source, {
+            search: args.search,
+            replacement: args.replacement,
+            caseSensitive: args.caseSensitive === true,
+            selectedMatchIds,
+          })
+          if (!result.changed) {
+            const error = new Error("The selected visible work text did not change")
+            error.code = "text-replace-no-change"
+            throw error
+          }
+          return {
+            ...database,
+            works: database.works.map(work => work.id === args.workId
+              ? { ...result.work, updatedAt:timestamp }
+              : work),
+          }
+        },
+      ),
+      commitDependencies(session, resolved),
+    ),
+  )
+  return mapSessionResult(sessionRun, database => uniqueWork(database, args.workId))
+}
+
+export async function shiftHomeWorkTimes(args, dependencies = {}) {
+  assertRecord(args, "args")
+  assertIdentifier(args.workId, "workId")
+  assertIdentifier(args.expectedWorkToken, "expectedWorkToken")
+  if (!Number.isSafeInteger(args.offsetMinutes) || args.offsetMinutes === 0) {
+    throw new RangeError("offsetMinutes must be a non-zero safe integer")
+  }
+  if (
+    args.selectedMatchIds !== undefined
+    && (
+      !Array.isArray(args.selectedMatchIds)
+      || args.selectedMatchIds.some(id => typeof id !== "string" || id.length === 0)
+    )
+  ) {
+    throw new TypeError("selectedMatchIds must be an array of non-empty strings")
+  }
+  const selectedMatchIds = args.selectedMatchIds === undefined
+    ? undefined
+    : [...new Set(args.selectedMatchIds)]
+  const resolved = resolveDependencies(dependencies)
+  const operationId = createPreparedId(resolved.createId, "operation")
+  const timestamp = readTimestamp(resolved.now)
+
+  const sessionRun = await runHomeMutationSession(
+    args.workId,
+    resolved,
+    session => commitLocalDatabaseMutation(
+      commitArgs(
+        session,
+        operationId,
+        args.workId,
+        args.expectedWorkToken,
+        database => {
+          const source = uniqueWork(database, args.workId)
+          const result = shiftPhoneTimes(source, {
+            offsetMinutes:args.offsetMinutes,
+            selectedMatchIds,
+          })
+          if (!result.changed) {
+            const error = new Error("The selected phone timestamps did not change")
+            error.code = "time-shift-no-change"
+            throw error
+          }
+          return {
+            ...database,
+            works:database.works.map(work => work.id === args.workId
+              ? {...result.work, updatedAt:timestamp}
+              : work),
+          }
+        },
+      ),
+      commitDependencies(session, resolved),
+    ),
+  )
+  return mapSessionResult(sessionRun, database => uniqueWork(database, args.workId))
+}
+
+export async function restoreHomeWorkSnapshot(args, dependencies = {}) {
+  assertRecord(args, "args")
+  assertIdentifier(args.workId, "workId")
+  assertIdentifier(args.expectedWorkToken, "expectedWorkToken")
+  assertRecord(args.snapshot, "snapshot")
+  if (args.snapshot.id !== args.workId) {
+    throw new TypeError("snapshot id must match workId")
+  }
+  const preparedSnapshot = structuredClone(args.snapshot)
+  const resolved = resolveDependencies(dependencies)
+  const operationId = createPreparedId(resolved.createId, "operation")
+  const timestamp = readTimestamp(resolved.now)
+
+  const sessionRun = await runHomeMutationSession(
+    args.workId,
+    resolved,
+    session => commitLocalDatabaseMutation(
+      commitArgs(
+        session,
+        operationId,
+        args.workId,
+        args.expectedWorkToken,
+        database => ({
+          ...database,
+          works:database.works.map(work => work.id === args.workId
+            ? {...preparedSnapshot, id:args.workId, updatedAt:timestamp}
             : work),
         }),
       ),
