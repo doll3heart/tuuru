@@ -182,7 +182,7 @@ function normalizedBookmark(value) {
   const id = ownData(value, "id")
   const path = normalizedPath(ownData(value, "path"))
   if (!exactId(id) || !path.length) return null
-  return {
+  const bookmark = {
     id,
     kind:"article",
     label:text(ownData(value, "label"), "阅读位置"),
@@ -192,6 +192,8 @@ function normalizedBookmark(value) {
     choiceMemory:normalizedIdMap(ownData(value, "choiceMemory")),
     interactionSelections:normalizedInteractionSelections(ownData(value, "interactionSelections")),
   }
+  if (ownData(value, "updateStatus") === "moved") bookmark.updateStatus = "moved"
+  return bookmark
 }
 
 function normalizedBookmarks(value) {
@@ -338,7 +340,7 @@ function normalizedBook(value) {
   const fallbackTime = timestamp(ownData(value, "lastOpenedAt"), timestamp(ownData(value, "addedAt")))
   const slots = normalizedSlots(value, definitions, fallbackTime)
   const activeSlotId = ownData(value, "activeSlotId")
-  return mirrorActiveSlot({
+  const book = {
     id,
     type:ownData(value, "type") === "phone" ? "phone" : "article",
     title:text(ownData(value, "title"), "无标题作品"),
@@ -347,7 +349,12 @@ function normalizedBook(value) {
     addedAt:timestamp(ownData(value, "addedAt")),
     lastOpenedAt:timestamp(ownData(value, "lastOpenedAt")),
     placeholderDefinitions:definitions,
-  }, slots, exactId(activeSlotId) ? activeSlotId : slots[0].id)
+  }
+  const unseenUpdateAt = timestamp(ownData(value, "unseenUpdateAt"))
+  if (unseenUpdateAt) book.unseenUpdateAt = unseenUpdateAt
+  const pinnedAt = timestamp(ownData(value, "pinnedAt"))
+  if (pinnedAt) book.pinnedAt = pinnedAt
+  return mirrorActiveSlot(book, slots, exactId(activeSlotId) ? activeSlotId : slots[0].id)
 }
 
 function normalizedLibrary(value) {
@@ -439,7 +446,7 @@ export function rememberReaderWork(library, work, now = Date.now()) {
     completedAt:0,
     bookmarks:[],
   }]
-  const next = mirrorActiveSlot({
+  const nextBook = {
     id,
     type:ownData(work, "type") === "phone" ? "phone" : "article",
     title:text(ownData(work, "title"), "无标题作品"),
@@ -448,7 +455,10 @@ export function rememberReaderWork(library, work, now = Date.now()) {
     addedAt:previous?.addedAt || openedAt,
     lastOpenedAt:openedAt,
     placeholderDefinitions,
-  }, previousSlots, previous?.activeSlotId || previousSlots[0].id)
+  }
+  if (previous?.unseenUpdateAt) nextBook.unseenUpdateAt = previous.unseenUpdateAt
+  if (previous?.pinnedAt) nextBook.pinnedAt = previous.pinnedAt
+  const next = mirrorActiveSlot(nextBook, previousSlots, previous?.activeSlotId || previousSlots[0].id)
   return withBooks(current, [
     next,
     ...current.books.filter(book => book.id !== id),
@@ -649,6 +659,22 @@ export function setReaderCompletion(library, workId, completed, now = Date.now()
     : book))
 }
 
+export function setReaderBookPinned(library, workId, pinned, now = Date.now()) {
+  const current = normalizedLibrary(library)
+  if (!exactId(workId)) return current
+  return withBooks(current, current.books.map(book => {
+    if (book.id !== workId) return book
+    if (pinned === true) {
+      if (book.pinnedAt) return book
+      const pinnedAt = timestamp(now)
+      return pinnedAt ? { ...book, pinnedAt } : book
+    }
+    if (!book.pinnedAt) return book
+    const { pinnedAt, ...next } = book
+    return next
+  }))
+}
+
 function bookmarkSignature(bookmark) {
   return JSON.stringify([
     bookmark.kind,
@@ -689,6 +715,21 @@ export function removeReaderBookmark(library, workId, bookmarkId) {
     : book))
 }
 
+export function restoreReaderBookmark(library, workId, bookmark) {
+  const current = normalizedLibrary(library)
+  const restored = normalizedBookmark(bookmark)
+  if (!exactId(workId) || !restored) return current
+  return withBooks(current, current.books.map(book => book.id === workId
+    ? updateActiveBookSlot(book, slot => {
+      if (slot.bookmarks.some(candidate => candidate.id === restored.id)) return slot
+      return {
+        ...slot,
+        bookmarks:[restored, ...slot.bookmarks].slice(0, MAX_BOOKMARKS),
+      }
+    })
+    : book))
+}
+
 export function updateReaderBookmark(library, workId, bookmarkId, changes, now = Date.now()) {
   const current = normalizedLibrary(library)
   if (!exactId(bookmarkId) || !plainRecord(changes)) return current
@@ -710,6 +751,212 @@ export function removeReaderBook(library, workId) {
   const current = normalizedLibrary(library)
   if (!exactId(workId)) return current
   return withBooks(current, current.books.filter(book => book.id !== workId))
+}
+
+export function restoreReaderBook(library, book) {
+  const current = normalizedLibrary(library)
+  const restored = normalizedBook(book)
+  if (!restored || current.books.some(candidate => candidate.id === restored.id)) return current
+  return withBooks(current, [restored, ...current.books].slice(0, MAX_BOOKS))
+}
+
+function normalizedMatchToken(value) {
+  return text(value).trim().toLocaleLowerCase("zh-CN")
+}
+
+function uniqueDefinitionLookup(definitions, field) {
+  const groups = new Map()
+  for (const definition of definitions) {
+    const token = normalizedMatchToken(definition[field])
+    if (!token) continue
+    const matches = groups.get(token) || []
+    matches.push(definition)
+    groups.set(token, matches)
+  }
+  return new Map(
+    [...groups.entries()]
+      .filter(([, matches]) => matches.length === 1)
+      .map(([token, matches]) => [token, matches[0]]),
+  )
+}
+
+function migratePlaceholderValues(values, previousDefinitions, incomingDefinitions) {
+  const previousValues = normalizedPlaceholderValues(values, previousDefinitions)
+  const previousById = new Map(previousDefinitions.map(definition => [definition.id, definition]))
+  const previousByKey = uniqueDefinitionLookup(previousDefinitions, "key")
+  const previousByLabel = uniqueDefinitionLookup(previousDefinitions, "label")
+  const incomingByKey = uniqueDefinitionLookup(incomingDefinitions, "key")
+  const incomingByLabel = uniqueDefinitionLookup(incomingDefinitions, "label")
+  const usedPreviousIds = new Set()
+  const result = {}
+
+  for (const incoming of incomingDefinitions) {
+    let previous = previousById.get(incoming.id)
+    if (!previous) {
+      const key = normalizedMatchToken(incoming.key)
+      if (key && incomingByKey.get(key)?.id === incoming.id) previous = previousByKey.get(key)
+    }
+    if (!previous) {
+      const label = normalizedMatchToken(incoming.label)
+      if (label && incomingByLabel.get(label)?.id === incoming.id) previous = previousByLabel.get(label)
+    }
+    if (!previous || usedPreviousIds.has(previous.id) || !previousValues[previous.id]) continue
+    usedPreviousIds.add(previous.id)
+    result[incoming.id] = previousValues[previous.id].slice()
+  }
+  return result
+}
+
+function visibleNodeText(value) {
+  return text(value)
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(?:nbsp|#160);/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("zh-CN")
+}
+
+function workNodes(work) {
+  return Array.isArray(work?.nodes) ? work.nodes.filter(plainRecord) : []
+}
+
+function workChapters(work) {
+  return Array.isArray(work?.chapters) ? work.chapters.filter(plainRecord) : []
+}
+
+function uniqueRecordBy(records, selector, expected) {
+  if (!expected) return null
+  const matches = records.filter(record => selector(record) === expected)
+  return matches.length === 1 ? matches[0] : null
+}
+
+function correspondingChapterId(previousWork, incomingWork, chapterId) {
+  const incomingChapters = workChapters(incomingWork)
+  if (incomingChapters.some(chapter => ownData(chapter, "id") === chapterId)) return chapterId
+  const previousChapter = workChapters(previousWork).find(chapter => ownData(chapter, "id") === chapterId)
+  const previousName = normalizedMatchToken(ownData(previousChapter, "name"))
+  return ownData(uniqueRecordBy(
+    incomingChapters,
+    chapter => normalizedMatchToken(ownData(chapter, "name")),
+    previousName,
+  ), "id") || ""
+}
+
+function nearbyIncomingNode(previousWork, incomingWork, previousNode) {
+  if (!previousNode) return null
+  const previousChapterId = ownData(previousNode, "chapterId")
+  const incomingChapterId = correspondingChapterId(previousWork, incomingWork, previousChapterId)
+  const incomingNodes = workNodes(incomingWork)
+  const chapterCandidates = incomingNodes.filter(node => (
+    !incomingChapterId || ownData(node, "chapterId") === incomingChapterId
+  ))
+  const title = normalizedMatchToken(ownData(previousNode, "title"))
+  const byTitle = uniqueRecordBy(
+    chapterCandidates,
+    node => normalizedMatchToken(ownData(node, "title")),
+    title,
+  )
+  if (byTitle) return byTitle
+  const content = visibleNodeText(ownData(previousNode, "content"))
+  const byContent = uniqueRecordBy(
+    chapterCandidates,
+    node => visibleNodeText(ownData(node, "content")),
+    content,
+  )
+  if (byContent) return byContent
+
+  const previousChapterNodes = workNodes(previousWork).filter(node => (
+    ownData(node, "chapterId") === previousChapterId
+  ))
+  const previousIndex = previousChapterNodes.indexOf(previousNode)
+  if (previousIndex >= 0 && chapterCandidates.length) {
+    return chapterCandidates[Math.min(previousIndex, chapterCandidates.length - 1)]
+  }
+  return null
+}
+
+function repairBookmarkForWork(bookmark, previousWork, incomingWork) {
+  if (bookmark.kind !== "article") return bookmark
+  const incomingNodes = workNodes(incomingWork)
+  const incomingById = new Map(incomingNodes.map(node => [ownData(node, "id"), node]))
+  const previousById = new Map(workNodes(previousWork).map(node => [ownData(node, "id"), node]))
+  let moved = false
+  const path = []
+  for (const nodeId of bookmark.path) {
+    let nextId = incomingById.has(nodeId) ? nodeId : ""
+    if (!nextId) {
+      const nearby = nearbyIncomingNode(previousWork, incomingWork, previousById.get(nodeId))
+      nextId = ownData(nearby, "id") || ""
+      moved = true
+    }
+    if (nextId && !path.includes(nextId)) path.push(nextId)
+  }
+  if (!path.length) {
+    const fallbackId = ownData(incomingWork, "startNode") || ownData(incomingNodes[0], "id")
+    if (exactId(fallbackId)) path.push(fallbackId)
+    moved = true
+  }
+  if (!moved) return bookmark
+  return {
+    ...bookmark,
+    path,
+    updateStatus:"moved",
+  }
+}
+
+export function reconcileReaderWorkUpdate(
+  library,
+  previousWork,
+  incomingWork,
+  options = {},
+) {
+  const current = normalizedLibrary(library)
+  const workId = ownData(incomingWork, "id")
+  if (
+    !plainRecord(previousWork)
+    || !plainRecord(incomingWork)
+    || !exactId(workId)
+    || ownData(previousWork, "id") !== workId
+  ) {
+    return current
+  }
+  const previousDefinitions = normalizedDefinitions(ownData(previousWork, "placeholders"))
+  const incomingDefinitions = normalizedDefinitions(ownData(incomingWork, "placeholders"))
+  const updatedAt = timestamp(options.now, Date.now())
+  return withBooks(current, current.books.map(book => {
+    if (book.id !== workId) return book
+    const slots = book.slots.map(slot => ({
+      ...slot,
+      placeholderValues:migratePlaceholderValues(
+        slot.placeholderValues,
+        previousDefinitions,
+        incomingDefinitions,
+      ),
+      bookmarks:slot.bookmarks.map(bookmark => (
+        repairBookmarkForWork(bookmark, previousWork, incomingWork)
+      )),
+    }))
+    const nextBook = {
+      ...book,
+      type:ownData(incomingWork, "type") === "phone" ? "phone" : "article",
+      title:text(ownData(incomingWork, "title"), book.title),
+      author:text(ownData(incomingWork, "author"), book.author),
+      coverColor:text(ownData(incomingWork, "coverColor"), book.coverColor),
+      placeholderDefinitions:incomingDefinitions,
+    }
+    if (options.markUpdated === true) nextBook.unseenUpdateAt = updatedAt
+    return mirrorActiveSlot(nextBook, slots, book.activeSlotId)
+  }))
+}
+
+export function dismissReaderWorkUpdate(library, workId) {
+  const current = normalizedLibrary(library)
+  if (!exactId(workId)) return current
+  return withBooks(current, current.books.map(book => {
+    if (book.id !== workId || !book.unseenUpdateAt) return book
+    const { unseenUpdateAt, ...next } = book
+    return next
+  }))
 }
 
 function checkpointSignature(checkpoint) {

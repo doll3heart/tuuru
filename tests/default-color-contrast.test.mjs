@@ -150,7 +150,8 @@ test("light primary and hover fills use their readable ink tokens", () => {
   assert.match(ruleBody(shoppingCss, ".phone-frame .shop-circle.checked::after"), /border\s*:\s*2px\s+solid\s+var\(--phone-system-primary-ink/)
   assert.doesNotMatch(readerSource, /background\s*:\s*#a4c6eb\s*;\s*color\s*:\s*#fff/i)
   assert.match(readerSource, /background:var\(--c-primary\);color:var\(--c-btn-text\)[^"']*" id="cuSave"/)
-  assert.match(readerSource, /background:var\(--c-primary\);color:var\(--c-btn-text\)[^"']*" id="rpSave"/)
+  assert.match(ruleBody(readerCss, ".cu-btn-save"), /background\s*:\s*var\(--c-primary\)/)
+  assert.match(ruleBody(readerCss, ".cu-btn-save"), /color\s*:\s*var\(--c-btn-text\)/)
 })
 
 test("every generated theme chooses readable primary and hover ink", async () => {

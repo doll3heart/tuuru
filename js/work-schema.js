@@ -2,6 +2,7 @@ export const CURRENT_WORK_SCHEMA_VERSION = 4
 
 import { isSafeCssColor, isSafeIconValue, isSafeIdentifier } from "./safe-values.js"
 import { normalizeWorkWatermark } from "./work-watermark.js"
+import { normalizeWorkRelease } from "./work-release.js"
 import { normalizeInteractiveScene } from "./interactive-scene-model.js"
 import {
   articleNodeHasInteractiveSceneCard,
@@ -599,6 +600,9 @@ function validateAndNormalizeWorkUnchecked(input, {
   if (Object.hasOwn(input, "watermark")) {
     normalized.work.watermark = normalizeWorkWatermark(input.watermark)
   }
+  const release = normalizeWorkRelease(input.release, normalized.work.id)
+  if (release) normalized.work.release = release
+  else delete normalized.work.release
 
   const renderValuesResult = validateWorkRenderValues(normalized.work, path, {
     strictPresentation: context !== "reader-import",

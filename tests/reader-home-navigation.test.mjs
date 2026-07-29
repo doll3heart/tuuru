@@ -171,6 +171,7 @@ test("reader home controls navigate without relying on module globals", async t 
   document.querySelector("[data-reader-home]").click()
 
   assert.ok(document.querySelector(".rd-home"))
+  assertActiveTab(1)
   assert.equal(document.querySelector("#tabImport"), null)
   assert.equal(document.querySelector('[data-tab="import"]'), null)
 

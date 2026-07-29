@@ -525,6 +525,50 @@ function inspectPhone(work, issues) {
   inspectHiddenPhoneApps(phoneData, issues)
 }
 
+function phoneIssueAppType(location) {
+  const text = String(location || "")
+  if (text.includes("消息") || text.includes("动态")) return "messages"
+  if (text.includes("论坛")) return "forum"
+  if (text.includes("备忘")) return "memo"
+  if (text.includes("相册")) return "gallery"
+  if (text.includes("浏览")) return "browser"
+  if (text.includes("购物")) return "shopping"
+  return "profile"
+}
+
+function preflightIssueLocator(work, issue) {
+  const location = String(issue?.location || "")
+  if (
+    issue?.code === "work-title-empty"
+    || issue?.code?.startsWith("placeholder-")
+    || location === "作品信息"
+  ) {
+    return {surface:"work-info"}
+  }
+  if (location.startsWith("小手机 ·")) {
+    return {surface:"phone", appType:phoneIssueAppType(location)}
+  }
+  if (work?.type === "phone") {
+    return {surface:"phone", appType:phoneIssueAppType(location)}
+  }
+  const nodes = items(work?.nodes)
+  for (const [index, node] of nodes.entries()) {
+    const label = plainText(node?.title) || `第 ${index + 1} 个节点`
+    if (location.startsWith(`互动文章 · ${label}`)) {
+      return {surface:"article", nodeId:String(node?.id || "")}
+    }
+  }
+  for (const [index, scene] of items(work?.interactiveScenes).entries()) {
+    const label = plainText(scene?.title) || `第 ${index + 1} 个互动图片`
+    if (!location.includes(`互动图片 · ${label}`)) continue
+    return {surface:"article", nodeId:String(scene?.nodeId || "")}
+  }
+  return {
+    surface:"article",
+    nodeId:String(nodes[0]?.id || ""),
+  }
+}
+
 export function inspectWorkBeforePublish(work) {
   const issues = []
   if (!plainText(work?.title)) {
@@ -542,6 +586,10 @@ export function inspectWorkBeforePublish(work) {
     inspectArticle(work, issues)
     if (work?.phoneData && typeof work.phoneData === "object") inspectPhone(work, issues)
   } else if (work?.type === "phone") inspectPhone(work, issues)
+
+  issues.forEach(issue => {
+    issue.locator = preflightIssueLocator(work, issue)
+  })
 
   return {
     issues,

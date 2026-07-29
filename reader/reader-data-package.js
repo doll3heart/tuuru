@@ -225,7 +225,7 @@ function mergeBook(currentBook, incomingBook) {
   const activeSlotId = slots.some(slot => slot.id === preferred.activeSlotId)
     ? preferred.activeSlotId
     : slots[0]?.id
-  return {
+  const merged = {
     ...preferred,
     addedAt:Math.min(
       Number(currentBook.addedAt || Number.MAX_SAFE_INTEGER),
@@ -238,6 +238,9 @@ function mergeBook(currentBook, incomingBook) {
     slots,
     activeSlotId,
   }
+  if (currentBook.pinnedAt) merged.pinnedAt = currentBook.pinnedAt
+  else delete merged.pinnedAt
+  return merged
 }
 
 function mergeLibraries(currentCandidate, incomingCandidate) {

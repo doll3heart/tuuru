@@ -40,6 +40,10 @@ import {
 import { openWorkPreflight } from "./home-preflight.js"
 import { openWorkFindReplace as openWorkFindReplaceDialog } from "./home-find-replace.js"
 import { openWorkTimeShift as openWorkTimeShiftDialog } from "./home-time-shift.js"
+import { runButtonAction } from "../interaction-feedback.js"
+import { shouldUseMotion } from "../motion-preference.js"
+import { refreshReorderedContent } from "../reorder-motion.js"
+import { installDialogInteraction } from "../dialog-interaction.js"
 
 const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请稍后刷新查看，不要重复操作。"
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
@@ -50,29 +54,6 @@ export function renderHome(){
   const articles = works.filter(w=>w.type===WORK_TYPE.ARTICLE)
   const phones = works.filter(w=>w.type===WORK_TYPE.PHONE)
   
-  // Bind tab switching after DOM is ready
-  setTimeout(function() {
-    var tabs = document.querySelectorAll('#workTabs .tab')
-    var list = document.getElementById('workList')
-    if (!tabs.length || !list) return
-    tabs.forEach(function(t) {
-      t.onclick = function() {
-        tabs.forEach(function(x) { x.classList.remove('active') })
-        t.classList.add('active')
-        var filter = t.dataset.tab
-        var allWorks = orderedWorks(getWorks())
-        var filtered = filter === 'all' ? allWorks
-          : allWorks.filter(function(w) { return w.type === (filter === 'phone' ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE) })
-        resetCollectionSelection()
-        list.innerHTML = renderWorkList(filtered, filter === 'all' ? getWorkCollections() : [])
-        bindCollectionShelf({ refresh: refreshHomeWorkList })
-        bindWorkShelfOrdering()
-      }
-    })
-  }, 50)
-  setTimeout(() => bindCollectionShelf({ refresh: refreshHomeWorkList }), 60)
-  setTimeout(() => bindWorkShelfOrdering(), 65)
-
   return `
     <div class="library-heading mb-4">
       <div class="library-heading-copy">
@@ -80,7 +61,7 @@ export function renderHome(){
         <span class="library-heading-hint">长按作品，可创建作品集</span>
       </div>
       <div class="library-heading-actions">
-        <button class="btn btn-sm btn-outline" onclick="backupLibrary()" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
+        <button class="btn btn-sm btn-outline" onclick="backupLibrary(this)" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
         <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
         <button class="btn btn-sm btn-outline" onclick="openLocalProfileTransfer()" aria-label="导出或导入作者端和读者端本地数据" title="把作者创作库、写作设置和读者端本地信息打包迁移到其他浏览器"><span class="library-action-label library-action-label-long">整机搬家</span><span class="library-action-label library-action-label-short" aria-hidden="true">搬家</span></button>
       </div>
@@ -95,6 +76,21 @@ export function renderHome(){
     <div id="workList">${renderWorkList(works, collections)}</div>
     ${renderCollectionSelectionBar()}
   `
+}
+
+export function bindHome() {
+  const tabs = Array.from(document.querySelectorAll("#workTabs .tab"))
+  const list = document.getElementById("workList")
+  if (!tabs.length || !list) return
+  tabs.forEach(tab => {
+    tab.onclick = function() {
+      tabs.forEach(candidate => candidate.classList.toggle("active", candidate === tab))
+      resetCollectionSelection()
+      refreshHomeWorkList()
+    }
+  })
+  bindCollectionShelf({ refresh: refreshHomeWorkList })
+  bindWorkShelfOrdering()
 }
 
 function renderWorkList(works, collections = []){
@@ -132,7 +128,7 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
             ${w.phoneData ? `<button class="btn btn-sm btn-ghost" data-work-time-shift="${w.id}" onclick="event.stopPropagation();openWorkTimeShift('${w.id}');closeWorkMenu('${w.id}')">批量顺延时间</button>` : ""}
             ${homeBulkUndoStore.peek(w.id) ? `<button class="btn btn-sm btn-ghost work-bulk-undo" id="workBulkUndo-${w.id}" data-work-bulk-undo="${w.id}" onclick="event.stopPropagation();undoLastBulkWork('${w.id}');closeWorkMenu('${w.id}')">撤销上次批量操作</button>` : ""}
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
-            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}');closeWorkMenu('${w.id}')">导出加密作品</button>
+            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}',this)">导出加密作品</button>
             <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出加密 PNG</button>
           </div>
         </div>
@@ -194,6 +190,14 @@ export function createHomeWriteController({
     return registerBulkUndo({
       ...captured,
       expectedWorkToken:createJsonToken(updatedWork),
+    })
+  }
+
+  function notifyBulkUndo(workId, message) {
+    notify(message, "success", {
+      actionLabel:"撤销",
+      duration:5000,
+      onAction:() => undoBulk({workId}),
     })
   }
 
@@ -332,7 +336,7 @@ export function createHomeWriteController({
         return updated
       }
       registerUndo(capturedUndo, updated)
-      notify("已完成全作品替换")
+      notifyBulkUndo(workId, "已完成全作品替换")
       close()
       refresh()
       return updated
@@ -343,7 +347,7 @@ export function createHomeWriteController({
       () => replaceTextReliable(args),
       outcome => {
         registerUndo(capturedUndo, outcome.work)
-        notify("已完成全作品替换")
+        notifyBulkUndo(workId, "已完成全作品替换")
         close()
         refresh()
       },
@@ -376,7 +380,7 @@ export function createHomeWriteController({
         return updated
       }
       registerUndo(capturedUndo, updated)
-      notify("已完成时间顺延")
+      notifyBulkUndo(workId, "已完成时间顺延")
       close()
       refresh()
       return updated
@@ -387,7 +391,7 @@ export function createHomeWriteController({
       () => shiftTimeReliable(args),
       outcome => {
         registerUndo(capturedUndo, outcome.work)
-        notify("已完成时间顺延")
+        notifyBulkUndo(workId, "已完成时间顺延")
         close()
         refresh()
       },
@@ -461,7 +465,17 @@ function refreshHomeWorkList() {
     const works = filter === "all"
       ? allWorks
       : allWorks.filter(work => work.type === (filter === "phone" ? WORK_TYPE.PHONE : WORK_TYPE.ARTICLE))
-    list.innerHTML = renderWorkList(works, filter === "all" ? getWorkCollections() : [])
+    refreshReorderedContent({
+      container:list,
+      selector:".work-card[data-id]",
+      key:element => element.dataset.id,
+      animate:shouldUseMotion(true, window),
+      update() {
+        list.innerHTML = renderWorkList(works, filter === 'all' ? getWorkCollections() : [])
+      },
+    })
+    bindCollectionShelf({ refresh: refreshHomeWorkList })
+    bindWorkShelfOrdering()
   }
 }
 
@@ -630,17 +644,30 @@ window.moveShelfWork = function(id, offset) {
   showToast("作品顺序已更新", "success")
 }
 
-window.backupLibrary = function(){
-  try {
-    var exportedAt = new Date()
-    var json = serializeLocalDatabaseBackup(localStorage, exportedAt)
-    var blob = new Blob([json], { type: 'application/json;charset=utf-8' })
-    var filename = 'tuuru-library-backup-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json'
-    downloadBlob(blob, filename)
-    showToast('备份下载已发起；文件包含私密内容，请妥善保管', 'success')
-  } catch(e) {
-    alert('备份失败：' + (e instanceof Error ? e.message : '未知错误'))
-  }
+function runVisibleAction(trigger, pendingText, action) {
+  if (!trigger) return Promise.resolve().then(action)
+  return runButtonAction(trigger, action, {pendingText})
+}
+
+window.backupLibrary = function(trigger){
+  return runVisibleAction(trigger, '正在备份…', async function() {
+    var feedbackKey = 'library-backup'
+    showToast('正在准备本地备份…', 'info', {key:feedbackKey, duration:0})
+    try {
+      await new Promise(function(resolve) {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(function() { resolve() })
+        else setTimeout(resolve, 0)
+      })
+      var exportedAt = new Date()
+      var json = serializeLocalDatabaseBackup(localStorage, exportedAt)
+      var blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+      var filename = 'tuuru-library-backup-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json'
+      downloadBlob(blob, filename)
+      showToast('备份下载已发起；文件包含私密内容，请妥善保管', 'success', {key:feedbackKey})
+    } catch(e) {
+      showToast('备份失败：' + (e instanceof Error ? e.message : '未知错误'), 'error', {key:feedbackKey})
+    }
+  })
 }
 
 let libraryRestoreController
@@ -812,44 +839,49 @@ window.expPNG = function(id){
     }
     var exportButton = ov.querySelector('#pngExportBtn')
     function handleExportError(error) {
-      exportButton.textContent = '导出 PNG'
-      exportButton.disabled = false
-      alert('导出失败：' + (error instanceof Error ? error.message : '未知错误'))
+      showToast('导出失败：' + (error instanceof Error ? error.message : '未知错误'), 'error', {key:'png-export-' + id})
     }
     exportButton.onclick = async function() {
-      exportButton.textContent = '编码中...'
-      exportButton.disabled = true
-      try {
-        var encrypted = await encryptWorkPackage(json)
-        encodeSteganoPNG(encrypted, coverUrl, function(dataUrl) {
+      return runButtonAction(exportButton, async function() {
+        showToast('正在编码加密 PNG…', 'info', {key:'png-export-' + id, duration:0})
+        try {
+          var encrypted = await encryptWorkPackage(json)
+          var dataUrl = await new Promise(function(resolve, reject) {
+            encodeSteganoPNG(encrypted, coverUrl, resolve, reject)
+          })
           var a = document.createElement('a')
           a.href = dataUrl
           a.download = title + '.png'
           a.click()
-          showToast('PNG 已导出', 'success')
+          showToast('PNG 已导出', 'success', {key:'png-export-' + id})
           ov.remove()
-        }, handleExportError)
-      } catch(e) {
-        handleExportError(e)
-      }
+        } catch(e) {
+          handleExportError(e)
+        }
+      }, {pendingText:'正在编码…'})
     }
   } catch(e) {
     alert('导出失败：' + e.message)
   }
 }
 
-window.expWork = async function(id){
-  try {
-    var json = exportWorkAsJSON(id)
-    if (!json) { alert('导出失败'); return }
-    var w = getWorks().find(function(x) { return x.id === id })
-    var encrypted = await encryptWorkPackage(json)
-    var blob = new Blob([encrypted], { type: 'application/vnd.tuuru.work' })
-    downloadBlob(blob, (w ? w.title : '作品') + '.tuuru')
-    showToast('加密作品已导出', 'success')
-  } catch(e) {
-    alert('导出失败：' + e.message)
-  }
+window.expWork = function(id, trigger){
+  return runVisibleAction(trigger, '正在打包…', async function() {
+    var feedbackKey = 'work-export-' + id
+    showToast('正在加密作品…', 'info', {key:feedbackKey, duration:0})
+    try {
+      var json = exportWorkAsJSON(id)
+      if (!json) throw new Error('作品数据无法读取')
+      var w = getWorks().find(function(x) { return x.id === id })
+      var encrypted = await encryptWorkPackage(json)
+      var blob = new Blob([encrypted], { type: 'application/vnd.tuuru.work' })
+      downloadBlob(blob, (w ? w.title : '作品') + '.tuuru')
+      showToast('加密作品已导出', 'success', {key:feedbackKey})
+      window.closeWorkMenu?.(id)
+    } catch(e) {
+      showToast('导出失败：' + (e instanceof Error ? e.message : '未知错误'), 'error', {key:feedbackKey})
+    }
+  })
 }
 
 window.dupWork = function(id){
@@ -957,7 +989,7 @@ window.editWorkInfo = function(id){
   var ov = document.createElement('div')
   ov.className = 'modal-overlay'
   ov.style.cssText = 'z-index:2000'
-  ov.innerHTML = '<div class="modal wi-modal" role="dialog" aria-labelledby="wiTitleLabel"><div class="modal-header"><span class="modal-title" id="wiTitleLabel">作品信息</span><button class="btn-icon" id="wiCloseBtn" type="button" aria-label="关闭" style="font-size:1.2rem;cursor:pointer;border:none;background:transparent;color:var(--c-text2)">&times;</button></div><div class="modal-body">' + body + '<div id="wiStatus" role="status" aria-live="polite" style="min-height:1.4em;margin-top:10px;color:var(--c-accent3)"></div></div><div class="modal-footer"><button class="btn btn-primary" id="wiSaveBtn">保存</button><button class="btn btn-ghost" id="wiCancelBtn" type="button">取消</button></div></div>'
+  ov.innerHTML = '<div class="modal wi-modal" role="dialog" aria-modal="true" aria-labelledby="wiTitleLabel"><div class="modal-header"><span class="modal-title" id="wiTitleLabel">作品信息</span><button class="btn-icon" id="wiCloseBtn" type="button" aria-label="关闭" style="font-size:1.2rem;cursor:pointer;border:none;background:transparent;color:var(--c-text2)">&times;</button></div><div class="modal-body">' + body + '<div id="wiStatus" role="status" aria-live="polite" style="min-height:1.4em;margin-top:10px;color:var(--c-accent3)"></div></div><div class="wi-draft-confirm" id="wiDraftConfirm" hidden role="alert"><p>这些修改还没有保存，要放弃吗？</p><div><button class="btn btn-ghost" id="wiDraftContinue" type="button">继续编辑</button><button class="btn btn-outline" id="wiDraftDiscard" type="button">放弃修改</button></div></div><div class="modal-footer"><button class="btn btn-primary" id="wiSaveBtn">保存</button><button class="btn btn-ghost" id="wiCancelBtn" type="button">取消</button></div></div>'
   document.body.appendChild(ov)
   var watermarkFields = ov.querySelector('#wiWatermarkFields')
   var watermarkStatus = ov.querySelector('#wiWatermarkStatus')
@@ -1073,14 +1105,54 @@ window.editWorkInfo = function(id){
   }
   refreshWatermarkControls()
 
+  function workInfoDraftSnapshot() {
+    var fields = Array.from(ov.querySelectorAll('input:not([type="file"]),textarea,select')).map(function(field) {
+      return [
+        field.id || field.name || field.type,
+        field.type === 'checkbox' || field.type === 'radio' ? field.checked : field.value,
+      ]
+    })
+    return JSON.stringify({
+      fields:fields,
+      watermark:normalizeWorkWatermark(watermarkDraft),
+    })
+  }
+  var cleanDraftSnapshot = workInfoDraftSnapshot()
+  var draftConfirm = ov.querySelector('#wiDraftConfirm')
+  var dialogLifecycle = null
+  function closeWorkInfo(restoreFocus) {
+    if (dialogLifecycle) {
+      dialogLifecycle.dispose({restoreFocus:restoreFocus !== false})
+      dialogLifecycle = null
+    }
+    ov.remove()
+    if (restoreFocus !== false && trigger?.isConnected) trigger.focus?.()
+  }
   var requestClose = function(){
     if (ov.querySelector('#wiSaveBtn')?.disabled) return
-    ov.remove()
-    trigger?.focus?.()
+    if (workInfoDraftSnapshot() !== cleanDraftSnapshot) {
+      draftConfirm.hidden = false
+      ov.querySelector('#wiDraftContinue')?.focus()
+      return
+    }
+    closeWorkInfo(true)
   }
   ov.querySelector('#wiCloseBtn').onclick = requestClose
   ov.querySelector('#wiCancelBtn').onclick = requestClose
-  ov.addEventListener('click', function(e) { if (e.target === ov) requestClose() })
+  ov.querySelector('#wiDraftContinue').onclick = function() {
+    draftConfirm.hidden = true
+    ov.querySelector('#wiTitle')?.focus()
+  }
+  ov.querySelector('#wiDraftDiscard').onclick = function() {
+    closeWorkInfo(true)
+  }
+  dialogLifecycle = installDialogInteraction({
+    overlay:ov,
+    dialog:ov.querySelector('.wi-modal'),
+    invoker:trigger,
+    initialFocus:ov.querySelector('#wiTitle'),
+    onRequestClose:requestClose,
+  })
   ov.querySelector('#wiSaveBtn').onclick = function(){
     var password = (document.getElementById('wiPwd')?.value || '').trim()
     watermarkDraft = normalizeWorkWatermark(watermarkDraft)
@@ -1102,7 +1174,10 @@ window.editWorkInfo = function(id){
         locked: !!password,
         watermark: normalizeWorkWatermark(watermarkDraft)
       },
-      close: function(){ ov.remove() }
+      close: function(){
+        cleanDraftSnapshot = workInfoDraftSnapshot()
+        closeWorkInfo(true)
+      }
     })
     if (result instanceof Promise) result.catch(function(){})
     return result

@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { Buffer } from "node:buffer"
 import { JSDOM } from "jsdom"
 import { CURRENT_WORK_SCHEMA_VERSION } from "../js/work-schema.js"
+import { createWorkRelease } from "../js/work-release.js"
 
 function phoneWork() {
   return {
@@ -584,6 +585,7 @@ test("reader reviews a same-work update before replacing cached content and pres
   updatedWork.id = previousWork.id
   updatedWork.title = "Updated title"
   for (const candidate of [previousWork, updatedWork]) {
+    candidate.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
     candidate.phoneData.memos = [
       {id:"memo-1", content:"第一条"},
       {id:"memo-2", content:"第二条"},
@@ -601,6 +603,17 @@ test("reader reviews a same-work update before replacing cached content and pres
       ],
     }
   }
+  previousWork.phoneData.memos = previousWork.phoneData.memos.slice(0, 2)
+  previousWork.updatedAt = 20
+  previousWork.release = createWorkRelease(previousWork, {
+    revision:20,
+    exportedAt:"2026-07-27T00:00:00.000Z",
+  })
+  updatedWork.updatedAt = 21
+  updatedWork.release = createWorkRelease(updatedWork, {
+    revision:21,
+    exportedAt:"2026-07-28T00:00:00.000Z",
+  })
   const serializedWork = JSON.stringify(updatedWork)
   const previousCached = JSON.stringify(previousWork)
   localStorage.setItem(`moirain_work_${previousWork.id}`, previousCached)
@@ -635,7 +648,10 @@ test("reader reviews a same-work update before replacing cached content and pres
   const review = document.querySelector(".rd-import-review")
   assert.ok(review)
   assert.equal(review.hidden, false)
-  assert.match(review.textContent, /检测到已有作品/)
+  assert.equal(review.dataset.releaseState, "newer")
+  assert.match(review.textContent, /发现作品更新/)
+  assert.match(review.textContent, /作者新发布的版本/)
+  assert.match(review.textContent, /新增 1 条备忘录/)
   assert.match(review.textContent, /保留存档、身份、占位符与书签/)
   assert.equal(document.getElementById("rdStartBtn"), null)
   assert.equal(localStorage.getItem(`moirain_work_${previousWork.id}`), previousCached)
@@ -657,6 +673,127 @@ test("reader reviews a same-work update before replacing cached content and pres
   const savedBook = savedLibrary.books.find(book => book.id === previousWork.id)
   assert.equal(savedBook.progress.kind, "phone")
   assert.equal(savedBook.progress.flowIndex, 2)
+  assert.equal(savedBook.unseenUpdateAt > 0, true)
+  assert.equal(alerts.length, 0)
+})
+
+test("same release continues from the cached copy without rewriting it", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const candidate = phoneWork()
+  candidate.id = "reader-same-release"
+  candidate.title = "Same release"
+  candidate.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
+  candidate.updatedAt = 21
+  candidate.release = createWorkRelease(candidate, {
+    revision:21,
+    exportedAt:"2026-07-28T00:00:00.000Z",
+  })
+  const cachedRaw = ` \n${JSON.stringify(candidate)}`
+  const libraryRaw = JSON.stringify({
+    version:1,
+    identities:[],
+    books:[{
+      id:candidate.id,
+      type:"phone",
+      title:candidate.title,
+      author:"",
+      coverColor:"",
+      addedAt:1,
+      lastOpenedAt:2,
+      placeholderDefinitions:[],
+      placeholderValues:{},
+      progress:null,
+    }],
+  })
+  localStorage.setItem(`moirain_work_${candidate.id}`, cachedRaw)
+  localStorage.setItem("moirain_readerLibrary", libraryRaw)
+  const serializedWork = JSON.stringify(candidate)
+  globalThis.FileReader = class {
+    readAsText() {
+      this.result = serializedWork
+      this.onload?.()
+    }
+    readAsDataURL() { throw new Error("unexpected PNG read") }
+  }
+
+  await import(`../reader/reader.js?reader-import-same-release=${Date.now()}`)
+  openImportDialog()
+  dropFile(dom, {name:"same.json", size:serializedWork.length})
+
+  const review = document.querySelector(".rd-import-review")
+  assert.equal(review.dataset.releaseState, "same")
+  assert.equal(review.querySelector("[data-reader-import-confirm]").textContent, "继续阅读")
+  assert.equal(review.querySelector("[data-reader-import-secondary]").textContent, "重新写入缓存")
+
+  review.querySelector("[data-reader-import-confirm]").click()
+
+  assert.equal(localStorage.getItem(`moirain_work_${candidate.id}`), cachedRaw)
+  assert.equal(document.querySelector(".rd-import-dialog"), null)
+  assert.equal(document.querySelector(".rd-landing-title").textContent, candidate.title)
+  assert.equal(alerts.length, 0)
+})
+
+test("older releases can open once without replacing the bookshelf copy", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const currentWork = phoneWork()
+  currentWork.id = "reader-preview-old-release"
+  currentWork.title = "Current release"
+  currentWork.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
+  currentWork.updatedAt = 21
+  currentWork.release = createWorkRelease(currentWork, {
+    revision:21,
+    exportedAt:"2026-07-28T00:00:00.000Z",
+  })
+  const olderWork = JSON.parse(JSON.stringify(currentWork))
+  olderWork.title = "Older release"
+  olderWork.updatedAt = 20
+  delete olderWork.release
+  olderWork.release = createWorkRelease(olderWork, {
+    revision:20,
+    exportedAt:"2026-07-27T00:00:00.000Z",
+  })
+  const cachedRaw = JSON.stringify(currentWork)
+  const libraryRaw = JSON.stringify({
+    version:1,
+    identities:[],
+    books:[{
+      id:currentWork.id,
+      type:"phone",
+      title:currentWork.title,
+      author:"",
+      coverColor:"",
+      addedAt:1,
+      lastOpenedAt:2,
+      placeholderDefinitions:[],
+      placeholderValues:{},
+      progress:null,
+    }],
+  })
+  localStorage.setItem(`moirain_work_${currentWork.id}`, cachedRaw)
+  localStorage.setItem("moirain_readerLibrary", libraryRaw)
+  const serializedWork = JSON.stringify(olderWork)
+  globalThis.FileReader = class {
+    readAsText() {
+      this.result = serializedWork
+      this.onload?.()
+    }
+    readAsDataURL() { throw new Error("unexpected PNG read") }
+  }
+
+  await import(`../reader/reader.js?reader-import-old-preview=${Date.now()}`)
+  openImportDialog()
+  dropFile(dom, {name:"older.json", size:serializedWork.length})
+
+  const review = document.querySelector(".rd-import-review")
+  assert.equal(review.dataset.releaseState, "older")
+  assert.equal(review.querySelector("[data-reader-import-secondary]").textContent, "仅本次打开")
+  review.querySelector("[data-reader-import-secondary]").click()
+
+  assert.equal(localStorage.getItem(`moirain_work_${currentWork.id}`), cachedRaw)
+  assert.equal(localStorage.getItem("moirain_readerLibrary"), libraryRaw)
+  assert.equal(document.querySelector(".rd-landing-title").textContent, olderWork.title)
   assert.equal(alerts.length, 0)
 })
 

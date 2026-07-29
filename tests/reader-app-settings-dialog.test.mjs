@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
 
 const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
+const sharedChatCss = readFileSync(new URL("../css/phone-chat.css", import.meta.url), "utf8")
 
 function installDom(t) {
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
@@ -30,6 +31,11 @@ function installDom(t) {
 function cssBody(selector) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   return readerCss.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? ""
+}
+
+function sharedChatCssBody(selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return sharedChatCss.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? ""
 }
 
 function openGallerySettings() {
@@ -183,7 +189,7 @@ function assertRetryableUploadFailure(beforeRaw, preset = "rose") {
   assert.doesNotMatch(document.querySelector("#cuCallBackgroundPreview").getAttribute("style") || "", /--rd-call-image/)
   assert.equal(error.hidden, false)
   assert.ok(error.textContent.trim())
-  assert.equal(document.getElementById("cuModalSave").disabled, false)
+  assert.equal(document.getElementById("cuModalSave").disabled, true)
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
 }
 
@@ -219,6 +225,9 @@ test("reader App settings behave as a modal dialog and restore focus", async t =
   assert.equal(document.activeElement, trigger)
 
   trigger.click()
+  const galleryGap = document.getElementById("cuGap")
+  galleryGap.value = "8"
+  galleryGap.dispatchEvent(new Event("input", { bubbles:true }))
   document.getElementById("cuModalSave").click()
   const replacementTrigger = document.querySelector('.rd-app-icon[data-app="gallery"]')
   assert.notEqual(replacementTrigger, trigger)
@@ -319,6 +328,9 @@ test("reader App settings stay retryable when local persistence fails", async t 
   t.after(() => { globalThis.localStorage = nativeStorage })
 
   const saveButton = document.getElementById("cuModalSave")
+  const galleryGap = document.getElementById("cuGap")
+  galleryGap.value = "8"
+  galleryGap.dispatchEvent(new Event("input", { bubbles:true }))
   saveButton.focus()
   assert.doesNotThrow(() => saveButton.onclick())
   assert.equal(overlay.isConnected, true)
@@ -331,45 +343,770 @@ test("reader App settings stay retryable when local persistence fails", async t 
   assert.doesNotThrow(() => resetButton.onclick())
   assert.equal(overlay.isConnected, true)
   assert.equal(document.activeElement, resetButton)
-  assert.equal(alerts.length, 2)
-  assert.match(alerts[1], /恢复默认|存储/)
+  assert.equal(alerts.length, 1)
+  assert.equal(saveButton.disabled, true)
 })
 
-test("reader App color choices expose names and synchronize selection state", async t => {
+test("reader message appearance uses only named native color pickers", async t => {
   installDom(t)
   await import(`../reader/reader.js?reader-app-settings-colors=${Date.now()}`)
 
   openNamedAppSettings("messages")
-  const group = document.querySelector(".cu-color-group")
-  const buttons = [...group.querySelectorAll(".cu-color-btn")]
-  const picker = group.querySelector(".cu-color-picker")
+  const groups = [...document.querySelectorAll(".cu-settings-section .cu-color-group")]
+  const picker = document.querySelector('[data-cu-self-bg-picker]')
 
-  assert.ok(buttons.length > 1)
-  assert.equal(buttons.filter(button => button.getAttribute("aria-pressed") === "true").length, 1)
-  buttons.forEach(button => {
-    assert.equal(button.type, "button")
-    assert.ok(button.getAttribute("aria-label"))
-    assert.ok(button.querySelector('.cu-color-swatch[aria-hidden="true"]'))
-    assert.ok(["true", "false"].includes(button.getAttribute("aria-pressed")))
-  })
+  assert.ok(groups.length > 0)
+  assert.equal(groups.every(group => group.querySelectorAll(".cu-color-btn").length === 0), true)
+  assert.equal(groups.every(group => group.querySelectorAll(".cu-color-picker").length === 1), true)
   assert.ok(picker.getAttribute("aria-label"))
-
-  const previous = buttons.find(button => button.getAttribute("aria-pressed") === "true")
-  const next = buttons.find(button => button !== previous)
-  next.click()
-  assert.equal(previous.getAttribute("aria-pressed"), "false")
-  assert.equal(next.getAttribute("aria-pressed"), "true")
-  assert.equal(next.classList.contains("active"), true)
 
   picker.value = "#123456"
   picker.dispatchEvent(new Event("input", { bubbles: true }))
-  assert.equal(group.querySelector(".cu-color-btn.active"), null)
-  assert.equal(buttons.every(button => button.getAttribute("aria-pressed") === "false"), true)
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-pink"), "#123456")
 
-  next.click()
   document.getElementById("cuModalSave").click()
   const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
-  assert.equal(saved.appSettings.messages.selfBubbleBg, next.getAttribute("data-cu-self-bg"))
+  assert.equal(saved.appSettings.messages.selfBubbleBg, "#123456")
+})
+
+test("reader messages can preview, save, and clear a local chat background image", async t => {
+  installDom(t)
+  const imageUrl = staticRasterCases[0][1]
+  installFileReader(t, {result:imageUrl})
+  installImageDecoder(t)
+  await import(`../reader/reader.js?reader-chat-background-image=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const beforeRaw = localStorage.getItem("moirain_phoneCustom")
+  const fileInput = document.getElementById("cuChatBackgroundFile")
+  assert.ok(document.getElementById("cuChatBackgroundUpload"))
+  assert.ok(document.getElementById("cuChatBackgroundClear"))
+  assert.ok(fileInput)
+
+  setInputFiles(fileInput, [{type:"image/png", size:8}])
+  await flushAsyncImageWork()
+  await flushAsyncImageWork()
+
+  const previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.match(previewChat.style.getPropertyValue("--chat-editor-image"), /^url\(/)
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
+
+  document.getElementById("cuModalSave").click()
+  let saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(saved.appSettings.messages.chatBgImage, imageUrl)
+
+  openNamedAppSettings("messages")
+  document.getElementById("cuChatBackgroundClear").click()
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-image"), "none")
+  document.getElementById("cuModalSave").click()
+  saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(saved.appSettings.messages.chatBgImage, null)
+})
+
+test("reader message appearance previews and saves bubble weight and reply button color", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-message-weight-and-button=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const weightButtons = [...document.querySelectorAll("[data-cu-bubble-weight]")]
+  const boldButton = document.querySelector('[data-cu-bubble-weight="800"]')
+  const buttonColor = document.querySelector('[data-cu-send-bg-picker]')
+  assert.deepEqual(weightButtons.map(button => Number(button.dataset.cuBubbleWeight)), [400, 500, 800])
+  assert.ok(boldButton)
+  assert.ok(buttonColor)
+
+  boldButton.click()
+  buttonColor.value = "#285c4d"
+  buttonColor.dispatchEvent(new Event("input", { bubbles: true }))
+
+  const previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bubble-weight"), "800")
+  assert.equal(previewChat.style.getPropertyValue("--chat-send-bg"), "#285c4d")
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.equal(saved.appSettings.messages.bubbleFontWeight, 800)
+  assert.equal(saved.appSettings.messages.sendButtonBg, "#285c4d")
+})
+
+test("reader message bottom actions expose custom input colors, radius, and a CSS shortcut", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-message-composer=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const autoToggle = document.getElementById("cuComposerAutoReadability")
+  const barColor = document.querySelector("[data-cu-composer-bg-picker]")
+  const inputColor = document.querySelector("[data-cu-composer-input-bg-picker]")
+  const textColor = document.querySelector("[data-cu-composer-input-text-picker]")
+  const borderColor = document.querySelector("[data-cu-composer-input-border-picker]")
+  const radius = document.getElementById("cuComposerInputRadius")
+  const cssShortcut = document.getElementById("cuMessageActionsCss")
+
+  assert.equal(autoToggle.checked, true)
+  assert.ok(barColor)
+  assert.ok(inputColor)
+  assert.ok(textColor)
+  assert.ok(borderColor)
+  assert.equal(radius.value, "2")
+  assert.ok(cssShortcut)
+
+  autoToggle.click()
+  barColor.value = "#211a24"
+  barColor.dispatchEvent(new Event("input", { bubbles: true }))
+  inputColor.value = "#3a3040"
+  inputColor.dispatchEvent(new Event("input", { bubbles: true }))
+  textColor.value = "#fff4fa"
+  textColor.dispatchEvent(new Event("input", { bubbles: true }))
+  borderColor.value = "#b58da2"
+  borderColor.dispatchEvent(new Event("input", { bubbles: true }))
+  radius.value = "10"
+  radius.dispatchEvent(new Event("input", { bubbles: true }))
+
+  const previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(previewChat.style.getPropertyValue("--chat-composer-surface"), "#211a24")
+  assert.equal(previewChat.style.getPropertyValue("--chat-composer-input"), "#3a3040")
+  assert.equal(previewChat.style.getPropertyValue("--chat-composer-ink"), "#fff4fa")
+  assert.equal(previewChat.style.getPropertyValue("--chat-composer-line"), "#b58da2")
+  assert.equal(previewChat.style.getPropertyValue("--chat-composer-radius"), "10px")
+
+  cssShortcut.click()
+  assert.equal(document.getElementById("cuMessageMore").open, true)
+  assert.equal(document.activeElement, document.getElementById("cuAppCustomCss"))
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.composerAutoReadability, false)
+  assert.equal(saved.composerBg, "#211a24")
+  assert.equal(saved.composerInputBg, "#3a3040")
+  assert.equal(saved.composerInputText, "#fff4fa")
+  assert.equal(saved.composerInputBorder, "#b58da2")
+  assert.equal(saved.composerInputRadius, 10)
+})
+
+test("reader message appearance renders separate full bubble skins with adjustable size", async t => {
+  installDom(t)
+  const imageUrl = staticRasterCases[0][1]
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: {
+      selfBubbleSkinImage: imageUrl,
+      selfBubbleSkinSize: 140,
+      selfBubbleSkinSlice: 18,
+      selfBubbleSkinPadding: 10,
+      otherBubbleSkinImage: imageUrl,
+      otherBubbleSkinSlice: 22,
+      otherBubbleSkinPadding: 7,
+    } },
+  }))
+  await import(`../reader/reader.js?reader-message-bubble-skins=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const preview = document.querySelector(".rd-app-preview-chat")
+  assert.ok(document.getElementById("cuSelfBubbleSkinUpload"))
+  assert.ok(document.getElementById("cuOtherBubbleSkinUpload"))
+  assert.equal(preview.style.getPropertyValue("--chat-self-bubble-min-width"), "162px")
+  assert.equal(preview.style.getPropertyValue("--chat-self-bubble-min-height"), "78px")
+  assert.equal(preview.style.getPropertyValue("--chat-self-bubble-slice"), "18")
+  assert.equal(preview.style.getPropertyValue("--chat-self-bubble-padding"), "10px")
+  assert.equal(preview.style.getPropertyValue("--chat-other-bubble-slice"), "22")
+  assert.equal(preview.style.getPropertyValue("--chat-other-bubble-padding"), "7px")
+  assert.equal(preview.querySelector(".chat-msg.self").classList.contains("has-bubble-skin"), true)
+  assert.equal(preview.querySelector(".chat-msg.other").classList.contains("has-bubble-skin"), true)
+  assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("has-bubble-skin"), true)
+  assert.equal(preview.querySelector(".chat-msg.other .chat-bubble").classList.contains("has-bubble-skin"), true)
+  assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("bubble-skin-full"), true)
+  assert.equal(preview.querySelector(".chat-msg.other .chat-bubble").classList.contains("bubble-skin-full"), true)
+  assert.equal(document.querySelector('[data-cu-bubble-skin-mode="full"][data-cu-bubble-skin-side="self"]').classList.contains("active"), true)
+  assert.equal(document.querySelector('[data-cu-bubble-skin-slice-row="self"]').hidden, true)
+})
+
+test("slice bubble skins use the size control and allow a larger 220 percent range", async t => {
+  installDom(t)
+  const imageUrl = staticRasterCases[0][1]
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: {
+      selfBubbleSkinImage: imageUrl,
+      selfBubbleSkinMode: "slice",
+      selfBubbleSkinSize: 220,
+    } },
+  }))
+  await import(`../reader/reader.js?reader-message-slice-size=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const size = document.getElementById("cuSelfBubbleSkinSize")
+  const preview = document.querySelector(".rd-app-preview-chat")
+  assert.equal(size.max, "220")
+  assert.equal(size.value, "220")
+  assert.equal(preview.style.getPropertyValue("--chat-self-bubble-min-width"), "250px")
+  assert.equal(preview.style.getPropertyValue("--chat-self-bubble-min-height"), "123px")
+  assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("bubble-skin-slice"), true)
+  assert.match(
+    sharedChatCss,
+    /\.phone-frame \.chat-msg\.self \.chat-bubble\.has-bubble-skin\.bubble-skin-slice\s*\{[^}]*min-width:\s*var\(--chat-self-bubble-min-width,\s*116px\);[^}]*min-height:\s*var\(--chat-self-bubble-min-height,\s*56px\);/s,
+  )
+})
+
+test("reader bubble skin upload stays draft-only, clears per side, and resets with bubble group", async t => {
+  installDom(t)
+  const imageUrl = staticRasterCases[0][1]
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: {
+      otherBubbleSkinImage: imageUrl,
+      otherBubbleSkinSlice: 20,
+      otherBubbleSkinPadding: 9,
+    } },
+  }))
+  const beforeRaw = localStorage.getItem("moirain_phoneCustom")
+  installFileReader(t, { result: imageUrl })
+  installImageDecoder(t)
+  await import(`../reader/reader.js?reader-message-bubble-skin-upload=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const selfFile = document.getElementById("cuSelfBubbleSkinFile")
+  setInputFiles(selfFile, [{ type:"image/png", size:8 }])
+  await flushAsyncImageWork()
+  await flushAsyncImageWork()
+
+  let preview = document.querySelector(".rd-app-preview-chat")
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
+  assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("has-bubble-skin"), true)
+  assert.equal(preview.querySelector(".chat-msg.other .chat-bubble").classList.contains("has-bubble-skin"), true)
+
+  document.getElementById("cuSelfBubbleSkinClear").click()
+  preview = document.querySelector(".rd-app-preview-chat")
+  assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("has-bubble-skin"), false)
+  assert.equal(preview.querySelector(".chat-msg.other .chat-bubble").classList.contains("has-bubble-skin"), true)
+
+  setInputFiles(selfFile, [{ type:"image/png", size:8 }])
+  await flushAsyncImageWork()
+  await flushAsyncImageWork()
+  document.getElementById("cuSelfBubbleSkinSize").value = "150"
+  document.getElementById("cuSelfBubbleSkinSize").dispatchEvent(new Event("input", { bubbles:true }))
+  document.getElementById("cuSelfBubbleSkinSlice").value = "24"
+  document.getElementById("cuSelfBubbleSkinSlice").dispatchEvent(new Event("input", { bubbles:true }))
+  document.getElementById("cuSelfBubbleSkinPadding").value = "11"
+  document.getElementById("cuSelfBubbleSkinPadding").dispatchEvent(new Event("input", { bubbles:true }))
+  document.getElementById("cuModalSave").click()
+
+  let saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.selfBubbleSkinImage, imageUrl)
+  assert.equal(saved.selfBubbleSkinMode, "full")
+  assert.equal(saved.selfBubbleSkinSize, 150)
+  assert.equal(saved.selfBubbleSkinSlice, 24)
+  assert.equal(saved.selfBubbleSkinPadding, 11)
+  assert.equal(saved.otherBubbleSkinImage, imageUrl)
+
+  openNamedAppSettings("messages")
+  document.querySelector('[data-cu-reset-message-section="bubbles"]').click()
+  preview = document.querySelector(".rd-app-preview-chat")
+  assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("has-bubble-skin"), false)
+  assert.equal(preview.querySelector(".chat-msg.other .chat-bubble").classList.contains("has-bubble-skin"), false)
+  document.getElementById("cuModalSave").click()
+  saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.selfBubbleSkinImage, null)
+  assert.equal(saved.otherBubbleSkinImage, null)
+})
+
+test("local appearance image upload reports dimensions, size, and edge transparency status", async t => {
+  installDom(t)
+  installFileReader(t, { result: staticRasterCases[0][1] })
+  installImageDecoder(t, { width:640, height:360 })
+  await import(`../reader/reader.js?reader-image-inspection=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  setInputFiles(document.getElementById("cuSelfBubbleSkinFile"), [{
+    name:"bubble.png",
+    type:"image/png",
+    size:512,
+  }])
+  await flushAsyncImageWork()
+  await flushAsyncImageWork()
+  await flushAsyncImageWork()
+
+  const state = document.getElementById("cuSelfBubbleSkinState")
+  assert.match(state.textContent, /640×360/)
+  assert.match(state.textContent, /512 B/)
+  assert.match(state.textContent, /透明边缘/)
+})
+
+test("reader message wallpaper controls preview and save fit, focus, tone, and automatic button contrast", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-message-wallpaper-controls=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  document.querySelector('[data-cu-chat-bg-fit="contain"]').click()
+  const tone = document.getElementById("cuChatBgTone")
+  const positionX = document.getElementById("cuChatBgPosX")
+  const positionY = document.getElementById("cuChatBgPosY")
+  const buttonColor = document.querySelector('[data-cu-send-bg-picker]')
+  tone.value = "-30"
+  tone.dispatchEvent(new Event("input", { bubbles: true }))
+  positionX.value = "22"
+  positionX.dispatchEvent(new Event("input", { bubbles: true }))
+  positionY.value = "78"
+  positionY.dispatchEvent(new Event("input", { bubbles: true }))
+  buttonColor.value = "#285c4d"
+  buttonColor.dispatchEvent(new Event("input", { bubbles: true }))
+
+  const previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bg-size"), "contain")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bg-position"), "22% 78%")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bg-overlay-color"), "#000000")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bg-overlay-opacity"), "0.3")
+  assert.equal(previewChat.style.getPropertyValue("--chat-send-ink"), "#ffffff")
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.chatBgFit, "contain")
+  assert.equal(saved.chatBgPositionX, 22)
+  assert.equal(saved.chatBgPositionY, 78)
+  assert.equal(saved.chatBgTone, -30)
+})
+
+test("reader message appearance groups stay compact and preview clicks reveal the matching section", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-message-appearance-sections=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const sections = [...document.querySelectorAll(".cu-settings-section")]
+  assert.deepEqual(
+    sections.slice(0, 4).map(section => section.id),
+    ["cuMessageBubbles", "cuMessageBackground", "cuMessageActions", "cuMessageCall"],
+  )
+  assert.deepEqual(sections.filter(section => section.open).map(section => section.id), ["cuMessageBubbles"])
+
+  document.querySelector(".rd-app-preview-chat .chat-msg-area").click()
+  assert.equal(document.getElementById("cuMessageBackground").open, true)
+  assert.equal(document.getElementById("cuMessageBubbles").open, false)
+
+  document.querySelector(".rd-app-preview-chat .chat-bubble").click()
+  assert.equal(document.getElementById("cuMessageBubbles").open, true)
+  assert.equal(document.getElementById("cuMessageBackground").open, false)
+
+  document.querySelector(".rd-app-preview-chat #chatSendBtn").click()
+  assert.equal(document.getElementById("cuMessageActions").open, true)
+  assert.equal(document.getElementById("cuMessageBubbles").open, false)
+})
+
+test("reader message bubble controls use collapsible groups and picker-only colors", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-message-bubble-groups=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const groups = [...document.querySelectorAll("#cuMessageBubbles > .cu-settings-section-body > details")]
+  assert.deepEqual(
+    groups.map(group => group.id),
+    ["cuMessageAvatar", "cuMessageSelfBubble", "cuMessageOtherBubble", "cuMessageTypography"],
+  )
+  assert.deepEqual(groups.filter(group => group.open).map(group => group.id), ["cuMessageSelfBubble"])
+  assert.equal(document.querySelectorAll("#cuMessageBubbles .cu-color-btn").length, 0)
+  assert.equal(document.querySelectorAll("#cuMessageBubbles .cu-color-picker").length, 5)
+  assert.equal(document.querySelectorAll("#cuMessageBackground .cu-color-btn").length, 0)
+  assert.equal(document.querySelectorAll("#cuMessageActions .cu-color-btn").length, 0)
+
+  document.querySelector(".rd-app-preview-chat .chat-msg.other .chat-bubble").click()
+  assert.equal(document.getElementById("cuMessageOtherBubble").open, true)
+  assert.equal(document.getElementById("cuMessageSelfBubble").open, false)
+
+  document.querySelector(".rd-app-preview-chat .chat-avatar").click()
+  assert.equal(document.getElementById("cuMessageAvatar").open, true)
+  assert.equal(document.getElementById("cuMessageOtherBubble").open, false)
+})
+
+test("reader appearance ranges support exact numeric entry with clamping", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-exact-ranges=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const range = document.getElementById("cuSelfRadius")
+  const exact = document.querySelector('[data-appearance-range-input="cuSelfRadius"]')
+  assert.ok(exact)
+  assert.equal(exact.value, "8")
+
+  exact.value = "99"
+  exact.dispatchEvent(new Event("change", { bubbles:true }))
+  assert.equal(range.value, "20")
+  assert.equal(exact.value, "20")
+  assert.match(document.querySelector(".rd-app-preview-chat").innerHTML, /border-radius:20px 20px 2px 20px/)
+})
+
+test("reader appearance sections expose live summaries and one-step undo", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-section-state=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const section = document.getElementById("cuMessageBubbles")
+  const summary = section.querySelector("[data-appearance-summary]")
+  const undo = document.querySelector(".appearance-workbench-undo")
+  assert.ok(summary)
+  assert.ok(undo)
+  assert.equal(section.classList.contains("is-appearance-modified"), false)
+  assert.equal(undo.disabled, true)
+
+  const range = document.getElementById("cuBubbleFs")
+  range.dispatchEvent(new MouseEvent("pointerdown", { bubbles:true }))
+  range.value = "16"
+  range.dispatchEvent(new Event("input", { bubbles:true }))
+  assert.equal(section.classList.contains("is-appearance-modified"), true)
+  assert.match(summary.textContent, /16px/)
+  assert.equal(undo.disabled, false)
+
+  undo.click()
+  assert.equal(range.value, "13")
+  assert.equal(section.classList.contains("is-appearance-modified"), false)
+  assert.match(document.querySelector(".rd-app-preview-chat").innerHTML, /font-size:13px/)
+})
+
+test("message bubble appearance can be copied between both sides", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-bubble-style-copy=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const selfColor = document.querySelector("[data-cu-self-bg-picker]")
+  selfColor.value = "#123456"
+  selfColor.dispatchEvent(new Event("input", { bubbles:true }))
+  const selfRadius = document.getElementById("cuSelfRadius")
+  selfRadius.value = "17"
+  selfRadius.dispatchEvent(new Event("input", { bubbles:true }))
+
+  document.querySelector('[data-cu-copy-bubble-style="self-to-other"]').click()
+  assert.equal(document.querySelector("[data-cu-other-bg-picker]").value, "#123456")
+  assert.equal(document.getElementById("cuOtherRadius").value, "17")
+  assert.equal(document.getElementById("cuMessageOtherBubble").open, true)
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.otherBubbleBg, "#123456")
+  assert.equal(saved.otherBubbleRadius, 17)
+})
+
+test("non-message App preview clicks reveal their matching settings", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-preview-targets=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("forum")
+  document.querySelector(".rd-forum-title").click()
+  assert.equal(document.getElementById("cuForumTypography").open, true)
+  assert.equal(document.querySelector(".appearance-workbench-pages").dataset.appearanceActivePage, "controls")
+  document.getElementById("cuModalCancel").click()
+
+  openNamedAppSettings("gallery")
+  document.querySelector(".rd-gallery-photo").click()
+  assert.equal(document.getElementById("cuGalleryAppearance").open, true)
+})
+
+test("every reader App appearance editor uses collapsible groups and shared preview pages", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-all-app-disclosures=${Date.now()}-${Math.random()}`)
+
+  const expectedSections = {
+    forum: ["cuForumAvatar", "cuForumCards", "cuForumTypography", "cuAppMore"],
+    memo: ["cuMemoStyle", "cuMemoAppearance", "cuAppMore"],
+    gallery: ["cuGalleryGrid", "cuGalleryAppearance", "cuAppMore"],
+    browser: ["cuBrowserTypography", "cuBrowserEntries", "cuAppMore"],
+    shopping: ["cuShoppingNames", "cuShoppingPrices", "cuAppMore"],
+    contacts: ["cuContactsAvatar", "cuContactsNames", "cuAppMore"],
+  }
+
+  for (const [type, sectionIds] of Object.entries(expectedSections)) {
+    openNamedAppSettings(type)
+    const workbench = document.querySelector(".app-appearance-workbench")
+    const sections = [...workbench.querySelectorAll(".app-appearance-controls > .cu-settings-section")]
+    assert.equal(workbench.querySelectorAll(".app-appearance-controls > .cu-card").length, 0, type)
+    assert.deepEqual(sections.map(section => section.id), sectionIds, type)
+    assert.deepEqual(sections.filter(section => section.open).map(section => section.id), [sectionIds[0]], type)
+    assert.ok(workbench.querySelector('[data-appearance-page="preview"]'), type)
+    assert.ok(workbench.querySelector('[data-appearance-page="controls"]'), type)
+    assert.ok(workbench.querySelector('[data-appearance-page-target="preview"]'), type)
+    assert.ok(workbench.querySelector('[data-appearance-page-target="controls"]'), type)
+
+    workbench.querySelector('[data-appearance-page-target="controls"]').click()
+    assert.equal(workbench.querySelector(".appearance-workbench-pages").dataset.appearanceActivePage, "controls")
+    document.getElementById("cuModalCancel").click()
+  }
+})
+
+test("reader App preview scales to the available height on short wide screens", async t => {
+  const dom = installDom(t)
+  Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 1100 })
+  await import(`../reader/reader.js?reader-app-preview-height=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const modalBody = document.querySelector(".app-appearance-workbench .cu-modal-body")
+  const previewLabel = document.querySelector(".app-appearance-preview-pane .cu-preview-label")
+  const previewStatus = document.querySelector(".app-appearance-preview-pane .phone-appearance-status")
+  const previewFrame = document.querySelector(".reader-app-preview-frame")
+  const previewWrap = document.querySelector(".app-appearance-preview-pane .rd-phone-preview")
+  Object.defineProperty(modalBody, "clientHeight", { configurable: true, value: 520 })
+  Object.defineProperty(previewLabel, "offsetHeight", { configurable: true, value: 24 })
+  Object.defineProperty(previewStatus, "offsetHeight", { configurable: true, value: 22 })
+  Object.defineProperty(previewFrame, "offsetHeight", { configurable: true, value: 640 })
+
+  dom.window.dispatchEvent(new Event("resize"))
+
+  assert.equal(document.querySelector(".app-appearance-workbench").style.getPropertyValue("--reader-app-preview-scale"), "0.659")
+  assert.equal(previewWrap.style.height, "422px")
+  assert.equal(previewWrap.style.overflow, "hidden")
+})
+
+test("reader message section reset stays draft-only and preserves other groups", async t => {
+  installDom(t)
+  const imageUrl = staticRasterCases[0][1]
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: {
+      avatarShape: "square",
+      avatarSize: 52,
+      selfBubbleBg: "#123456",
+      bubbleFontWeight: 800,
+      chatBg: "#25435f",
+      chatBgImage: imageUrl,
+      chatBgFit: "contain",
+      chatBgPositionX: 22,
+      sendButtonBg: "#285c4d",
+    } },
+  }))
+  await import(`../reader/reader.js?reader-message-section-reset=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const rawBefore = localStorage.getItem("moirain_phoneCustom")
+  const resetButtons = [...document.querySelectorAll("[data-cu-reset-message-section]")]
+  assert.deepEqual(resetButtons.map(button => button.dataset.cuResetMessageSection), ["bubbles", "background", "actions", "call"])
+
+  document.querySelector('[data-cu-reset-message-section="bubbles"]').click()
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), rawBefore)
+  assert.equal(document.querySelector('[data-cu-shape="circle"]').classList.contains("active"), true)
+  assert.equal(document.getElementById("cuMsgAvSize").value, "36")
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-bubble-weight"), "400")
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-bg-size"), "contain")
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.avatarShape, "circle")
+  assert.equal(saved.avatarSize, 36)
+  assert.equal(saved.selfBubbleBg, "#555")
+  assert.equal(saved.bubbleFontWeight, 400)
+  assert.equal(saved.chatBg, "#25435f")
+  assert.equal(saved.chatBgImage, imageUrl)
+  assert.equal(saved.chatBgFit, "contain")
+  assert.equal(saved.chatBgPositionX, 22)
+  assert.equal(saved.sendButtonBg, "#285c4d")
+})
+
+test("reader message wallpaper focus can be dragged directly in the preview", async t => {
+  installDom(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: { chatBgImage: staticRasterCases[0][1] } },
+  }))
+  await import(`../reader/reader.js?reader-message-wallpaper-drag=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const area = document.querySelector(".rd-app-preview-chat .chat-msg-area")
+  area.getBoundingClientRect = () => ({ left: 10, top: 20, width: 200, height: 100, right: 210, bottom: 120 })
+  const pointer = (type, x, y) => {
+    const event = new Event(type, { bubbles: true, cancelable: true })
+    Object.defineProperties(event, {
+      clientX: { value: x },
+      clientY: { value: y },
+      pointerId: { value: 1 },
+    })
+    return event
+  }
+
+  area.dispatchEvent(pointer("pointerdown", 30, 30))
+  document.dispatchEvent(pointer("pointermove", 170, 90))
+  document.dispatchEvent(pointer("pointerup", 170, 90))
+
+  assert.equal(document.getElementById("cuChatBgPosX").value, "80")
+  assert.equal(document.getElementById("cuChatBgPosY").value, "70")
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-bg-position"), "80% 70%")
+})
+
+test("reader message section resets stay draft-only and do not affect sibling groups", async t => {
+  installDom(t)
+  const imageUrl = staticRasterCases[0][1]
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: {
+      bubbleFontSize: 17,
+      bubbleFontWeight: 800,
+      chatBg: "#1a1a2e",
+      chatBgImage: imageUrl,
+      chatBgFit: "contain",
+      chatBgPositionX: 20,
+      chatBgPositionY: 80,
+      chatBgTone: -30,
+      sendButtonBg: "#493b40",
+    } },
+  }))
+  const beforeRaw = localStorage.getItem("moirain_phoneCustom")
+  await import(`../reader/reader.js?reader-message-section-reset=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  document.querySelector('[data-cu-reset-message-section="background"]').click()
+
+  let previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(document.getElementById("cuChatBgTone").value, "0")
+  assert.equal(document.getElementById("cuChatBgPosX").value, "50")
+  assert.equal(document.getElementById("cuChatBgPosY").value, "50")
+  assert.equal(document.querySelector('[data-cu-chat-bg-fit="cover"]').classList.contains("active"), true)
+  assert.equal(previewChat.style.getPropertyValue("--chat-editor-image"), "none")
+  assert.equal(document.getElementById("cuBubbleFs").value, "17")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bubble-weight"), "800")
+  assert.equal(previewChat.style.getPropertyValue("--chat-send-bg"), "#493b40")
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
+
+  document.querySelector('[data-cu-reset-message-section="bubbles"]').click()
+  previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(document.getElementById("cuBubbleFs").value, "13")
+  assert.equal(previewChat.style.getPropertyValue("--chat-bubble-weight"), "400")
+  assert.equal(previewChat.style.getPropertyValue("--chat-send-bg"), "#493b40")
+
+  document.querySelector('[data-cu-reset-message-section="actions"]').click()
+  previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(previewChat.style.getPropertyValue("--chat-send-bg"), "#cda9b1")
+  assert.equal(previewChat.style.getPropertyValue("--chat-send-ink"), "#241d20")
+
+  document.getElementById("cuModalSave").click()
+  const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages
+  assert.equal(saved.bubbleFontSize, 13)
+  assert.equal(saved.bubbleFontWeight, 400)
+  assert.equal(saved.chatBg, "#f0f0f0")
+  assert.equal(saved.chatBgImage, null)
+  assert.equal(saved.chatBgFit, "cover")
+  assert.equal(saved.chatBgPositionX, 50)
+  assert.equal(saved.chatBgPositionY, 50)
+  assert.equal(saved.chatBgTone, 0)
+  assert.equal(saved.sendButtonBg, "#cda9b1")
+})
+
+test("reader App preview uses the dynamic desktop scale variable", () => {
+  assert.match(
+    readerCss,
+    /@media \(min-width: 861px\)\s*\{[\s\S]*?\.app-appearance-workbench \.reader-app-preview-frame\s*\{[^}]*transform:\s*scale\(var\(--reader-app-preview-scale,\s*1\)\);[^}]*transform-origin:\s*top center;[^}]*\}[\s\S]*?\}/,
+  )
+})
+
+test("reader message wallpaper readability stays local and protects dark backgrounds", async t => {
+  installDom(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings: { messages: {
+      chatBgImage:staticRasterCases[0][1],
+      chatBgLuminance:0.08,
+      chatAutoReadability:true,
+    } },
+  }))
+  await import(`../reader/reader.js?reader-message-readability=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const previewChat = document.querySelector(".rd-app-preview-chat")
+  assert.equal(document.getElementById("cuChatAutoReadability").checked, true)
+  assert.equal(previewChat.style.getPropertyValue("--chat-time-color"), "#ffffff")
+  assert.equal(previewChat.style.getPropertyValue("--chat-composer-ink"), "#ffffff")
+  assert.match(previewChat.style.getPropertyValue("--chat-composer-surface"), /^rgba\(/)
+
+  document.getElementById("cuChatAutoReadability").click()
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-time-color"), "#b0b8c4")
+})
+
+test("reader App settings expose an honest dirty draft and guarded discard", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-dirty-draft=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const save = document.getElementById("cuModalSave")
+  const status = document.getElementById("cuAppLiveStatus")
+  assert.equal(save.disabled, true)
+  assert.match(status.textContent, /尚未修改/)
+
+  const size = document.getElementById("cuBubbleFs")
+  size.value = "15"
+  size.dispatchEvent(new Event("input", { bubbles:true }))
+  assert.equal(save.disabled, false)
+  assert.match(status.textContent, /未保存/)
+
+  document.getElementById("cuModalClose").click()
+  assert.ok(document.querySelector(".app-appearance-workbench"))
+  const discard = document.querySelector('[data-feedback-action]')
+  assert.equal(discard.textContent, "放弃修改")
+  discard.click()
+  assert.equal(document.querySelector(".app-appearance-workbench"), null)
+})
+
+test("reader App Restore Default is draft-only and immediately undoable", async t => {
+  installDom(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    appSettings:{ messages:{ selfBubbleBg:"#3b82f6" } },
+  }))
+  const beforeRaw = localStorage.getItem("moirain_phoneCustom")
+  await import(`../reader/reader.js?reader-app-reset-undo=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  document.getElementById("cuAppReset").click()
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-pink"), "#555")
+  assert.equal(document.getElementById("cuModalSave").disabled, false)
+  const undo = document.querySelector('[data-feedback-action]')
+  assert.equal(undo.textContent, "撤销")
+
+  undo.click()
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-pink"), "#3b82f6")
+  assert.equal(document.getElementById("cuModalSave").disabled, true)
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
+})
+
+test("reader App preview supports press-and-hold original comparison", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?reader-app-hold-comparison=${Date.now()}-${Math.random()}`)
+
+  openNamedAppSettings("messages")
+  const picker = document.querySelector('[data-cu-self-bg-picker]')
+  picker.value = "#3b82f6"
+  picker.dispatchEvent(new Event("input", { bubbles:true }))
+  await new Promise(resolve => setTimeout(resolve, 60))
+
+  const frame = document.querySelector(".reader-app-preview-frame")
+  const pointer = type => {
+    const event = new Event(type, { bubbles:true, cancelable:true })
+    Object.defineProperties(event, {
+      pointerId:{ value:1 },
+      pointerType:{ value:"mouse" },
+      button:{ value:0 },
+      clientX:{ value:20 },
+      clientY:{ value:20 },
+    })
+    return event
+  }
+  frame.dispatchEvent(pointer("pointerdown"))
+  await new Promise(resolve => setTimeout(resolve, 240))
+  assert.equal(document.querySelector(".app-appearance-workbench").classList.contains("is-comparing-original"), true)
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-pink"), "#555")
+
+  document.dispatchEvent(pointer("pointerup"))
+  assert.equal(document.querySelector(".app-appearance-workbench").classList.contains("is-comparing-original"), false)
+  assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-pink"), "#3b82f6")
+})
+
+test("phone chat keeps the selected wallpaper layer and uses appearance variables", () => {
+  const messageAreaRule = sharedChatCssBody(".phone-frame .chat-msg-area")
+  const bubbleRule = sharedChatCssBody(".phone-frame .chat-bubble")
+  const sendButtonRule = sharedChatCssBody(".phone-frame .chat-composer #chatSendBtn")
+
+  assert.match(messageAreaRule, /background-color:\s*var\(--chat-editor-screen\);/)
+  assert.match(messageAreaRule, /background-image:\s*var\(--chat-editor-image,\s*none\);/)
+  assert.match(messageAreaRule, /background-position:\s*var\(--chat-bg-position,\s*center\);/)
+  assert.match(messageAreaRule, /background-size:\s*var\(--chat-bg-size,\s*cover\);/)
+  assert.doesNotMatch(messageAreaRule, /(?:^|;)\s*background:\s*/)
+  assert.match(bubbleRule, /font-weight:\s*var\(--chat-bubble-weight,\s*400\);/)
+  assert.match(sharedChatCss, /\.phone-frame \.chat-bubble\.has-bubble-skin\.bubble-skin-slice\s*\{[^}]*border-image-repeat:\s*stretch;[^}]*background:\s*transparent\s*!important;/s)
+  assert.match(sharedChatCss, /\.phone-frame \.chat-msg\.has-bubble-skin\s*\{[^}]*align-items:\s*center;/s)
+  assert.match(sharedChatCss, /\.phone-frame \.chat-bubble\.has-bubble-skin\.bubble-skin-full\s*\{[^}]*background-size:\s*100% 100%\s*!important;/s)
+  assert.match(sharedChatCss, /\.phone-frame \.chat-msg\.self \.chat-bubble\.has-bubble-skin\.bubble-skin-slice\s*\{[^}]*border-image-source:\s*var\(--chat-self-bubble-skin\);[^}]*border-image-slice:\s*var\(--chat-self-bubble-slice,\s*16\)\s+fill;/s)
+  assert.match(sharedChatCss, /\.phone-frame \.chat-msg\.other \.chat-bubble\.has-bubble-skin\.bubble-skin-slice\s*\{[^}]*border-image-source:\s*var\(--chat-other-bubble-skin\);[^}]*border-image-slice:\s*var\(--chat-other-bubble-slice,\s*16\)\s+fill;/s)
+  assert.match(sendButtonRule, /background:\s*var\(--chat-send-bg,\s*#cda9b1\);/)
+  assert.match(sendButtonRule, /color:\s*var\(--chat-send-ink,\s*#241d20\);/)
+  assert.match(sharedChatCss, /--chat-composer-surface/)
+  assert.match(sharedChatCss, /--chat-time-color/)
+  assert.match(
+    sharedChatCss,
+    /\.phone-frame \.chat-msg-area::before\s*\{[^}]*background:\s*var\(--chat-bg-overlay-color,\s*#000000\);[^}]*opacity:\s*var\(--chat-bg-overlay-opacity,\s*0\);/s,
+  )
 })
 
 test("reader App color controls keep 44px targets and visible focus", () => {
@@ -479,6 +1216,7 @@ test("call preset changes stay draft-only until Save and Cancel preserves raw st
   assert.equal(document.querySelector('#cuCallBackgroundPreview').dataset.callBackground, "water")
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
   document.getElementById("cuModalCancel").click()
+  document.querySelector('[data-feedback-action]').click()
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
 
   openNamedAppSettings("messages")
@@ -537,6 +1275,9 @@ test("all non-Save call background dismissals preserve raw storage", async t => 
     assert.equal(localStorage.getItem("moirain_phoneCustom"), originalRaw)
 
     dismissal.dismiss()
+    const discard = document.querySelector('[data-feedback-action]')
+    assert.equal(discard.textContent, "放弃修改")
+    discard.click()
 
     assert.equal(document.querySelector(".cu-modal-overlay"), null, `${dismissal.name} closes the modal`)
     assert.equal(localStorage.getItem("moirain_phoneCustom"), originalRaw, `${dismissal.name} preserves storage`)
@@ -823,7 +1564,7 @@ test("persisted images stay preset-only until canonical current-session decode s
   decoder.succeed()
   await flushAsyncImageWork()
   preview = document.getElementById("cuCallBackgroundPreview")
-  assert.equal(save.disabled, false)
+  assert.equal(save.disabled, true)
   assert.equal(preview.dataset.callBackground, "image")
   assert.match(preview.getAttribute("style") || "", /--rd-call-image/)
   assert.match(preview.getAttribute("style") || "", new RegExp(canonicalUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
@@ -833,7 +1574,7 @@ test("persisted images stay preset-only until canonical current-session decode s
   openNamedAppSettings("messages")
   preview = document.getElementById("cuCallBackgroundPreview")
   assert.equal(decoder.pending.length, 1, "verified canonical URL is reused from the session Set")
-  assert.equal(document.getElementById("cuModalSave").disabled, false)
+  assert.equal(document.getElementById("cuModalSave").disabled, true)
   assert.equal(preview.dataset.callBackground, "image")
 })
 
@@ -870,7 +1611,7 @@ for (const [name, dataUrl] of invalidPersistedCandidates) {
     assert.doesNotMatch(preview.outerHTML, /--rd-call-image|data:image/)
     assert.equal(error.hidden, false)
     assert.ok(error.textContent.trim())
-    assert.equal(document.getElementById("cuModalSave").disabled, false)
+    assert.equal(document.getElementById("cuModalSave").disabled, true)
     assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
   })
 }

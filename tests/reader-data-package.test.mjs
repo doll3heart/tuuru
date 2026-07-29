@@ -11,6 +11,7 @@ import {
   emptyReaderLibrary,
   rememberReaderWork,
   saveReaderProgress,
+  setReaderBookPinned,
 } from "../reader/reader-library-state.js"
 
 function work(id, title = id) {
@@ -160,6 +161,27 @@ test("reader data merge keeps newer slots and local binary appearance assets", (
     "data:image/png;base64,Y2FsbA==",
   )
   assert.equal(merged.appearance.phone.appSettings.messages.bubbleFontSize, 16)
+})
+
+test("reader data restore keeps current-device pin choices and imports pins for new books", () => {
+  let currentLibrary = rememberReaderWork(emptyReaderLibrary(), work("book-a"), 100)
+  currentLibrary = setReaderBookPinned(currentLibrary, "book-a", true, 500)
+  currentLibrary = rememberReaderWork(currentLibrary, work("book-b"), 200)
+
+  let incomingLibrary = rememberReaderWork(emptyReaderLibrary(), work("book-a"), 1000)
+  incomingLibrary = rememberReaderWork(incomingLibrary, work("book-b"), 1100)
+  incomingLibrary = setReaderBookPinned(incomingLibrary, "book-b", true, 1200)
+  incomingLibrary = rememberReaderWork(incomingLibrary, work("book-c"), 1150)
+  incomingLibrary = setReaderBookPinned(incomingLibrary, "book-c", true, 1300)
+
+  const incomingPackage = inspectReaderDataPackage(serializeReaderDataPackage({
+    library:incomingLibrary,
+  }, new Date("2026-07-28T12:00:00.000Z")))
+  const merged = mergeReaderDataPackage({ library:currentLibrary }, incomingPackage)
+
+  assert.equal(merged.library.books.find(book => book.id === "book-a").pinnedAt, 500)
+  assert.equal(merged.library.books.find(book => book.id === "book-b").pinnedAt, undefined)
+  assert.equal(merged.library.books.find(book => book.id === "book-c").pinnedAt, 1300)
 })
 
 test("reader data inspection rejects malformed, unsupported, oversized, and accessor-backed input", () => {

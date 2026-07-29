@@ -106,3 +106,34 @@ test("a write scheduled while flushing remains pending for the next pass", () =>
   buffer.flush("node:1")
   assert.deepEqual(writes, ["first", "second"])
 })
+
+test("persistence buffer reports editing, saving, saved, and failed states", () => {
+  const timers = fakeTimers()
+  const states = []
+  const buffer = createEditorPersistenceBuffer({
+    setTimer: callback => timers.setTimer(callback),
+    clearTimer: id => timers.clearTimer(id),
+    onStateChange(snapshot) {
+      states.push({
+        state:snapshot.state,
+        pendingCount:snapshot.pendingCount,
+        message:snapshot.error?.message || "",
+      })
+    },
+  })
+
+  buffer.schedule("node:1", () => {})
+  timers.runAll()
+
+  buffer.schedule("node:2", () => { throw new Error("quota") })
+  assert.throws(() => timers.runAll(), /quota/)
+
+  assert.deepEqual(states, [
+    {state:"editing", pendingCount:1, message:""},
+    {state:"saving", pendingCount:0, message:""},
+    {state:"saved", pendingCount:0, message:""},
+    {state:"editing", pendingCount:1, message:""},
+    {state:"saving", pendingCount:0, message:""},
+    {state:"error", pendingCount:0, message:"quota"},
+  ])
+})

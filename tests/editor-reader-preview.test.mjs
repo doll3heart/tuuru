@@ -54,7 +54,11 @@ test("preview URLs stay same-origin under a subdirectory and encode the work id"
   assert.equal(typeof bridge.buildReaderPreviewUrl, "function")
   assert.equal(
     bridge.buildReaderPreviewUrl("work id/雪", dom.window.location.href),
-    "https://example.test/tuuru/reader/index.html?preview=work+id%2F%E9%9B%AA",
+    "https://example.test/tuuru/reader/index.html?preview=work+id%2F%E9%9B%AA&returnTo=%23%2F",
+  )
+  assert.equal(
+    bridge.buildReaderPreviewUrl("work-1", "https://example.test/tuuru/index.html#/edit/work-1"),
+    "https://example.test/tuuru/reader/index.html?preview=work-1&returnTo=%23%2Fedit%2Fwork-1",
   )
   assert.throws(() => bridge.buildReaderPreviewUrl("  ", dom.window.location.href), /work id/i)
 
@@ -64,7 +68,7 @@ test("preview URLs stay same-origin under a subdirectory and encode the work id"
     replace(value) { replacedWith = value },
   }
   const openedUrl = bridge.openReaderPreview("work-1", locationObject)
-  assert.equal(openedUrl, "https://example.test/tuuru/reader/index.html?preview=work-1")
+  assert.equal(openedUrl, "https://example.test/tuuru/reader/index.html?preview=work-1&returnTo=%23%2F")
   assert.equal(replacedWith, openedUrl)
 })
 

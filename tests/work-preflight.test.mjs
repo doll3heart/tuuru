@@ -67,6 +67,11 @@ test("article inspection derives its start and reports blank nodes and broken br
     ],
   )
   assert.ok(report.issues.every(issue => issue.title && issue.location && issue.action))
+  assert.equal(report.issues.find(issue => issue.code === "work-title-empty").locator.surface, "work-info")
+  assert.deepEqual(
+    report.issues.find(issue => issue.code === "article-choice-target-missing").locator,
+    {surface:"article", nodeId:"start"},
+  )
 })
 
 test("phone inspection reports broken people, links, flow steps, and hidden App content", () => {
@@ -116,6 +121,11 @@ test("phone inspection reports broken people, links, flow steps, and hidden App 
       "phone-reading-flow-target-missing",
       "phone-hidden-app-has-content",
     ],
+  )
+  assert.ok(report.issues.every(issue => issue.locator?.surface === "phone"))
+  assert.equal(
+    report.issues.find(issue => issue.code === "phone-forum-link-missing").locator.appType,
+    "messages",
   )
 })
 

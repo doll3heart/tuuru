@@ -51,7 +51,8 @@ var _articleTargetPick = null
 var _articleTargetInspect = null
 var _movingInteractionGroup = null
 var _splitPaneController = null
-var _editorPersistence = createEditorPersistenceBuffer()
+var _editorPersistenceState = {state:"saved", pendingCount:0, error:null}
+var _editorPersistence = createEditorPersistenceBuffer({onStateChange:updateEditorPersistenceState})
 var FORMAT_COMMANDS = { bold:'bold', italic:'italic', underline:'underline', left:'justifyLeft', center:'justifyCenter', right:'justifyRight' }
 var AUTHOR_NOTE_GROUPS = [
   {
@@ -89,6 +90,22 @@ var AUTHOR_NOTE_GROUPS = [
 ]
 var AUTHOR_NOTE_SECTIONS = AUTHOR_NOTE_GROUPS.flatMap(function(group) { return group.sections })
 var AUTHOR_NOTE_SECTION_IDS = AUTHOR_NOTE_SECTIONS.map(function(section) { return section.id })
+
+function editorPersistenceCopy(snapshot) {
+  if (snapshot?.state === "editing") return "编辑中"
+  if (snapshot?.state === "saving") return "保存中"
+  if (snapshot?.state === "error") return "保存失败"
+  return "已保存"
+}
+
+function updateEditorPersistenceState(snapshot) {
+  _editorPersistenceState = snapshot || {state:"saved", pendingCount:0, error:null}
+  var copy = editorPersistenceCopy(_editorPersistenceState)
+  document.querySelectorAll(".editor-mobile-save-state,[data-author-notes-status]").forEach(function(status) {
+    status.textContent = copy
+    status.dataset.saveState = _editorPersistenceState.state
+  })
+}
 
 function esc(s) {
   if (!s) return ""
@@ -308,7 +325,16 @@ export function renderEditor(wid) {
   if (split.collapsed && _articleTargetPick) splitState += ' data-outline-overlay="true"'
   var divider = '<div class="editor-splitter" data-editor-splitter role="separator" aria-label="调整正文与作品结构宽度" aria-orientation="vertical" aria-valuemin="180" aria-valuemax="520" aria-valuenow="' + split.width + '" tabindex="0"><span aria-hidden="true"></span></div>'
   var reopen = '<button type="button" class="editor-outline-reopen" data-editor-outline-reopen data-a="outline-reopen" aria-label="打开作品结构">结构</button>'
-  return '<div class="editor-page"><div class="editor-body-area" data-mobile-pane="' + _mobilePane + '"' + splitState + ' style="--editor-outline-width:' + split.width + 'px">' + L + buildMobileViewSwitch() + E + divider + W + reopen + M + '</div></div>'
+  return '<div class="editor-page">' + buildPreflightReturnBar(wid) + '<div class="editor-body-area" data-mobile-pane="' + _mobilePane + '"' + splitState + ' style="--editor-outline-width:' + split.width + 'px">' + L + buildMobileViewSwitch() + E + divider + W + reopen + M + '</div></div>'
+}
+
+function buildPreflightReturnBar(wid) {
+  var pending = null
+  try {
+    pending = JSON.parse(sessionStorage.getItem("tuuru_preflight_return") || "null")
+  } catch {}
+  if (!pending || pending.workId !== wid) return ""
+  return '<div class="editor-preflight-return" role="status"><span><strong>正在修复发布前体检问题</strong><small>修改会自动保存，完成后重新检查即可。</small></span><button type="button" class="btn btn-sm btn-primary" data-a="return-preflight" data-w="' + escAttr(wid) + '">重新体检</button></div>'
 }
 
 function buildMobileViewSwitch() {
@@ -335,7 +361,7 @@ function buildMobileCommandbar(wid, nid) {
   h += '<button type="button" data-a="mobile-tools" data-panel="insert" data-mobile-editor-tool aria-label="插入内容" aria-controls="mobileInsertPanel" aria-expanded="false"' + editorToolsDisabled + '><span aria-hidden="true">＋</span></button>'
   h += '<button type="button" data-a="undo" data-n="' + nid + '" aria-label="撤回" title="撤回"' + editorToolsDisabled + '><span aria-hidden="true">↶</span></button>'
   h += '<button type="button" data-a="redo" data-n="' + nid + '" aria-label="重做" title="重做"' + editorToolsDisabled + '><span aria-hidden="true">↷</span></button>'
-  h += '<span class="editor-mobile-save-state" aria-live="polite">已保存</span>'
+  h += '<span class="editor-mobile-save-state" data-save-state="' + escAttr(_editorPersistenceState.state) + '" aria-live="polite">' + editorPersistenceCopy(_editorPersistenceState) + '</span>'
   h += '</div>'
 
   h += '<section class="editor-mobile-tool-panel" id="mobileInsertPanel" data-mobile-tool-panel="insert" aria-label="插入内容" hidden>'
@@ -1060,7 +1086,7 @@ function buildAuthorNotesPane(workId, viewState, active) {
   var activeSection = viewState.noteSection || "outline"
   if (!AUTHOR_NOTE_SECTION_IDS.includes(activeSection)) activeSection = "outline"
   var h = '<section class="editor-side-view author-notes-pane" id="articleNotesPane"' + (active ? '' : ' hidden') + '>'
-  h += '<div class="author-notes-head"><div><strong>作品设定</strong><small>写作时随手查阅的私人资料库</small></div><span data-author-notes-status role="status" aria-live="polite">已保存</span></div>'
+  h += '<div class="author-notes-head"><div><strong>作品设定</strong><small>写作时随手查阅的私人资料库</small></div><span data-author-notes-status data-save-state="' + escAttr(_editorPersistenceState.state) + '" role="status" aria-live="polite">' + editorPersistenceCopy(_editorPersistenceState) + '</span></div>'
   h += '<p class="author-notes-privacy"><span aria-hidden="true">◇</span>仅保存在作者端，不进入作品预览与导出文件</p>'
   h += '<label class="author-notes-search"><span class="sr-only">搜索作品设定</span><input type="search" data-author-notes-search aria-label="搜索作品设定" placeholder="搜索分类或已记录内容"><output data-author-notes-search-status aria-live="polite">8 个分类</output></label>'
   h += '<nav class="author-notes-directory" aria-label="设定分类">'
@@ -1264,6 +1290,11 @@ function handleClick(e) {
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
   var mobileShell = b.closest(".editor-body-area")
+  if (a === "return-preflight") {
+    _editorPersistence.flush()
+    globalThis.openWorkPreflight?.(w)
+    return
+  }
   if (a === "outline-reopen") {
     _splitPaneController?.openOverlay(mobileShell)
     mobileShell?.querySelector("[data-work-search]")?.focus()
@@ -3284,8 +3315,6 @@ document.addEventListener("input", function(e) {
     })
     var notesPane = authorNote.closest("#articleNotesPane")
     var count = authorNote.value.length
-    var notesStatus = notesPane?.querySelector("[data-author-notes-status]")
-    if (notesStatus) notesStatus.textContent = "已保存"
     var sectionCount = notesPane?.querySelector('[data-a="note-section"][data-section="' + section + '"] [data-note-count]')
     if (sectionCount) {
       sectionCount.textContent = String(count)

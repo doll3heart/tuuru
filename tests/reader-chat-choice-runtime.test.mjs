@@ -145,6 +145,36 @@ test("reader-authored messages use the reader profile avatar", async t => {
   assert.equal(avatar.getAttribute("aria-label"), "读者昵称")
 })
 
+test("saved reader chat background reaches the actual conversation screen", async t => {
+  const imageUrl = `data:image/png;base64,${Buffer.from("\x89PNG\r\n\x1a\n", "binary").toString("base64")}`
+  await openSeededChat(t, choiceWork(), {
+    appSettings:{
+      messages:{
+        chatBg:"#25435f",
+        chatBgImage:imageUrl,
+        chatBgFit:"contain",
+        chatBgPositionX:22,
+        chatBgPositionY:78,
+        chatBgTone:-30,
+        bubbleFontWeight:700,
+        sendButtonBg:"#285c4d",
+      },
+    },
+  })
+
+  const chat = document.querySelector(".rd-phone-app-messages")
+  assert.ok(chat)
+  assert.equal(chat.style.getPropertyValue("--chat-editor-screen"), "#25435f")
+  assert.match(chat.style.getPropertyValue("--chat-editor-image"), /^url\(/)
+  assert.equal(chat.style.getPropertyValue("--chat-bg-size"), "contain")
+  assert.equal(chat.style.getPropertyValue("--chat-bg-position"), "22% 78%")
+  assert.equal(chat.style.getPropertyValue("--chat-bg-overlay-color"), "#000000")
+  assert.equal(chat.style.getPropertyValue("--chat-bg-overlay-opacity"), "0.3")
+  assert.equal(chat.style.getPropertyValue("--chat-bubble-weight"), "800")
+  assert.equal(chat.style.getPropertyValue("--chat-send-bg"), "#285c4d")
+  assert.equal(chat.style.getPropertyValue("--chat-send-ink"), "#ffffff")
+})
+
 test("a choice without reader text keeps reselection on its first generated follow-up", async t => {
   const work = choiceWork()
   const choice = work.phoneData.chats[0].rounds[0].messages[0].choices[0]

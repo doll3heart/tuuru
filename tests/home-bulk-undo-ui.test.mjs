@@ -12,6 +12,8 @@ test("successful text replacement and time shifting register one guarded undo", 
   assert.match(homeSource, /批量顺延时间/)
   assert.match(homeSource, /registerBulkUndo/)
   assert.match(homeSource, /expectedWorkToken/)
+  assert.match(homeSource, /actionLabel:"撤销"/)
+  assert.match(homeSource, /onAction:\(\) => undoBulk/)
 })
 
 test("only the affected work card exposes the recent bulk undo action", () => {

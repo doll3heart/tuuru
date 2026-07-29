@@ -36,26 +36,25 @@ function createDom() {
 }
 
 test("current major announcement covers every user-facing release area", () => {
-  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.id, "2026-07-26-article-memory-interactive-pages")
+  assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.id, "2026-07-29-reader-polish-and-release-workflow")
   assert.equal(CURRENT_RELEASE_ANNOUNCEMENT.items.length, 9)
   const copy = [
     CURRENT_RELEASE_ANNOUNCEMENT.intro,
     ...CURRENT_RELEASE_ANNOUNCEMENT.items.flatMap(item => [item.title, item.body]),
   ].join("\n")
   for (const required of [
-    "正文段落", "节点标题", "NEXT", "自动起点", "第一个普通节点",
-    "选项文本", "选择后内容", "首行缩进", "隐藏节点", "稳定 ID",
-    "正文任意位置", "同一节点可以容纳多组", "独立记录读者选择",
-    "剧情分支固定在节点末尾", "未放进正文", "重复放置",
-    "同一条件组", "附加条件组", "互动图片", "独立阅读页面", "后续跳转至",
-    "暂不承载剧情分支", "作者设定", "故事总纲", "人物关系", "不随作品导出",
-    "读者美化包", "个人主页顶部图", "不会包含读者昵称、头像、ID",
-    "缓冲保存", "发布检查", "内置教程", "不会清空 localStorage",
-    "只打开首页", "安全默认值", "作品格式版本", "附加字段继续保留",
-    "没有归属章节的节点", "归入第一章", "既有互动文章", "自动起点",
-    "同章普通节点", "首次正式上线", "停止覆盖", "保留原始数据",
+    "长按管理", "置顶", "系统明暗模式", "占位符", "身份组",
+    "稳定身份", "新版本", "较早版本", "版本冲突", "变化摘要",
+    "阅读进度", "存档", "书签", "限时撤销", "折叠分区",
+    "左侧实时预览", "预览与设置双页工作台", "未保存状态",
+    "聊天壁纸", "可读性保护", "加粗", "PNG", "WebP",
+    "切片拉伸", "220%", "中线对齐", "取色器", "安全自定义 CSS",
+    "不调用 API", "不会把图片发送给 AI", "单步撤销", "修改前效果",
+    "发布前体检", "去修改", "保存失败", "全作品批量替换",
+    "Escape", "焦点恢复", "JSON", "旧作品", "不会主动清空",
     "首次打开时显示一次",
   ]) assert.match(copy, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+  assert.doesNotMatch(copy, /\p{Extended_Pictographic}/u)
 })
 
 test("an announcement appears once per id and a newer id appears again", () => {

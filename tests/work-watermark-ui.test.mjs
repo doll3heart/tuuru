@@ -115,6 +115,28 @@ test("work info exposes progressive author watermark controls and a live preview
     .every(row => row.dataset.offset === "base"))
 })
 
+test("work info protects unsaved changes without interrupting a clean close", async t => {
+  await openWorkInfo(t)
+
+  const title = document.getElementById("wiTitle")
+  title.value = "还没保存的新标题"
+  title.dispatchEvent(new Event("input", {bubbles:true}))
+  document.getElementById("wiCancelBtn").click()
+
+  const guard = document.getElementById("wiDraftConfirm")
+  assert.ok(document.querySelector(".wi-modal"))
+  assert.equal(guard.hidden, false)
+  assert.equal(document.activeElement, document.getElementById("wiDraftContinue"))
+
+  document.getElementById("wiDraftContinue").click()
+  assert.equal(guard.hidden, true)
+  assert.equal(document.activeElement, title)
+
+  document.getElementById("wiCancelBtn").click()
+  document.getElementById("wiDraftDiscard").click()
+  assert.equal(document.querySelector(".wi-modal"), null)
+})
+
 test("work watermark author controls are touch-safe, focused, and saved through normalization", () => {
   for (const selector of [".wi-watermark-toggle", ".wi-watermark-choice", ".wi-watermark-upload"]) {
     assert.match(cssBody(selector), /min-height:\s*44px/, selector)

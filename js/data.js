@@ -10,6 +10,7 @@ import {
 } from "./work-collections.js"
 import { migrateInteractiveSceneCards } from "./interactive-scene-node.js"
 import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
+import { createWorkRelease } from "./work-release.js"
 import {
   moveWorkBefore as moveWorkBeforeRecords,
   moveWorkByOffset as moveWorkByOffsetRecords,
@@ -379,6 +380,7 @@ export function getPhoneModule(wid, pmid) {
 export function exportWorkAsJSON(wid) {
   var w = getWork(wid)
   if (!w) return null
+  var releaseRevision = w.updatedAt || w.createdAt || 1
   // Deep clone to avoid mutating original
   var copy = JSON.parse(JSON.stringify(w))
   copy.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
@@ -404,6 +406,7 @@ export function exportWorkAsJSON(wid) {
         })
     }
   }
+  copy.release = createWorkRelease(copy, { revision:releaseRevision })
   return JSON.stringify(copy, null, 2)
 }
 

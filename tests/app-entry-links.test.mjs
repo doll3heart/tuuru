@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises"
 
 import {
   buildAuthorHomeUrl,
+  buildAuthorReturnUrl,
   buildReaderHomeUrl,
 } from "../js/app-entry-links.js"
 
@@ -16,12 +17,21 @@ test("product links preserve an application subdirectory", () => {
     buildAuthorHomeUrl("https://example.test/tuuru/reader/index.html#library"),
     "https://example.test/tuuru/index.html",
   )
+  assert.equal(
+    buildAuthorReturnUrl("https://example.test/tuuru/reader/index.html?preview=work-1&returnTo=%23%2Fedit%2Fwork-1"),
+    "https://example.test/tuuru/index.html#/edit/work-1",
+  )
+  assert.equal(
+    buildAuthorReturnUrl("https://example.test/tuuru/reader/index.html?preview=work-1&returnTo=https%3A%2F%2Fevil.test"),
+    "https://example.test/tuuru/index.html",
+  )
 })
 
 test("product links reject a missing browser location", () => {
   for (const value of [undefined, null, "", "   "]) {
     assert.throws(() => buildReaderHomeUrl(value), TypeError)
     assert.throws(() => buildAuthorHomeUrl(value), TypeError)
+    assert.throws(() => buildAuthorReturnUrl(value), TypeError)
   }
 })
 

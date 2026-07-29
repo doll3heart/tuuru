@@ -6,6 +6,7 @@ import {
   validateAndNormalizeWork,
   validateWorkForImport,
 } from "../js/work-schema.js"
+import { createWorkRelease } from "../js/work-release.js"
 
 const VALIDATION_CONTEXTS = ["reader-import", "local-database", "backup"]
 
@@ -29,6 +30,38 @@ test("legacy article works remain importable and receive defaults", () => {
   assert.equal(result.work.startNode, "start")
   assert.deepEqual(result.work.placeholders, [])
   assert.deepEqual(result.work.interactiveScenes, [])
+})
+
+test("reader imports preserve valid release identity and discard invalid metadata", () => {
+  const source = {
+    id: "release-work",
+    schemaVersion: CURRENT_WORK_SCHEMA_VERSION,
+    type: "article",
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_100_000,
+    nodes: [{ id: "start", content: "Hello", choices: [], interactionGroups: [] }],
+  }
+  source.release = createWorkRelease(source, {
+    exportedAt: "2026-07-28T00:00:00.000Z",
+  })
+
+  const valid = validateWorkForImport(source)
+  assert.equal(valid.ok, true)
+  assert.deepEqual(valid.work.release, source.release)
+
+  const mismatched = validateWorkForImport({
+    ...source,
+    release: { ...source.release, workId: "another-work" },
+  })
+  assert.equal(mismatched.ok, true)
+  assert.equal(mismatched.work.release, undefined)
+
+  const malformed = validateWorkForImport({
+    ...source,
+    release: { ...source.release, revision: 0 },
+  })
+  assert.equal(malformed.ok, true)
+  assert.equal(malformed.work.release, undefined)
 })
 
 test("article imports normalize interactive scene stages and hotspots", () => {

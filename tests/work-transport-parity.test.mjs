@@ -129,6 +129,11 @@ test("current article and phone exports have identical JSON and PNG reader seman
     const pngWork = throughStegano(serialized, windowObject)
 
     assert.deepEqual(pngWork, jsonWork)
+    assert.equal(jsonWork.release.version, 1)
+    assert.equal(jsonWork.release.workId, fixture.id)
+    assert.equal(Number.isSafeInteger(jsonWork.release.revision), true)
+    assert.match(jsonWork.release.exportedAt, /^\d{4}-\d{2}-\d{2}T/)
+    assert.match(jsonWork.release.fingerprint, /^fnv1a32:[0-9a-f]{8}$/)
     assert.deepEqual(jsonWork.watermark, fixture.watermark)
     assert.equal(jsonWork.editorSettings, undefined)
     assert.doesNotMatch(serialized, /Author Device Only|AUTHOR_LOCAL_ONLY/)

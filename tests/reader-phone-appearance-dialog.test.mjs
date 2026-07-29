@@ -59,6 +59,18 @@ test("phone appearance workbench previews drafts live and saves only on confirma
   assert.ok(document.querySelector(".reader-phone-css-preview-scope"))
   assert.ok(dialog.querySelector("[data-reader-appearance-export]"))
   assert.ok(dialog.querySelector("[data-reader-appearance-import]"))
+  assert.ok(dialog.querySelector('[data-appearance-page="preview"]'))
+  assert.ok(dialog.querySelector('[data-appearance-page="controls"]'))
+  assert.deepEqual(
+    [...dialog.querySelectorAll(".phone-appearance-controls > .cu-settings-section")].map(section => section.id),
+    ["cuPhoneWallpaper", "cuPhoneDimensions", "cuPhoneSystem", "cuPhoneCss", "cuPhoneTransfer"],
+  )
+  assert.deepEqual(
+    [...dialog.querySelectorAll(".phone-appearance-controls > .cu-settings-section")]
+      .filter(section => section.open)
+      .map(section => section.id),
+    ["cuPhoneWallpaper"],
+  )
 
   for (const id of [
     "cuWallpaperColor",
@@ -235,6 +247,21 @@ test("saved reader profile images can be replaced and cleared after reopening", 
   await import(`../reader/reader.js?reader-profile-reedit=${Date.now()}-${Math.random()}`)
   document.querySelector('[data-tab="custom"]').click()
   document.querySelector('[data-reader-phone-control="profile"]').click()
+
+  const profileDialog = document.querySelector(".cu-modal.profile-appearance-workbench")
+  assert.ok(profileDialog)
+  assert.ok(profileDialog.querySelector('[data-appearance-page="preview"]'))
+  assert.ok(profileDialog.querySelector('[data-appearance-page="controls"]'))
+  assert.deepEqual(
+    [...profileDialog.querySelectorAll(".profile-appearance-controls > .cu-settings-section")].map(section => section.id),
+    ["cuProfileIdentity", "cuProfileAvatar", "cuProfileCover"],
+  )
+  assert.deepEqual(
+    [...profileDialog.querySelectorAll(".profile-appearance-controls > .cu-settings-section")]
+      .filter(section => section.open)
+      .map(section => section.id),
+    ["cuProfileIdentity"],
+  )
 
   document.getElementById("rpUploadAv").click()
   assert.equal(document.getElementById("rpAvatarUrl").value, "data:image/png;base64,bmV3LWF2YXRhcg==")

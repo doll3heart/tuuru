@@ -12,6 +12,8 @@ import { startLocalLibraryRestore } from "./library-restore-ui.js"
 import { downloadBlob } from "./download.js"
 import { buildReaderHomeUrl } from "./app-entry-links.js"
 import { showReleaseAnnouncementOnce } from "./release-announcement.js"
+import { installDialogInteraction } from "./dialog-interaction.js"
+import { createFeedbackCenter } from "./interaction-feedback.js"
 
 // ==================== Render helpers ====================
 export function h(tag, attrs={}, ...children){
@@ -32,26 +34,67 @@ export function h(tag, attrs={}, ...children){
 
 export function empty(el){while(el.firstChild) el.removeChild(el.firstChild)}
 
-export function showToast(msg, type="success"){
-  const t = document.createElement("div")
-  t.className = "toast "+type
-  t.textContent = msg
-  document.body.appendChild(t)
-  setTimeout(()=>t.remove(), 3000)
+let authorFeedbackCenter = null
+let authorFeedbackDocument = null
+
+function feedbackCenter() {
+  if (!authorFeedbackCenter || authorFeedbackDocument !== document) {
+    authorFeedbackDocument = document
+    authorFeedbackCenter = createFeedbackCenter({
+      documentObject:document,
+      className:"toast",
+      duration:3000,
+    })
+  }
+  return authorFeedbackCenter
 }
 
-export function modal(title, bodyHtml, footerHtml, onClose){
+export function showToast(msg, type="success", options={}){
+  return feedbackCenter().show(msg, type, options)
+}
+
+let modalSequence = 0
+
+export function modal(title, bodyHtml, footerHtml, onClose, options={}){
+  const invoker = document.activeElement
   const overlay = document.createElement("div")
   overlay.className = "modal-overlay"
+  const titleId = `modalTitle-${++modalSequence}`
   overlay.innerHTML = `
-    <div class="modal">
-      <div class="modal-header"><span class="modal-title">${title}</span><span class="btn-ghost btn-icon" style="cursor:pointer;font-size:1.2rem" id="modalClose">&times;</span></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1">
+      <div class="modal-header"><span class="modal-title" id="${titleId}">${title}</span><button type="button" class="btn-ghost btn-icon modal-close" id="modalClose" aria-label="关闭">&times;</button></div>
       <div class="modal-body">${bodyHtml}</div>
       ${footerHtml?`<div class="modal-footer">${footerHtml}</div>`:""}
     </div>`
   document.body.appendChild(overlay)
-  overlay.querySelector("#modalClose")?.addEventListener("click",()=>{overlay.remove();onClose?.()})
-  overlay.addEventListener("click",e=>{if(e.target===overlay){overlay.remove();onClose?.()}})
+  const dialog = overlay.querySelector(".modal")
+  const nativeRemove = overlay.remove.bind(overlay)
+  let closed = false
+  let lifecycle = null
+  function close(reason="programmatic") {
+    if (closed || overlay.dataset.modalBusy === "true") return false
+    if (typeof options.beforeClose === "function" && options.beforeClose(reason, overlay) === false) return false
+    closed = true
+    lifecycle?.dispose({restoreFocus:options.restoreFocus !== false})
+    nativeRemove()
+    onClose?.(reason)
+    return true
+  }
+  overlay.closeModal = close
+  overlay.remove = () => close("programmatic")
+  const initialFocus = options.initialFocus
+    || overlay.querySelector("[autofocus]")
+    || overlay.querySelector(".modal-footer .btn-primary")
+    || overlay.querySelector("#modalClose")
+  lifecycle = installDialogInteraction({
+    overlay,
+    dialog,
+    invoker,
+    onRequestClose:close,
+    closeOnBackdrop:options.closeOnBackdrop !== false,
+    initialFocus,
+  })
+  overlay.querySelector("#modalClose")?.addEventListener("click",()=>close("button"))
   return overlay
 }
 
@@ -196,7 +239,7 @@ export function renderHeader(){
 }
 
 // ==================== Pages ====================
-import { renderHome } from "./pages/home.js"
+import { bindHome, renderHome } from "./pages/home.js"
 import { renderNew } from "./pages/new.js"
 import { renderEditor } from "./pages/editor.js"
 import { buildReaderPreviewUrl, openReaderPreview } from "./pages/reader.js"
@@ -482,6 +525,7 @@ export function init(){
   
   router("/", (container) => {
     app.innerHTML = renderHeader() + '<main class="app-main">'+renderHome()+'</main>'
+    bindHome()
   })
   
   router("/new", (container) => {

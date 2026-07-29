@@ -1,4 +1,6 @@
 import { prepareImportedWork } from '../js/work-import.js'
+import { readerWorkImportReview } from './work-import-review.js'
+import { workReleaseFingerprintMatches } from '../js/work-release.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
@@ -36,7 +38,7 @@ import {
   reconcileArticleConditionalPath,
 } from '../js/article-chapter-runtime.js'
 import { prepareEditorPreview } from './editor-preview.js'
-import { buildAuthorHomeUrl } from '../js/app-entry-links.js'
+import { buildAuthorReturnUrl } from '../js/app-entry-links.js'
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-links.js'
 import { orderedForumPosts } from '../js/forum-post-order.js'
 import { orderedChats } from '../js/chat-order.js'
@@ -78,6 +80,9 @@ import { splitMentionText } from '../js/mention-text.js'
 import { forumDisplayCommentCount, forumDisplayFloor } from '../js/forum-display-metrics.js'
 import { substitutePhoneTextData } from '../js/phone-placeholder-text.js'
 import { showReleaseAnnouncementOnce } from '../js/release-announcement.js'
+import { installDialogInteraction } from '../js/dialog-interaction.js'
+import { createFeedbackCenter } from '../js/interaction-feedback.js'
+import { refreshReorderedContent } from '../js/reorder-motion.js'
 import { WORK_COLLECTION_BUNDLE_TYPE } from '../js/work-collections.js'
 import { inspectReaderCollectionBundle, installReaderCollection } from './work-collection-import.js'
 import { downloadBlob } from '../js/download.js'
@@ -123,10 +128,12 @@ import {
   appendReaderCheckpoint,
   clearReaderProgress,
   createReaderSlot,
+  dismissReaderWorkUpdate,
   readReaderLibrary,
   readerActiveSlot,
   readerBook,
   readerBookStatus,
+  reconcileReaderWorkUpdate,
   rememberReaderWork,
   removeReaderBook,
   removeReaderBookmark,
@@ -134,9 +141,12 @@ import {
   removeReaderSlot,
   renameReaderSlot,
   restoreArticleReadingState,
+  restoreReaderBook,
+  restoreReaderBookmark,
   saveReaderIdentity,
   saveReaderPlaceholders,
   saveReaderProgress,
+  setReaderBookPinned,
   setReaderCompletion,
   switchReaderSlot,
   toggleReaderBookmark,
@@ -329,8 +339,12 @@ var _editorPreviewMode = false
 var _readerPersistenceEnabled = true
 var _readerImportOverlay = null
 var _readerImportInvoker = null
+var _readerImportDialogLifecycle = null
 var _readerShelfQuery = ''
 var _readerShelfSort = 'recent'
+var _readerHomeTab = 'personal'
+var _readerHomeScrollY = 0
+var _readerHomeRestoreScroll = false
 var _readerDataPanelOpen = false
 var _readerDataStatusMessage = ''
 var _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
@@ -407,7 +421,7 @@ function render(el, html) {
 }
 
 function editorHomeUrl() {
-  return buildAuthorHomeUrl(globalThis.location?.href ?? globalThis.window?.location?.href)
+  return buildAuthorReturnUrl(globalThis.location?.href ?? globalThis.window?.location?.href)
 }
 
 function renderEditorPreviewError(message) {
@@ -1296,12 +1310,32 @@ function addRecent(work) {
 }
 
 // ====== HOME ======
+function rememberReaderHomeContext(tab) {
+  if (tab === 'personal' || tab === 'library' || tab === 'custom') _readerHomeTab = tab
+  _readerHomeScrollY = currentReaderScrollY()
+}
+
+function restoreReaderHomeContext() {
+  if (!_readerHomeRestoreScroll) return
+  _readerHomeRestoreScroll = false
+  var scrollY = Math.max(0, Number(_readerHomeScrollY) || 0)
+  if (typeof window.scrollTo === 'function') {
+    window.scrollTo({top:scrollY, left:0, behavior:'auto'})
+  } else {
+    document.documentElement.scrollTop = scrollY
+    document.body.scrollTop = scrollY
+  }
+}
+
 function renderHome() {
   flushReaderPositionSave()
   _readerPendingReadingPosition = null
   _readerPhoneLocation = null
   _readerPersistenceEnabled = true
   resetArticleReaderSession()
+  var activeTab = ['personal', 'library', 'custom'].includes(_readerHomeTab)
+    ? _readerHomeTab
+    : 'personal'
   var h = '<div class="rd-home">'
   h += '<header class="rd-product-header">'
   h += '<div class="rd-product-brand">Tuuru</div>'
@@ -1311,14 +1345,14 @@ function renderHome() {
   h += '</nav></header>'
   // Tabs
   h += '<div class="rd-tabs" role="tablist" aria-label="首页栏目">'
-  h += '<button type="button" class="rd-tab active" id="rdTabPersonal" role="tab" aria-controls="tabPersonal" aria-selected="true" tabindex="0" data-tab="personal">个人主页</button>'
-  h += '<button type="button" class="rd-tab" id="rdTabLibrary" role="tab" aria-controls="tabLibrary" aria-selected="false" tabindex="-1" data-tab="library">书架</button>'
-  h += '<button type="button" class="rd-tab" id="rdTabCustom" role="tab" aria-controls="tabCustom" aria-selected="false" tabindex="-1" data-tab="custom">美化</button>'
+  h += '<button type="button" class="rd-tab' + (activeTab === 'personal' ? ' active' : '') + '" id="rdTabPersonal" role="tab" aria-controls="tabPersonal" aria-selected="' + (activeTab === 'personal') + '" tabindex="' + (activeTab === 'personal' ? '0' : '-1') + '" data-tab="personal">个人主页</button>'
+  h += '<button type="button" class="rd-tab' + (activeTab === 'library' ? ' active' : '') + '" id="rdTabLibrary" role="tab" aria-controls="tabLibrary" aria-selected="' + (activeTab === 'library') + '" tabindex="' + (activeTab === 'library' ? '0' : '-1') + '" data-tab="library">书架</button>'
+  h += '<button type="button" class="rd-tab' + (activeTab === 'custom' ? ' active' : '') + '" id="rdTabCustom" role="tab" aria-controls="tabCustom" aria-selected="' + (activeTab === 'custom') + '" tabindex="' + (activeTab === 'custom' ? '0' : '-1') + '" data-tab="custom">美化</button>'
   h += '</div>'
   // Tab panels
-  h += '<div class="rd-panel" id="tabPersonal" role="tabpanel" aria-labelledby="rdTabPersonal">' + renderPersonalPage() + '</div>'
-  h += '<div class="rd-panel" style="display:none" id="tabLibrary" role="tabpanel" aria-labelledby="rdTabLibrary" hidden>' + renderBookshelfPage() + '</div>'
-  h += '<div class="rd-panel" style="display:none" id="tabCustom" role="tabpanel" aria-labelledby="rdTabCustom" hidden>' + renderCustomPage() + '</div>'
+  h += '<div class="rd-panel" id="tabPersonal" role="tabpanel" aria-labelledby="rdTabPersonal"' + (activeTab === 'personal' ? '' : ' style="display:none" hidden') + '>' + renderPersonalPage() + '</div>'
+  h += '<div class="rd-panel"' + (activeTab === 'library' ? '' : ' style="display:none"') + ' id="tabLibrary" role="tabpanel" aria-labelledby="rdTabLibrary"' + (activeTab === 'library' ? '' : ' hidden') + '>' + renderBookshelfPage() + '</div>'
+  h += '<div class="rd-panel"' + (activeTab === 'custom' ? '' : ' style="display:none"') + ' id="tabCustom" role="tabpanel" aria-labelledby="rdTabCustom"' + (activeTab === 'custom' ? '' : ' hidden') + '>' + renderCustomPage() + '</div>'
   h += '<div style="text-align:center;padding:16px;margin-top:20px;font-size:.6rem;color:var(--c-text2);opacity:.3"><a href="https://tuuru.chat" target="_blank" style="color:inherit;text-decoration:none">tuuru.chat</a></div>'
   h += '</div>'
   render('app', h)
@@ -1340,6 +1374,7 @@ function renderHome() {
       }
     })
     var tab = t.dataset.tab
+    _readerHomeTab = tab
     if (moveFocus) t.focus()
     if (tab === 'personal') refreshPersonalPage()
     if (tab === 'library') refreshBookshelfPage()
@@ -1358,6 +1393,7 @@ function renderHome() {
       activateTab(tabs[nextIndex], true)
     }
   })
+  restoreReaderHomeContext()
 }
 
 document.addEventListener('click', function(event) {
@@ -1368,6 +1404,8 @@ document.addEventListener('click', function(event) {
   if (libraryTrigger) {
     event.preventDefault()
     _activeReaderCollectionId = ''
+    _readerHomeTab = 'library'
+    _readerHomeRestoreScroll = true
     renderHome()
     return
   }
@@ -1430,6 +1468,11 @@ document.addEventListener('click', function(event) {
       location.assign(editorHomeUrl())
       return
     }
+    if (_activeReaderCollectionId) {
+      renderReaderCollectionById(_activeReaderCollectionId)
+      return
+    }
+    _readerHomeRestoreScroll = true
     renderHome()
     return
   }
@@ -1537,20 +1580,35 @@ function readerBookStatusLabel(book) {
   })[readerBookStatus(book)] || '未开始'
 }
 
+function readerBookPinOrder(left, right) {
+  var leftPinnedAt = Number(left?.pinnedAt) || 0
+  var rightPinnedAt = Number(right?.pinnedAt) || 0
+  if (leftPinnedAt && rightPinnedAt) return rightPinnedAt - leftPinnedAt
+  if (leftPinnedAt) return -1
+  if (rightPinnedAt) return 1
+  return 0
+}
+
 function sortedReaderBooks(books) {
   var sorted = (books || []).slice()
   if (_readerShelfSort === 'title') {
     sorted.sort(function(a, b) {
-      return String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN')
+      return readerBookPinOrder(a, b)
+        || String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN')
     })
   } else if (_readerShelfSort === 'added') {
-    sorted.sort(function(a, b) { return (b.addedAt || 0) - (a.addedAt || 0) })
+    sorted.sort(function(a, b) {
+      return readerBookPinOrder(a, b) || (b.addedAt || 0) - (a.addedAt || 0)
+    })
   } else if (_readerShelfSort === 'status') {
     var order = {reading:0, unread:1, completed:2}
     sorted.sort(function(a, b) {
-      return order[readerBookStatus(a)] - order[readerBookStatus(b)]
+      return readerBookPinOrder(a, b)
+        || order[readerBookStatus(a)] - order[readerBookStatus(b)]
         || (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0)
     })
+  } else {
+    sorted.sort(readerBookPinOrder)
   }
   return sorted
 }
@@ -1665,16 +1723,19 @@ function renderBookshelfPage() {
       var title = book.title || '无标题作品'
       var searchText = [title, book.author || ''].join(' ').toLocaleLowerCase('zh-CN')
       var hidden = normalizedQuery && !searchText.includes(normalizedQuery)
-      h += '<article class="rd-book' + (cached ? '' : ' is-missing') + '" data-reader-book-search="' + escapeHtmlAttribute(searchText) + '"' + (hidden ? ' hidden' : '') + '>'
+      h += '<article class="rd-book' + (cached ? '' : ' is-missing') + '" data-reader-book-id="' + escapeHtmlAttribute(book.id) + '" data-reader-book-search="' + escapeHtmlAttribute(searchText) + '"' + (hidden ? ' hidden' : '') + '>'
       h += '<div class="rd-book-cover-wrap">'
-      h += '<button type="button" class="rd-book-cover rd-recent-item" data-reader-book-index="' + bookIndex + '" data-reader-recent-index="' + bookIndex + '" aria-label="' + escapeHtmlAttribute((book.progress ? '继续阅读《' : '打开《') + title + '》') + '">'
+      h += '<button type="button" class="rd-book-cover rd-recent-item" data-reader-book-index="' + bookIndex + '" data-reader-recent-index="' + bookIndex + '" data-reader-book-cover-id="' + escapeHtmlAttribute(book.id) + '" aria-label="' + escapeHtmlAttribute((book.pinnedAt ? '已置顶，' : '') + (book.unseenUpdateAt ? '已更新，' : '') + (book.progress ? '继续阅读《' : '打开《') + title + '》') + '">'
+      if (book.unseenUpdateAt) h += '<span class="rd-book-updated" aria-hidden="true">已更新</span>'
       h += '<span class="rd-book-cover-type">' + (book.type === 'phone' ? '小手机' : '互动文章') + '</span>'
       h += '<span class="rd-book-cover-title">' + esc(title) + '</span>'
       h += '<span class="rd-book-cover-author">' + esc(book.author || '佚名') + '</span>'
       h += '<span class="rd-book-cover-rule" aria-hidden="true"></span></button>'
-      h += '<button type="button" class="rd-book-manage" data-reader-book-manage="' + bookIndex + '" aria-label="' + escapeHtmlAttribute('管理《' + title + '》') + '" title="管理本书">•••</button>'
+      h += '<button type="button" class="rd-book-manage" data-reader-book-manage="' + bookIndex + '" data-reader-book-manage-id="' + escapeHtmlAttribute(book.id) + '" aria-label="' + escapeHtmlAttribute('管理《' + title + '》') + '" title="管理本书">•••</button>'
       h += '</div>'
-      h += '<div class="rd-book-meta"><strong>' + esc(title) + '</strong>'
+      h += '<div class="rd-book-meta"><div class="rd-book-title-row"><strong>' + esc(title) + '</strong>'
+      if (book.pinnedAt) h += '<span class="rd-book-pinned" aria-hidden="true">置顶</span>'
+      h += '</div>'
       h += '<span class="rd-book-status" data-status="' + readerBookStatus(book) + '">' + readerBookStatusLabel(book) + '</span>'
       h += '<span>' + (cached ? readerBookProgressLabel(book) : '正文已清理 · 重新导入') + '</span>'
       h += '<time>' + esc(timeAgo(book.lastOpenedAt)) + '</time></div></article>'
@@ -1703,7 +1764,13 @@ function renderBookshelfPage() {
 function refreshBookshelfPage() {
   var panel = document.getElementById('tabLibrary')
   if (!panel) return
-  panel.innerHTML = renderBookshelfPage()
+  refreshReorderedContent({
+    container:panel,
+    selector:'.rd-book[data-reader-book-id]',
+    key:function(element) { return element.dataset.readerBookId },
+    animate:shouldUseMotion(true, window),
+    update:function() { panel.innerHTML = renderBookshelfPage() },
+  })
   bindBookshelfPage(panel)
 }
 
@@ -1711,19 +1778,14 @@ function closeReaderImportDialog(options) {
   options = options || {}
   var overlay = _readerImportOverlay
   var invoker = _readerImportInvoker
+  var lifecycle = _readerImportDialogLifecycle
   _readerImportOverlay = null
   _readerImportInvoker = null
+  _readerImportDialogLifecycle = null
+  if (lifecycle) lifecycle.dispose({restoreFocus:options.restoreFocus !== false})
   if (overlay) overlay.remove()
   document.body.classList.remove('rd-import-open')
-  if (options.restoreFocus !== false && invoker && document.contains(invoker)) invoker.focus()
-}
-
-function readerImportDialogFocusables(dialog) {
-  if (!dialog) return []
-  return Array.prototype.filter.call(
-    dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'),
-    function(control) { return !control.hidden && !control.closest('[hidden]') && control.tabIndex !== -1 },
-  )
+  if (!lifecycle && options.restoreFocus !== false && invoker && document.contains(invoker)) invoker.focus()
 }
 
 function openReaderImportDialog(invoker, options) {
@@ -1753,39 +1815,18 @@ function openReaderImportDialog(invoker, options) {
   var closeButton = overlay.querySelector('.rd-import-close')
   function close() { closeReaderImportDialog() }
   closeButton.onclick = close
-  overlay.addEventListener('click', function(event) {
-    if (event.target === overlay) close()
-  })
-  dialog.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      close()
-      return
-    }
-    if (event.key !== 'Tab') return
-    var focusables = readerImportDialogFocusables(dialog)
-    if (!focusables.length) {
-      event.preventDefault()
-      dialog.focus()
-      return
-    }
-    var first = focusables[0]
-    var last = focusables[focusables.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  })
-
   var primaryAction = overlay.querySelector('#pickFileBtn')
-  if (primaryAction) primaryAction.focus()
-  else dialog.focus()
+  _readerImportDialogLifecycle = installDialogInteraction({
+    overlay:overlay,
+    dialog:dialog,
+    invoker:_readerImportInvoker,
+    initialFocus:primaryAction || dialog,
+    onRequestClose:close,
+  })
 }
 
 function openReaderBookById(workId, options) {
+  if (document.querySelector('.rd-home')) rememberReaderHomeContext('library')
   var work = cachedReaderWork(workId)
   if (!work) {
     var missingBook = savedReaderBook(workId)
@@ -1800,6 +1841,10 @@ function openReaderBookById(workId, options) {
   }
   work = prepared.work
   var book = savedReaderBook(workId)
+  if (book?.unseenUpdateAt) {
+    commitReaderLibraryState(dismissReaderWorkUpdate(getReaderLibraryState(), workId))
+    book = savedReaderBook(workId)
+  }
   if (book && Object.keys(book.placeholderValues || {}).length) {
     work.readerPhValues = cloneReaderPlaceholderValues(book.placeholderValues)
   }
@@ -1811,6 +1856,7 @@ function openReaderBookById(workId, options) {
   ))
   var canSkipLanding = !String(work.password || '').trim() && hasReaderState
   loadWork(work, {
+    cachePrepared:true,
     skipLanding:canSkipLanding,
     resume:!restart,
   })
@@ -1886,6 +1932,24 @@ function readerRouteComparisonHtml(work, book, leftSlotId, rightSlotId) {
   return h + '</div>'
 }
 
+function focusReaderBookInvoker(workId, invoker) {
+  if (invoker && invoker.isConnected && typeof invoker.focus === 'function') {
+    invoker.focus()
+    return
+  }
+  if (!invoker) return
+  var manageControl = typeof invoker.hasAttribute === 'function'
+    && invoker.hasAttribute('data-reader-book-manage')
+  var attribute = manageControl ? 'readerBookManageId' : 'readerBookCoverId'
+  var selector = manageControl
+    ? '[data-reader-book-manage-id]'
+    : '[data-reader-book-cover-id]'
+  var replacement = Array.from(document.querySelectorAll(selector)).find(function(candidate) {
+    return candidate.dataset?.[attribute] === workId
+  })
+  if (replacement && typeof replacement.focus === 'function') replacement.focus()
+}
+
 function openReaderBookManager(workId, invoker) {
   var book = savedReaderBook(workId)
   if (!book) return
@@ -1918,6 +1982,10 @@ function openReaderBookManager(workId, invoker) {
   h += '<header class="rd-book-manager-head"><div><span>书架管理</span><h2 id="rdBookManagerTitle">' + esc(book.title || '无标题作品') + '</h2></div>'
   h += '<button type="button" class="rd-book-manager-close" aria-label="关闭">×</button></header>'
   h += '<div class="rd-book-manager-body">'
+  h += '<div class="rd-book-pin-row"><span><strong>书架置顶</strong><small data-reader-book-pin-note>' +
+    (book.pinnedAt ? '已固定在其他作品前面' : '固定在其他作品前面') + '</small></span>'
+  h += '<button type="button" class="rd-book-secondary" data-reader-book-pin aria-pressed="' +
+    (book.pinnedAt ? 'true' : 'false') + '">' + (book.pinnedAt ? '取消置顶' : '置顶') + '</button></div>'
   h += '<section class="rd-book-manager-section"><div class="rd-book-manager-section-head"><h3>阅读存档</h3><span>' + book.slots.length + ' / 5</span></div>'
   h += '<div class="rd-reader-slot-toolbar"><label><span class="sr-only">当前阅读存档</span><select data-reader-slot-select>'
   book.slots.forEach(function(slot, index) {
@@ -1964,7 +2032,7 @@ function openReaderBookManager(workId, invoker) {
     h += '<section class="rd-book-manager-section"><div class="rd-book-manager-section-head"><h3>场景书签</h3><span>' + book.bookmarks.length + ' 个位置</span></div>'
     h += '<div class="rd-book-bookmarks">'
     book.bookmarks.forEach(function(bookmark) {
-      h += '<div class="rd-book-bookmark-row"><button type="button" data-reader-book-bookmark="' + escapeHtmlAttribute(bookmark.id) + '"><span><strong>' + esc(bookmark.label || '阅读位置') + '</strong>' + (bookmark.note ? '<small>' + esc(bookmark.note) + '</small>' : '') + '</span><time>' + esc(timeAgo(bookmark.savedAt)) + '</time></button>'
+      h += '<div class="rd-book-bookmark-row"><button type="button" data-reader-book-bookmark="' + escapeHtmlAttribute(bookmark.id) + '"><span><strong>' + esc(bookmark.label || '阅读位置') + '</strong>' + (bookmark.updateStatus === 'moved' ? '<small class="rd-bookmark-update-note">原位置已变动，已定位到附近内容</small>' : '') + (bookmark.note ? '<small>' + esc(bookmark.note) + '</small>' : '') + '</span><time>' + esc(timeAgo(bookmark.savedAt)) + '</time></button>'
       h += '<button type="button" class="rd-book-bookmark-edit" data-reader-book-bookmark-edit="' + escapeHtmlAttribute(bookmark.id) + '" aria-label="' + escapeHtmlAttribute('编辑书签：' + (bookmark.label || '阅读位置')) + '">编辑</button>'
       h += '<button type="button" class="rd-book-bookmark-remove" data-reader-book-bookmark-remove="' + escapeHtmlAttribute(bookmark.id) + '" aria-label="' + escapeHtmlAttribute('删除书签：' + (bookmark.label || '阅读位置')) + '">×</button></div>'
       h += '<div class="rd-book-bookmark-editor" data-reader-book-bookmark-editor="' + escapeHtmlAttribute(bookmark.id) + '" hidden><label><span>书签名称</span><input type="text" data-reader-bookmark-label value="' + escapeHtmlAttribute(bookmark.label || '') + '" maxlength="500"></label><label><span>备注</span><textarea data-reader-bookmark-note maxlength="500" placeholder="写下想记住的内容">' + esc(bookmark.note || '') + '</textarea></label><div><button type="button" class="rd-book-secondary" data-reader-bookmark-edit-cancel>取消</button><button type="button" class="rd-book-primary" data-reader-bookmark-edit-save>保存备注</button></div></div>'
@@ -2023,7 +2091,7 @@ function openReaderBookManager(workId, invoker) {
   h += '<div class="rd-book-manager-storage"><p>清除正文缓存会保留进度、占位符和书签；下次阅读前需要重新导入原文件。</p>'
   h += '<div><button type="button" class="rd-book-secondary" data-reader-book-clear-cache' + (cacheBytes ? '' : ' disabled') + '>清除正文缓存</button>'
   h += '<button type="button" class="rd-book-danger" data-reader-book-remove>从书架移除</button></div></div>'
-  h += '<div class="rd-book-remove-confirm" hidden><p>这会同时删除本书的进度、占位符、书签和正文缓存，无法撤销。</p><div><button type="button" class="rd-book-secondary" data-reader-book-remove-cancel>取消</button><button type="button" class="rd-book-danger" data-reader-book-remove-confirm>确认移除</button></div></div></div></details></section>'
+  h += '<div class="rd-book-remove-confirm" hidden><p>这会同时移除本书的进度、占位符、书签和正文缓存；完成后可在短时间内撤销。</p><div><button type="button" class="rd-book-secondary" data-reader-book-remove-cancel>取消</button><button type="button" class="rd-book-danger" data-reader-book-remove-confirm>确认移除</button></div></div></div></details></section>'
   h += '<p class="rd-book-manager-status rd-book-manager-global-status" role="status" aria-live="polite"></p>'
   h += '</div><footer class="rd-book-manager-actions">'
   if (book.progress) h += '<button type="button" class="rd-book-secondary" data-reader-book-restart>从头开始</button>'
@@ -2036,10 +2104,19 @@ function openReaderBookManager(workId, invoker) {
   document.body.appendChild(overlay)
 
   var status = overlay.querySelector('.rd-book-manager-status')
+  var dialogLifecycle = null
+  function removeManager(options) {
+    options = options || {}
+    if (dialogLifecycle) {
+      dialogLifecycle.dispose({restoreFocus:options.restoreFocus === true})
+      dialogLifecycle = null
+    }
+    overlay.remove()
+  }
   function close() {
     closeReaderUnlockedSearchPreview(false)
-    overlay.remove()
-    if (invoker && invoker.isConnected) invoker.focus()
+    removeManager({restoreFocus:true})
+    focusReaderBookInvoker(workId, invoker)
   }
   function saveValues() {
     if (!definitions.length) return true
@@ -2064,16 +2141,16 @@ function openReaderBookManager(workId, invoker) {
     return true
   }
   function reopenManager() {
-    overlay.remove()
+    removeManager({restoreFocus:false})
     openReaderBookManager(workId, invoker)
   }
   overlay.querySelector('.rd-book-manager-close').onclick = close
-  overlay.addEventListener('click', function(event) { if (event.target === overlay) close() })
-  overlay.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      close()
-    }
+  dialogLifecycle = installDialogInteraction({
+    overlay:overlay,
+    dialog:overlay.querySelector('.rd-book-manager'),
+    invoker:invoker,
+    initialFocus:overlay.querySelector('.rd-book-manager-close'),
+    onRequestClose:close,
   })
   var slotManageButton = overlay.querySelector('[data-reader-slot-manage]')
   var slotManagePanel = overlay.querySelector('.rd-reader-slot-manage')
@@ -2225,13 +2302,13 @@ function openReaderBookManager(workId, invoker) {
   if (saveBookButton) saveBookButton.onclick = saveValues
   overlay.querySelector('[data-reader-book-continue]').onclick = function() {
     if (!saveValues()) return
-    overlay.remove()
+    removeManager({restoreFocus:false})
     openReaderBookById(workId)
   }
   var restartBookButton = overlay.querySelector('[data-reader-book-restart]')
   if (restartBookButton) restartBookButton.onclick = function() {
       if (!saveValues()) return
-      overlay.remove()
+      removeManager({restoreFocus:false})
       openReaderBookById(workId, {restart:true})
     }
   overlay.querySelector('[data-reader-book-completion]').onclick = function() {
@@ -2250,6 +2327,51 @@ function openReaderBookManager(workId, invoker) {
     stateButton.textContent = complete ? '恢复为阅读中' : '标记已完成'
     if (status) status.textContent = complete ? '已标记为完成。' : '已恢复为阅读中。'
     refreshBookshelfPage()
+  }
+  var pinBookButton = overlay.querySelector('[data-reader-book-pin]')
+  var pinBookNote = overlay.querySelector('[data-reader-book-pin-note]')
+  pinBookButton.onclick = function() {
+    var latest = savedReaderBook(workId)
+    if (!latest) return
+    var pinned = !latest.pinnedAt
+    var nextLibrary = setReaderBookPinned(getReaderLibraryState(), workId, pinned, Date.now())
+    if (!commitReaderLibraryState(nextLibrary)) {
+      if (status) status.textContent = '无法保存置顶状态，请检查浏览器存储空间。'
+      return
+    }
+    var nextBook = savedReaderBook(workId)
+    var isPinned = !!nextBook?.pinnedAt
+    pinBookButton.setAttribute('aria-pressed', isPinned ? 'true' : 'false')
+    pinBookButton.textContent = isPinned ? '取消置顶' : '置顶'
+    if (pinBookNote) {
+      pinBookNote.textContent = isPinned ? '已固定在其他作品前面' : '固定在其他作品前面'
+    }
+    if (status) status.textContent = isPinned ? '已置顶到书架顶部。' : '已取消置顶。'
+    refreshBookshelfPage()
+    showReaderToast(isPinned ? '已置顶到书架顶部' : '已取消置顶', 'success', {
+      actionLabel:'撤销',
+      duration:5000,
+      onAction:function() {
+        var restored = setReaderBookPinned(
+          getReaderLibraryState(),
+          workId,
+          !isPinned,
+          Date.now(),
+        )
+        if (!commitReaderLibraryState(restored)) return
+        var restoredBook = savedReaderBook(workId)
+        var restoredPinned = !!restoredBook?.pinnedAt
+        if (pinBookButton.isConnected) {
+          pinBookButton.setAttribute('aria-pressed', restoredPinned ? 'true' : 'false')
+          pinBookButton.textContent = restoredPinned ? '取消置顶' : '置顶'
+        }
+        if (pinBookNote?.isConnected) {
+          pinBookNote.textContent = restoredPinned ? '已固定在其他作品前面' : '固定在其他作品前面'
+        }
+        if (status?.isConnected) status.textContent = '已撤销刚才的书架调整。'
+        refreshBookshelfPage()
+      },
+    })
   }
   var clearCacheButton = overlay.querySelector('[data-reader-book-clear-cache]')
   clearCacheButton.onclick = function() {
@@ -2270,13 +2392,41 @@ function openReaderBookManager(workId, invoker) {
     overlay.querySelector('[data-reader-book-remove]').focus()
   }
   overlay.querySelector('[data-reader-book-remove-confirm]').onclick = function() {
-    try { localStorage.removeItem('moirain_work_' + workId) } catch (_) {}
+    var removedBook = savedReaderBook(workId)
+    var cacheKey = 'moirain_work_' + workId
+    var removedCache = null
+    try { removedCache = localStorage.getItem(cacheKey) } catch (_) {}
+    var removedRecent = getRecents().find(function(recent) { return recent?.id === workId }) || null
+    try { localStorage.removeItem(cacheKey) } catch (_) {}
     try {
       lsSet('recent', getRecents().filter(function(recent) { return recent?.id !== workId }))
     } catch (_) {}
     commitReaderLibraryState(removeReaderBook(getReaderLibraryState(), workId))
     close()
     refreshBookshelfPage()
+    if (!removedBook) return
+    showReaderToast('已从书架移除', 'success', {
+      actionLabel:'撤销',
+      duration:6000,
+      onAction:function() {
+        var restoredLibrary = restoreReaderBook(getReaderLibraryState(), removedBook)
+        if (!commitReaderLibraryState(restoredLibrary)) return
+        if (removedCache !== null) {
+          try {
+            if (localStorage.getItem(cacheKey) === null) localStorage.setItem(cacheKey, removedCache)
+          } catch (_) {}
+        }
+        if (removedRecent) {
+          try {
+            var currentRecents = getRecents()
+            if (!currentRecents.some(function(recent) { return recent?.id === workId })) {
+              lsSet('recent', [removedRecent].concat(currentRecents))
+            }
+          } catch (_) {}
+        }
+        refreshBookshelfPage()
+      }
+    })
   }
   overlay.querySelectorAll('[data-reader-book-bookmark-remove]').forEach(function(button) {
     button.onclick = function() {
@@ -2289,6 +2439,16 @@ function openReaderBookManager(workId, invoker) {
       button.closest('.rd-book-bookmark-row')?.remove()
       if (status) status.textContent = '书签已删除。'
       refreshBookshelfPage()
+      showReaderToast('书签已删除', 'success', {
+        actionLabel:'撤销',
+        duration:5000,
+        onAction:function() {
+          var restored = restoreReaderBookmark(getReaderLibraryState(), workId, bookmark)
+          if (!commitReaderLibraryState(restored)) return
+          if (overlay.isConnected) reopenManager()
+          else refreshBookshelfPage()
+        }
+      })
     }
   })
   overlay.querySelectorAll('[data-reader-book-bookmark-edit]').forEach(function(button) {
@@ -2339,7 +2499,7 @@ function openReaderBookManager(workId, invoker) {
         interactionSelections:bookmark.interactionSelections,
         checkpoints:latestBook?.progress?.checkpoints || [],
       }, Date.now()))
-      overlay.remove()
+      removeManager({restoreFocus:false})
       openReaderBookById(workId)
     }
   })
@@ -2363,7 +2523,7 @@ function openReaderBookManager(workId, invoker) {
         nextProgress,
         Date.now(),
       ))
-      overlay.remove()
+      removeManager({restoreFocus:false})
       openReaderBookById(workId)
     }
   })
@@ -2396,7 +2556,6 @@ function openReaderBookManager(workId, invoker) {
   }
   if (compareLeftSelect) compareLeftSelect.onchange = refreshRouteComparison
   if (compareRightSelect) compareRightSelect.onchange = refreshRouteComparison
-  overlay.querySelector('.rd-book-manager-close').focus()
 }
 
 function bindReaderDataPanel(root) {
@@ -2811,27 +2970,83 @@ function importWorkCollection(payload, root) {
     reportReaderImportError(inspected.message, root)
     return
   }
-  var replacement = inspected.existingWorkCount
-    ? '\n其中 ' + inspected.existingWorkCount + ' 篇会更新同名本地缓存。'
-    : ''
-  var access = inspected.collection.accessMode === 'unified' ? '统一进入' : '各篇独立进入'
-  if (!confirm('导入作品集《' + inspected.collection.title + '》？\n共 ' + inspected.works.length + ' 篇，' + access + '。' + replacement)) {
-    setReaderImportStatus(root, 'idle', '')
+  var dropInner = root?.querySelector?.('#dropInner')
+  var review = root?.querySelector?.('.rd-import-review')
+  if (!dropInner || !review) {
+    reportReaderImportError('无法打开作品集导入确认，请重新选择文件', root)
     return
   }
-  try {
-    var installed = installReaderCollection(localStorage, inspected)
-    closeReaderImportDialog({restoreFocus:false})
-    openReaderCollection(installed.collection.id)
-  } catch (error) {
-    reportReaderImportError('作品集导入失败：' + (error instanceof Error ? error.message : '本地存储不可用'), root)
+  var replacement = inspected.existingWorkCount
+    ? inspected.existingWorkCount + ' 篇会更新同名本地缓存'
+    : '不会覆盖书架中的同名作品'
+  var access = inspected.collection.accessMode === 'unified' ? '统一进入' : '各篇独立进入'
+  dropInner.hidden = true
+  review.hidden = false
+  review.dataset.releaseState = inspected.existingWorkCount ? 'newer' : 'new'
+  review.innerHTML = '<p class="rd-import-review-label">作品集导入</p>' +
+    '<h3>' + esc(inspected.collection.title || '未命名作品集') + '</h3>' +
+    (inspected.collection.author ? '<p class="rd-import-review-author">' + esc(inspected.collection.author) + '</p>' : '') +
+    '<dl class="rd-import-review-summary"><div><dt>包含作品</dt><dd>' +
+    inspected.works.length + ' 篇</dd></div><div><dt>进入方式</dt><dd>' +
+    esc(access) + '</dd></div><div><dt>本地变化</dt><dd>' +
+    esc(replacement) + '</dd></div></dl>' +
+    '<p class="rd-import-review-note">确认后会把整套作品加入当前设备的书架，阅读记录仍只保存在本机。</p>' +
+    '<div class="rd-import-review-actions"><button type="button" class="rd-book-secondary" data-reader-collection-cancel>重新选择</button>' +
+    '<button type="button" class="rd-book-primary" data-reader-collection-confirm>导入并打开</button></div>'
+  setReaderImportStatus(root, 'review', '')
+
+  var cancelButton = review.querySelector('[data-reader-collection-cancel]')
+  var confirmButton = review.querySelector('[data-reader-collection-confirm]')
+  cancelButton.onclick = function() {
+    review.hidden = true
+    review.innerHTML = ''
+    delete review.dataset.releaseState
+    dropInner.hidden = false
+    setReaderImportStatus(root, 'idle', '')
+    root.querySelector('#pickFileBtn')?.focus()
   }
+  confirmButton.onclick = function() {
+    cancelButton.disabled = true
+    confirmButton.disabled = true
+    confirmButton.setAttribute('aria-busy', 'true')
+    confirmButton.textContent = '正在导入…'
+    try {
+      var installed = installReaderCollection(localStorage, inspected)
+      closeReaderImportDialog({restoreFocus:false})
+      openReaderCollection(installed.collection.id)
+    } catch (error) {
+      cancelButton.disabled = false
+      confirmButton.disabled = false
+      confirmButton.removeAttribute('aria-busy')
+      confirmButton.textContent = '导入并打开'
+      reportReaderImportError('作品集导入失败：' + (error instanceof Error ? error.message : '本地存储不可用'), root)
+    }
+  }
+  confirmButton.focus()
 }
 
 function serializedReaderWorkCache(work) {
   var cachedWork = Object.assign({}, work)
   delete cachedWork.readerPhValues
   return JSON.stringify(cachedWork)
+}
+
+function reconcileImportedReaderWork(previousCache, work, loadOptions) {
+  if (!previousCache) return loadOptions || {}
+  commitReaderLibraryState(reconcileReaderWorkUpdate(
+    getReaderLibraryState(),
+    previousCache,
+    work,
+    {
+      now:Date.now(),
+      markUpdated:loadOptions?.releaseState === 'newer',
+    },
+  ))
+  return Object.assign({}, loadOptions, {
+    skipLanding:loadOptions?.resume
+      ? canResumeReaderImport(work, savedReaderBook(work.id))
+      : loadOptions?.skipLanding,
+  })
 }
 
 function renderReaderStorageRescue(work, root, serialized, loadOptions) {
@@ -2902,7 +3117,10 @@ function renderReaderStorageRescue(work, root, serialized, loadOptions) {
 
   memoryButton.onclick = function() {
     closeReaderImportDialog({restoreFocus:false})
-    loadWork(work, Object.assign({}, loadOptions, {skipCache:true}))
+    loadWork(work, Object.assign({}, loadOptions, {
+      remember:loadOptions?.previousCache ? false : loadOptions?.remember,
+      skipCache:true,
+    }))
     showReaderToast('这次正文不会保存；关闭后需重新导入')
   }
   continueButton.onclick = function() {
@@ -2926,7 +3144,12 @@ function renderReaderStorageRescue(work, root, serialized, loadOptions) {
       return
     }
     closeReaderImportDialog({restoreFocus:false})
-    loadWork(work, Object.assign({}, loadOptions, {cachePrepared:true}))
+    var reconciledOptions = reconcileImportedReaderWork(
+      loadOptions?.previousCache,
+      work,
+      loadOptions,
+    )
+    loadWork(work, Object.assign({}, reconciledOptions, {cachePrepared:true}))
     showReaderToast('已释放 ' + formatReaderStorageSize(result.clearedBytes) + '，阅读记录仍保留')
   }
   var initialFocus = checkboxes[0] || memoryButton
@@ -2935,19 +3158,29 @@ function renderReaderStorageRescue(work, root, serialized, loadOptions) {
 }
 
 function openImportedReaderWork(work, root, loadOptions) {
+  var previousCache = cachedReaderWork(work.id)
   var serialized
   try {
     serialized = serializedReaderWorkCache(work)
     localStorage.setItem('moirain_work_' + work.id, serialized)
   } catch (error) {
-    if (isReaderStorageQuotaError(error) && renderReaderStorageRescue(work, root, serialized || '', loadOptions)) {
+    if (isReaderStorageQuotaError(error) && renderReaderStorageRescue(
+      work,
+      root,
+      serialized || '',
+      Object.assign({}, loadOptions, {previousCache:previousCache}),
+    )) {
       return false
     }
     warnReaderStorageFailure()
     closeReaderImportDialog({restoreFocus:false})
-    loadWork(work, Object.assign({}, loadOptions, {skipCache:true}))
+    loadWork(work, Object.assign({}, loadOptions, {
+      remember:previousCache ? false : loadOptions?.remember,
+      skipCache:true,
+    }))
     return true
   }
+  loadOptions = reconcileImportedReaderWork(previousCache, work, loadOptions)
   closeReaderImportDialog({restoreFocus:false})
   loadWork(work, Object.assign({}, loadOptions, {cachePrepared:true}))
   return true
@@ -2964,7 +3197,7 @@ function canResumeReaderImport(work, book) {
   })
 }
 
-function reviewReaderWorkImport(work, root) {
+function reviewReaderWorkImport(work, root, releaseIntegrity) {
   root = root && typeof root.querySelector === 'function' ? root : _readerImportOverlay
   var existingBook = work && work.id ? savedReaderBook(work.id) : null
   var existingCache = work && work.id ? cachedReaderWork(work.id) : null
@@ -2973,44 +3206,76 @@ function reviewReaderWorkImport(work, root) {
   var review = root.querySelector('.rd-import-review')
   if (!dropInner || !review) return false
 
-  var recovering = !!existingBook && !existingCache
+  var reviewCopy = readerWorkImportReview(work, existingCache, {
+    hasBook:!!existingBook,
+    releaseIntegrity:releaseIntegrity,
+  })
+  var recovering = reviewCopy.state === 'recovery'
+  var changeSummary = reviewCopy.changeSummary.length
+    ? '<section class="rd-import-change-summary" aria-label="本次变化"><span>本次变化</span><ul>' +
+      reviewCopy.changeSummary.map(function(item) { return '<li>' + esc(item) + '</li>' }).join('') +
+      '</ul></section>'
+    : ''
   dropInner.hidden = true
   review.hidden = false
-  review.innerHTML = '<p class="rd-import-review-label">' + (recovering ? '恢复书架内容' : '检测到已有作品') + '</p>' +
+  review.dataset.releaseState = reviewCopy.state
+  review.innerHTML = '<p class="rd-import-review-label">' + esc(reviewCopy.label) + '</p>' +
     '<h3>' + esc(work.title || '无标题作品') + '</h3>' +
     (work.author ? '<p class="rd-import-review-author">' + esc(work.author) + '</p>' : '') +
+    changeSummary +
     '<dl class="rd-import-review-summary"><div><dt>正文内容</dt><dd>' +
-    (recovering ? '重新保存到这台设备' : '更新为这次导入的版本') + '</dd></div>' +
+    esc(reviewCopy.contentSummary) + '</dd></div>' +
     '<div><dt>阅读记录</dt><dd>' +
-    (recovering ? '接回原来的存档、身份、占位符与书签' : '保留存档、身份、占位符与书签') + '</dd></div></dl>' +
-    '<p class="rd-import-review-note">' +
-    (recovering
-      ? '确认后会回到上次阅读位置；如果原位置已失效，会从作品开头继续。'
-      : '如果作者删除了原剧情节点，失效的位置会安全回到开头。') +
-    '</p>' +
-    '<div class="rd-import-review-actions"><button type="button" class="rd-book-secondary" data-reader-import-cancel>返回选择</button>' +
-    '<button type="button" class="rd-book-primary" data-reader-import-confirm>' + (recovering ? '恢复并继续' : '更新作品') + '</button></div>'
+    esc(reviewCopy.readerSummary) + '</dd></div></dl>' +
+    '<p class="rd-import-review-note">' + esc(reviewCopy.note) + '</p>' +
+    '<div class="rd-import-review-actions"><button type="button" class="rd-book-secondary" data-reader-import-secondary>' + esc(reviewCopy.secondaryLabel) + '</button>' +
+    '<button type="button" class="rd-book-primary" data-reader-import-confirm>' + esc(reviewCopy.confirmLabel) + '</button></div>'
   setReaderImportStatus(root, 'review', '')
 
-  var cancelButton = review.querySelector('[data-reader-import-cancel]')
+  var secondaryButton = review.querySelector('[data-reader-import-secondary]')
   var confirmButton = review.querySelector('[data-reader-import-confirm]')
-  cancelButton.onclick = function() {
+  function returnToPicker() {
     review.hidden = true
     review.innerHTML = ''
+    delete review.dataset.releaseState
     dropInner.hidden = false
     setReaderImportStatus(root, 'idle', '')
     var picker = root.querySelector('#pickFileBtn')
     if (picker) picker.focus()
   }
+  function replaceCachedWork() {
+    openImportedReaderWork(work, root, {
+      resume:true,
+      skipLanding:canResumeReaderImport(work, existingBook),
+      releaseState:reviewCopy.state,
+    })
+  }
+  secondaryButton.onclick = function() {
+    if (reviewCopy.secondaryAction === 'preview') {
+      closeReaderImportDialog({restoreFocus:false})
+      loadWork(work, {remember:false})
+      return
+    }
+    if (reviewCopy.secondaryAction === 'replace') {
+      replaceCachedWork()
+      return
+    }
+    returnToPicker()
+  }
   confirmButton.onclick = function() {
-    var skipLanding = canResumeReaderImport(work, existingBook)
-    openImportedReaderWork(work, root, {resume:true, skipLanding:skipLanding})
+    if (reviewCopy.primaryAction === 'continue') {
+      closeReaderImportDialog({restoreFocus:false})
+      openReaderBookById(work.id)
+      return
+    }
+    replaceCachedWork()
   }
   confirmButton.focus()
   return true
 }
 
 function importWork(work, root) {
+  var releaseIntegrity = workReleaseFingerprintMatches(work)
   var result = prepareImportedWork(work)
   if (!result.ok) {
     reportReaderImportError(result.message, root)
@@ -3025,7 +3290,7 @@ function importWork(work, root) {
     )
     return
   }
-  if (reviewReaderWorkImport(result.work, root)) return
+  if (reviewReaderWorkImport(result.work, root, releaseIntegrity)) return
   openImportedReaderWork(result.work, root)
 }
 
@@ -3254,7 +3519,23 @@ function renderReaderCollectionById(id) {
     return
   }
   _activeReaderCollectionId = id
-  var available = 0
+  var libraryById = new Map(getReaderLibraryState().books.map(function(book) {
+    return [book.id, book]
+  }))
+  var entries = (collection.workIds || []).map(function(workId, authoredIndex) {
+    return {
+      workId:workId,
+      authoredIndex:authoredIndex,
+      work:readerCollectionWork(workId),
+    }
+  }).filter(function(entry) {
+    return !!entry.work
+  }).sort(function(left, right) {
+    return readerBookPinOrder(
+      libraryById.get(left.workId),
+      libraryById.get(right.workId),
+    ) || left.authoredIndex - right.authoredIndex
+  })
   var h = '<main class="rd-collection-directory">'
   h += '<button type="button" class="reader-back" data-reader-library title="返回个人主页" aria-label="返回个人主页">←</button>'
   if (collection.coverImage && isSafeImageUrl(collection.coverImage)) h += '<img class="rd-collection-cover" src="' + escapeHtmlAttribute(collection.coverImage) + '" alt="">'
@@ -3263,13 +3544,11 @@ function renderReaderCollectionById(id) {
   if (collection.description) h += '<p>' + esc(collection.description) + '</p>'
   if (collection.authorNote) h += '<div class="rd-collection-note">' + esc(collection.authorNote) + '</div>'
   h += '</header><section class="rd-collection-directory-list" aria-label="作品目录">'
-  ;(collection.workIds || []).forEach(function(workId, index) {
-    var work = readerCollectionWork(workId)
-    if (!work) return
-    available += 1
-    h += '<button type="button" class="rd-collection-directory-item" data-reader-collection-work="' + escapeHtmlAttribute(workId) + '"><span class="rd-collection-number">' + String(index + 1).padStart(2, '0') + '</span><span><strong>' + esc(work.title || '无标题作品') + '</strong><small>' + (work.type === 'phone' ? '小手机' : '互动文章') + '</small></span><span aria-hidden="true">→</span></button>'
+  entries.forEach(function(entry, index) {
+    var work = entry.work
+    h += '<button type="button" class="rd-collection-directory-item" data-reader-collection-work="' + escapeHtmlAttribute(entry.workId) + '"><span class="rd-collection-number">' + String(index + 1).padStart(2, '0') + '</span><span><strong>' + esc(work.title || '无标题作品') + '</strong><small>' + (work.type === 'phone' ? '小手机' : '互动文章') + '</small></span><span aria-hidden="true">→</span></button>'
   })
-  if (!available) h += '<div class="rd-empty">作品内容不在本地，请重新导入这个作品集</div>'
+  if (!entries.length) h += '<div class="rd-empty">作品内容不在本地，请重新导入这个作品集</div>'
   h += '</section></main>'
   render('app', h)
 }
@@ -3710,14 +3989,16 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
   ]
   var themes = READER_APPEARANCE_THEMES
 
-  var body = '<div class="rs-panel-body">'
-  body += '<aside class="rs-preview-pane"><div class="rs-preview" aria-label="阅读外观实时预览"><div class="rs-preview-copy reader-article-css-preview-scope">'
+  var body = readerAppearancePagerMarkup() +
+    '<div class="rs-panel-body appearance-workbench-pages" data-appearance-active-page="preview">'
+  body += '<aside class="rs-preview-pane appearance-workbench-page" data-appearance-page="preview"><div class="rs-preview" aria-label="阅读外观实时预览"><div class="rs-preview-copy reader-article-css-preview-scope">'
   body += '<div class="article-progress" aria-hidden="true"><span class="dot visited"></span><span class="dot current"></span><span class="dot"></span></div>'
   body += '<h3 class="article-title">雾色来信</h3><div class="article-meta">试读章节 · 刚刚</div>'
   body += '<div class="article-content"><section class="article-node"><h4 class="article-node-title">窗边</h4><p>晨光落在纸页上，文字与留白会跟随右侧设置实时变化。</p><p>这里也会显示段距、首行缩进和对齐效果。</p>'
   body += '<div class="article-choices"><button type="button" class="article-choice-btn" tabindex="-1"><span class="label">1.</span><span>继续阅读</span></button></div></section></div>'
   body += '</div></div><p class="rs-live-status" id="rsLiveStatus" role="status" aria-live="polite">实时预览 · 修改后自动保存</p></aside>'
-  body += '<div class="rs-controls">'
+  body += '<div class="rs-controls appearance-workbench-page" data-appearance-page="controls">'
+  body += cuSettingsSectionStart('rsTypography', '文字排版', true)
 
   // Font size
   body += '<div class="rs-section"><div class="rs-section-title">字号 <span id="rsFontSizeVal">' + rs.fontSize + '</span>px</div>'
@@ -3741,6 +4022,8 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
   body += '<div class="rs-section"><div class="rs-section-title">内容宽度 <span id="rsContentWidthVal">' + rs.contentWidth + '</span>px</div>'
   body += '<input type="range" id="rsContentWidth" class="rs-range" min="420" max="1080" step="20" value="' + rs.contentWidth + '"></div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsStructure', '标题与结构', false)
   body += '<div class="rs-section"><div class="rs-group-heading"><span>标题与结构</span><small>控制标题、作者信息和章节之间的节奏</small></div><div class="rs-control-grid">'
   body += '<label class="rs-range-field" for="rsTitleSize"><span>标题字号 <output id="rsTitleSizeVal">' + rs.titleSize + 'px</output></span><input type="range" id="rsTitleSize" class="rs-range" min="18" max="44" value="' + rs.titleSize + '"></label>'
   body += '<label class="rs-range-field" for="rsTitleSpacing"><span>标题下方 <output id="rsTitleSpacingVal">' + rs.titleSpacing + 'px</output></span><input type="range" id="rsTitleSpacing" class="rs-range" min="0" max="40" step="2" value="' + rs.titleSpacing + '"></label>'
@@ -3756,6 +4039,8 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
   ;['left','justify','center','right'].forEach(function(alignment) { var label = {left:'左对齐',justify:'两端对齐',center:'居中',right:'右对齐'}[alignment]; body += '<button type="button" class="rs-align-btn' + (rs.textAlign === alignment ? ' active' : '') + '" data-rs-align="' + alignment + '" aria-pressed="' + (rs.textAlign === alignment ? 'true' : 'false') + '">' + label + '</button>' })
   body += '</div><label class="rd-checkbox"><input type="checkbox" id="rsIndent"' + (rs.indentFirstLine ? ' checked' : '') + '> 段落首行缩进</label></div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsFonts', '字体', false)
   // Font
   body += '<div class="rs-section"><div class="rs-section-title">字体</div>'
   body += '<div class="rs-font-grid">'
@@ -3778,12 +4063,16 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
   body += '</div>'
   body += '</div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsMedia', '选项与图片', false)
   body += '<div class="rs-section"><div class="rs-group-heading"><span>选项与图片</span><small>让互动按钮和插图融入正文排版</small></div><div class="rs-control-grid">'
   body += '<label class="rs-range-field" for="rsImageRadius"><span>图片圆角 <output id="rsImageRadiusVal">' + rs.imageRadius + 'px</output></span><input type="range" id="rsImageRadius" class="rs-range" min="0" max="24" value="' + rs.imageRadius + '"></label>'
   body += '<label class="rs-range-field" for="rsChoiceGap"><span>选项间距 <output id="rsChoiceGapVal">' + rs.choiceGap + 'px</output></span><input type="range" id="rsChoiceGap" class="rs-range" min="4" max="28" step="2" value="' + rs.choiceGap + '"></label>'
   body += '<label class="rs-range-field" for="rsChoiceRadius"><span>选项圆角 <output id="rsChoiceRadiusVal">' + rs.choiceRadius + 'px</output></span><input type="range" id="rsChoiceRadius" class="rs-range" min="0" max="20" value="' + rs.choiceRadius + '"></label>'
   body += '</div></div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsThemeBackground', '主题与背景', false)
   // Theme
   body += '<div class="rs-section"><div class="rs-section-title">主题</div>'
   body += '<div class="rs-theme-grid">'
@@ -3812,18 +4101,25 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
   body += '<input type="range" id="rsBgOverlay" class="rs-range" min="0" max="90" step="5" value="' + rs.backgroundOverlay + '">'
   body += '</div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsReadingEffects', '阅读效果', false)
   // Typing effect
   body += '<div class="rs-section">'
   body += '<label class="rd-checkbox"><input type="checkbox" id="rsTyping"' + (rs.typingEffect ? ' checked' : '') + '> 打字机效果</label>'
   body += '<div class="rs-section-title" style="margin-top:8px">速度: <span id="rsTypingSpeedVal">' + (rs.typingSpeed || 50) + '</span>ms</div>'
   body += '<input type="range" id="rsTypingSpeed" class="rs-range" min="10" max="500" step="5" value="' + (rs.typingSpeed || 50) + '"></div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsAdvancedCss', '高级 CSS', false, 'rs-css-section')
   body += '<div class="rs-section rs-css-section"><div class="rs-group-heading"><span>高级 CSS</span><small>只作用于文章区域，输入时即时校验</small></div>'
   body += '<textarea id="rsCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="rsCssHint rsCssError" placeholder=".article-title { letter-spacing: .08em; }">' + esc(rs.customCss || '') + '</textarea>'
   body += '<div class="rs-css-meta"><p class="rs-field-hint" id="rsCssHint">支持普通选择器与属性；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="rsCssCount">' + String((rs.customCss || '').length) + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>'
   body += '<p class="rs-field-error" id="rsCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="rsCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="rsClearCss">清空 CSS</button></div></div>'
 
+  body += cuSettingsSectionEnd()
+  body += cuSettingsSectionStart('rsAppearanceTransfer', '外观迁移', false)
   body += readerAppearancePackageTransferMarkup()
+  body += cuSettingsSectionEnd()
   body += '<div class="rs-reset-wrap"><button class="rs-reset-btn" id="rsReset">恢复默认</button></div>'
   body += '</div></div>'
 
@@ -3838,6 +4134,7 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
     '<div class="rs-sheet-scroll">' + body + '</div>' +
     '</section>'
   document.body.appendChild(ov)
+  bindReaderAppearancePager(ov)
 
   var activeTrigger = triggerElement && triggerElement.isConnected ? triggerElement : document.activeElement
   var dialog = ov.querySelector('.rs-sheet')
@@ -3914,7 +4211,7 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
     el.oninput = function() {
       var v = parseFloat(this.value)
       rs[key] = v
-      if (valEl) { var lbl = ov.querySelector(valEl); if (lbl) lbl.textContent = format ? format(v) : v }
+      if (valEl) { var lbl = ov.querySelector(valEl); if (lbl) setReaderRangeOutput(lbl, format ? format(v) : v) }
       persistAndPreview()
     }
   }
@@ -4194,6 +4491,68 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
       persistAndPreview()
       closePanel({ restoreFocus: false })
       openReaderSettingsPanel(activeTrigger)
+    }
+  })
+
+  function applyArticleAppearanceSnapshot(snapshot) {
+    rs = saveReaderSettings(snapshot)
+    var rangeValues = {
+      rsFontSize:[rs.fontSize, ''],
+      rsLineH:[rs.lineHeight, ''],
+      rsLetterS:[rs.letterSpacing, ''],
+      rsParaS:[rs.paragraphSpacing, ''],
+      rsMargin:[rs.marginSize, ''],
+      rsContentWidth:[rs.contentWidth, ''],
+      rsTitleSize:[rs.titleSize, 'px'],
+      rsTitleSpacing:[rs.titleSpacing, 'px'],
+      rsMetaSpacing:[rs.metaSpacing, 'px'],
+      rsSectionSpacing:[rs.sectionSpacing, 'px'],
+      rsImageRadius:[rs.imageRadius, 'px'],
+      rsChoiceGap:[rs.choiceGap, 'px'],
+      rsChoiceRadius:[rs.choiceRadius, 'px'],
+      rsBgOverlay:[rs.backgroundOverlay, ''],
+      rsTypingSpeed:[rs.typingSpeed, '']
+    }
+    Object.keys(rangeValues).forEach(function(id) {
+      var range = ov.querySelector('#' + id)
+      if (range) range.value = rangeValues[id][0]
+      setReaderRangeOutput(ov.querySelector('#' + id + 'Val'), rangeValues[id][0] + rangeValues[id][1])
+    })
+    ;[['rsBgColor', rs.backgroundColor], ['rsTextColor', rs.textColor], ['rsAccentColor', rs.accentColor]].forEach(function(binding) {
+      var input = ov.querySelector('#' + binding[0])
+      if (input) input.value = readerColorInputValue(binding[1])
+    })
+    if (indentCb) indentCb.checked = rs.indentFirstLine
+    if (typingCb) typingCb.checked = rs.typingEffect
+    syncPressedButtons('[data-rs-align]', 'rsAlign', rs.textAlign)
+    syncPressedButtons('[data-rs-title-weight]', 'rsTitleWeight', String(rs.titleWeight))
+    syncPressedButtons('[data-rs-theme]', 'rsTheme', rs.theme)
+    syncPressedButtons('[data-rs-fit]', 'rsFit', rs.backgroundFit)
+    syncPressedButtons('[data-rs-position]', 'rsPosition', rs.backgroundPosition)
+    ov.querySelectorAll('[data-rs-font]').forEach(function(button) {
+      button.classList.toggle('active', button.dataset.rsFont === rs.fontFamily)
+    })
+    document.querySelectorAll('.article-content').forEach(function(content) { applyReaderSettings(content, rs) })
+    applyReaderSettingsPreview(ov, rs)
+  }
+
+  enhanceReaderAppearanceRanges(ov)
+  bindReaderAppearanceSectionStates(ov)
+  bindReaderAppearanceUndo(ov, {
+    capture:function() { return JSON.parse(JSON.stringify(rs)) },
+    restore:applyArticleAppearanceSnapshot
+  })
+  ov.querySelector('.rs-preview-copy').addEventListener('click', function(event) {
+    var sectionId = event.target.closest('h3') ? 'rsStructure'
+      : (event.target.closest('.rs-preview-choice') ? 'rsMedia'
+        : (event.target.closest('p, h4') ? 'rsTypography' : 'rsThemeBackground'))
+    var section = ov.querySelector('#' + sectionId)
+    if (section) {
+      ov.querySelectorAll('.rs-controls > .cu-settings-section').forEach(function(candidate) { candidate.open = candidate === section })
+      section.classList.add('is-preview-targeted')
+      globalThis.setTimeout(function() { if (section.isConnected) section.classList.remove('is-preview-targeted') }, 650)
+      var settingsPage = ov.querySelector('[data-appearance-page-target="controls"]')
+      if (settingsPage) settingsPage.click()
     }
   })
 
@@ -6349,7 +6708,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     var autoCall = null
 
     // ---- BUILD HTML ----
-    var h = '<div class="rd-phone-app-panel rd-phone-app-messages chat-author-shell chat-reader-shell" style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px">'
+    var chatBackgroundImage = ast.chatBgImage ? 'url("' + ast.chatBgImage + '")' : 'none'
+    var chatTone = readerChatTonePresentation(ast.chatBgTone)
+    var h = '<div class="rd-phone-app-panel rd-phone-app-messages chat-author-shell chat-reader-shell" style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;--chat-editor-screen:' + sanitizeCssColor(ast.chatBg) + ';--chat-editor-image:' + escapeHtmlAttribute(chatBackgroundImage) + ';--chat-bg-size:' + ast.chatBgFit + ';--chat-bg-position:' + ast.chatBgPositionX + '% ' + ast.chatBgPositionY + '%;--chat-bg-overlay-color:' + chatTone.color + ';--chat-bg-overlay-opacity:' + chatTone.opacity + ';--chat-bubble-weight:' + ast.bubbleFontWeight + ';--chat-send-bg:' + sanitizeCssColor(ast.sendButtonBg, { fallback: '#cda9b1' }) + ';--chat-send-ink:' + readerReadableTextColor(ast.sendButtonBg) + ';' + readerBubbleSkinVariables(ast) + readerChatReadabilityVariables(ast) + '">'
 
     // Top bar
     h += '<div class="chat-round-header">'
@@ -6370,7 +6731,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         renderedVisibleCount++
         if (msg.type === 'time') {
           if (!shouldShowPhoneTimestamp(pd, msg.time)) continue
-          h += '<div class="rd-chat-time' + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" style="text-align:center;padding:6px 0;font-size:.62rem;color:#b0b8c4">' + esc(msg.time || '') + '</div>'
+          h += '<div class="rd-chat-time' + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" style="text-align:center;padding:6px 0;font-size:.62rem;color:var(--chat-time-color,#b0b8c4)">' + esc(msg.time || '') + '</div>'
           continue
         }
         if (msg.type === 'call') {
@@ -6385,8 +6746,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           continue
         }
         var isSelf = msg.senderId === 'self'
+        var bubbleSkinClass = readerBubbleSkinClass(ast, isSelf ? 'self' : 'other')
+        var bubbleSkinRowClass = readerMessageUsesBubbleShell(msg) ? bubbleSkinClass : ''
         var reselectRunKey = reselectRunsByReply.get(messageLocationKey(ri, msg.id)) || ''
-        h += '<div class="chat-msg rd-chat-message ' + (isSelf ? 'self is-self' : 'other is-other') + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '">'
+        h += '<div class="chat-msg rd-chat-message ' + (isSelf ? 'self is-self' : 'other is-other') + bubbleSkinRowClass + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '">'
         if (isSelf) {
           h += '<div class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerChatName) + '" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerChatName)) + '">'
           if (readerChatAvatar) h += '<img src="' + escapeHtmlAttribute(readerChatAvatar) + '" alt="">'
@@ -6414,7 +6777,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
           : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
         if (msg.type === 'image') {
-          h += '<div class="chat-bubble" style="' + bubbleStyle + '">'
+          h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + '">'
           h += '<img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
           h += '</div>'
         } else if (msg.type === 'link') {
@@ -6449,13 +6812,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
             var bh = 4 + Math.abs(Math.sin(bi * 0.7 + 1.5)) * 14
             bars += '<rect x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
           }
-          h += '<div class="chat-bubble" style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
+          h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
           h += '<svg width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
           h += '<span style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
           h += '<span class="cv-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(resolvedMessageText) + '</span>'
           h += '</div>'
         } else {
-          h += '<div class="chat-bubble" style="' + bubbleStyle + '">'
+          h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + '">'
           if (msg.quoteId && msg.quoteText) {
             h += '<div style="font-size:.6rem;opacity:.7;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid rgba(0,0,0,.1)">引用：' + esc(msg.quoteText.substring(0, 40)) + '</div>'
           }
@@ -7151,12 +7514,23 @@ function renderPhonePreview(ct, options) {
   return h
 }
 
-function showReaderToast(msg) {
-  var t = document.createElement('div')
-  t.className = 'rd-toast'
-  t.textContent = msg
-  document.body.appendChild(t)
-  setTimeout(function() { t.remove() }, 2500)
+var _readerFeedbackCenter = null
+var _readerFeedbackDocument = null
+
+function readerFeedbackCenter() {
+  if (!_readerFeedbackCenter || _readerFeedbackDocument !== document) {
+    _readerFeedbackDocument = document
+    _readerFeedbackCenter = createFeedbackCenter({
+      documentObject:document,
+      className:'rd-toast',
+      duration:2500,
+    })
+  }
+  return _readerFeedbackCenter
+}
+
+function showReaderToast(msg, type, options) {
+  return readerFeedbackCenter().show(msg, type || 'success', options || {})
 }
 
 // ====== Custom Font Engine ======
@@ -7330,11 +7704,13 @@ function openReaderCustomizePanel(triggerElement) {
     { name:'奶油', color:'#faf5ed' }, { name:'薰衣草', color:'#ede8f5' },
     { name:'浅灰', color:'#e8e8e8' }, { name:'暗夜', color:'#1a1a2e' }
   ]
-  var body = '<div class="phone-appearance-layout">'
-  body += '<aside class="phone-appearance-preview-pane"><div id="phoneAppearancePreview"></div><p class="phone-appearance-status" id="cuLiveStatus" role="status" aria-live="polite">实时预览 · 保存后保留</p></aside>'
-  body += '<div class="phone-appearance-controls">'
+  var body = readerAppearancePagerMarkup() +
+    '<div class="phone-appearance-layout appearance-workbench-pages" data-appearance-active-page="preview">'
+  body += '<aside class="phone-appearance-preview-pane appearance-workbench-page" data-appearance-page="preview"><div id="phoneAppearancePreview"></div><p class="phone-appearance-status" id="cuLiveStatus" role="status" aria-live="polite">实时预览 · 保存后保留</p></aside>'
+  body += '<div class="phone-appearance-controls appearance-workbench-page" data-appearance-page="controls">'
 
-  body += '<section class="phone-appearance-group"><div class="rs-group-heading"><span>壁纸与边框</span><small>颜色会即时映射到左侧手机</small></div>'
+  body += cuSettingsSectionStart('cuPhoneWallpaper', '壁纸与边框', true)
+  body += '<div class="rs-group-heading"><small>颜色会即时映射到左侧手机</small></div>'
   body += '<div class="phone-appearance-swatches" role="group" aria-label="壁纸预设">'
   wallpaperPresets.forEach(function(preset) {
     body += '<button type="button" class="phone-appearance-swatch' + (ct.wallpaper === preset.color && ct.wallpaperType !== 'image' ? ' active' : '') + '" data-cu-color="' + preset.color + '" aria-label="' + preset.name + '" aria-pressed="' + (ct.wallpaper === preset.color && ct.wallpaperType !== 'image' ? 'true' : 'false') + '"><span style="background:' + preset.color + '"></span></button>'
@@ -7344,16 +7720,18 @@ function openReaderCustomizePanel(triggerElement) {
   body += '<label class="rs-color-control">边框色<input type="color" class="rs-color-input" id="cuFrameColor" value="' + escapeHtmlAttribute(ct.frameColor) + '"></label>'
   body += '<label class="rs-color-control">系统标记<input type="color" class="rs-color-input" id="cuTimeColor" value="' + escapeHtmlAttribute(ct.timeColor) + '"></label></div>'
   body += '<div class="phone-appearance-image-row"><input type="url" class="rd-input" id="cuWpUrl" value="' + escapeHtmlAttribute(ct.wallpaperType === 'image' && ct.wallpaperImage && !/^data:/i.test(ct.wallpaperImage) ? ct.wallpaperImage : '') + '" placeholder="背景图片地址"><button type="button" class="rs-action-btn" id="cuApplyBg">应用</button><button type="button" class="rs-action-btn" id="cuUploadBg">本地图片</button><button type="button" class="rs-action-btn subtle" id="cuClearBg">清除</button></div>'
-  body += '<p class="rs-field-error" id="cuBgError" role="alert" hidden></p></section>'
+  body += '<p id="cuPhoneWallpaperState" class="cu-chat-background-state" aria-live="polite"></p><p class="rs-field-error" id="cuBgError" role="alert" hidden></p>' + cuSettingsSectionEnd()
 
-  body += '<section class="phone-appearance-group"><div class="rs-group-heading"><span>尺寸与材质</span><small>边框圆角在宽屏手机框和预览中显示</small></div><div class="phone-appearance-range-grid">'
+  body += cuSettingsSectionStart('cuPhoneDimensions', '尺寸与材质', false)
+  body += '<div class="rs-group-heading"><small>边框圆角在宽屏手机框和预览中显示</small></div><div class="phone-appearance-range-grid">'
   body += phoneAppearanceRange('机身圆角', 'cuRadius', 0, 40, 1, ct.borderRadius, 'px')
   body += phoneAppearanceRange('界面字号', 'cuFontSize', 9, 20, 1, ct.fontSize, 'px')
   body += phoneAppearanceRange('图标圆角', 'cuIconRadius', 0, 27, 1, ct.iconBorderRadius, 'px')
   body += phoneAppearanceRange('材质透明度', 'cuMaterialOpacity', 20, 100, 1, ct.materialOpacity, '%')
-  body += '</div></section>'
+  body += '</div>' + cuSettingsSectionEnd()
 
-  body += '<section class="phone-appearance-group"><div class="rs-group-heading"><span>字体与系统组件</span><small>这些设置同时作用于桌面和已接入 App</small></div>'
+  body += cuSettingsSectionStart('cuPhoneSystem', '字体与系统组件', false)
+  body += '<div class="rs-group-heading"><small>这些设置同时作用于桌面和已接入 App</small></div>'
   body += '<label class="phone-appearance-select-label" for="cuFontFamily">手机字体<select class="rd-input" id="cuFontFamily">' + phoneAppearanceFontOptions(ct) + '</select></label>'
   body += '<div class="phone-appearance-font-actions"><button type="button" class="rs-action-btn subtle" id="cuUploadFont">上传字体</button><div id="cuFontList"></div></div>'
   body += '<div class="phone-appearance-toggles">'
@@ -7362,13 +7740,14 @@ function openReaderCustomizePanel(triggerElement) {
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuLabels"' + (ct.showAppLabels ? ' checked' : '') + '> App 名称</label>'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuHome"' + (ct.showHomeIndicator ? ' checked' : '') + '> Home 指示条</label>'
   body += '<label class="rd-checkbox"><input type="checkbox" id="cuShadow"' + (ct.showIconShadow ? ' checked' : '') + '> 图标阴影</label>'
-  body += '</div></section>'
+  body += '</div>' + cuSettingsSectionEnd()
 
-  body += '<section class="phone-appearance-group rs-css-section"><div class="rs-group-heading"><span>高级 CSS</span><small>只作用于手机框内部，输入时即时校验</small></div>'
+  body += cuSettingsSectionStart('cuPhoneCss', '高级 CSS', false, 'rs-css-section')
+  body += '<div class="rs-group-heading"><small>只作用于手机框内部，输入时即时校验</small></div>'
   body += '<textarea id="cuCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="cuCssHint cuCssError" placeholder=".phone-profile { box-shadow: none; }">' + esc(ct.customCss || '') + '</textarea>'
   body += '<div class="rs-css-meta"><p class="rs-field-hint" id="cuCssHint">支持普通选择器与属性；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="cuCssCount">' + (ct.customCss || '').length + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>'
-  body += '<p class="rs-field-error" id="cuCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="cuCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="cuClearCss">清空 CSS</button></div></section>'
-  body += readerAppearancePackageTransferMarkup()
+  body += '<p class="rs-field-error" id="cuCssError" role="alert" hidden></p><div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="cuCssExample">填入示例</button><button type="button" class="rs-action-btn subtle" id="cuClearCss">清空 CSS</button></div>' + cuSettingsSectionEnd()
+  body += cuSettingsSection('cuPhoneTransfer', '外观迁移', readerAppearancePackageTransferMarkup(), false)
   body += '<div class="phone-appearance-reset"><button type="button" class="rs-reset-btn" id="cuAppearanceReset">恢复手机外观默认值</button></div>'
   body += '</div></div>'
 
@@ -7385,6 +7764,7 @@ function openReaderCustomizePanel(triggerElement) {
   }, triggerElement)
   var dialog = ov.querySelector('.cu-modal')
   dialog.classList.add('phone-appearance-workbench')
+  bindReaderAppearancePager(ov)
   var previewHost = ov.querySelector('#phoneAppearancePreview')
   var saveButton = ov.querySelector('#cuModalSave')
   var cancelButton = ov.querySelector('#cuModalCancel')
@@ -7518,7 +7898,7 @@ function openReaderCustomizePanel(triggerElement) {
     if (!input) return
     input.oninput = function() {
       updateDraft(function() { ct[key] = Number(input.value) })
-      if (output) output.textContent = input.value + (unit || '')
+      if (output) setReaderRangeOutput(output, input.value + (unit || ''))
     }
   }
   bindAppearanceRange('cuRadius', 'borderRadius', 'px')
@@ -7584,6 +7964,16 @@ function openReaderCustomizePanel(triggerElement) {
       readReaderCallBackgroundFile(file).then(function(dataUrl) {
         if (backgroundUrl) backgroundUrl.value = ''
         applyWallpaperImage(dataUrl)
+        return inspectReaderAppearanceImage(dataUrl, file.size)
+      }).then(function(meta) {
+        if (!meta || !ov.isConnected) return
+        renderReaderAppearanceImageChoice(ov.querySelector('#cuPhoneWallpaperState'), meta, function(nextUrl, nextMeta) {
+          applyWallpaperImage(nextUrl)
+          renderReaderAppearanceImageChoice(ov.querySelector('#cuPhoneWallpaperState'), nextMeta, null)
+          var section = ov.querySelector('#cuPhoneWallpaper')
+          if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+          if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+        })
       }).catch(function(error) {
         setBackgroundError((error && error.message) || '图片读取失败，请换一张再试。')
       })
@@ -7698,7 +8088,7 @@ function openReaderCustomizePanel(triggerElement) {
       ['cuMaterialOpacity', ct.materialOpacity, '%']
     ].forEach(function(item) {
       ov.querySelector('#' + item[0]).value = item[1]
-      ov.querySelector('#' + item[0] + 'Val').textContent = item[1] + item[2]
+      setReaderRangeOutput(ov.querySelector('#' + item[0] + 'Val'), item[1] + item[2])
     })
     ov.querySelector('#cuIsland').checked = ct.showDynamicIsland
     ov.querySelector('#cuIslandStyle').value = normalizeDynamicIslandStyle(ct.dynamicIslandStyle)
@@ -7710,39 +8100,112 @@ function openReaderCustomizePanel(triggerElement) {
     syncPresetButtons()
     setCssDraft('')
   }
+
+  function applyPhoneAppearanceSnapshot(snapshot) {
+    ct = normalizePhoneCustom(snapshot)
+    ov.querySelector('#cuWallpaperColor').value = ct.wallpaper
+    ov.querySelector('#cuFrameColor').value = ct.frameColor
+    ov.querySelector('#cuTimeColor').value = ct.timeColor
+    ov.querySelector('#cuWpUrl').value = ct.wallpaperType === 'image' && ct.wallpaperImage && !/^data:/i.test(ct.wallpaperImage) ? ct.wallpaperImage : ''
+    ;[
+      ['cuRadius', ct.borderRadius, 'px'],
+      ['cuFontSize', ct.fontSize, 'px'],
+      ['cuIconRadius', ct.iconBorderRadius, 'px'],
+      ['cuMaterialOpacity', ct.materialOpacity, '%']
+    ].forEach(function(item) {
+      var range = ov.querySelector('#' + item[0])
+      if (range) range.value = item[1]
+      setReaderRangeOutput(ov.querySelector('#' + item[0] + 'Val'), item[1] + item[2])
+    })
+    ov.querySelector('#cuIsland').checked = ct.showDynamicIsland
+    ov.querySelector('#cuIslandStyle').value = normalizeDynamicIslandStyle(ct.dynamicIslandStyle)
+    ov.querySelector('#cuLabels').checked = ct.showAppLabels
+    ov.querySelector('#cuHome').checked = ct.showHomeIndicator
+    ov.querySelector('#cuShadow').checked = ct.showIconShadow
+    ov.querySelector('#cuCustomCss').value = ct.customCss || ''
+    renderFontList()
+    syncPresetButtons()
+    setCssDraft(ct.customCss || '')
+  }
+
+  enhanceReaderAppearanceRanges(ov)
+  bindReaderAppearanceSectionStates(ov)
+  bindReaderAppearanceUndo(ov, {
+    capture:function() { return JSON.parse(JSON.stringify(ct)) },
+    restore:applyPhoneAppearanceSnapshot
+  })
+  previewHost.addEventListener('click', function(event) {
+    var sectionId = event.target.closest('.phone-profile') ? 'cuPhoneWallpaper'
+      : (event.target.closest('.phone-icon-body, .phone-icon-label') ? 'cuPhoneDimensions'
+        : (event.target.closest('.dynamic-island, .phone-home-indicator') ? 'cuPhoneSystem' : 'cuPhoneWallpaper'))
+    focusReaderAppearanceSection(ov, sectionId, null, event.detail === 0)
+  })
 }
 
-function openReaderProfilePanel() {
+function openReaderProfilePanel(triggerElement) {
   var ct = getPhoneCustom()
-  var body = '<div class="cu-section"><div class="cu-section-title">个人信息</div>'
-  body += '<label class="cu-label">昵称</label><input class="rd-input" id="rpName" value="' + escapeHtmlAttribute(ct.readerId || '') + '" placeholder="默认使用作品昵称">'
-  body += '<label class="cu-label">头像</label>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" placeholder="输入头像URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadAv">上传</button></div>'
-  body += '<div class="rd-preview-img" id="rpAvatarPreview"' + (ct.readerAvatar ? '' : ' hidden') + '><img id="rpAvatarPreviewImage" src="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" alt="" style="border-radius:50%"><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearAv">清除</button></div>'
-  body += '<label class="cu-label">顶部背景图</label>'
-  body += '<div class="rd-input-row"><input class="rd-input" id="rpTopBgUrl" value="' + escapeHtmlAttribute(ct.topBgImage || '') + '" placeholder="输入图片URL..."><button style="padding:5px 12px;font-size:.75rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer" id="rpUploadTop">上传</button></div>'
-  body += '<div class="rd-preview-img" id="rpTopBgPreview"' + (ct.topBgImage ? '' : ' hidden') + '><img id="rpTopBgPreviewImage" src="' + escapeHtmlAttribute(ct.topBgImage || '') + '" alt=""><button style="padding:4px 8px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer" id="rpClearTop">清除</button></div>'
-  body += '</div>'
+  var identitySettings = cuRow('昵称',
+    '<input class="rd-input" id="rpName" value="' + escapeHtmlAttribute(ct.readerId || '') + '" placeholder="默认使用作品昵称">')
+  var avatarSettings = cuRow('头像',
+    '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" placeholder="输入头像 URL"><button type="button" class="rs-action-btn subtle" id="rpUploadAv">上传</button></div>') +
+    '<div class="rd-preview-img" id="rpAvatarPreview"' + (ct.readerAvatar ? '' : ' hidden') + '><img id="rpAvatarPreviewImage" src="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" alt="" style="border-radius:50%"><button type="button" class="rs-action-btn subtle" id="rpClearAv">清除</button></div>'
+  var coverSettings = cuRow('顶部背景图',
+    '<div class="rd-input-row"><input class="rd-input" id="rpTopBgUrl" value="' + escapeHtmlAttribute(ct.topBgImage || '') + '" placeholder="输入图片 URL"><button type="button" class="rs-action-btn subtle" id="rpUploadTop">上传</button></div>') +
+    '<div class="rd-preview-img" id="rpTopBgPreview"' + (ct.topBgImage ? '' : ' hidden') + '><img id="rpTopBgPreviewImage" src="' + escapeHtmlAttribute(ct.topBgImage || '') + '" alt=""><button type="button" class="rs-action-btn subtle" id="rpClearTop">清除</button></div>'
 
-  var ov = document.createElement('div')
-  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px'
-  ov.innerHTML = '<div style="background:#fff;max-width:420px;width:100%;max-height:85vh;overflow-y:auto;border-radius:12px;box-shadow:0 8px 40px rgba(0,0,0,.15)"><div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #ddd"><span style="font-size:1rem;font-weight:600;color:#333">个人信息</span><button style="border:none;background:transparent;cursor:pointer;font-size:1.3rem;color:#888;padding:0 4px" id="rpCloseX">×</button></div><div style="padding:14px 16px">' + body + '</div><div style="display:flex;gap:8px;justify-content:flex-end;padding:10px 16px;border-top:1px solid #ddd"><button style="padding:6px 16px;font-size:.8rem;border:none;background:var(--c-primary);color:var(--c-btn-text);cursor:pointer;border-radius:4px" id="rpSave">保存</button><button style="padding:6px 16px;font-size:.8rem;border:1px solid #ddd;background:#fff;color:#666;cursor:pointer;border-radius:4px" id="rpCancel">取消</button></div></div>'
-  document.body.appendChild(ov)
-  ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
-  ov.querySelector('#rpCloseX').onclick = function() { ov.remove() }
-  ov.querySelector('#rpCancel').onclick = function() { ov.remove() }
+  var controls = cuSettingsSection('cuProfileIdentity', '基本信息', identitySettings, true) +
+    cuSettingsSection('cuProfileAvatar', '头像', avatarSettings, false) +
+    cuSettingsSection('cuProfileCover', '顶部背景', coverSettings, false)
+  var body = readerAppearancePagerMarkup() +
+    '<div class="profile-appearance-layout appearance-workbench-pages" data-appearance-active-page="preview">' +
+    '<aside class="profile-appearance-preview-pane appearance-workbench-page" data-appearance-page="preview"><div id="profileAppearancePreview"></div><p class="phone-appearance-status">实时预览 · 保存后应用</p></aside>' +
+    '<div class="profile-appearance-controls appearance-workbench-page" data-appearance-page="controls">' + controls + '</div></div>'
 
-  ov.querySelector('#rpSave').onclick = function() {
-    ct.readerId = ov.querySelector('#rpName').value.trim() || ct.readerId
-    var avu = ov.querySelector('#rpAvatarUrl')
-    var tbu = ov.querySelector('#rpTopBgUrl')
-    ct.readerAvatar = avu && avu.value.trim() ? avu.value.trim() : null
-    ct.topBgImage = tbu && tbu.value.trim() ? tbu.value.trim() : null
+  var ov = openCuModal('个人信息', body, function(modal) {
+    var nameInput = modal.querySelector('#rpName')
+    var avatarInput = modal.querySelector('#rpAvatarUrl')
+    var coverInput = modal.querySelector('#rpTopBgUrl')
+    ct.readerId = nameInput && nameInput.value.trim() ? nameInput.value.trim() : ct.readerId
+    ct.readerAvatar = avatarInput && avatarInput.value.trim() ? avatarInput.value.trim() : null
+    ct.topBgImage = coverInput && coverInput.value.trim() ? coverInput.value.trim() : null
     savePhoneCustom(ct)
-    ov.remove()
     renderCustomPage()
     showReaderToast('个人信息已保存')
+  }, triggerElement)
+  var dialog = ov.querySelector('.cu-modal')
+  dialog.classList.add('profile-appearance-workbench')
+  var saveButton = ov.querySelector('#cuModalSave')
+  var cancelButton = ov.querySelector('#cuModalCancel')
+  var closeButton = ov.querySelector('.cu-modal-close')
+  if (saveButton) saveButton.id = 'rpSave'
+  if (cancelButton) cancelButton.id = 'rpCancel'
+  if (closeButton) closeButton.id = 'rpCloseX'
+  bindReaderAppearancePager(ov)
+
+  function currentProfileDraft() {
+    var draft = readerOwnDataRecord(ct)
+    var nameInput = ov.querySelector('#rpName')
+    var avatarInput = ov.querySelector('#rpAvatarUrl')
+    var coverInput = ov.querySelector('#rpTopBgUrl')
+    draft.readerId = nameInput && nameInput.value.trim() ? nameInput.value.trim() : ct.readerId
+    draft.readerAvatar = avatarInput && avatarInput.value.trim() ? avatarInput.value.trim() : null
+    draft.topBgImage = coverInput && coverInput.value.trim() ? coverInput.value.trim() : null
+    return draft
   }
+
+  function renderProfilePreview() {
+    var host = ov.querySelector('#profileAppearancePreview')
+    if (!host) return
+    host.innerHTML = renderPhonePreview(currentProfileDraft(), {
+      scopeClass:'reader-profile-preview-scope',
+      applyGlobalCss:false
+    })
+  }
+
+  ;['#rpName', '#rpAvatarUrl', '#rpTopBgUrl'].forEach(function(selector) {
+    var input = ov.querySelector(selector)
+    if (input) input.addEventListener('input', renderProfilePreview)
+  })
   function setProfileImageDraft(inputId, previewId, imageId, value) {
     var nextValue = String(value || '')
     var input = ov.querySelector(inputId)
@@ -7751,6 +8214,7 @@ function openReaderProfilePanel() {
     if (input) input.value = nextValue
     if (image) image.src = nextValue
     if (preview) preview.hidden = !nextValue
+    renderProfilePreview()
   }
   // Upload buttons
   function bindUpload(btnId, setter) {
@@ -7764,6 +8228,23 @@ function openReaderProfilePanel() {
   bindUpload('#rpUploadTop', function(v) { setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', v) })
   var clearAv = ov.querySelector('#rpClearAv'); if (clearAv) clearAv.onclick = function() { setProfileImageDraft('#rpAvatarUrl', '#rpAvatarPreview', '#rpAvatarPreviewImage', null) }
   var clearTop = ov.querySelector('#rpClearTop'); if (clearTop) clearTop.onclick = function() { setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', null) }
+  renderProfilePreview()
+  bindReaderAppearanceSectionStates(ov)
+  bindReaderAppearanceUndo(ov, {
+    capture:currentProfileDraft,
+    restore:function(snapshot) {
+      var name = ov.querySelector('#rpName')
+      if (name) name.value = snapshot.readerId || ''
+      setProfileImageDraft('#rpAvatarUrl', '#rpAvatarPreview', '#rpAvatarPreviewImage', snapshot.readerAvatar)
+      setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', snapshot.topBgImage)
+    }
+  })
+  var profilePreview = ov.querySelector('#profileAppearancePreview')
+  if (profilePreview) profilePreview.addEventListener('click', function(event) {
+    var sectionId = event.target.closest('.phone-avatar') ? 'cuProfileAvatar'
+      : (event.target.closest('.phone-profile') ? 'cuProfileCover' : 'cuProfileIdentity')
+    focusReaderAppearanceSection(ov, sectionId, 'input', event.detail === 0)
+  })
 }
 
 // ---- App Settings defaults ----
@@ -7786,6 +8267,7 @@ var READER_CALL_BACKGROUND_MIME_PREFIXES = Object.freeze({
 })
 var READER_CALL_BACKGROUND_DATA_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,(?:[a-zA-Z0-9+/]{4})*(?:[a-zA-Z0-9+/]{2}==|[a-zA-Z0-9+/]{3}=)?$/
 var verifiedReaderCallBackgroundImages = new Set()
+var verifiedReaderImageLuminance = new Map()
 
 function canonicalReaderCallBackgroundDataUrl(value) {
   return typeof value === 'string' ? value.trim() : ''
@@ -7906,8 +8388,13 @@ function decodeReaderCallBackgroundImage(dataUrl) {
   return new Promise(function(resolve, reject) {
     var image = new Image()
     image.onload = function() {
-      if (image.naturalWidth > 0 && image.naturalHeight > 0) resolve(dataUrl)
-      else reject(new Error('图片没有可用尺寸'))
+      if (image.naturalWidth <= 0 || image.naturalHeight <= 0) {
+        reject(new Error('图片没有可用尺寸'))
+        return
+      }
+      var measured = measureReaderImageElementLuminance(image)
+      if (Number.isFinite(measured)) verifiedReaderImageLuminance.set(dataUrl, measured)
+      resolve(dataUrl)
     }
     image.onerror = function() { reject(new Error('图片无法解码')) }
     image.src = dataUrl
@@ -7986,18 +8473,111 @@ function readerCallBackgroundPresentation(settings) {
   }
 }
 
-function getAppSettings(type) {
-  var ct = getPhoneCustom()
+function defaultReaderMessageSettings() {
+  return {
+    avatarShape: 'circle', avatarSize: 36,
+    selfBubbleBg: '#555', selfBubbleText: '#fff', selfBubbleRadius: 8,
+    selfBubbleSkinImage: null, selfBubbleSkinMode: 'full', selfBubbleSkinSize: 100,
+    selfBubbleSkinSlice: 16, selfBubbleSkinPadding: 12,
+    otherBubbleBg: '#fff', otherBubbleText: '#333', otherBubbleRadius: 8,
+    otherBubbleSkinImage: null, otherBubbleSkinMode: 'full', otherBubbleSkinSize: 100,
+    otherBubbleSkinSlice: 16, otherBubbleSkinPadding: 12,
+    bubbleFontSize: 13, bubbleFontWeight: 400,
+    timeColor: '#b0b8c4', chatBg: '#f0f0f0', sendButtonBg: '#cda9b1',
+    composerAutoReadability: true,
+    composerBg: '#f7f0ef', composerInputBg: '#fffafa',
+    composerInputText: '#40383b', composerInputBorder: '#8f7b81',
+    composerInputRadius: 2,
+    chatBgFit: 'cover', chatBgPositionX: 50, chatBgPositionY: 50, chatBgTone: 0,
+    chatAutoReadability: true,
+    chatBgLuminance: null,
+    callBackgroundType: 'preset',
+    callBackgroundPreset: 'plain',
+    callBackgroundImage: null
+  }
+}
+
+function normalizedReaderBubbleSkin(settings, side) {
+  var source = settings && typeof settings === 'object' ? settings : {}
+  var prefix = side === 'self' ? 'self' : 'other'
+  var imageCandidate = validatedReaderCallBackgroundCandidate(source[prefix + 'BubbleSkinImage'])
+  return {
+    image: imageCandidate ? imageCandidate.dataUrl : null,
+    mode: source[prefix + 'BubbleSkinMode'] === 'slice' ? 'slice' : 'full',
+    size: boundedReaderSetting(source[prefix + 'BubbleSkinSize'], 100, 70, 220),
+    slice: boundedReaderSetting(source[prefix + 'BubbleSkinSlice'], 16, 4, 40),
+    padding: boundedReaderSetting(source[prefix + 'BubbleSkinPadding'], 12, 4, 32)
+  }
+}
+
+function readerBubbleSkinClass(settings, side) {
+  var skin = normalizedReaderBubbleSkin(settings, side)
+  return skin.image ? ' has-bubble-skin bubble-skin-' + skin.mode : ''
+}
+
+function readerMessageUsesBubbleShell(message) {
+  var type = message && message.type
+  return ['time', 'call', 'link', 'redpacket', 'transfer', 'familycard', 'takeaway'].indexOf(type) < 0
+}
+
+function readerBubbleSkinVariables(settings) {
+  var selfSkin = normalizedReaderBubbleSkin(settings, 'self')
+  var otherSkin = normalizedReaderBubbleSkin(settings, 'other')
+  var selfMinWidth = Math.min(250, Math.round(116 * selfSkin.size / 100))
+  var selfMinHeight = Math.round(56 * selfSkin.size / 100)
+  var selfMaxWidth = Math.min(260, Math.round(190 * selfSkin.size / 100))
+  var otherMinWidth = Math.min(250, Math.round(116 * otherSkin.size / 100))
+  var otherMinHeight = Math.round(56 * otherSkin.size / 100)
+  var otherMaxWidth = Math.min(260, Math.round(190 * otherSkin.size / 100))
+  return '--chat-self-bubble-skin:' + (selfSkin.image ? "url('" + selfSkin.image + "')" : 'none') + ';' +
+    '--chat-self-bubble-min-width:' + selfMinWidth + 'px;' +
+    '--chat-self-bubble-min-height:' + selfMinHeight + 'px;' +
+    '--chat-self-bubble-max-width:' + selfMaxWidth + 'px;' +
+    '--chat-self-bubble-slice:' + selfSkin.slice + ';' +
+    '--chat-self-bubble-border:' + selfSkin.slice + 'px;' +
+    '--chat-self-bubble-padding:' + selfSkin.padding + 'px;' +
+    '--chat-other-bubble-skin:' + (otherSkin.image ? "url('" + otherSkin.image + "')" : 'none') + ';' +
+    '--chat-other-bubble-min-width:' + otherMinWidth + 'px;' +
+    '--chat-other-bubble-min-height:' + otherMinHeight + 'px;' +
+    '--chat-other-bubble-max-width:' + otherMaxWidth + 'px;' +
+    '--chat-other-bubble-slice:' + otherSkin.slice + ';' +
+    '--chat-other-bubble-border:' + otherSkin.slice + 'px;' +
+    '--chat-other-bubble-padding:' + otherSkin.padding + 'px;'
+}
+
+function measureReaderImageElementLuminance(image) {
+  try {
+    var canvasContextType = globalThis.CanvasRenderingContext2D ||
+      (globalThis.window && globalThis.window.CanvasRenderingContext2D)
+    if (typeof canvasContextType !== 'function') return null
+    var canvas = document.createElement('canvas')
+    canvas.width = 24
+    canvas.height = 24
+    var context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return null
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    var pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+    var total = 0
+    var count = 0
+    for (var index = 0; index < pixels.length; index += 4) {
+      var alpha = pixels[index + 3] / 255
+      var channels = [
+        pixels[index] * alpha + 240 * (1 - alpha),
+        pixels[index + 1] * alpha + 240 * (1 - alpha),
+        pixels[index + 2] * alpha + 240 * (1 - alpha)
+      ]
+      total += readerColorLuminance(channels)
+      count += 1
+    }
+    return count ? Math.max(0, Math.min(1, total / count)) : null
+  } catch (_) {
+    return null
+  }
+}
+
+function defaultReaderAppSettings(type) {
   var defaults = {
-    messages: {
-      avatarShape: 'circle', avatarSize: 36,
-      selfBubbleBg: '#555', selfBubbleText: '#fff', selfBubbleRadius: 8,
-      otherBubbleBg: '#fff', otherBubbleText: '#333', otherBubbleRadius: 8,
-      bubbleFontSize: 13, timeColor: '#b0b8c4', chatBg: '#f0f0f0',
-      callBackgroundType: 'preset',
-      callBackgroundPreset: 'plain',
-      callBackgroundImage: null
-    },
+    messages: defaultReaderMessageSettings(),
     forum: {
       avatarShape: 'circle',
       cardBg: '#fff', cardBorder: '#eee', cardRadius: 0,
@@ -8025,13 +8605,44 @@ function getAppSettings(type) {
       nameColor: '#555', nameSize: 13, nameWeight: '500'
     }
   }
+  return readerOwnDataRecord({}, defaults[type] || {})
+}
+
+function getAppSettings(type) {
+  var ct = getPhoneCustom()
+  var defaults = defaultReaderAppSettings(type)
   var stored = ct.appSettings[type]
   if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {}
-  var settings = readerOwnDataRecord(defaults[type] || {}, stored)
+  var settings = readerOwnDataRecord(defaults, stored)
   settings.customCss = typeof settings.customCss === 'string'
     ? settings.customCss.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
     : ''
-  if (type === 'messages') settings = readerOwnDataRecord(settings, normalizedReaderCallBackgroundSettings(settings))
+  if (type === 'messages') {
+    settings = readerOwnDataRecord(settings, normalizedReaderCallBackgroundSettings(settings))
+    settings = readerOwnDataRecord(settings, normalizedReaderChatAppearanceSettings(settings))
+    var selfBubbleSkin = normalizedReaderBubbleSkin(settings, 'self')
+    var otherBubbleSkin = normalizedReaderBubbleSkin(settings, 'other')
+    settings.selfBubbleSkinImage = selfBubbleSkin.image
+    settings.selfBubbleSkinMode = selfBubbleSkin.mode
+    settings.selfBubbleSkinSize = selfBubbleSkin.size
+    settings.selfBubbleSkinSlice = selfBubbleSkin.slice
+    settings.selfBubbleSkinPadding = selfBubbleSkin.padding
+    settings.otherBubbleSkinImage = otherBubbleSkin.image
+    settings.otherBubbleSkinMode = otherBubbleSkin.mode
+    settings.otherBubbleSkinSize = otherBubbleSkin.size
+    settings.otherBubbleSkinSlice = otherBubbleSkin.slice
+    settings.otherBubbleSkinPadding = otherBubbleSkin.padding
+    settings.bubbleFontWeight = normalizedReaderBubbleFontWeight(settings.bubbleFontWeight)
+    settings.sendButtonBg = sanitizeCssColor(settings.sendButtonBg, { fallback: '#cda9b1' })
+    settings.composerAutoReadability = settings.composerAutoReadability !== false
+    settings.composerBg = sanitizeCssColor(settings.composerBg, { fallback: '#f7f0ef' })
+    settings.composerInputBg = sanitizeCssColor(settings.composerInputBg, { fallback: '#fffafa' })
+    settings.composerInputText = sanitizeCssColor(settings.composerInputText, { fallback: '#40383b' })
+    settings.composerInputBorder = sanitizeCssColor(settings.composerInputBorder, { fallback: '#8f7b81' })
+    settings.composerInputRadius = Math.round(boundedReaderSetting(settings.composerInputRadius, 2, 0, 18))
+    var chatBackgroundCandidate = validatedReaderCallBackgroundCandidate(settings.chatBgImage)
+    settings.chatBgImage = chatBackgroundCandidate ? chatBackgroundCandidate.dataUrl : null
+  }
   return settings
 }
 
@@ -8039,6 +8650,8 @@ function getAppSettings(type) {
 function appStyle(type) {
   var s = getAppSettings(type)
   var gallerySettings = normalizedReaderGallerySettings(s)
+  var selfBubbleSkin = normalizedReaderBubbleSkin(s, 'self')
+  var otherBubbleSkin = normalizedReaderBubbleSkin(s, 'other')
   var shape = s.avatarShape || 'circle'
   var avRadius = shape === 'circle' ? '50%' : (shape === 'rounded' ? '8px' : '2px')
   return {
@@ -8047,12 +8660,37 @@ function appStyle(type) {
     selfBubbleBg: s.selfBubbleBg || '#555',
     selfBubbleText: s.selfBubbleText || '#fff',
     selfBubbleRadius: (s.selfBubbleRadius || 8) + 'px',
+    selfBubbleSkinImage: selfBubbleSkin.image,
+    selfBubbleSkinMode: selfBubbleSkin.mode,
+    selfBubbleSkinSize: selfBubbleSkin.size,
+    selfBubbleSkinSlice: selfBubbleSkin.slice,
+    selfBubbleSkinPadding: selfBubbleSkin.padding,
     otherBubbleBg: s.otherBubbleBg || '#fff',
     otherBubbleText: s.otherBubbleText || '#333',
     otherBubbleRadius: (s.otherBubbleRadius || 8) + 'px',
+    otherBubbleSkinImage: otherBubbleSkin.image,
+    otherBubbleSkinMode: otherBubbleSkin.mode,
+    otherBubbleSkinSize: otherBubbleSkin.size,
+    otherBubbleSkinSlice: otherBubbleSkin.slice,
+    otherBubbleSkinPadding: otherBubbleSkin.padding,
     bubbleFontSize: (s.bubbleFontSize || 13) + 'px',
+    bubbleFontWeight: normalizedReaderBubbleFontWeight(s.bubbleFontWeight),
     timeColor: s.timeColor || '#b0b8c4',
     chatBg: s.chatBg || '#f0f0f0',
+    chatBgImage: s.chatBgImage || null,
+    chatBgFit: s.chatBgFit,
+    chatBgPositionX: s.chatBgPositionX,
+    chatBgPositionY: s.chatBgPositionY,
+    chatBgTone: s.chatBgTone,
+    chatAutoReadability: s.chatAutoReadability,
+    chatBgLuminance: s.chatBgLuminance,
+    sendButtonBg: sanitizeCssColor(s.sendButtonBg, { fallback: '#cda9b1' }),
+    composerAutoReadability: s.composerAutoReadability !== false,
+    composerBg: sanitizeCssColor(s.composerBg, { fallback: '#f7f0ef' }),
+    composerInputBg: sanitizeCssColor(s.composerInputBg, { fallback: '#fffafa' }),
+    composerInputText: sanitizeCssColor(s.composerInputText, { fallback: '#40383b' }),
+    composerInputBorder: sanitizeCssColor(s.composerInputBorder, { fallback: '#8f7b81' }),
+    composerInputRadius: Math.round(boundedReaderSetting(s.composerInputRadius, 2, 0, 18)),
     cardBg: s.cardBg || '#fff',
     cardBorder: s.cardBorder || '#eee',
     cardRadius: (s.cardRadius || 0) + 'px',
@@ -8083,6 +8721,130 @@ function boundedReaderSetting(value, fallback, min, max) {
   return number
 }
 
+function normalizedReaderBubbleFontWeight(value) {
+  var weight = Number(value)
+  if (weight === 500 || weight === 600) return 500
+  if (weight === 700 || weight === 800) return 800
+  return 400
+}
+
+function normalizedReaderChatAppearanceSettings(settings) {
+  var source = settings && typeof settings === 'object' ? settings : {}
+  var luminance = typeof source.chatBgLuminance === 'number'
+    ? source.chatBgLuminance
+    : NaN
+  return {
+    chatBgFit: source.chatBgFit === 'contain' ? 'contain' : 'cover',
+    chatBgPositionX: Math.round(boundedReaderSetting(source.chatBgPositionX, 50, 0, 100)),
+    chatBgPositionY: Math.round(boundedReaderSetting(source.chatBgPositionY, 50, 0, 100)),
+    chatBgTone: Math.round(boundedReaderSetting(source.chatBgTone, 0, -50, 50)),
+    chatAutoReadability: source.chatAutoReadability !== false,
+    chatBgLuminance: Number.isFinite(luminance) && luminance >= 0 && luminance <= 1
+      ? luminance
+      : null
+  }
+}
+
+function readerChatTonePresentation(value) {
+  var tone = Math.round(boundedReaderSetting(value, 0, -50, 50))
+  return {
+    color: tone > 0 ? '#ffffff' : '#000000',
+    opacity: Math.abs(tone) / 100
+  }
+}
+
+function readerHexColorChannels(value) {
+  var color = String(value || '').trim()
+  var shortMatch = color.match(/^#([\da-f])([\da-f])([\da-f])$/i)
+  if (shortMatch) {
+    return shortMatch.slice(1).map(function(channel) { return parseInt(channel + channel, 16) })
+  }
+  var fullMatch = color.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i)
+  return fullMatch ? fullMatch.slice(1).map(function(channel) { return parseInt(channel, 16) }) : null
+}
+
+function readerColorLuminance(channels) {
+  return channels.map(function(channel) {
+    var normalized = channel / 255
+    return normalized <= 0.04045
+      ? normalized / 12.92
+      : Math.pow((normalized + 0.055) / 1.055, 2.4)
+  }).reduce(function(total, channel, index) {
+    return total + channel * [0.2126, 0.7152, 0.0722][index]
+  }, 0)
+}
+
+function readerReadableTextColor(background) {
+  var backgroundChannels = readerHexColorChannels(background)
+  if (!backgroundChannels) return '#241d20'
+  var backgroundLuminance = readerColorLuminance(backgroundChannels)
+  var darkLuminance = readerColorLuminance([36, 29, 32])
+  var lightLuminance = 1
+  var darkContrast = (backgroundLuminance + 0.05) / (darkLuminance + 0.05)
+  var lightContrast = (lightLuminance + 0.05) / (backgroundLuminance + 0.05)
+  return lightContrast > darkContrast ? '#ffffff' : '#241d20'
+}
+
+function readerChatReadabilityPresentation(settings) {
+  var source = settings && typeof settings === 'object' ? settings : {}
+  var manualComposer = {
+    composerSurface: sanitizeCssColor(source.composerBg || '#f7f0ef'),
+    inputSurface: sanitizeCssColor(source.composerInputBg || '#fffafa'),
+    ink: sanitizeCssColor(source.composerInputText || '#40383b'),
+    line: sanitizeCssColor(source.composerInputBorder || '#8f7b81'),
+    placeholder: sanitizeCssColor(source.composerInputText || '#6d6266')
+  }
+  var enabled = source.chatAutoReadability !== false && !!source.chatBgImage
+  if (!enabled) {
+    return {
+      time: sanitizeCssColor(source.timeColor || '#b0b8c4'),
+      composerSurface: manualComposer.composerSurface,
+      inputSurface: manualComposer.inputSurface,
+      ink: manualComposer.ink,
+      line: manualComposer.line,
+      placeholder: manualComposer.placeholder
+    }
+  }
+  var luminance = Number(source.chatBgLuminance)
+  if (!Number.isFinite(luminance) || luminance < 0 || luminance > 1) {
+    var backgroundChannels = readerHexColorChannels(source.chatBg || '#f0f0f0')
+    luminance = backgroundChannels ? readerColorLuminance(backgroundChannels) : 0.72
+  }
+  var tone = Math.round(boundedReaderSetting(source.chatBgTone, 0, -50, 50)) / 100
+  luminance = tone > 0
+    ? luminance + (1 - luminance) * tone
+    : luminance * (1 + tone)
+  if (luminance < 0.46) {
+    return {
+      time: '#ffffff',
+      composerSurface: source.composerAutoReadability !== false ? 'rgba(28,24,29,.92)' : manualComposer.composerSurface,
+      inputSurface: source.composerAutoReadability !== false ? 'rgba(50,44,51,.96)' : manualComposer.inputSurface,
+      ink: source.composerAutoReadability !== false ? '#ffffff' : manualComposer.ink,
+      line: source.composerAutoReadability !== false ? 'rgba(255,255,255,.48)' : manualComposer.line,
+      placeholder: source.composerAutoReadability !== false ? '#ded6da' : manualComposer.placeholder
+    }
+  }
+  return {
+    time: '#40383b',
+    composerSurface: source.composerAutoReadability !== false ? 'rgba(255,250,250,.94)' : manualComposer.composerSurface,
+    inputSurface: source.composerAutoReadability !== false ? 'rgba(255,255,255,.97)' : manualComposer.inputSurface,
+    ink: source.composerAutoReadability !== false ? '#241d20' : manualComposer.ink,
+    line: source.composerAutoReadability !== false ? 'rgba(64,56,59,.42)' : manualComposer.line,
+    placeholder: source.composerAutoReadability !== false ? '#5f5358' : manualComposer.placeholder
+  }
+}
+
+function readerChatReadabilityVariables(settings) {
+  var presentation = readerChatReadabilityPresentation(settings)
+  return '--chat-time-color:' + presentation.time +
+    ';--chat-composer-surface:' + presentation.composerSurface +
+    ';--chat-composer-input:' + presentation.inputSurface +
+    ';--chat-composer-ink:' + presentation.ink +
+    ';--chat-composer-line:' + presentation.line +
+    ';--chat-composer-placeholder:' + presentation.placeholder +
+    ';--chat-composer-radius:' + Math.round(boundedReaderSetting(settings && settings.composerInputRadius, 2, 0, 18)) + 'px'
+}
+
 function normalizedReaderGallerySettings(settings) {
   var source = settings && typeof settings === 'object' ? settings : {}
   var columns = Number(source.columns)
@@ -8108,6 +8870,7 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
   var dialog = ov.querySelector('.cu-modal')
   var closeButton = ov.querySelector('#cuModalClose')
   var closed = false
+  var beforeClose = null
   var returnAppType = returnFocus && returnFocus.getAttribute ? returnFocus.getAttribute('data-app') : ''
   var returnOwnerControl = returnFocus && returnFocus.getAttribute ? returnFocus.getAttribute('data-reader-phone-control') : ''
 
@@ -8135,8 +8898,9 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
     if (customTab) customTab.focus()
   }
 
-  function closeModal() {
+  function closeModal(reason, force) {
     if (closed) return
+    if (!force && beforeClose && beforeClose(reason || 'programmatic') === false) return
     closed = true
     ov.removeEventListener('keydown', onModalKeydown)
     ov.remove()
@@ -8152,7 +8916,7 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
   function onModalKeydown(event) {
     if (event.key === 'Escape') {
       event.preventDefault()
-      closeModal()
+      closeModal('escape')
       return
     }
     if (event.key !== 'Tab') return
@@ -8174,16 +8938,20 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
     }
   }
 
-  ov.closeReaderModal = closeModal
+  ov.closeReaderModal = function() { closeModal('programmatic') }
+  ov.forceCloseReaderModal = function() { closeModal('forced', true) }
+  ov.setReaderBeforeClose = function(callback) {
+    beforeClose = typeof callback === 'function' ? callback : null
+  }
   ov.addEventListener('keydown', onModalKeydown)
-  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal() })
-  closeButton.onclick = closeModal
-  ov.querySelector('#cuModalCancel').onclick = closeModal
+  ov.addEventListener('click', function(e) { if (e.target === ov) closeModal('backdrop') })
+  closeButton.onclick = function() { closeModal('button') }
+  ov.querySelector('#cuModalCancel').onclick = function() { closeModal('cancel') }
   var saveButton = ov.querySelector('#cuModalSave')
   saveButton.onclick = function() {
     try {
       if (onSave) onSave(ov)
-      closeModal()
+      closeModal('save', true)
     } catch (error) {
       alert('设置保存失败，浏览器无法写入本地存储。请检查存储空间后重试。')
       saveButton.focus()
@@ -8197,6 +8965,435 @@ function cuCard(title, body) {
   return '<div class="cu-card"><div class="cu-card-title">' + esc(title) + '</div><div class="cu-card-body">' + body + '</div></div>'
 }
 
+function cuSettingsSectionStart(id, title, open, className) {
+  return '<details class="cu-settings-section' + (className ? ' ' + escapeHtmlAttribute(className) : '') + '" id="' + escapeHtmlAttribute(id) + '"' + (open ? ' open' : '') + '>' +
+    '<summary><span class="cu-settings-section-heading"><span>' + esc(title) + '</span><small data-appearance-summary></small></span><span class="cu-settings-section-modified" aria-label="本次已修改" hidden></span><span class="cu-settings-section-chevron" aria-hidden="true"></span></summary>' +
+    '<div class="cu-settings-section-body">'
+}
+
+function cuSettingsSectionEnd() {
+  return '</div></details>'
+}
+
+function cuSettingsSection(id, title, body, open, resetKey) {
+  var resetAction = resetKey
+    ? '<div class="cu-settings-section-actions"><button type="button" class="cu-settings-section-reset" data-cu-reset-message-section="' + escapeHtmlAttribute(resetKey) + '">仅恢复本组</button></div>'
+    : ''
+  return cuSettingsSectionStart(id, title, open) + resetAction + body + cuSettingsSectionEnd()
+}
+
+function readerAppearancePagerMarkup() {
+  return '<nav class="appearance-workbench-pager" aria-label="美化工作台页面">' +
+    '<button type="button" data-appearance-page-target="preview" aria-selected="true">预览</button>' +
+    '<button type="button" data-appearance-page-target="controls" aria-selected="false">设置</button>' +
+    '</nav>'
+}
+
+function bindReaderAppearancePager(root) {
+  if (!root) return
+  var pages = root.querySelector('.appearance-workbench-pages')
+  var buttons = Array.from(root.querySelectorAll('[data-appearance-page-target]'))
+  if (!pages || buttons.length === 0) return
+
+  function setActivePage(name, shouldScroll) {
+    var targetName = name === 'controls' ? 'controls' : 'preview'
+    pages.dataset.appearanceActivePage = targetName
+    buttons.forEach(function(button) {
+      var active = button.dataset.appearancePageTarget === targetName
+      button.setAttribute('aria-selected', active ? 'true' : 'false')
+      button.tabIndex = active ? 0 : -1
+    })
+    if (!shouldScroll) return
+    var page = pages.querySelector('[data-appearance-page="' + targetName + '"]')
+    if (!page) return
+    var left = Number(page.offsetLeft) || (targetName === 'controls' ? pages.clientWidth : 0)
+    if (typeof pages.scrollTo === 'function') {
+      pages.scrollTo({
+        left: left,
+        behavior: globalThis.matchMedia && globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+      })
+    } else {
+      pages.scrollLeft = left
+    }
+  }
+
+  buttons.forEach(function(button) {
+    button.addEventListener('click', function() {
+      setActivePage(button.dataset.appearancePageTarget, true)
+    })
+  })
+
+  var scrollFrame = 0
+  pages.addEventListener('scroll', function() {
+    if (scrollFrame) cancelAnimationFrame(scrollFrame)
+    scrollFrame = requestAnimationFrame(function() {
+      scrollFrame = 0
+      var next = pages.scrollLeft > Math.max(1, pages.clientWidth * .5) ? 'controls' : 'preview'
+      setActivePage(next, false)
+    })
+  }, { passive: true })
+  setActivePage(pages.dataset.appearanceActivePage, false)
+}
+
+function setReaderRangeOutput(output, formattedValue) {
+  if (!output) return
+  var textValue = String(formattedValue == null ? '' : formattedValue)
+  var exactInput = output.querySelector && output.querySelector('.appearance-range-value-input')
+  if (!exactInput) {
+    output.textContent = textValue
+    return
+  }
+  var match = textValue.match(/^(-?(?:\d+\.?\d*|\.\d+))(.*)$/)
+  exactInput.value = match ? match[1] : textValue
+  var unit = output.querySelector('.appearance-range-value-unit')
+  if (unit) unit.textContent = match ? match[2] : ''
+}
+
+function readerAppearanceRangePrecision(step) {
+  var text = String(step || '1')
+  return text.includes('.') ? text.split('.')[1].length : 0
+}
+
+function normalizedReaderAppearanceRangeValue(range, value) {
+  var number = Number(value)
+  var min = Number(range.min)
+  var max = Number(range.max)
+  var step = Number(range.step)
+  if (!Number.isFinite(number)) number = Number(range.value)
+  if (Number.isFinite(min)) number = Math.max(min, number)
+  if (Number.isFinite(max)) number = Math.min(max, number)
+  if (Number.isFinite(step) && step > 0) {
+    var base = Number.isFinite(min) ? min : 0
+    number = base + Math.round((number - base) / step) * step
+    number = Number(number.toFixed(readerAppearanceRangePrecision(range.step)))
+  }
+  return number
+}
+
+function enhanceReaderAppearanceRanges(root) {
+  if (!root) return
+  root.querySelectorAll('input[type="range"]').forEach(function(range) {
+    if (!range.id || range.dataset.appearanceExactBound === 'true') return
+    var output = root.querySelector('#' + range.id + 'Val')
+    if (!output) return
+    range.dataset.appearanceExactBound = 'true'
+    var currentText = output.textContent.trim()
+    var unitMatch = currentText.match(/^-?(?:\d+\.?\d*|\.\d+)(.*)$/)
+    var unitText = unitMatch ? unitMatch[1] : ''
+    var exact = document.createElement('input')
+    exact.type = 'number'
+    exact.className = 'appearance-range-value-input'
+    exact.dataset.appearanceRangeInput = range.id
+    exact.min = range.min
+    exact.max = range.max
+    exact.step = range.step || '1'
+    exact.value = range.value
+    exact.inputMode = Number(range.step) < 1 ? 'decimal' : 'numeric'
+    var row = range.closest('.cu-row, .rs-range-field, .phone-appearance-range')
+    var rowLabel = row && row.querySelector('.cu-row-label, span')
+    exact.setAttribute('aria-label', (rowLabel ? rowLabel.textContent.trim() : range.id) + '精确数值')
+    var unit = document.createElement('span')
+    unit.className = 'appearance-range-value-unit'
+    unit.textContent = unitText
+    output.textContent = ''
+    output.classList.add('appearance-range-exact')
+    output.append(exact, unit)
+
+    function syncExact() {
+      exact.value = range.value
+    }
+    range.addEventListener('input', syncExact)
+    exact.addEventListener('change', function() {
+      var next = normalizedReaderAppearanceRangeValue(range, exact.value)
+      range.value = String(next)
+      exact.value = range.value
+      range.dispatchEvent(new Event('input', { bubbles:true }))
+      range.dispatchEvent(new Event('change', { bubbles:true }))
+    })
+    exact.addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        exact.dispatchEvent(new Event('change', { bubbles:true }))
+        exact.select()
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        exact.value = range.value
+        exact.blur()
+      }
+    })
+  })
+}
+
+function formatReaderAppearanceBytes(bytes) {
+  var value = Number(bytes)
+  if (!Number.isFinite(value) || value <= 0) return '大小未知'
+  if (value < 1024) return Math.round(value) + ' B'
+  if (value < 1024 * 1024) return Math.round(value / 1024) + ' KB'
+  return (value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0) + ' MB'
+}
+
+function inspectReaderAppearanceImage(dataUrl, originalBytes) {
+  return new Promise(function(resolve) {
+    var image = new Image()
+    image.onerror = function() {
+      resolve({ dataUrl:dataUrl, width:0, height:0, bytes:originalBytes, transparentEdges:null, compressed:null })
+    }
+    image.onload = function() {
+      var result = {
+        dataUrl:dataUrl,
+        width:Number(image.naturalWidth) || 0,
+        height:Number(image.naturalHeight) || 0,
+        bytes:Number(originalBytes) || readerCallBackgroundDecodedByteLength(dataUrl),
+        transparentEdges:null,
+        compressed:null
+      }
+      try {
+        var canvasType = globalThis.CanvasRenderingContext2D || (globalThis.window && globalThis.window.CanvasRenderingContext2D)
+        if (typeof canvasType !== 'function' || !result.width || !result.height) {
+          resolve(result)
+          return
+        }
+        var sample = document.createElement('canvas')
+        sample.width = Math.min(64, result.width)
+        sample.height = Math.min(64, result.height)
+        var sampleContext = sample.getContext('2d', { willReadFrequently:true })
+        if (sampleContext) {
+          sampleContext.drawImage(image, 0, 0, sample.width, sample.height)
+          var pixels = sampleContext.getImageData(0, 0, sample.width, sample.height).data
+          var transparent = false
+          for (var x = 0; x < sample.width && !transparent; x++) {
+            var top = (x * 4) + 3
+            var bottom = (((sample.height - 1) * sample.width + x) * 4) + 3
+            transparent = pixels[top] < 248 || pixels[bottom] < 248
+          }
+          for (var y = 0; y < sample.height && !transparent; y++) {
+            var left = (y * sample.width * 4) + 3
+            var right = ((y * sample.width + sample.width - 1) * 4) + 3
+            transparent = pixels[left] < 248 || pixels[right] < 248
+          }
+          result.transparentEdges = transparent
+        }
+
+        if (result.bytes >= 160 * 1024) {
+          var scale = Math.min(1, 1600 / Math.max(result.width, result.height))
+          var canvas = document.createElement('canvas')
+          canvas.width = Math.max(1, Math.round(result.width * scale))
+          canvas.height = Math.max(1, Math.round(result.height * scale))
+          var context = canvas.getContext('2d')
+          if (context) {
+            context.drawImage(image, 0, 0, canvas.width, canvas.height)
+            var compressedUrl = canvas.toDataURL(result.transparentEdges ? 'image/webp' : 'image/jpeg', .86)
+            var candidate = validatedReaderCallBackgroundCandidate(compressedUrl)
+            if (candidate) {
+              var compressedBytes = readerCallBackgroundDecodedByteLength(candidate.dataUrl)
+              if (compressedBytes > 0 && compressedBytes <= result.bytes * .88) {
+                result.compressed = {
+                  dataUrl:candidate.dataUrl,
+                  bytes:compressedBytes,
+                  width:canvas.width,
+                  height:canvas.height
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+      resolve(result)
+    }
+    image.src = dataUrl
+  })
+}
+
+function readerAppearanceImageMetaText(meta) {
+  if (!meta) return ''
+  var dimensions = meta.width && meta.height ? meta.width + '×' + meta.height : '尺寸未知'
+  var edge = meta.transparentEdges === true
+    ? '检测到透明边缘'
+    : (meta.transparentEdges === false ? '边缘不透明' : '透明边缘未检测')
+  return dimensions + ' · ' + formatReaderAppearanceBytes(meta.bytes) + ' · ' + edge
+}
+
+function renderReaderAppearanceImageChoice(state, meta, onChoose) {
+  if (!state || !meta) return
+  state.textContent = '已载入 · ' + readerAppearanceImageMetaText(meta)
+  if (!meta.compressed || typeof onChoose !== 'function') return
+  var choices = document.createElement('span')
+  choices.className = 'appearance-image-storage-choice'
+  var original = document.createElement('button')
+  original.type = 'button'
+  original.className = 'active'
+  original.textContent = '保持原图'
+  var compressed = document.createElement('button')
+  compressed.type = 'button'
+  compressed.textContent = '压缩存储 ' + formatReaderAppearanceBytes(meta.compressed.bytes)
+  original.onclick = function() {
+    original.classList.add('active')
+    compressed.classList.remove('active')
+    onChoose(meta.dataUrl, meta)
+  }
+  compressed.onclick = function() {
+    compressed.classList.add('active')
+    original.classList.remove('active')
+    onChoose(meta.compressed.dataUrl, Object.assign({}, meta, {
+      dataUrl:meta.compressed.dataUrl,
+      bytes:meta.compressed.bytes,
+      width:meta.compressed.width,
+      height:meta.compressed.height,
+      compressed:null
+    }))
+  }
+  choices.append(original, compressed)
+  state.append(document.createElement('br'), choices)
+}
+
+function readerAppearanceControlSignature(section) {
+  var controls = Array.from(section.querySelectorAll('input, select, textarea, button'))
+    .filter(function(control) {
+      return !control.matches('.cu-settings-section-reset, .appearance-workbench-undo, [data-cu-copy-bubble-style]')
+    })
+    .map(function(control) {
+      if (control.matches('button')) {
+        return [control.id || control.textContent.trim(), control.classList.contains('active'), control.getAttribute('aria-pressed')]
+      }
+      return [control.id || control.name || control.type, control.type === 'checkbox' ? control.checked : control.value]
+    })
+  controls.push(section.dataset.appearanceManualVersion || '0')
+  return JSON.stringify(controls)
+}
+
+function readerAppearanceSectionSummary(section) {
+  var parts = []
+  Array.from(section.querySelectorAll('input[type="range"]')).forEach(function(range) {
+    if (parts.length >= 2 || range.dataset.appearanceInitialValue === undefined || range.value === range.dataset.appearanceInitialValue) return
+    var output = section.querySelector('#' + range.id + 'Val')
+    var exact = output && output.querySelector('.appearance-range-value-input')
+    var unit = output && output.querySelector('.appearance-range-value-unit')
+    parts.push((exact ? exact.value : range.value) + (unit ? unit.textContent : ''))
+  })
+  var imageState = Array.from(section.querySelectorAll('.cu-bubble-skin-state, .cu-chat-background-state'))
+    .map(function(node) { return node.textContent.trim() })
+    .find(function(text) { return /^已/.test(text) })
+  if (imageState) parts.push(imageState.replace(/[；。].*$/, ''))
+
+  Array.from(section.querySelectorAll('button.active, button[aria-pressed="true"]')).forEach(function(button) {
+    if (parts.length >= 2 || button.closest('.appearance-workbench-pager')) return
+    var label = button.textContent.trim()
+    if (label && parts.indexOf(label) < 0) parts.push(label)
+  })
+  Array.from(section.querySelectorAll('.appearance-range-exact')).forEach(function(output) {
+    if (parts.length >= 2) return
+    var input = output.querySelector('.appearance-range-value-input')
+    var unit = output.querySelector('.appearance-range-value-unit')
+    if (input) parts.push(input.value + (unit ? unit.textContent : ''))
+  })
+  if (parts.length === 0) {
+    var color = section.querySelector('input[type="color"]')
+    if (color) parts.push(color.value.toUpperCase())
+  }
+  return parts.slice(0, 2).join(' · ') || '默认'
+}
+
+function bindReaderAppearanceSectionStates(root) {
+  if (!root) return null
+  var sections = Array.from(root.querySelectorAll('.cu-settings-section'))
+  sections.forEach(function(section) {
+    section.querySelectorAll('input, select, textarea').forEach(function(control) {
+      control.dataset.appearanceInitialValue = control.type === 'checkbox' ? String(control.checked) : control.value
+    })
+    section._appearanceInitialSignature = readerAppearanceControlSignature(section)
+  })
+  function refresh() {
+    sections.forEach(function(section) {
+      var modified = readerAppearanceControlSignature(section) !== section._appearanceInitialSignature
+      section.classList.toggle('is-appearance-modified', modified)
+      var marker = section.querySelector(':scope > summary .cu-settings-section-modified')
+      if (marker) marker.hidden = !modified
+      var summary = section.querySelector(':scope > summary [data-appearance-summary]')
+      if (summary) summary.textContent = readerAppearanceSectionSummary(section)
+    })
+  }
+  root.addEventListener('input', refresh)
+  root.addEventListener('change', refresh)
+  root.addEventListener('click', refresh)
+  root._refreshAppearanceSectionStates = refresh
+  refresh()
+  return { refresh:refresh }
+}
+
+function focusReaderAppearanceSection(root, sectionId, controlSelector, moveFocus) {
+  if (!root) return
+  var section = root.querySelector('#' + sectionId)
+  if (!section) return
+  var controlsPage = section.closest('[data-appearance-page="controls"]')
+  if (controlsPage) {
+    controlsPage.querySelectorAll(':scope > .cu-settings-section').forEach(function(candidate) {
+      candidate.open = candidate === section
+      if (candidate !== section) candidate.classList.remove('is-preview-targeted')
+    })
+  }
+  section.open = true
+  section.classList.add('is-preview-targeted')
+  globalThis.setTimeout(function() {
+    if (section.isConnected) section.classList.remove('is-preview-targeted')
+  }, 650)
+  var settingsPage = root.querySelector('[data-appearance-page-target="controls"]')
+  if (settingsPage) settingsPage.click()
+  var focusTarget = controlSelector ? section.querySelector(controlSelector) : section.querySelector('summary')
+  if (moveFocus && focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus({ preventScroll:true })
+  if (typeof section.scrollIntoView === 'function') {
+    section.scrollIntoView({ behavior:shouldUseMotion() ? 'smooth' : 'auto', block:'start' })
+  }
+}
+
+function bindReaderAppearanceUndo(root, options) {
+  if (!root || !options || typeof options.capture !== 'function' || typeof options.restore !== 'function') return null
+  var controls = root.querySelector('[data-appearance-page="controls"]')
+  if (!controls) return null
+  var bar = document.createElement('div')
+  bar.className = 'appearance-workbench-history'
+  bar.innerHTML = '<span>本次调整</span><button type="button" class="appearance-workbench-undo" disabled>撤销上一步</button>'
+  controls.insertBefore(bar, controls.firstChild)
+  var undo = bar.querySelector('.appearance-workbench-undo')
+  var previous = null
+  var restoring = false
+
+  function remember() {
+    if (restoring) return
+    previous = JSON.parse(JSON.stringify(options.capture()))
+    undo.disabled = false
+  }
+  controls.addEventListener('pointerdown', function(event) {
+    if (event.target.closest('input, select, textarea, button') && !event.target.closest('.appearance-workbench-undo')) remember()
+  }, true)
+  controls.addEventListener('keydown', function(event) {
+    if (event.target.closest('input, select, textarea') && !['Tab', 'Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) remember()
+  }, true)
+  controls.addEventListener('click', function(event) {
+    if (event.target.closest('button') && !event.target.closest('.appearance-workbench-undo')) remember()
+  }, true)
+  undo.onclick = function() {
+    if (!previous) return
+    var snapshot = previous
+    previous = null
+    undo.disabled = true
+    restoring = true
+    options.restore(snapshot)
+    restoring = false
+    if (root._refreshAppearanceSectionStates) root._refreshAppearanceSectionStates()
+  }
+  return { remember:remember, clear:function() { previous = null; undo.disabled = true } }
+}
+
+function cuSettingsSubsection(title, body) {
+  return '<section class="cu-settings-subsection"><h3>' + esc(title) + '</h3>' + body + '</section>'
+}
+
+function cuCollapsibleSubsection(id, title, body, open) {
+  return '<details class="cu-settings-subsection cu-settings-subsection-collapsible" id="' + escapeHtmlAttribute(id) + '"' + (open ? ' open' : '') + '>' +
+    '<summary><span>' + esc(title) + '</span><span class="cu-settings-subsection-chevron" aria-hidden="true"></span></summary>' +
+    '<div class="cu-settings-subsection-body">' + body + '</div></details>'
+}
+
 function cuRow(label, control) {
   return '<div class="cu-row"><span class="cu-row-label">' + esc(label) + '</span><span class="cu-row-ctrl">' + control + '</span></div>'
 }
@@ -8207,12 +9404,19 @@ function cuColorBtn(color, cls, dataAttr, dataVal, label) {
   return '<button type="button" class="cu-color-btn' + (cls || '') + '" data-' + dataAttr + '="' + escapeHtmlAttribute(dataVal) + '" aria-label="' + escapeHtmlAttribute(accessibleName) + '" aria-pressed="' + (active ? 'true' : 'false') + '"><span class="cu-color-swatch" aria-hidden="true" style="background:' + escapeHtmlAttribute(color) + '"></span></button>'
 }
 
+function readerColorInputValue(value) {
+  var color = String(value || '')
+  var shortMatch = color.match(/^#([\da-f])([\da-f])([\da-f])$/i)
+  if (shortMatch) return '#' + shortMatch.slice(1).map(function(channel) { return channel + channel }).join('')
+  return /^#[\da-f]{6}$/i.test(color) ? color : '#000000'
+}
+
 function cuColorRow(label, presetColors, currentColor, dataAttr) {
-  var h = '<div class="cu-color-group">'
+  var h = '<div class="cu-color-group' + (presetColors.length ? '' : ' is-picker-only') + '">'
   for (var i = 0; i < presetColors.length; i++) {
     h += cuColorBtn(presetColors[i], currentColor === presetColors[i] ? ' active' : '', dataAttr, presetColors[i], label)
   }
-  h += '<input type="color" class="cu-color-picker" aria-label="' + escapeHtmlAttribute('自定义' + label) + '" value="' + escapeHtmlAttribute(currentColor) + '" data-' + dataAttr + '-picker="' + escapeHtmlAttribute(currentColor) + '">'
+  h += '<input type="color" class="cu-color-picker" aria-label="' + escapeHtmlAttribute('自定义' + label) + '" value="' + escapeHtmlAttribute(readerColorInputValue(currentColor)) + '" data-' + dataAttr + '-picker="' + escapeHtmlAttribute(currentColor) + '">'
   h += '</div>'
   return cuRow(label, h)
 }
@@ -8389,12 +9593,20 @@ function readerAppPreviewBody(type, settings) {
 
   if (type === 'messages') {
     var chatBg = sanitizeCssColor(s.chatBg || '#f0f0f0')
+    var chatBgImage = validatedReaderCallBackgroundCandidate(s.chatBgImage)
+    var chatImageValue = chatBgImage ? 'url("' + chatBgImage.dataUrl + '")' : 'none'
     var otherBg = sanitizeCssColor(s.otherBubbleBg || '#fff')
     var otherText = sanitizeCssColor(s.otherBubbleText || '#333')
     var selfBg = sanitizeCssColor(s.selfBubbleBg || '#555')
     var selfText = sanitizeCssColor(s.selfBubbleText || '#fff')
     var avatarSize = boundedReaderSetting(s.avatarSize, 36, 24, 56)
     var bubbleSize = boundedReaderSetting(s.bubbleFontSize, 13, 10, 18)
+    var bubbleWeight = normalizedReaderBubbleFontWeight(s.bubbleFontWeight)
+    var otherBubbleSkinClass = readerBubbleSkinClass(s, 'other')
+    var selfBubbleSkinClass = readerBubbleSkinClass(s, 'self')
+    var sendButtonBg = sanitizeCssColor(s.sendButtonBg, { fallback: '#cda9b1' })
+    var chatAppearance = normalizedReaderChatAppearanceSettings(s)
+    var chatTone = readerChatTonePresentation(chatAppearance.chatBgTone)
     var otherRadius = boundedReaderSetting(s.otherBubbleRadius, 8, 0, 20)
     var selfRadius = boundedReaderSetting(s.selfBubbleRadius, 8, 0, 20)
     var chat = Array.isArray(pd.chats) && pd.chats[0] ? pd.chats[0] : null
@@ -8411,14 +9623,14 @@ function readerAppPreviewBody(type, settings) {
       ? pd.skin.readerAvatar.trim()
       : ''
     var readerAvatar = readerCustom.readerAvatar || authoredReaderAvatar
-    var h = '<div class="rd-app-preview-chat chat-author-shell chat-reader-shell" style="display:flex;flex-direction:column;height:100%;--chat-editor-screen:' + chatBg + '">'
+    var h = '<div class="rd-app-preview-chat chat-author-shell chat-reader-shell" data-chat-background-image="' + (chatBgImage ? 'true' : 'false') + '" style="display:flex;flex-direction:column;height:100%;--chat-editor-screen:' + chatBg + ';--chat-editor-image:' + escapeHtmlAttribute(chatImageValue) + ';--chat-bg-size:' + chatAppearance.chatBgFit + ';--chat-bg-position:' + chatAppearance.chatBgPositionX + '% ' + chatAppearance.chatBgPositionY + '%;--chat-bg-overlay-color:' + chatTone.color + ';--chat-bg-overlay-opacity:' + chatTone.opacity + ';--chat-bubble-weight:' + bubbleWeight + ';--chat-editor-pink:' + selfBg + ';--chat-send-bg:' + sendButtonBg + ';--chat-send-ink:' + readerReadableTextColor(sendButtonBg) + ';' + readerBubbleSkinVariables(s) + readerChatReadabilityVariables(readerOwnDataRecord(s, chatAppearance)) + '">'
     h += '<div class="chat-round-header"><span class="chat-round-control" aria-hidden="true">‹</span><div class="chat-round-title"><strong>' + esc(contact.name || '林晚') + '</strong></div><span class="chat-round-control" aria-hidden="true"></span></div>'
-    h += '<div class="chat-msg-area">' + (shouldShowPhoneTimestamp(pd, '今天 20:41') ? '<div class="rd-chat-time" style="text-align:center;padding:6px 0;font-size:.62rem;color:' + sanitizeCssColor(s.timeColor || '#b0b8c4') + '">今天 20:41</div>' : '')
-    h += '<div class="chat-msg rd-chat-message other is-other"><span class="chat-avatar" style="width:' + avatarSize + 'px;height:' + avatarSize + 'px;flex-basis:' + avatarSize + 'px;border-radius:' + shape + ';background:' + sanitizeCssColor(avatarColor(contact.id)) + '">' + esc(String(contact.name || '林').charAt(0)) + '</span><div class="rd-chat-message-body"><div class="chat-bubble" style="font-size:' + bubbleSize + 'px;background:' + otherBg + ';color:' + otherText + ';border-radius:' + otherRadius + 'px ' + otherRadius + 'px ' + otherRadius + 'px 2px">' + esc(otherCopy) + '</div></div></div>'
-    h += '<div class="chat-msg rd-chat-message self is-self"><span class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerName) + '" style="width:' + avatarSize + 'px;height:' + avatarSize + 'px;flex-basis:' + avatarSize + 'px;border-radius:' + shape + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerName)) + '">'
+    h += '<div class="chat-msg-area">' + (shouldShowPhoneTimestamp(pd, '今天 20:41') ? '<div class="rd-chat-time" style="text-align:center;padding:6px 0;font-size:.62rem;color:var(--chat-time-color,#b0b8c4)">今天 20:41</div>' : '')
+    h += '<div class="chat-msg rd-chat-message other is-other' + otherBubbleSkinClass + '"><span class="chat-avatar" style="width:' + avatarSize + 'px;height:' + avatarSize + 'px;flex-basis:' + avatarSize + 'px;border-radius:' + shape + ';background:' + sanitizeCssColor(avatarColor(contact.id)) + '">' + esc(String(contact.name || '林').charAt(0)) + '</span><div class="rd-chat-message-body"><div class="chat-bubble' + otherBubbleSkinClass + '" style="font-size:' + bubbleSize + 'px;background:' + otherBg + ';color:' + otherText + ';border-radius:' + otherRadius + 'px ' + otherRadius + 'px ' + otherRadius + 'px 2px">' + esc(otherCopy) + '</div></div></div>'
+    h += '<div class="chat-msg rd-chat-message self is-self' + selfBubbleSkinClass + '"><span class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerName) + '" style="width:' + avatarSize + 'px;height:' + avatarSize + 'px;flex-basis:' + avatarSize + 'px;border-radius:' + shape + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerName)) + '">'
     if (readerAvatar) h += '<img src="' + escapeHtmlAttribute(readerAvatar) + '" alt="">'
     else h += esc((readerName || '我').charAt(0))
-    h += '</span><div class="rd-chat-message-body"><div class="chat-bubble" style="font-size:' + bubbleSize + 'px;background:' + selfBg + ';color:' + selfText + ';border-radius:' + selfRadius + 'px ' + selfRadius + 'px 2px ' + selfRadius + 'px">' + esc(selfCopy) + '</div></div></div></div>'
+    h += '</span><div class="rd-chat-message-body"><div class="chat-bubble' + selfBubbleSkinClass + '" style="font-size:' + bubbleSize + 'px;background:' + selfBg + ';color:' + selfText + ';border-radius:' + selfRadius + 'px ' + selfRadius + 'px 2px ' + selfRadius + 'px">' + esc(selfCopy) + '</div></div></div></div>'
     h += '<div class="chat-input-bar chat-composer rd-chat-composer has-choices"><input id="chatInput" class="rd-chat-choice-trigger" readonly value="" placeholder="点击选择回复..."><button type="button" id="chatSendBtn" class="chat-send-btn rd-chat-choice-toggle" tabindex="-1">▶</button></div></div>'
     return h
   }
@@ -8561,7 +9773,7 @@ function renderCuPreview(type, settings) {
   var body = readerAppPreviewBody(safeType, settings)
   var h = '<div class="cu-preview" id="cuPreview">'
   h += '<div class="cu-preview-label"><span>实时预览</span><small>使用当前作品与实际 App 组件</small></div>'
-  h += '<div class="rd-phone-preview"><div class="phone-frame reader-app-preview-frame reader-phone-css-preview-scope" style="' + escapeHtmlAttribute(frameStyle) + '">'
+  h += '<div class="rd-phone-preview"><div class="phone-frame reader-app-preview-frame reader-phone-css-preview-scope" tabindex="0" aria-label="应用效果预览；按住可查看修改前效果" style="' + escapeHtmlAttribute(frameStyle) + '">'
   h += '<div class="cu-panel cu-panel-embedded rd-phone-app-panel rd-phone-app-' + safeType + ' reader-app-preview-scope">'
   h += '<div class="cu-header rd-phone-app-header"><span class="rd-back-btn" aria-hidden="true">←</span><span class="cu-title">' + esc(previewTitle) + '</span><span class="rd-back-spacer" aria-hidden="true"></span></div>'
   h += '<div class="cu-body rd-phone-app-body">' + body + '</div></div></div></div></div>'
@@ -8578,9 +9790,14 @@ function readCurrentSettings(modal, type) {
   // Read sliders
   var sliderMap = {
     cuMsgAvSize: 'avatarSize', cuSelfRadius: 'selfBubbleRadius', cuOtherRadius: 'otherBubbleRadius',
+    cuSelfBubbleSkinSize: 'selfBubbleSkinSize', cuOtherBubbleSkinSize: 'otherBubbleSkinSize',
+    cuSelfBubbleSkinSlice: 'selfBubbleSkinSlice', cuSelfBubbleSkinPadding: 'selfBubbleSkinPadding',
+    cuOtherBubbleSkinSlice: 'otherBubbleSkinSlice', cuOtherBubbleSkinPadding: 'otherBubbleSkinPadding',
     cuBubbleFs: 'bubbleFontSize', cuCardRadius: 'cardRadius', cuTitleSize: 'titleSize',
     cuFontSize: 'fontSize', cuLineHeight: 'lineHeight', cuImgRadius: 'imageRadius',
-    cuGap: 'gap', cuEntryRadius: 'entryRadius', cuNameSize: 'nameSize'
+    cuGap: 'gap', cuEntryRadius: 'entryRadius', cuNameSize: 'nameSize',
+    cuComposerInputRadius: 'composerInputRadius',
+    cuChatBgPosX: 'chatBgPositionX', cuChatBgPosY: 'chatBgPositionY', cuChatBgTone: 'chatBgTone'
   }
   for (var id in sliderMap) {
     var el = modal.querySelector('#' + id)
@@ -8590,7 +9807,9 @@ function readCurrentSettings(modal, type) {
   var colorBtnMap = {
     'cu-self-bg': 'selfBubbleBg', 'cu-self-text': 'selfBubbleText',
     'cu-other-bg': 'otherBubbleBg', 'cu-other-text': 'otherBubbleText',
-    'cu-chat-bg': 'chatBg', 'cu-time-color': 'timeColor',
+    'cu-chat-bg': 'chatBg', 'cu-time-color': 'timeColor', 'cu-send-bg': 'sendButtonBg',
+    'cu-composer-bg': 'composerBg', 'cu-composer-input-bg': 'composerInputBg',
+    'cu-composer-input-text': 'composerInputText', 'cu-composer-input-border': 'composerInputBorder',
     'cu-card-bg': 'cardBg', 'cu-title-color': 'titleColor',
     'cu-text-color': 'textColor', 'cu-url-color': 'urlColor',
     'cu-name-color': 'nameColor', 'cu-price-color': 'priceColor'
@@ -8599,7 +9818,9 @@ function readCurrentSettings(modal, type) {
     var btn = modal.querySelector('.cu-color-btn.active[data-' + attr + ']')
     if (btn) { s[colorBtnMap[attr]] = btn.getAttribute('data-' + attr); continue }
     var picker = modal.querySelector('.cu-color-picker[data-' + attr + '-picker]')
-    if (picker && picker.value) s[colorBtnMap[attr]] = picker.value
+    if (picker && picker.value) {
+      s[colorBtnMap[attr]] = picker.getAttribute('data-' + attr + '-picker') || picker.value
+    }
   }
   // Read active shape button
   var shapeBtn = modal.querySelector('.cu-shape-btn.active')
@@ -8609,10 +9830,34 @@ function readCurrentSettings(modal, type) {
   if (memoStyle) s.cardStyle = memoStyle.dataset.cuMemoStyle
   var galleryCol = modal.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')
   if (galleryCol) s.columns = parseInt(galleryCol.dataset.cuGalleryCols) || 3
+  var bubbleWeight = modal.querySelector('.cu-style-btn.active[data-cu-bubble-weight]')
+  if (bubbleWeight) s.bubbleFontWeight = normalizedReaderBubbleFontWeight(bubbleWeight.dataset.cuBubbleWeight)
+  modal.querySelectorAll('.cu-style-btn.active[data-cu-bubble-skin-mode]').forEach(function(button) {
+    var prefix = button.dataset.cuBubbleSkinSide === 'self' ? 'self' : 'other'
+    s[prefix + 'BubbleSkinMode'] = button.dataset.cuBubbleSkinMode === 'slice' ? 'slice' : 'full'
+  })
+  var chatBgFit = modal.querySelector('.cu-style-btn.active[data-cu-chat-bg-fit]')
+  if (chatBgFit) s.chatBgFit = chatBgFit.dataset.cuChatBgFit === 'contain' ? 'contain' : 'cover'
   var customCss = modal.querySelector('#cuAppCustomCss')
   s.customCss = customCss && typeof customCss.value === 'string'
     ? customCss.value.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
     : (typeof s.customCss === 'string' ? s.customCss.slice(0, READER_CUSTOM_CSS_MAX_LENGTH) : '')
+  if (type === 'messages' && Object.prototype.hasOwnProperty.call(modal, '_readerChatBgImageDraft')) {
+    s.chatBgImage = modal._readerChatBgImageDraft || null
+    s.chatBgLuminance = Number.isFinite(modal._readerChatBgLuminanceDraft)
+      ? modal._readerChatBgLuminanceDraft
+      : null
+    var readabilityToggle = modal.querySelector('#cuChatAutoReadability')
+    s.chatAutoReadability = readabilityToggle ? readabilityToggle.checked : s.chatAutoReadability !== false
+    var composerReadabilityToggle = modal.querySelector('#cuComposerAutoReadability')
+    s.composerAutoReadability = composerReadabilityToggle
+      ? composerReadabilityToggle.checked
+      : s.composerAutoReadability !== false
+    if (modal._readerBubbleSkinDraft) {
+      s.selfBubbleSkinImage = modal._readerBubbleSkinDraft.self || null
+      s.otherBubbleSkinImage = modal._readerBubbleSkinDraft.other || null
+    }
+  }
   return s
 }
 
@@ -8623,6 +9868,9 @@ function syncReaderAppCssFeedback(modal, type, settings) {
   var count = modal.querySelector('#cuAppCssCount')
   var status = modal.querySelector('#cuAppLiveStatus')
   var save = modal.querySelector('#cuModalSave')
+  var dirty = typeof modal._readerAppDraftDirty === 'function'
+    ? modal._readerAppDraftDirty(settings)
+    : true
   if (count) count.textContent = rawCss.length + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH
   if (error) {
     error.hidden = result.ok
@@ -8630,9 +9878,13 @@ function syncReaderAppCssFeedback(modal, type, settings) {
   }
   if (status) {
     status.classList.toggle('is-error', !result.ok)
-    status.textContent = result.ok ? '实时预览 · 保存后应用到实际 App' : 'CSS 有误，已保留上一次可用预览'
+    status.textContent = result.ok
+      ? (dirty
+        ? '有未保存修改 · 按住预览可对比原效果'
+        : '尚未修改 · 按住预览可查看原效果')
+      : 'CSS 有误，已保留上一次可用预览'
   }
-  if (save) save.disabled = !result.ok || save.dataset.readerAsyncPending === 'true'
+  if (save) save.disabled = !dirty || !result.ok || save.dataset.readerAsyncPending === 'true'
   return result
 }
 
@@ -8657,7 +9909,33 @@ function readerCallBackgroundControls(background) {
   return '<div class="cu-call-background-presets" role="group" aria-label="通话背景预设">' + buttons + '</div>' +
     readerCallBackgroundPreviewMarkup(background) +
     '<div class="cu-call-background-actions"><button type="button" id="cuCallBackgroundUpload">选择本地图片</button><input type="file" id="cuCallBackgroundFile" accept="image/png,image/jpeg,image/webp" hidden><button type="button" id="cuCallBackgroundRestore">恢复默认</button></div>' +
+    '<p id="cuCallBackgroundState" class="cu-chat-background-state" aria-live="polite"></p>' +
     '<p id="cuCallBackgroundError" class="cu-call-background-error" role="alert" hidden></p>'
+}
+
+function readerBubbleSkinControls(side, settings) {
+  var isSelf = side === 'self'
+  var key = isSelf ? 'Self' : 'Other'
+  var skin = normalizedReaderBubbleSkin(settings, side)
+  return '<div class="cu-bubble-skin-control" data-cu-bubble-skin-side="' + side + '">' +
+    '<div class="cu-call-background-actions cu-bubble-skin-actions">' +
+      '<button type="button" id="cu' + key + 'BubbleSkinUpload">选择图片</button>' +
+      '<input type="file" id="cu' + key + 'BubbleSkinFile" accept="image/png,image/jpeg,image/webp" hidden>' +
+      '<button type="button" id="cu' + key + 'BubbleSkinClear"' + (skin.image ? '' : ' disabled') + '>清除</button>' +
+    '</div>' +
+    '<p id="cu' + key + 'BubbleSkinState" class="cu-bubble-skin-state" aria-live="polite">' +
+      (skin.image ? '已使用本地素材，可继续调整显示方式和大小。' : '未使用，继续显示背景色与圆角。') +
+    '</p>' +
+    '<p id="cu' + key + 'BubbleSkinError" class="cu-call-background-error" role="alert" hidden></p>' +
+  '</div>'
+}
+
+function readerBubbleSkinModeControls(side, settings) {
+  var skin = normalizedReaderBubbleSkin(settings, side)
+  return '<div class="cu-shape-group cu-bubble-skin-mode" role="group" aria-label="' + (side === 'self' ? '我方' : '对方') + '气泡素材显示方式">' +
+    '<button type="button" class="cu-style-btn' + (skin.mode === 'full' ? ' active' : '') + '" data-cu-bubble-skin-mode="full" data-cu-bubble-skin-side="' + side + '">完整素材</button>' +
+    '<button type="button" class="cu-style-btn' + (skin.mode === 'slice' ? ' active' : '') + '" data-cu-bubble-skin-mode="slice" data-cu-bubble-skin-side="' + side + '">切片拉伸</button>' +
+  '</div>'
 }
 
 function syncReaderCallBackgroundControls(modal, background) {
@@ -8670,6 +9948,83 @@ function syncReaderCallBackgroundControls(modal, background) {
   if (preview) preview.outerHTML = readerCallBackgroundPreviewMarkup(background)
 }
 
+function bindReaderAppPreviewAutoScale(overlay) {
+  var modal = overlay.querySelector('.app-appearance-workbench')
+  var modalBody = modal && modal.querySelector('.cu-modal-body')
+  var previewPane = modal && modal.querySelector('.app-appearance-preview-pane')
+  var previewWrap = previewPane && previewPane.querySelector('.rd-phone-preview')
+  var previewFrame = previewPane && previewPane.querySelector('.reader-app-preview-frame')
+  var previewLabel = previewPane && previewPane.querySelector('.cu-preview-label')
+  var previewStatus = previewPane && previewPane.querySelector('.phone-appearance-status')
+  if (!modal || !modalBody || !previewWrap || !previewFrame) return
+
+  var lastScale = ''
+  var lastHeight = ''
+  var resizeObserver = null
+  var removalObserver = null
+  var resizeTarget = globalThis.window && typeof globalThis.window.addEventListener === 'function'
+    ? globalThis.window
+    : (typeof globalThis.addEventListener === 'function' ? globalThis : null)
+
+  function clearPreviewScale() {
+    lastScale = ''
+    lastHeight = ''
+    modal.style.removeProperty('--reader-app-preview-scale')
+    previewWrap.style.removeProperty('height')
+    previewWrap.style.removeProperty('overflow')
+  }
+
+  function syncPreviewScale() {
+    if (!overlay.isConnected) return
+    var viewportWidth = Number(resizeTarget && resizeTarget.innerWidth) ||
+      Number(globalThis.innerWidth) ||
+      document.documentElement.clientWidth ||
+      0
+    if (viewportWidth <= 860) {
+      clearPreviewScale()
+      return
+    }
+    var availableBodyHeight = modalBody.clientHeight
+    if (!availableBodyHeight) return
+    var naturalHeight = previewFrame.offsetHeight || 640
+    var fixedChromeHeight = (previewLabel ? previewLabel.offsetHeight : 0) +
+      (previewStatus ? previewStatus.offsetHeight : 0) + 52
+    var availablePreviewHeight = Math.max(0, availableBodyHeight - fixedChromeHeight)
+    var scale = Math.max(0.42, Math.min(1, availablePreviewHeight / naturalHeight))
+    var scaleText = String(Number(scale.toFixed(3)))
+    var heightText = Math.round(naturalHeight * scale) + 'px'
+    if (scaleText !== lastScale) {
+      modal.style.setProperty('--reader-app-preview-scale', scaleText)
+      lastScale = scaleText
+    }
+    if (heightText !== lastHeight) {
+      previewWrap.style.height = heightText
+      previewWrap.style.overflow = 'hidden'
+      lastHeight = heightText
+    }
+  }
+
+  function cleanupPreviewScale() {
+    if (resizeTarget) resizeTarget.removeEventListener('resize', syncPreviewScale)
+    if (resizeObserver) resizeObserver.disconnect()
+    if (removalObserver) removalObserver.disconnect()
+  }
+
+  if (resizeTarget) resizeTarget.addEventListener('resize', syncPreviewScale)
+  if (typeof ResizeObserver === 'function') {
+    resizeObserver = new ResizeObserver(syncPreviewScale)
+    resizeObserver.observe(modalBody)
+  }
+  if (typeof MutationObserver === 'function' && document.body) {
+    removalObserver = new MutationObserver(function() {
+      if (overlay.isConnected) return
+      cleanupPreviewScale()
+    })
+    removalObserver.observe(document.body, { childList: true })
+  }
+  requestAnimationFrame(syncPreviewScale)
+}
+
 // ====== Per-App Settings Panel ======
 function openReaderAppSettings(type, trigger) {
   var ct = getPhoneCustom()
@@ -8678,6 +10033,9 @@ function openReaderAppSettings(type, trigger) {
 
   var persistedSettings = getAppSettings(type)
   var s = JSON.parse(JSON.stringify(persistedSettings))
+  var initialSettingsSnapshot = JSON.parse(JSON.stringify(persistedSettings))
+  var appIconDraft = ct.customIcons[type] || ''
+  var initialIconSnapshot = appIconDraft
   var callBackgroundDraft = type === 'messages'
     ? normalizedReaderCallBackgroundSettings(s)
     : null
@@ -8712,135 +10070,186 @@ function openReaderAppSettings(type, trigger) {
 
   if (type === 'messages') {
     var shapes = ['circle', 'rounded', 'square']
-    body += cuCard('头像设置',
+    var bubbleSettings =
+      cuCollapsibleSubsection('cuMessageAvatar', '头像',
       cuRow('形状', '<div class="cu-shape-group">' + shapes.map(function(sh) { return cuShapeBtn(sh, s.avatarShape === sh) }).join('') + '</div>') +
-      cuSliderRow('尺寸', 'cuMsgAvSize', 24, 56, 2, s.avatarSize, 'px')
-    )
-    body += cuCard('我方气泡',
-      cuColorRow('背景色', ['#555', '#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6'], s.selfBubbleBg, 'cu-self-bg') +
-      cuColorRow('文字色', ['#fff', '#333', '#1a1a2e', '#4a3a2a'], s.selfBubbleText, 'cu-self-text') +
-      cuSliderRow('圆角', 'cuSelfRadius', 0, 20, 1, s.selfBubbleRadius, 'px')
-    )
-    body += cuCard('对方气泡',
-      cuColorRow('背景色', ['#fff', '#f0f0f0', '#e8f4e8', '#fef9e7', '#f0e8f4', '#e8f0f8'], s.otherBubbleBg, 'cu-other-bg') +
-      cuColorRow('文字色', ['#333', '#555', '#1a1a2e', '#4a3a2a'], s.otherBubbleText, 'cu-other-text') +
-      cuSliderRow('圆角', 'cuOtherRadius', 0, 20, 1, s.otherBubbleRadius, 'px')
-    )
-    body += cuCard('文字',
-      cuSliderRow('字号', 'cuBubbleFs', 10, 18, 1, s.bubbleFontSize, 'px')
-    )
-    body += cuCard('聊天背景',
-      cuColorRow('背景色', ['#f0f0f0', '#fff', '#e8e8e8', '#1a1a2e', '#c8dcc8'], s.chatBg, 'cu-chat-bg')
-    )
-    body += cuCard('时间标签',
-      cuColorRow('颜色', ['#b0b8c4', '#999', '#666', '#333'], s.timeColor, 'cu-time-color')
-    )
-    body += '<div id="cuCallBackgroundCard">' + cuCard('通话背景', readerCallBackgroundControls(callBackgroundDraft)) + '</div>'
+      cuSliderRow('尺寸', 'cuMsgAvSize', 24, 56, 2, s.avatarSize, 'px'),
+      false
+      ) +
+      cuCollapsibleSubsection('cuMessageSelfBubble', '我方气泡',
+      cuColorRow('背景色', [], s.selfBubbleBg, 'cu-self-bg') +
+      cuColorRow('文字色', [], s.selfBubbleText, 'cu-self-text') +
+      cuSliderRow('圆角', 'cuSelfRadius', 0, 20, 1, s.selfBubbleRadius, 'px') +
+      cuRow('气泡皮肤', readerBubbleSkinControls('self', s)) +
+      cuRow('显示方式', readerBubbleSkinModeControls('self', s)) +
+      cuSliderRow('整体大小', 'cuSelfBubbleSkinSize', 70, 220, 5, s.selfBubbleSkinSize, '%') +
+      '<div data-cu-bubble-skin-slice-row="self"' + (s.selfBubbleSkinMode === 'slice' ? '' : ' hidden') + '>' +
+        cuSliderRow('边缘保留', 'cuSelfBubbleSkinSlice', 4, 40, 1, s.selfBubbleSkinSlice, 'px') +
+      '</div>' +
+      cuSliderRow('文字留白', 'cuSelfBubbleSkinPadding', 4, 32, 1, s.selfBubbleSkinPadding, 'px') +
+      '<div class="cu-bubble-copy-row"><button type="button" class="rs-action-btn subtle" data-cu-copy-bubble-style="self-to-other">复制到对方气泡</button></div>',
+      true
+      ) +
+      cuCollapsibleSubsection('cuMessageOtherBubble', '对方气泡',
+      cuColorRow('背景色', [], s.otherBubbleBg, 'cu-other-bg') +
+      cuColorRow('文字色', [], s.otherBubbleText, 'cu-other-text') +
+      cuSliderRow('圆角', 'cuOtherRadius', 0, 20, 1, s.otherBubbleRadius, 'px') +
+      cuRow('气泡皮肤', readerBubbleSkinControls('other', s)) +
+      cuRow('显示方式', readerBubbleSkinModeControls('other', s)) +
+      cuSliderRow('整体大小', 'cuOtherBubbleSkinSize', 70, 220, 5, s.otherBubbleSkinSize, '%') +
+      '<div data-cu-bubble-skin-slice-row="other"' + (s.otherBubbleSkinMode === 'slice' ? '' : ' hidden') + '>' +
+        cuSliderRow('边缘保留', 'cuOtherBubbleSkinSlice', 4, 40, 1, s.otherBubbleSkinSlice, 'px') +
+      '</div>' +
+      cuSliderRow('文字留白', 'cuOtherBubbleSkinPadding', 4, 32, 1, s.otherBubbleSkinPadding, 'px') +
+      '<p class="cu-settings-hint">完整素材不会裁边；只有专门的九宫格素材才需要切片拉伸。图片只保存在当前浏览器。</p>' +
+      '<div class="cu-bubble-copy-row"><button type="button" class="rs-action-btn subtle" data-cu-copy-bubble-style="other-to-self">复制到我方气泡</button></div>',
+      false
+      ) +
+      cuCollapsibleSubsection('cuMessageTypography', '文字与时间',
+      cuSliderRow('字号', 'cuBubbleFs', 10, 18, 1, s.bubbleFontSize, 'px') +
+      cuRow('字重', '<div class="cu-shape-group">' +
+        '<button type="button" class="cu-style-btn' + (s.bubbleFontWeight === 400 ? ' active' : '') + '" data-cu-bubble-weight="400">常规</button>' +
+        '<button type="button" class="cu-style-btn' + (s.bubbleFontWeight === 500 ? ' active' : '') + '" data-cu-bubble-weight="500">中等</button>' +
+        '<button type="button" class="cu-style-btn' + (s.bubbleFontWeight === 800 ? ' active' : '') + '" data-cu-bubble-weight="800">加粗</button>' +
+        '</div>') +
+      cuColorRow('时间颜色', [], s.timeColor, 'cu-time-color'),
+      false
+      )
+    body += cuSettingsSection('cuMessageBubbles', '气泡与文字', bubbleSettings, true, 'bubbles')
+
+    var backgroundSettings =
+      cuColorRow('背景色', [], s.chatBg, 'cu-chat-bg') +
+      cuRow('背景图', '<div class="cu-call-background-actions"><button type="button" id="cuChatBackgroundUpload">选择本地图片</button><input type="file" id="cuChatBackgroundFile" accept="image/png,image/jpeg,image/webp" hidden><button type="button" id="cuChatBackgroundClear">清除图片</button></div><p id="cuChatBackgroundState" class="cu-chat-background-state" aria-live="polite"></p><p id="cuChatBackgroundError" class="cu-call-background-error" role="alert" hidden></p>') +
+      cuRow('清晰保护', '<label class="rd-checkbox cu-readability-toggle"><input type="checkbox" id="cuChatAutoReadability"' + (s.chatAutoReadability !== false ? ' checked' : '') + '> 自动保障文字清晰</label>') +
+      cuRow('填充方式', '<div class="cu-shape-group">' +
+        '<button type="button" class="cu-style-btn' + (s.chatBgFit === 'cover' ? ' active' : '') + '" data-cu-chat-bg-fit="cover">铺满</button>' +
+        '<button type="button" class="cu-style-btn' + (s.chatBgFit === 'contain' ? ' active' : '') + '" data-cu-chat-bg-fit="contain">完整显示</button>' +
+        '</div>') +
+      cuSliderRow('明暗', 'cuChatBgTone', -50, 50, 5, s.chatBgTone, '%') +
+      cuSliderRow('水平焦点', 'cuChatBgPosX', 0, 100, 1, s.chatBgPositionX, '%') +
+      cuSliderRow('垂直焦点', 'cuChatBgPosY', 0, 100, 1, s.chatBgPositionY, '%') +
+      '<p class="cu-settings-hint">负数压暗、正数提亮；上传壁纸后也可以直接拖动左侧预览调整焦点。</p>'
+    body += cuSettingsSection('cuMessageBackground', '聊天背景', backgroundSettings, false, 'background')
+
+    body += cuSettingsSection('cuMessageActions', '底部操作',
+      cuRow('自动适配', '<label class="rd-checkbox cu-readability-toggle"><input type="checkbox" id="cuComposerAutoReadability"' + (s.composerAutoReadability !== false ? ' checked' : '') + '> 跟随聊天背景自动适配</label>') +
+      cuColorRow('操作栏背景', [], s.composerBg, 'cu-composer-bg') +
+      cuColorRow('输入框背景', [], s.composerInputBg, 'cu-composer-input-bg') +
+      cuColorRow('输入框文字', [], s.composerInputText, 'cu-composer-input-text') +
+      cuColorRow('输入框边框', [], s.composerInputBorder, 'cu-composer-input-border') +
+      cuSliderRow('输入框圆角', 'cuComposerInputRadius', 0, 18, 1, s.composerInputRadius, 'px') +
+      cuColorRow('播放 / 回复按钮', [], s.sendButtonBg, 'cu-send-bg') +
+      '<div class="cu-message-css-shortcut"><p class="cu-settings-hint">调节以上任一项会切换为自定义；更细的样式可以继续使用当前消息 App 的高级 CSS。</p><button type="button" class="rs-action-btn subtle" id="cuMessageActionsCss">用 CSS 微调</button></div>'
+    , false, 'actions')
+    body += cuSettingsSection('cuMessageCall', '通话界面',
+      '<div id="cuCallBackgroundCard">' + readerCallBackgroundControls(callBackgroundDraft) + '</div>'
+    , false, 'call')
   } else if (type === 'forum') {
     var shapes = ['circle', 'rounded', 'square']
-    body += cuCard('头像',
+    body += cuSettingsSection('cuForumAvatar', '头像',
       cuRow('形状', '<div class="cu-shape-group">' + shapes.map(function(sh) { return cuShapeBtn(sh, s.avatarShape === sh) }).join('') + '</div>')
-    )
-    body += cuCard('帖子卡片',
+    , true)
+    body += cuSettingsSection('cuForumCards', '帖子卡片',
       cuColorRow('背景色', ['#fff', '#f8f8f8', '#e8f0f8', '#fef9e7'], s.cardBg, 'cu-card-bg') +
       cuSliderRow('圆角', 'cuCardRadius', 0, 16, 1, s.cardRadius, 'px')
-    )
-    body += cuCard('标题',
+    , false)
+    body += cuSettingsSection('cuForumTypography', '标题与时间',
       cuColorRow('颜色', ['#555', '#333', '#1a1a2e', '#6366f1'], s.titleColor, 'cu-title-color') +
-      cuSliderRow('字号', 'cuTitleSize', 10, 18, 1, s.titleSize, 'px')
-    )
-    body += cuCard('时间标签',
-      cuColorRow('颜色', ['#999', '#666', '#b0b8c4'], s.timeColor, 'cu-time-color')
-    )
+      cuSliderRow('字号', 'cuTitleSize', 10, 18, 1, s.titleSize, 'px') +
+      cuColorRow('时间颜色', ['#999', '#666', '#b0b8c4'], s.timeColor, 'cu-time-color')
+    , false)
   } else if (type === 'memo') {
-    body += cuCard('卡片风格',
+    body += cuSettingsSection('cuMemoStyle', '卡片风格',
       cuRow('样式', '<div class="cu-shape-group">' +
         '<button class="cu-style-btn' + (s.cardStyle === 'plain' ? ' active' : '') + '" data-cu-memo-style="plain">简洁</button>' +
         '<button class="cu-style-btn' + (s.cardStyle === 'sticky' ? ' active' : '') + '" data-cu-memo-style="sticky">便签</button>' +
         '<button class="cu-style-btn' + (s.cardStyle === 'vintage' ? ' active' : '') + '" data-cu-memo-style="vintage">复古</button>' +
         '</div>')
-    )
-    body += cuCard('外观',
+    , true)
+    body += cuSettingsSection('cuMemoAppearance', '外观与文字',
       cuColorRow('背景色', ['#fff', '#fef9e7', '#f5e6c8', '#e8f4e8'], s.cardBg, 'cu-card-bg') +
-      cuSliderRow('圆角', 'cuCardRadius', 0, 16, 1, s.cardRadius, 'px')
-    )
-    body += cuCard('文字',
+      cuSliderRow('圆角', 'cuCardRadius', 0, 16, 1, s.cardRadius, 'px') +
       cuColorRow('颜色', ['#333', '#555', '#4a3a2a', '#1a1a2e'], s.textColor, 'cu-text-color') +
       cuSliderRow('字号', 'cuFontSize', 10, 16, 1, s.fontSize, 'px') +
       cuSliderRow('行间距', 'cuLineHeight', 1.2, 2.4, 0.1, s.lineHeight, '')
-    )
+    , false)
   } else if (type === 'gallery') {
-    body += cuCard('网格',
+    body += cuSettingsSection('cuGalleryGrid', '网格',
       cuRow('列数', '<div class="cu-shape-group">' +
         '<button class="cu-style-btn' + (s.columns === 2 ? ' active' : '') + '" data-cu-gallery-cols="2">2列</button>' +
         '<button class="cu-style-btn' + (s.columns === 3 ? ' active' : '') + '" data-cu-gallery-cols="3">3列</button>' +
         '<button class="cu-style-btn' + (s.columns === 4 ? ' active' : '') + '" data-cu-gallery-cols="4">4列</button>' +
         '</div>')
-    )
-    body += cuCard('外观',
+    , true)
+    body += cuSettingsSection('cuGalleryAppearance', '图片外观',
       cuSliderRow('图片圆角', 'cuImgRadius', 0, 16, 1, s.imageRadius, 'px') +
       cuSliderRow('间距', 'cuGap', 2, 16, 2, s.gap, 'px')
-    )
+    , false)
   } else if (type === 'browser') {
-    body += cuCard('标题',
+    body += cuSettingsSection('cuBrowserTypography', '标题与 URL',
       cuColorRow('颜色', ['#555', '#333', '#6366f1', '#1a1a2e'], s.titleColor, 'cu-title-color') +
-      cuSliderRow('字号', 'cuTitleSize', 10, 16, 1, s.titleSize, 'px')
-    )
-    body += cuCard('URL',
-      cuColorRow('颜色', ['#999', '#666', '#888'], s.urlColor, 'cu-url-color')
-    )
-    body += cuCard('时间标签',
-      cuColorRow('颜色', ['#999', '#666', '#b0b8c4'], s.timeColor, 'cu-time-color')
-    )
-    body += cuCard('条目',
+      cuSliderRow('字号', 'cuTitleSize', 10, 16, 1, s.titleSize, 'px') +
+      cuColorRow('URL 颜色', ['#999', '#666', '#888'], s.urlColor, 'cu-url-color')
+    , true)
+    body += cuSettingsSection('cuBrowserEntries', '时间与条目',
+      cuColorRow('时间颜色', ['#999', '#666', '#b0b8c4'], s.timeColor, 'cu-time-color') +
       cuSliderRow('圆角', 'cuEntryRadius', 0, 12, 1, s.entryRadius, 'px')
-    )
+    , false)
   } else if (type === 'shopping') {
-    body += cuCard('商品名称',
+    body += cuSettingsSection('cuShoppingNames', '商品名称',
       cuColorRow('颜色', ['#333', '#555', '#1a1a2e'], s.nameColor, 'cu-name-color') +
       cuSliderRow('字号', 'cuNameSize', 10, 16, 1, s.nameSize, 'px')
-    )
-    body += cuCard('价格',
+    , true)
+    body += cuSettingsSection('cuShoppingPrices', '价格',
       cuColorRow('颜色', ['#a3bded', '#ef4444', '#f59e0b', '#10b981'], s.priceColor, 'cu-price-color')
-    )
+    , false)
   } else if (type === 'contacts') {
     var shapes = ['circle', 'rounded', 'square']
-    body += cuCard('头像',
+    body += cuSettingsSection('cuContactsAvatar', '头像',
       cuRow('形状', '<div class="cu-shape-group">' + shapes.map(function(sh) { return cuShapeBtn(sh, s.avatarShape === sh) }).join('') + '</div>')
-    )
-    body += cuCard('名称',
+    , true)
+    body += cuSettingsSection('cuContactsNames', '名称',
       cuColorRow('颜色', ['#555', '#333', '#6366f1', '#1a1a2e'], s.nameColor, 'cu-name-color') +
       cuSliderRow('字号', 'cuNameSize', 10, 18, 1, s.nameSize, 'px')
-    )
+    , false)
   }
 
   // Icon card - for all app types
   ct.customIcons = ct.customIcons || {}
-  var curIcon = ct.customIcons[type] || ''
-  body += cuCard('应用图标',
-    cuRow('自定义', '<div style="display:flex;gap:6px;align-items:center">' +
+  var curIcon = appIconDraft
+  var iconSettings = cuRow('自定义', '<div style="display:flex;gap:6px;align-items:center">' +
       '<input class="rd-input rd-input-sm" id="cuIconUrl" value="' + esc(curIcon) + '" placeholder="输入图标URL或上传...">' +
       '<button style="padding:4px 10px;font-size:.7rem;border:1px solid var(--c-primary-hover);background:transparent;color:var(--c-primary-hover);cursor:pointer;white-space:nowrap" id="cuIconUpload">上传</button>' +
       (curIcon ? '<button style="padding:4px 10px;font-size:.7rem;border:1px solid #D9A0B3;background:transparent;color:#D9A0B3;cursor:pointer;white-space:nowrap" id="cuIconClear">清除</button>' : '') +
       '</div>')
-  )
-  if (curIcon) body += '<div class="rd-preview-img"><img src="' + esc(curIcon) + '" style="max-height:40px;border-radius:4px"></div>'
+  if (curIcon) iconSettings += '<div class="rd-preview-img"><img src="' + esc(curIcon) + '" style="max-height:40px;border-radius:4px"></div>'
 
-  body += cuCard('高级 CSS',
-    '<div class="rs-css-section">' +
+  var advancedCssSettings = '<div class="rs-css-section">' +
       '<textarea id="cuAppCustomCss" class="rs-css-editor" maxlength="' + READER_CUSTOM_CSS_MAX_LENGTH + '" spellcheck="false" aria-describedby="cuAppCssHint cuAppCssError" placeholder=".rd-phone-app-body { padding: 14px; }">' + esc(s.customCss || '') + '</textarea>' +
       '<div class="rs-css-meta"><p class="rs-field-hint" id="cuAppCssHint">只作用于当前 App；外链、@ 规则、固定定位和覆盖点击会被拦截。</p><span id="cuAppCssCount">' + String((s.customCss || '').length) + ' / ' + READER_CUSTOM_CSS_MAX_LENGTH + '</span></div>' +
       '<p class="rs-css-error" id="cuAppCssError" role="alert" hidden></p>' +
       '<div class="rs-css-actions"><button type="button" class="rs-action-btn subtle" id="cuAppCssSample">填入示例</button><button type="button" class="rs-action-btn subtle" id="cuAppCssClear">清空 CSS</button></div>' +
     '</div>'
-  )
+  if (type === 'messages') {
+    body += cuSettingsSection('cuMessageMore', '应用与高级',
+      cuSettingsSubsection('应用图标', iconSettings) +
+      cuSettingsSubsection('高级 CSS', advancedCssSettings),
+    false)
+  } else {
+    body += cuSettingsSection('cuAppMore', '应用与高级',
+      cuSettingsSubsection('应用图标', iconSettings) +
+      cuSettingsSubsection('高级 CSS', advancedCssSettings),
+    false)
+  }
 
   body += '<div style="text-align:center;padding-top:8px"><button class="cu-reset-btn" id="cuAppReset">恢复默认</button></div>'
 
-  body = '<div class="app-appearance-layout"><aside class="app-appearance-preview-pane">' +
+  body = readerAppearancePagerMarkup() +
+    '<div class="app-appearance-layout appearance-workbench-pages" data-appearance-active-page="preview">' +
+    '<aside class="app-appearance-preview-pane appearance-workbench-page" data-appearance-page="preview">' +
     renderCuPreview(type, s) +
     '<p class="phone-appearance-status" id="cuAppLiveStatus" role="status" aria-live="polite">实时预览 · 保存后应用到实际 App</p>' +
-    '</aside><div class="app-appearance-controls">' + body + '</div></div>'
+    '</aside><div class="app-appearance-controls appearance-workbench-page" data-appearance-page="controls">' + body + '</div></div>'
 
   var ov = openCuModal(title, body, function(modal) {
     // Helper: read color from active button or from picker
@@ -8848,7 +10257,9 @@ function openReaderAppSettings(type, trigger) {
       var btn = modal.querySelector('.cu-color-btn.active[data-' + attr + ']')
       if (btn) { s[key] = btn.getAttribute('data-' + attr); return }
       var picker = modal.querySelector('.cu-color-picker[data-' + attr + '-picker]')
-      if (picker && picker.value) s[key] = picker.value
+      if (picker && picker.value) {
+        s[key] = picker.getAttribute('data-' + attr + '-picker') || picker.value
+      }
     }
     readColor('cu-self-bg', 'selfBubbleBg')
     readColor('cu-self-text', 'selfBubbleText')
@@ -8856,6 +10267,11 @@ function openReaderAppSettings(type, trigger) {
     readColor('cu-other-text', 'otherBubbleText')
     readColor('cu-chat-bg', 'chatBg')
     readColor('cu-time-color', 'timeColor')
+    readColor('cu-send-bg', 'sendButtonBg')
+    readColor('cu-composer-bg', 'composerBg')
+    readColor('cu-composer-input-bg', 'composerInputBg')
+    readColor('cu-composer-input-text', 'composerInputText')
+    readColor('cu-composer-input-border', 'composerInputBorder')
     readColor('cu-card-bg', 'cardBg')
     readColor('cu-title-color', 'titleColor')
     readColor('cu-text-color', 'textColor')
@@ -8874,6 +10290,12 @@ function openReaderAppSettings(type, trigger) {
     readSlider('cuMsgAvSize', 'avatarSize')
     readSlider('cuSelfRadius', 'selfBubbleRadius')
     readSlider('cuOtherRadius', 'otherBubbleRadius')
+    readSlider('cuSelfBubbleSkinSize', 'selfBubbleSkinSize')
+    readSlider('cuOtherBubbleSkinSize', 'otherBubbleSkinSize')
+    readSlider('cuSelfBubbleSkinSlice', 'selfBubbleSkinSlice')
+    readSlider('cuSelfBubbleSkinPadding', 'selfBubbleSkinPadding')
+    readSlider('cuOtherBubbleSkinSlice', 'otherBubbleSkinSlice')
+    readSlider('cuOtherBubbleSkinPadding', 'otherBubbleSkinPadding')
     readSlider('cuBubbleFs', 'bubbleFontSize')
     readSlider('cuCardRadius', 'cardRadius')
     readSlider('cuTitleSize', 'titleSize')
@@ -8883,11 +10305,27 @@ function openReaderAppSettings(type, trigger) {
     readSlider('cuGap', 'gap')
     readSlider('cuEntryRadius', 'entryRadius')
     readSlider('cuNameSize', 'nameSize')
+    readSlider('cuChatBgPosX', 'chatBgPositionX')
+    readSlider('cuChatBgPosY', 'chatBgPositionY')
+    readSlider('cuChatBgTone', 'chatBgTone')
+    readSlider('cuComposerInputRadius', 'composerInputRadius')
+    var readabilityToggle = modal.querySelector('#cuChatAutoReadability')
+    if (readabilityToggle) s.chatAutoReadability = readabilityToggle.checked
+    var composerReadabilityToggle = modal.querySelector('#cuComposerAutoReadability')
+    if (composerReadabilityToggle) s.composerAutoReadability = composerReadabilityToggle.checked
     // Style buttons
     var memoStyleBtn = modal.querySelector('.cu-style-btn.active[data-cu-memo-style]')
     if (memoStyleBtn) s.cardStyle = memoStyleBtn.dataset.cuMemoStyle
     var galleryColBtn = modal.querySelector('.cu-style-btn.active[data-cu-gallery-cols]')
     if (galleryColBtn) s.columns = parseInt(galleryColBtn.dataset.cuGalleryCols) || 3
+    var bubbleWeightBtn = modal.querySelector('.cu-style-btn.active[data-cu-bubble-weight]')
+    if (bubbleWeightBtn) s.bubbleFontWeight = normalizedReaderBubbleFontWeight(bubbleWeightBtn.dataset.cuBubbleWeight)
+    modal.querySelectorAll('.cu-style-btn.active[data-cu-bubble-skin-mode]').forEach(function(button) {
+      var prefix = button.dataset.cuBubbleSkinSide === 'self' ? 'self' : 'other'
+      s[prefix + 'BubbleSkinMode'] = button.dataset.cuBubbleSkinMode === 'slice' ? 'slice' : 'full'
+    })
+    var chatBgFitBtn = modal.querySelector('.cu-style-btn.active[data-cu-chat-bg-fit]')
+    if (chatBgFitBtn) s.chatBgFit = chatBgFitBtn.dataset.cuChatBgFit === 'contain' ? 'contain' : 'cover'
     var customCssInput = modal.querySelector('#cuAppCustomCss')
     s.customCss = customCssInput && typeof customCssInput.value === 'string'
       ? customCssInput.value.slice(0, READER_CUSTOM_CSS_MAX_LENGTH)
@@ -8895,8 +10333,19 @@ function openReaderAppSettings(type, trigger) {
     var customCssValidation = compileScopedReaderCss(s.customCss, '.rd-phone-app-' + readerAppCssType(type))
     if (!customCssValidation.ok) throw new Error(customCssValidation.error)
     // Read icon URL
-    var iconUrlEl = modal.querySelector('#cuIconUrl'); if (iconUrlEl && iconUrlEl.value.trim()) ct.customIcons[type] = iconUrlEl.value.trim()
-    if (type === 'messages') Object.assign(s, normalizedReaderCallBackgroundSettings(callBackgroundDraft))
+    var iconUrlEl = modal.querySelector('#cuIconUrl')
+    appIconDraft = iconUrlEl ? iconUrlEl.value.trim() : appIconDraft
+    if (appIconDraft) ct.customIcons[type] = appIconDraft
+    else delete ct.customIcons[type]
+    if (type === 'messages') {
+      Object.assign(s, normalizedReaderCallBackgroundSettings(callBackgroundDraft))
+      s.chatBgImage = ov._readerChatBgImageDraft || null
+      s.chatBgLuminance = Number.isFinite(ov._readerChatBgLuminanceDraft)
+        ? ov._readerChatBgLuminanceDraft
+        : null
+      s.selfBubbleSkinImage = ov._readerBubbleSkinDraft.self || null
+      s.otherBubbleSkinImage = ov._readerBubbleSkinDraft.other || null
+    }
     ct.appSettings[type] = s
     try {
       savePhoneCustom(ct)
@@ -8914,10 +10363,525 @@ function openReaderAppSettings(type, trigger) {
   }, trigger)
   var appAppearanceDialog = ov.querySelector('.cu-modal')
   if (appAppearanceDialog) appAppearanceDialog.classList.add('app-appearance-workbench')
+  if (type === 'messages' && appAppearanceDialog) appAppearanceDialog.classList.add('is-message-appearance')
+  bindReaderAppearancePager(ov)
+  bindReaderAppPreviewAutoScale(ov)
+  if (type === 'messages') {
+    ov._readerChatBgImageDraft = s.chatBgImage || null
+    ov._readerChatBgLuminanceDraft = Number.isFinite(s.chatBgLuminance)
+      ? s.chatBgLuminance
+      : null
+    ov._readerBubbleSkinDraft = {
+      self: s.selfBubbleSkinImage || null,
+      other: s.otherBubbleSkinImage || null
+    }
+  }
+
+  function readerAppDraftSnapshot(settings) {
+    var draft = JSON.parse(JSON.stringify(settings || readCurrentSettings(ov, type)))
+    if (type === 'messages') {
+      Object.assign(draft, normalizedReaderCallBackgroundSettings(callBackgroundDraft))
+      draft.chatBgImage = ov._readerChatBgImageDraft || null
+      draft.chatBgLuminance = Number.isFinite(ov._readerChatBgLuminanceDraft)
+        ? ov._readerChatBgLuminanceDraft
+        : null
+      draft.selfBubbleSkinImage = ov._readerBubbleSkinDraft.self || null
+      draft.otherBubbleSkinImage = ov._readerBubbleSkinDraft.other || null
+      var readabilityToggle = ov.querySelector('#cuChatAutoReadability')
+      draft.chatAutoReadability = readabilityToggle ? readabilityToggle.checked : draft.chatAutoReadability !== false
+      var composerReadabilityToggle = ov.querySelector('#cuComposerAutoReadability')
+      draft.composerAutoReadability = composerReadabilityToggle
+        ? composerReadabilityToggle.checked
+        : draft.composerAutoReadability !== false
+    }
+    var iconInput = ov.querySelector('#cuIconUrl')
+    return {
+      settings: draft,
+      icon: iconInput ? iconInput.value.trim() : appIconDraft
+    }
+  }
+
+  var initialDraftSignature = JSON.stringify({
+    settings: initialSettingsSnapshot,
+    icon: initialIconSnapshot
+  })
+  ov._readerAppDraftDirty = function(settings) {
+    return JSON.stringify(readerAppDraftSnapshot(settings)) !== initialDraftSignature
+  }
+  ov.setReaderBeforeClose(function() {
+    if (!ov._readerAppDraftDirty()) return true
+    showReaderToast('还有未保存修改', 'info', {
+      actionLabel:'放弃修改',
+      duration:5000,
+      onAction:function() {
+        if (ov.isConnected) ov.forceCloseReaderModal()
+      }
+    })
+    return false
+  })
+
+  function showOriginalReaderAppPreview() {
+    if (!ov.isConnected || appAppearanceDialog.classList.contains('is-comparing-original')) return
+    var preview = ov.querySelector('#cuPreview')
+    if (!preview) return
+    preview.innerHTML = renderCuPreview(type, initialSettingsSnapshot)
+      .replace(/^<div class="cu-preview"[^>]*>/, '')
+      .replace(/<\/div>$/, '')
+    appAppearanceDialog.classList.add('is-comparing-original')
+  }
+
+  function restoreReaderAppDraftPreview() {
+    if (!appAppearanceDialog.classList.contains('is-comparing-original')) return
+    appAppearanceDialog.classList.remove('is-comparing-original')
+    updateCuPreview(ov, type)
+  }
+
+  var comparisonTimer = null
+  var comparisonPointerId = null
+  var comparisonStartX = 0
+  var comparisonStartY = 0
+
+  function clearComparisonPointer() {
+    if (comparisonTimer !== null) globalThis.clearTimeout(comparisonTimer)
+    comparisonTimer = null
+    comparisonPointerId = null
+    document.removeEventListener('pointermove', moveReaderAppComparison)
+    document.removeEventListener('pointerup', finishReaderAppComparison)
+    document.removeEventListener('pointercancel', finishReaderAppComparison)
+  }
+
+  function moveReaderAppComparison(event) {
+    if (comparisonPointerId !== null && event.pointerId !== comparisonPointerId) return
+    if (appAppearanceDialog.classList.contains('is-comparing-original')) return
+    if (Math.max(
+      Math.abs(event.clientX - comparisonStartX),
+      Math.abs(event.clientY - comparisonStartY)
+    ) <= 6) return
+    clearComparisonPointer()
+  }
+
+  function finishReaderAppComparison(event) {
+    if (comparisonPointerId !== null && event.pointerId !== undefined && event.pointerId !== comparisonPointerId) return
+    clearComparisonPointer()
+    restoreReaderAppDraftPreview()
+  }
+
+  ov.addEventListener('pointerdown', function(event) {
+    var frame = event.target.closest && event.target.closest('.reader-app-preview-frame')
+    if (!frame || event.button !== 0 || comparisonPointerId !== null) return
+    comparisonPointerId = event.pointerId
+    comparisonStartX = event.clientX
+    comparisonStartY = event.clientY
+    comparisonTimer = globalThis.setTimeout(function() {
+      comparisonTimer = null
+      showOriginalReaderAppPreview()
+    }, 220)
+    document.addEventListener('pointermove', moveReaderAppComparison)
+    document.addEventListener('pointerup', finishReaderAppComparison)
+    document.addEventListener('pointercancel', finishReaderAppComparison)
+  })
+
+  ov.addEventListener('keydown', function(event) {
+    if (event.key !== ' ' || event.repeat || !event.target.closest('.reader-app-preview-frame')) return
+    event.preventDefault()
+    showOriginalReaderAppPreview()
+  })
+  function releaseReaderAppComparison(event) {
+    if (!ov.isConnected) {
+      document.removeEventListener('keyup', releaseReaderAppComparison)
+      return
+    }
+    if (event.key !== ' ') return
+    restoreReaderAppDraftPreview()
+  }
+  document.addEventListener('keyup', releaseReaderAppComparison)
+  if (typeof MutationObserver === 'function' && document.body) {
+    var comparisonRemovalObserver = new MutationObserver(function() {
+      if (ov.isConnected) return
+      clearComparisonPointer()
+      document.removeEventListener('keyup', releaseReaderAppComparison)
+      comparisonRemovalObserver.disconnect()
+    })
+    comparisonRemovalObserver.observe(document.body, { childList:true })
+  }
+
+  var messageSettingsSections = Array.from(ov.querySelectorAll('.app-appearance-controls > .cu-settings-section'))
+
+  function revealMessageSettingsSection(sectionId, moveFocus) {
+    var section = ov.querySelector('#' + sectionId)
+    if (!section) return
+    messageSettingsSections.forEach(function(candidate) {
+      candidate.open = candidate === section
+      if (candidate !== section) candidate.classList.remove('is-preview-targeted')
+    })
+    section.classList.add('is-preview-targeted')
+    globalThis.setTimeout(function() {
+      if (section.isConnected) section.classList.remove('is-preview-targeted')
+    }, 650)
+    var summary = section.querySelector('summary')
+    if (moveFocus && summary && typeof summary.focus === 'function') summary.focus({ preventScroll: true })
+    if (typeof section.scrollIntoView === 'function') {
+      section.scrollIntoView({
+        behavior: shouldUseMotion() ? 'smooth' : 'auto',
+        block: 'start'
+      })
+    }
+    var settingsPage = ov.querySelector('[data-appearance-page-target="controls"]')
+    if (settingsPage) settingsPage.click()
+  }
+
+  function revealMessageBubbleSubsection(subsectionId) {
+    var bubbleSection = ov.querySelector('#cuMessageBubbles')
+    if (!bubbleSection) return
+    bubbleSection.querySelectorAll('.cu-settings-subsection-collapsible').forEach(function(subsection) {
+      subsection.open = subsection.id === subsectionId
+    })
+  }
+
+  messageSettingsSections.forEach(function(section) {
+    section.addEventListener('toggle', function() {
+      if (!section.open) return
+      messageSettingsSections.forEach(function(candidate) {
+        if (candidate !== section) candidate.open = false
+      })
+    })
+  })
+
+  if (type === 'messages') {
+    ov.addEventListener('click', function(event) {
+      var previewChat = event.target.closest && event.target.closest('.rd-app-preview-chat')
+      if (!previewChat) return
+      if (event.target.closest('#chatSendBtn, .chat-composer')) {
+        event.preventDefault()
+        revealMessageSettingsSection('cuMessageActions', event.detail === 0)
+        return
+      }
+      if (event.target.closest('.chat-avatar')) {
+        event.preventDefault()
+        revealMessageSettingsSection('cuMessageBubbles', event.detail === 0)
+        revealMessageBubbleSubsection('cuMessageAvatar')
+        return
+      }
+      if (event.target.closest('.chat-bubble')) {
+        event.preventDefault()
+        revealMessageSettingsSection('cuMessageBubbles', event.detail === 0)
+        revealMessageBubbleSubsection(event.target.closest('.chat-msg.self') ? 'cuMessageSelfBubble' : 'cuMessageOtherBubble')
+        return
+      }
+      if (event.target.closest('.rd-chat-time')) {
+        event.preventDefault()
+        revealMessageSettingsSection('cuMessageBubbles', event.detail === 0)
+        revealMessageBubbleSubsection('cuMessageTypography')
+        return
+      }
+      if (event.target.closest('.chat-msg-area')) {
+        event.preventDefault()
+        revealMessageSettingsSection('cuMessageBackground', event.detail === 0)
+      }
+    })
+
+    ov.addEventListener('pointerdown', function(event) {
+      var area = event.target.closest && event.target.closest('.rd-app-preview-chat .chat-msg-area')
+      if (!area || event.target !== area) return
+      var previewChat = area.closest('.rd-app-preview-chat')
+      if (!previewChat || previewChat.dataset.chatBackgroundImage !== 'true') return
+      var rect = area.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      var startX = event.clientX
+      var startY = event.clientY
+      var moved = false
+      var pointerId = event.pointerId
+
+      function updateWallpaperFocus(pointerEvent) {
+        var deltaX = Math.abs(pointerEvent.clientX - startX)
+        var deltaY = Math.abs(pointerEvent.clientY - startY)
+        if (!moved && Math.max(deltaX, deltaY) < 4) return
+        moved = true
+        var x = Math.max(0, Math.min(100, Math.round((pointerEvent.clientX - rect.left) / rect.width * 100)))
+        var y = Math.max(0, Math.min(100, Math.round((pointerEvent.clientY - rect.top) / rect.height * 100)))
+        var positionX = ov.querySelector('#cuChatBgPosX')
+        var positionY = ov.querySelector('#cuChatBgPosY')
+        var positionXValue = ov.querySelector('#cuChatBgPosXVal')
+        var positionYValue = ov.querySelector('#cuChatBgPosYVal')
+        if (positionX) positionX.value = String(x)
+        if (positionY) positionY.value = String(y)
+        setReaderRangeOutput(positionXValue, x + '%')
+        setReaderRangeOutput(positionYValue, y + '%')
+        previewChat.classList.add('is-wallpaper-dragging')
+        previewChat.style.setProperty('--chat-bg-position', x + '% ' + y + '%')
+        pointerEvent.preventDefault()
+      }
+
+      function finishWallpaperFocus(pointerEvent) {
+        if (pointerEvent.pointerId !== undefined && pointerId !== undefined && pointerEvent.pointerId !== pointerId) return
+        document.removeEventListener('pointermove', updateWallpaperFocus)
+        document.removeEventListener('pointerup', finishWallpaperFocus)
+        document.removeEventListener('pointercancel', finishWallpaperFocus)
+        previewChat.classList.remove('is-wallpaper-dragging')
+        if (moved && ov.isConnected) {
+          revealMessageSettingsSection('cuMessageBackground', false)
+          updateCuPreview(ov, type)
+        }
+      }
+
+      document.addEventListener('pointermove', updateWallpaperFocus)
+      document.addEventListener('pointerup', finishWallpaperFocus)
+      document.addEventListener('pointercancel', finishWallpaperFocus)
+    })
+  } else {
+    var previewSectionTargets = {
+      forum:[
+        ['.rd-forum-avatar', 'cuForumAvatar'],
+        ['.rd-forum-title, .rd-forum-meta', 'cuForumTypography'],
+        ['.rd-post-card', 'cuForumCards']
+      ],
+      memo:[
+        ['.rd-memo-note', 'cuMemoAppearance'],
+        ['.rd-memo-stack', 'cuMemoStyle']
+      ],
+      gallery:[
+        ['.rd-gallery-photo', 'cuGalleryAppearance'],
+        ['.rd-gallery-grid, .gallery-bar', 'cuGalleryGrid']
+      ],
+      browser:[
+        ['.rd-browser-title, .rd-browser-url', 'cuBrowserTypography'],
+        ['.rd-browser-entry, .rd-browser-time', 'cuBrowserEntries']
+      ],
+      shopping:[
+        ['.rd-shop-name', 'cuShoppingNames'],
+        ['.rd-shop-price', 'cuShoppingPrices']
+      ],
+      contacts:[
+        ['.rd-forum-avatar, .rd-contact-avatar', 'cuContactsAvatar'],
+        ['.rd-contact-row, .rd-contact-name', 'cuContactsNames']
+      ]
+    }
+    ov.addEventListener('click', function(event) {
+      var previewFrame = event.target.closest && event.target.closest('.reader-app-preview-frame')
+      if (!previewFrame) return
+      var targets = previewSectionTargets[type] || []
+      for (var targetIndex = 0; targetIndex < targets.length; targetIndex++) {
+        if (!event.target.closest(targets[targetIndex][0])) continue
+        event.preventDefault()
+        revealMessageSettingsSection(targets[targetIndex][1], event.detail === 0)
+        return
+      }
+    })
+  }
+
+  var bubbleSkinOperationVersion = { self:0, other:0 }
+  var bubbleSkinPending = { self:false, other:false }
+  var bubbleSkinMeta = { self:null, other:null }
+
+  function readerBubbleSkinKey(side) {
+    return side === 'self' ? 'Self' : 'Other'
+  }
+
+  function showReaderBubbleSkinError(side, message) {
+    var error = ov.querySelector('#cu' + readerBubbleSkinKey(side) + 'BubbleSkinError')
+    if (!error) return
+    error.hidden = !message
+    error.textContent = message || ''
+  }
+
+  function syncReaderBubbleSkinControls(side) {
+    var key = readerBubbleSkinKey(side)
+    var hasImage = !!(ov._readerBubbleSkinDraft && ov._readerBubbleSkinDraft[side])
+    var clear = ov.querySelector('#cu' + key + 'BubbleSkinClear')
+    var state = ov.querySelector('#cu' + key + 'BubbleSkinState')
+    var size = ov.querySelector('#cu' + key + 'BubbleSkinSize')
+    var slice = ov.querySelector('#cu' + key + 'BubbleSkinSlice')
+    var padding = ov.querySelector('#cu' + key + 'BubbleSkinPadding')
+    var modeButtons = ov.querySelectorAll('[data-cu-bubble-skin-mode][data-cu-bubble-skin-side="' + side + '"]')
+    var activeMode = ov.querySelector('.active[data-cu-bubble-skin-mode][data-cu-bubble-skin-side="' + side + '"]')
+    var mode = activeMode && activeMode.dataset.cuBubbleSkinMode === 'slice' ? 'slice' : 'full'
+    var sliceRow = ov.querySelector('[data-cu-bubble-skin-slice-row="' + side + '"]')
+    if (clear) clear.disabled = !hasImage
+    if (size) size.disabled = !hasImage
+    if (slice) slice.disabled = !hasImage || mode !== 'slice'
+    if (padding) padding.disabled = !hasImage
+    modeButtons.forEach(function(button) { button.disabled = !hasImage })
+    if (sliceRow) sliceRow.hidden = mode !== 'slice'
+    if (state) {
+      state.textContent = hasImage
+        ? (mode === 'full'
+          ? '完整显示整张素材；可继续调整大小与文字留白。'
+          : '切片拉伸边缘；适合中心区域可以延展的素材。')
+        : '未使用，继续显示背景色与圆角。'
+      if (hasImage && bubbleSkinMeta[side]) {
+        renderReaderAppearanceImageChoice(state, bubbleSkinMeta[side], function(nextUrl, nextMeta) {
+          ov._readerBubbleSkinDraft[side] = nextUrl
+          bubbleSkinMeta[side] = nextMeta
+          var section = ov.querySelector('#cuMessageBubbles')
+          if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+          syncReaderBubbleSkinControls(side)
+          updateCuPreview(ov, type)
+          if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+        })
+      }
+    }
+  }
+
+  function syncReaderBubbleSkinPending() {
+    var save = ov.querySelector('#cuModalSave')
+    if (!save) return
+    if (bubbleSkinPending.self || bubbleSkinPending.other) save.dataset.readerAsyncPending = 'true'
+    else delete save.dataset.readerAsyncPending
+    syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
+  }
+
+  function bindReaderBubbleSkinControls(side) {
+    var key = readerBubbleSkinKey(side)
+    var upload = ov.querySelector('#cu' + key + 'BubbleSkinUpload')
+    var fileInput = ov.querySelector('#cu' + key + 'BubbleSkinFile')
+    var clear = ov.querySelector('#cu' + key + 'BubbleSkinClear')
+    if (upload && fileInput) {
+      upload.onclick = function() { fileInput.click() }
+      fileInput.onchange = function() {
+        var file = fileInput.files && fileInput.files[0]
+        if (!file) return
+        fileInput.value = ''
+        var operationVersion = ++bubbleSkinOperationVersion[side]
+        showReaderBubbleSkinError(side, '')
+        bubbleSkinPending[side] = true
+        syncReaderBubbleSkinPending()
+        readReaderCallBackgroundFile(file).then(function(dataUrl) {
+          if (!ov.isConnected || operationVersion !== bubbleSkinOperationVersion[side]) return
+          ov._readerBubbleSkinDraft[side] = dataUrl
+          syncReaderBubbleSkinControls(side)
+          updateCuPreview(ov, type)
+          inspectReaderAppearanceImage(dataUrl, file.size).then(function(meta) {
+            if (!meta || !ov.isConnected || operationVersion !== bubbleSkinOperationVersion[side]) return
+            bubbleSkinMeta[side] = meta
+            syncReaderBubbleSkinControls(side)
+            var section = ov.querySelector('#cuMessageBubbles')
+            if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+            if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+          })
+        }).catch(function(error) {
+          if (!ov.isConnected || operationVersion !== bubbleSkinOperationVersion[side]) return
+          showReaderBubbleSkinError(side, error && error.message ? error.message : '图片无法使用')
+        }).finally(function() {
+          if (!ov.isConnected || operationVersion !== bubbleSkinOperationVersion[side]) return
+          bubbleSkinPending[side] = false
+          syncReaderBubbleSkinPending()
+        })
+      }
+    }
+    if (clear) clear.onclick = function() {
+      bubbleSkinOperationVersion[side] += 1
+      bubbleSkinPending[side] = false
+      ov._readerBubbleSkinDraft[side] = null
+      bubbleSkinMeta[side] = null
+      showReaderBubbleSkinError(side, '')
+      syncReaderBubbleSkinControls(side)
+      syncReaderBubbleSkinPending()
+      updateCuPreview(ov, type)
+    }
+    syncReaderBubbleSkinControls(side)
+  }
+
+  if (type === 'messages') {
+    bindReaderBubbleSkinControls('self')
+    bindReaderBubbleSkinControls('other')
+  }
+
+  var chatBackgroundSaveButton = ov.querySelector('#cuModalSave')
+  var chatBackgroundError = ov.querySelector('#cuChatBackgroundError')
+  var chatBackgroundState = ov.querySelector('#cuChatBackgroundState')
+  var chatBackgroundClear = ov.querySelector('#cuChatBackgroundClear')
+  var chatBackgroundOperationVersion = 0
+  var chatBackgroundMeta = null
+
+  function syncReaderChatBackgroundControls() {
+    var hasImage = !!ov._readerChatBgImageDraft
+    if (chatBackgroundClear) chatBackgroundClear.disabled = !hasImage
+    if (chatBackgroundState) {
+      chatBackgroundState.textContent = hasImage
+        ? '已选择本地图片；可以拖动左侧预览调整壁纸焦点。'
+        : '当前使用背景色。'
+      if (hasImage && chatBackgroundMeta) {
+        renderReaderAppearanceImageChoice(chatBackgroundState, chatBackgroundMeta, function(nextUrl, nextMeta) {
+          ov._readerChatBgImageDraft = nextUrl
+          chatBackgroundMeta = nextMeta
+          var section = ov.querySelector('#cuMessageBackground')
+          if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+          syncReaderChatBackgroundControls()
+          updateCuPreview(ov, type)
+          if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+        })
+      }
+    }
+  }
+
+  function showReaderChatBackgroundError(message) {
+    if (!chatBackgroundError) return
+    chatBackgroundError.hidden = !message
+    chatBackgroundError.textContent = message || ''
+  }
+
+  function finishReaderChatBackgroundOperation(version) {
+    if (!ov.isConnected || version !== chatBackgroundOperationVersion) return
+    if (chatBackgroundSaveButton) {
+      delete chatBackgroundSaveButton.dataset.readerAsyncPending
+      syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
+    }
+  }
+
+  var chatBackgroundUpload = ov.querySelector('#cuChatBackgroundUpload')
+  var chatBackgroundFile = ov.querySelector('#cuChatBackgroundFile')
+  if (chatBackgroundUpload && chatBackgroundFile) {
+    chatBackgroundUpload.onclick = function() { chatBackgroundFile.click() }
+    chatBackgroundFile.onchange = function() {
+      var file = chatBackgroundFile.files && chatBackgroundFile.files[0]
+      if (!file) return
+      chatBackgroundFile.value = ''
+      var operationVersion = ++chatBackgroundOperationVersion
+      showReaderChatBackgroundError('')
+      if (chatBackgroundSaveButton) {
+        chatBackgroundSaveButton.dataset.readerAsyncPending = 'true'
+        chatBackgroundSaveButton.disabled = true
+      }
+      readReaderCallBackgroundFile(file).then(function(dataUrl) {
+        if (!ov.isConnected || operationVersion !== chatBackgroundOperationVersion) return
+        ov._readerChatBgImageDraft = dataUrl
+        ov._readerChatBgLuminanceDraft = verifiedReaderImageLuminance.has(dataUrl)
+          ? verifiedReaderImageLuminance.get(dataUrl)
+          : null
+        syncReaderChatBackgroundControls()
+        updateCuPreview(ov, type)
+        inspectReaderAppearanceImage(dataUrl, file.size).then(function(meta) {
+          if (!meta || !ov.isConnected || operationVersion !== chatBackgroundOperationVersion) return
+          chatBackgroundMeta = meta
+          syncReaderChatBackgroundControls()
+          var section = ov.querySelector('#cuMessageBackground')
+          if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+          if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+        })
+      }).catch(function(error) {
+        if (!ov.isConnected || operationVersion !== chatBackgroundOperationVersion) return
+        showReaderChatBackgroundError(error && error.message ? error.message : '图片无法使用')
+      }).finally(function() {
+        finishReaderChatBackgroundOperation(operationVersion)
+      })
+    }
+  }
+  if (chatBackgroundClear) chatBackgroundClear.onclick = function() {
+    chatBackgroundOperationVersion += 1
+    ov._readerChatBgImageDraft = null
+    ov._readerChatBgLuminanceDraft = null
+    chatBackgroundMeta = null
+    showReaderChatBackgroundError('')
+    syncReaderChatBackgroundControls()
+    updateCuPreview(ov, type)
+  }
+  syncReaderChatBackgroundControls()
 
   var callBackgroundSaveButton = ov.querySelector('#cuModalSave')
   var callBackgroundError = ov.querySelector('#cuCallBackgroundError')
+  var callBackgroundState = ov.querySelector('#cuCallBackgroundState')
   var callBackgroundOperationVersion = 0
+  var callBackgroundMeta = null
 
   function clearReaderCallBackgroundError() {
     if (!callBackgroundError) return
@@ -8943,20 +10907,26 @@ function openReaderAppSettings(type, trigger) {
     button.onclick = function() {
       invalidateReaderCallBackgroundOperation()
       clearReaderCallBackgroundError()
+      callBackgroundMeta = null
+      if (callBackgroundState) callBackgroundState.textContent = ''
       callBackgroundDraft = {
         callBackgroundType: 'preset',
         callBackgroundPreset: button.dataset.cuCallBackgroundPreset,
         callBackgroundImage: null
       }
       syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+      syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
     }
   })
   var callBackgroundRestore = ov.querySelector('#cuCallBackgroundRestore')
   if (callBackgroundRestore) callBackgroundRestore.onclick = function() {
     invalidateReaderCallBackgroundOperation()
     clearReaderCallBackgroundError()
+    callBackgroundMeta = null
+    if (callBackgroundState) callBackgroundState.textContent = ''
     callBackgroundDraft = Object.assign({}, READER_CALL_BACKGROUND_DEFAULT)
     syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+    syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
   }
 
   if (pendingPersistedCallBackground) {
@@ -8974,6 +10944,7 @@ function openReaderAppSettings(type, trigger) {
         callBackgroundImage: dataUrl
       }
       syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+      syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
     }).catch(function() {
       if (!ov.isConnected || persistedOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== pendingPersistedFallbackDraft) return
       showReaderCallBackgroundError('之前保存的通话背景无法使用，已改用安全预设。')
@@ -9008,6 +10979,27 @@ function openReaderAppSettings(type, trigger) {
           callBackgroundImage: dataUrl
         }
         syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+        syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
+        inspectReaderAppearanceImage(dataUrl, file.size).then(function(meta) {
+          if (!meta || !ov.isConnected || uploadOperationVersion !== callBackgroundOperationVersion) return
+          callBackgroundMeta = meta
+          renderReaderAppearanceImageChoice(callBackgroundState, meta, function(nextUrl, nextMeta) {
+            callBackgroundDraft = {
+              callBackgroundType:'image',
+              callBackgroundPreset:callBackgroundDraft.callBackgroundPreset,
+              callBackgroundImage:nextUrl
+            }
+            callBackgroundMeta = nextMeta
+            syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+            renderReaderAppearanceImageChoice(callBackgroundState, nextMeta, null)
+            var section = ov.querySelector('#cuMessageCall')
+            if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+            if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+          })
+          var section = ov.querySelector('#cuMessageCall')
+          if (section) section.dataset.appearanceManualVersion = String(Number(section.dataset.appearanceManualVersion || 0) + 1)
+          if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+        })
       }).catch(function(error) {
         if (!ov.isConnected || uploadOperationVersion !== callBackgroundOperationVersion || callBackgroundDraft !== draftBeforeUpload) return
         showReaderCallBackgroundError(error && error.message ? error.message : '图片无法使用')
@@ -9025,6 +11017,203 @@ function openReaderAppSettings(type, trigger) {
 
   // Bind slider displays
   bindCuSliders(ov)
+
+  function readerColorPickerValue(value) {
+    return readerColorInputValue(value)
+  }
+
+  function setMessageSliderControl(id, value) {
+    var input = ov.querySelector('#' + id)
+    var output = ov.querySelector('#' + id + 'Val')
+    if (input) input.value = String(value)
+    if (output) {
+      var unitNode = output.querySelector && output.querySelector('.appearance-range-value-unit')
+      var unit = unitNode ? unitNode.textContent : output.textContent.replace(/^-?[\d.]+/, '')
+      setReaderRangeOutput(output, String(value) + unit)
+    }
+  }
+
+  function setMessageColorControl(attribute, value) {
+    ov.querySelectorAll('.cu-color-btn[data-' + attribute + ']').forEach(function(button) {
+      var active = button.getAttribute('data-' + attribute) === value
+      button.classList.toggle('active', active)
+      button.setAttribute('aria-pressed', active ? 'true' : 'false')
+    })
+    var picker = ov.querySelector('.cu-color-picker[data-' + attribute + '-picker]')
+    if (picker) {
+      picker.value = readerColorPickerValue(value)
+      picker.setAttribute('data-' + attribute + '-picker', value)
+    }
+  }
+
+  function setMessageStyleControl(selector, attribute, value) {
+    ov.querySelectorAll(selector).forEach(function(button) {
+      button.classList.toggle('active', button.getAttribute(attribute) === String(value))
+    })
+  }
+
+  function applyReaderAppDraftSettings(nextSettings, nextIcon) {
+    var next = JSON.parse(JSON.stringify(nextSettings || defaultReaderAppSettings(type)))
+    var sliderSettings = {
+      cuMsgAvSize:'avatarSize', cuSelfRadius:'selfBubbleRadius', cuOtherRadius:'otherBubbleRadius',
+      cuSelfBubbleSkinSize:'selfBubbleSkinSize', cuOtherBubbleSkinSize:'otherBubbleSkinSize',
+      cuSelfBubbleSkinSlice:'selfBubbleSkinSlice', cuSelfBubbleSkinPadding:'selfBubbleSkinPadding',
+      cuOtherBubbleSkinSlice:'otherBubbleSkinSlice', cuOtherBubbleSkinPadding:'otherBubbleSkinPadding',
+      cuBubbleFs:'bubbleFontSize', cuCardRadius:'cardRadius', cuTitleSize:'titleSize',
+      cuFontSize:'fontSize', cuLineHeight:'lineHeight', cuImgRadius:'imageRadius',
+      cuGap:'gap', cuEntryRadius:'entryRadius', cuNameSize:'nameSize',
+      cuChatBgPosX:'chatBgPositionX', cuChatBgPosY:'chatBgPositionY', cuChatBgTone:'chatBgTone',
+      cuComposerInputRadius:'composerInputRadius'
+    }
+    Object.keys(sliderSettings).forEach(function(id) {
+      var key = sliderSettings[id]
+      if (next[key] !== undefined) setMessageSliderControl(id, next[key])
+    })
+    var colorSettings = {
+      'cu-self-bg':'selfBubbleBg', 'cu-self-text':'selfBubbleText',
+      'cu-other-bg':'otherBubbleBg', 'cu-other-text':'otherBubbleText',
+      'cu-chat-bg':'chatBg', 'cu-time-color':'timeColor', 'cu-send-bg':'sendButtonBg',
+      'cu-composer-bg':'composerBg', 'cu-composer-input-bg':'composerInputBg',
+      'cu-composer-input-text':'composerInputText', 'cu-composer-input-border':'composerInputBorder',
+      'cu-card-bg':'cardBg', 'cu-title-color':'titleColor', 'cu-text-color':'textColor',
+      'cu-url-color':'urlColor', 'cu-name-color':'nameColor', 'cu-price-color':'priceColor'
+    }
+    Object.keys(colorSettings).forEach(function(attribute) {
+      var key = colorSettings[attribute]
+      if (next[key] !== undefined) setMessageColorControl(attribute, next[key])
+    })
+    setMessageStyleControl('.cu-shape-btn[data-cu-shape]', 'data-cu-shape', next.avatarShape)
+    setMessageStyleControl('.cu-style-btn[data-cu-memo-style]', 'data-cu-memo-style', next.cardStyle)
+    setMessageStyleControl('.cu-style-btn[data-cu-gallery-cols]', 'data-cu-gallery-cols', next.columns)
+    setMessageStyleControl('.cu-style-btn[data-cu-bubble-weight]', 'data-cu-bubble-weight', normalizedReaderBubbleFontWeight(next.bubbleFontWeight))
+    setMessageStyleControl('.cu-style-btn[data-cu-chat-bg-fit]', 'data-cu-chat-bg-fit', next.chatBgFit)
+    setMessageStyleControl('.cu-style-btn[data-cu-bubble-skin-side="self"]', 'data-cu-bubble-skin-mode', next.selfBubbleSkinMode)
+    setMessageStyleControl('.cu-style-btn[data-cu-bubble-skin-side="other"]', 'data-cu-bubble-skin-mode', next.otherBubbleSkinMode)
+    var customCssInput = ov.querySelector('#cuAppCustomCss')
+    if (customCssInput) customCssInput.value = next.customCss || ''
+    var iconInput = ov.querySelector('#cuIconUrl')
+    if (iconInput && nextIcon !== undefined) {
+      appIconDraft = nextIcon || ''
+      iconInput.value = appIconDraft
+    }
+    if (type === 'messages') {
+      chatBackgroundOperationVersion += 1
+      chatBackgroundMeta = null
+      bubbleSkinOperationVersion.self += 1
+      bubbleSkinOperationVersion.other += 1
+      bubbleSkinPending.self = false
+      bubbleSkinPending.other = false
+      pendingPersistedCallBackground = null
+      pendingPersistedFallbackDraft = null
+      invalidateReaderCallBackgroundOperation()
+      ov._readerChatBgImageDraft = next.chatBgImage || null
+      ov._readerChatBgLuminanceDraft = Number.isFinite(next.chatBgLuminance)
+        ? next.chatBgLuminance
+        : null
+      var readabilityToggle = ov.querySelector('#cuChatAutoReadability')
+      if (readabilityToggle) readabilityToggle.checked = next.chatAutoReadability !== false
+      var composerReadabilityToggle = ov.querySelector('#cuComposerAutoReadability')
+      if (composerReadabilityToggle) composerReadabilityToggle.checked = next.composerAutoReadability !== false
+      ov._readerBubbleSkinDraft.self = next.selfBubbleSkinImage || null
+      ov._readerBubbleSkinDraft.other = next.otherBubbleSkinImage || null
+      bubbleSkinMeta.self = null
+      bubbleSkinMeta.other = null
+      callBackgroundDraft = normalizedReaderCallBackgroundSettings(next)
+      showReaderBubbleSkinError('self', '')
+      showReaderBubbleSkinError('other', '')
+      syncReaderBubbleSkinControls('self')
+      syncReaderBubbleSkinControls('other')
+      syncReaderBubbleSkinPending()
+      syncReaderChatBackgroundControls()
+      syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+    }
+    updateCuPreview(ov, type)
+  }
+
+  function resetReaderMessageSection(sectionKey, button) {
+    var defaults = defaultReaderMessageSettings()
+    if (sectionKey === 'bubbles') {
+      bubbleSkinOperationVersion.self += 1
+      bubbleSkinOperationVersion.other += 1
+      bubbleSkinPending.self = false
+      bubbleSkinPending.other = false
+      setMessageStyleControl('.cu-shape-btn[data-cu-shape]', 'data-cu-shape', defaults.avatarShape)
+      setMessageSliderControl('cuMsgAvSize', defaults.avatarSize)
+      setMessageColorControl('cu-self-bg', defaults.selfBubbleBg)
+      setMessageColorControl('cu-self-text', defaults.selfBubbleText)
+      setMessageSliderControl('cuSelfRadius', defaults.selfBubbleRadius)
+      setMessageSliderControl('cuSelfBubbleSkinSize', defaults.selfBubbleSkinSize)
+      setMessageSliderControl('cuSelfBubbleSkinSlice', defaults.selfBubbleSkinSlice)
+      setMessageSliderControl('cuSelfBubbleSkinPadding', defaults.selfBubbleSkinPadding)
+      setMessageColorControl('cu-other-bg', defaults.otherBubbleBg)
+      setMessageColorControl('cu-other-text', defaults.otherBubbleText)
+      setMessageSliderControl('cuOtherRadius', defaults.otherBubbleRadius)
+      setMessageSliderControl('cuOtherBubbleSkinSize', defaults.otherBubbleSkinSize)
+      setMessageSliderControl('cuOtherBubbleSkinSlice', defaults.otherBubbleSkinSlice)
+      setMessageSliderControl('cuOtherBubbleSkinPadding', defaults.otherBubbleSkinPadding)
+      setMessageSliderControl('cuBubbleFs', defaults.bubbleFontSize)
+      setMessageStyleControl('.cu-style-btn[data-cu-bubble-weight]', 'data-cu-bubble-weight', defaults.bubbleFontWeight)
+      setMessageColorControl('cu-time-color', defaults.timeColor)
+      setMessageStyleControl('.cu-style-btn[data-cu-bubble-skin-side="self"]', 'data-cu-bubble-skin-mode', defaults.selfBubbleSkinMode)
+      setMessageStyleControl('.cu-style-btn[data-cu-bubble-skin-side="other"]', 'data-cu-bubble-skin-mode', defaults.otherBubbleSkinMode)
+      ov._readerBubbleSkinDraft.self = null
+      ov._readerBubbleSkinDraft.other = null
+      bubbleSkinMeta.self = null
+      bubbleSkinMeta.other = null
+      showReaderBubbleSkinError('self', '')
+      showReaderBubbleSkinError('other', '')
+      syncReaderBubbleSkinControls('self')
+      syncReaderBubbleSkinControls('other')
+      syncReaderBubbleSkinPending()
+    } else if (sectionKey === 'background') {
+      chatBackgroundOperationVersion += 1
+      chatBackgroundMeta = null
+      ov._readerChatBgImageDraft = null
+      ov._readerChatBgLuminanceDraft = null
+      showReaderChatBackgroundError('')
+      setMessageColorControl('cu-chat-bg', defaults.chatBg)
+      var readabilityToggle = ov.querySelector('#cuChatAutoReadability')
+      if (readabilityToggle) readabilityToggle.checked = defaults.chatAutoReadability
+      setMessageStyleControl('.cu-style-btn[data-cu-chat-bg-fit]', 'data-cu-chat-bg-fit', defaults.chatBgFit)
+      setMessageSliderControl('cuChatBgTone', defaults.chatBgTone)
+      setMessageSliderControl('cuChatBgPosX', defaults.chatBgPositionX)
+      setMessageSliderControl('cuChatBgPosY', defaults.chatBgPositionY)
+      syncReaderChatBackgroundControls()
+    } else if (sectionKey === 'actions') {
+      setMessageColorControl('cu-send-bg', defaults.sendButtonBg)
+      setMessageColorControl('cu-composer-bg', defaults.composerBg)
+      setMessageColorControl('cu-composer-input-bg', defaults.composerInputBg)
+      setMessageColorControl('cu-composer-input-text', defaults.composerInputText)
+      setMessageColorControl('cu-composer-input-border', defaults.composerInputBorder)
+      setMessageSliderControl('cuComposerInputRadius', defaults.composerInputRadius)
+      var composerReadabilityToggle = ov.querySelector('#cuComposerAutoReadability')
+      if (composerReadabilityToggle) composerReadabilityToggle.checked = defaults.composerAutoReadability
+    } else if (sectionKey === 'call') {
+      pendingPersistedCallBackground = null
+      pendingPersistedFallbackDraft = null
+      invalidateReaderCallBackgroundOperation()
+      clearReaderCallBackgroundError()
+      callBackgroundDraft = normalizedReaderCallBackgroundSettings(defaults)
+      syncReaderCallBackgroundControls(ov, callBackgroundDraft)
+    } else {
+      return
+    }
+    updateCuPreview(ov, type)
+    if (button) {
+      var previousLabel = button.textContent
+      button.textContent = '已恢复'
+      globalThis.setTimeout(function() {
+        if (button.isConnected) button.textContent = previousLabel
+      }, 900)
+    }
+  }
+
+  ov.querySelectorAll('[data-cu-reset-message-section]').forEach(function(button) {
+    button.onclick = function() {
+      resetReaderMessageSection(button.dataset.cuResetMessageSection, button)
+    }
+  })
+
   // Icon upload / clear handlers (need ov to be created)
   var iconUploadBtn = ov.querySelector('#cuIconUpload')
   if (iconUploadBtn) iconUploadBtn.onclick = function() {
@@ -9032,27 +11221,49 @@ function openReaderAppSettings(type, trigger) {
     inp.onchange = function() {
       var file = inp.files[0]; if (!file) return
       var r = new FileReader()
-      r.onload = function() { ct.customIcons[type] = r.result; ov.querySelector('#cuIconUrl').value = r.result }
+      r.onload = function() {
+        appIconDraft = r.result
+        ov.querySelector('#cuIconUrl').value = r.result
+        updateCuPreview(ov, type)
+      }
       r.readAsDataURL(file)
     }
     inp.click()
   }
   var iconClearBtn = ov.querySelector('#cuIconClear')
   if (iconClearBtn) iconClearBtn.onclick = function() {
-    ct.customIcons[type] = ''
+    appIconDraft = ''
     var urlEl = ov.querySelector('#cuIconUrl'); if (urlEl) urlEl.value = ''
     var preview = ov.querySelector('.rd-preview-img'); if (preview) preview.remove()
+    syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
   }
+  var iconDraftInput = ov.querySelector('#cuIconUrl')
+  if (iconDraftInput) iconDraftInput.addEventListener('input', function() {
+    appIconDraft = iconDraftInput.value.trim()
+    syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
+  })
   // Read icon URL on save (via onSave callback above already reads from ct.customIcons)
   // Real-time preview updates
   ov.querySelectorAll('.cu-slider').forEach(function(sl) {
-    sl.addEventListener('input', function() { updateCuPreview(ov, type) })
-  })
-  ov.querySelectorAll('.cu-color-btn').forEach(function(b) {
-    b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
+    sl.addEventListener('input', function() {
+      if (sl.id === 'cuComposerInputRadius') {
+        var composerAuto = ov.querySelector('#cuComposerAutoReadability')
+        if (composerAuto) composerAuto.checked = false
+      }
+      updateCuPreview(ov, type)
+    })
   })
   ov.querySelectorAll('.cu-color-picker').forEach(function(p) {
     p.addEventListener('input', function() {
+      if (p.closest('#cuMessageActions')) {
+        var composerAuto = ov.querySelector('#cuComposerAutoReadability')
+        if (composerAuto) composerAuto.checked = false
+      }
+      Array.from(p.attributes).forEach(function(attribute) {
+        if (/^data-cu-.*-picker$/.test(attribute.name)) {
+          p.setAttribute(attribute.name, p.value)
+        }
+      })
       var group = p.parentElement
       if (group) {
         group.querySelectorAll('.cu-color-btn').forEach(function(button) {
@@ -9063,20 +11274,30 @@ function openReaderAppSettings(type, trigger) {
       updateCuPreview(ov, type)
     })
   })
-  ov.querySelectorAll('.cu-shape-btn').forEach(function(b) {
-    b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
-  })
-  ov.querySelectorAll('.cu-style-btn').forEach(function(b) {
-    b.addEventListener('click', function() { setTimeout(function() { updateCuPreview(ov, type) }, 50) })
-  })
   var appCssInput = ov.querySelector('#cuAppCustomCss')
   if (appCssInput) {
     appCssInput.addEventListener('input', function() { updateCuPreview(ov, type) })
   }
+  var chatAutoReadability = ov.querySelector('#cuChatAutoReadability')
+  if (chatAutoReadability) {
+    chatAutoReadability.addEventListener('change', function() { updateCuPreview(ov, type) })
+  }
+  var composerAutoReadability = ov.querySelector('#cuComposerAutoReadability')
+  if (composerAutoReadability) {
+    composerAutoReadability.addEventListener('change', function() { updateCuPreview(ov, type) })
+  }
   var appCssSample = ov.querySelector('#cuAppCssSample')
   if (appCssSample && appCssInput) appCssSample.onclick = function() {
-    appCssInput.value = ':scope { --phone-system-accent: #9f6678; }\n.rd-phone-app-body { padding: 14px; }'
+    appCssInput.value = type === 'messages'
+      ? '.chat-input-bar { padding: 6px 8px !important; }\n#chatInput { font-size: 11px; }\n#chatSendBtn { border-radius: 8px; }'
+      : ':scope { --phone-system-accent: #9f6678; }\n.rd-phone-app-body { padding: 14px; }'
     updateCuPreview(ov, type)
+    appCssInput.focus()
+  }
+  var messageActionsCss = ov.querySelector('#cuMessageActionsCss')
+  if (messageActionsCss && appCssInput) messageActionsCss.onclick = function() {
+    var moreSection = ov.querySelector('#cuMessageMore')
+    if (moreSection) moreSection.open = true
     appCssInput.focus()
   }
   var appCssClear = ov.querySelector('#cuAppCssClear')
@@ -9096,6 +11317,7 @@ function openReaderAppSettings(type, trigger) {
       })
       b.classList.add('active')
       b.setAttribute('aria-pressed', 'true')
+      updateCuPreview(ov, type)
     }
   })
   // Bind shape buttons
@@ -9105,6 +11327,7 @@ function openReaderAppSettings(type, trigger) {
       if (!group) return
       group.querySelectorAll('.cu-shape-btn').forEach(function(x) { x.classList.remove('active') })
       b.classList.add('active')
+      updateCuPreview(ov, type)
     }
   })
   // Bind style buttons
@@ -9114,24 +11337,48 @@ function openReaderAppSettings(type, trigger) {
       if (!group) return
       group.querySelectorAll('.cu-style-btn').forEach(function(x) { x.classList.remove('active') })
       b.classList.add('active')
+      if (b.dataset.cuBubbleSkinMode) syncReaderBubbleSkinControls(b.dataset.cuBubbleSkinSide)
+      updateCuPreview(ov, type)
+    }
+  })
+  enhanceReaderAppearanceRanges(ov)
+  bindReaderAppearanceSectionStates(ov)
+  var appearanceUndo = bindReaderAppearanceUndo(ov, {
+    capture:function() { return readerAppDraftSnapshot() },
+    restore:function(snapshot) {
+      applyReaderAppDraftSettings(snapshot.settings, snapshot.icon)
+    }
+  })
+  ov.querySelectorAll('[data-cu-copy-bubble-style]').forEach(function(button) {
+    button.onclick = function() {
+      var direction = button.dataset.cuCopyBubbleStyle
+      var from = direction === 'other-to-self' ? 'other' : 'self'
+      var to = from === 'self' ? 'other' : 'self'
+      var snapshot = readerAppDraftSnapshot()
+      var next = snapshot.settings
+      ;['BubbleBg', 'BubbleText', 'BubbleRadius', 'BubbleSkinImage', 'BubbleSkinMode', 'BubbleSkinSize', 'BubbleSkinSlice', 'BubbleSkinPadding'].forEach(function(suffix) {
+        next[to + suffix] = next[from + suffix]
+      })
+      applyReaderAppDraftSettings(next, snapshot.icon)
+      revealMessageSettingsSection('cuMessageBubbles', false)
+      revealMessageBubbleSubsection(to === 'self' ? 'cuMessageSelfBubble' : 'cuMessageOtherBubble')
+      if (ov._refreshAppearanceSectionStates) ov._refreshAppearanceSectionStates()
+      showReaderToast((from === 'self' ? '我方' : '对方') + '气泡样式已复制')
     }
   })
   syncReaderAppCssFeedback(ov, type, readCurrentSettings(ov, type))
   // Reset
   var resetBtn = ov.querySelector('#cuAppReset')
   if (resetBtn) resetBtn.onclick = function() {
-    delete ct.appSettings[type]
-    try {
-      savePhoneCustom(ct)
-    } catch (error) {
-      alert('恢复默认失败，浏览器无法写入本地存储。请检查存储空间后重试。')
-      resetBtn.focus()
-      return
-    }
-    applyReaderAppCustomCss(type, getAppSettings(type))
-    renderCustomPage()
-    ov.closeReaderModal()
-    showReaderToast((labels[type] || 'App') + '已恢复默认')
+    var previous = readerAppDraftSnapshot()
+    applyReaderAppDraftSettings(defaultReaderAppSettings(type), previous.icon)
+    showReaderToast((labels[type] || 'App') + '已恢复默认，保存后生效', 'success', {
+      actionLabel:'撤销',
+      duration:5000,
+      onAction:function() {
+        if (ov.isConnected) applyReaderAppDraftSettings(previous.settings, previous.icon)
+      }
+    })
   }
 }
 
@@ -9139,7 +11386,11 @@ function bindCuSliders(ov) {
   ov.querySelectorAll('.cu-slider').forEach(function(sl) {
     var valEl = ov.querySelector('#' + sl.id + 'Val')
     sl.oninput = function() {
-      if (valEl) valEl.textContent = this.value + (valEl.textContent.replace(/[\d.]+/, '') || '')
+      if (valEl) {
+        var unitNode = valEl.querySelector && valEl.querySelector('.appearance-range-value-unit')
+        var unit = unitNode ? unitNode.textContent : (valEl.textContent.replace(/[\d.]+/, '') || '')
+        setReaderRangeOutput(valEl, this.value + unit)
+      }
     }
   })
 }
@@ -9180,7 +11431,7 @@ document.addEventListener('click', function(e) {
     e.preventDefault()
     if (ownerControl.dataset.readerPhoneControl === 'reading') openReaderSettingsPanel(ownerControl)
     if (ownerControl.dataset.readerPhoneControl === 'appearance') openReaderCustomizePanel(ownerControl)
-    if (ownerControl.dataset.readerPhoneControl === 'profile') openReaderProfilePanel()
+    if (ownerControl.dataset.readerPhoneControl === 'profile') openReaderProfilePanel(ownerControl)
     return
   }
   // Walk up the DOM tree to find .rd-app-icon inside #tabCustom

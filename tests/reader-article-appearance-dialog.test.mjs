@@ -78,6 +78,27 @@ test("reader beauty hub opens a reader-owned article appearance dialog", async t
   ]) assert.ok(document.getElementById(id), id)
   assert.ok(document.querySelector(".rs-preview-copy.reader-article-css-preview-scope"))
   assert.ok(document.querySelector(".rs-controls"))
+  assert.ok(dialog.querySelector('[data-appearance-page="preview"]'))
+  assert.ok(dialog.querySelector('[data-appearance-page="controls"]'))
+  assert.deepEqual(
+    [...dialog.querySelectorAll(".rs-controls > .cu-settings-section")].map(section => section.id),
+    [
+      "rsTypography",
+      "rsStructure",
+      "rsFonts",
+      "rsMedia",
+      "rsThemeBackground",
+      "rsReadingEffects",
+      "rsAdvancedCss",
+      "rsAppearanceTransfer",
+    ],
+  )
+  assert.deepEqual(
+    [...dialog.querySelectorAll(".rs-controls > .cu-settings-section")]
+      .filter(section => section.open)
+      .map(section => section.id),
+    ["rsTypography"],
+  )
 
   const fontSize = document.getElementById("rsFontSize")
   fontSize.value = "30"

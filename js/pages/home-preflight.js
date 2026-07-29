@@ -1,4 +1,4 @@
-import { getWork } from "../data.js"
+import { exportWorkAsJSON, getWork } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { navigate } from "../router.js"
 import { writeArticleEditorViewState } from "../article-editor-view-state.js"
@@ -6,6 +6,10 @@ import { inspectWorkBeforePublish } from "../work-preflight.js"
 import { inspectArticleRoutes } from "../work-route-preflight.js"
 import { inspectWorkSize } from "../work-size-report.js"
 import { openPhoneAppModal } from "./phone.js"
+import { buildReaderPreviewUrl } from "./reader.js"
+import { encryptWorkPackage } from "../work-package.js"
+import { downloadBlob } from "../download.js"
+import { runButtonAction } from "../interaction-feedback.js"
 
 function esc(value) {
   return String(value ?? "")
@@ -17,14 +21,17 @@ function esc(value) {
 }
 
 function renderIssueList(issues, level, heading) {
-  const matching = issues.filter(issue => issue.level === level)
+  const matching = issues
+    .map((issue, index) => ({issue, index}))
+    .filter(entry => entry.issue.level === level)
   if (!matching.length) return ""
   return `<section class="work-preflight-group" aria-labelledby="workPreflight${level}Title">
     <h3 id="workPreflight${level}Title">${heading}（${matching.length}）</h3>
-    <ul class="work-preflight-list">${matching.map(issue => `<li class="work-preflight-item work-preflight-level-${level}">
+    <ul class="work-preflight-list">${matching.map(({issue, index}) => `<li class="work-preflight-item work-preflight-level-${level}">
       <strong>${esc(issue.title)}</strong>
       <span class="work-preflight-location">${esc(issue.location)}</span>
       <p>${esc(issue.action)}</p>
+      ${issue.locator ? `<button type="button" class="btn btn-sm btn-outline work-preflight-edit" data-work-preflight-issue="${index}">去修改</button>` : ""}
     </li>`).join("")}</ul>
   </section>`
 }
@@ -62,9 +69,9 @@ function renderRouteInspectionEntry(work) {
         <h3 id="workRoutePreflightTitle">深度路线检查</h3>
         <p>模拟作品的章节推进与剧情跳转，检查不可达节点、提前结束、循环路线和互斥的隐藏条件。</p>
       </div>
-      <button type="button" class="btn btn-outline" id="workRoutePreflightRun">开始路线试跑</button>
+      <button type="button" class="btn btn-outline" id="workRoutePreflightRun">重新检查</button>
     </div>
-    <div id="workRoutePreflightResults" aria-live="polite"></div>
+    <div id="workRoutePreflightResults" aria-live="polite"><p class="work-route-preflight-running" role="status">正在遍历作品路线…</p></div>
   </section>`
 }
 
@@ -129,15 +136,52 @@ export function openWorkPreflight(workId) {
     return null
   }
   const sizeReport = inspectWorkSize(work)
+  const preflightReport = inspectWorkBeforePublish(work)
+  const hasBlockingIssues = preflightReport.counts.error > 0
   const overlay = modal(
     "发布前体检",
-    renderWorkPreflightBody(work, inspectWorkBeforePublish(work), sizeReport),
-    '<button type="button" class="btn btn-primary" id="workPreflightClose">知道了</button>',
+    renderWorkPreflightBody(work, preflightReport, sizeReport),
+    '<button type="button" class="btn btn-ghost" id="workPreflightClose">关闭</button>' +
+      '<button type="button" class="btn ' + (hasBlockingIssues ? 'btn-primary' : 'btn-outline') + '" id="workPreflightPreview">预览作品</button>' +
+      '<button type="button" class="btn btn-primary" id="workPreflightExport"' +
+      (hasBlockingIssues ? ' disabled title="处理完需要处理的问题后即可导出"' : '') +
+      '>导出加密作品</button>',
   )
+  try {
+    const pendingReturn = JSON.parse(sessionStorage.getItem("tuuru_preflight_return") || "null")
+    if (pendingReturn?.workId === work.id) sessionStorage.removeItem("tuuru_preflight_return")
+  } catch {}
   overlay.querySelector("#workPreflightClose")?.addEventListener("click", () => overlay.remove())
+  overlay.querySelector("#workPreflightPreview")?.addEventListener("click", () => {
+    const previewUrl = buildReaderPreviewUrl(work.id, globalThis.location?.href)
+    overlay.remove()
+    globalThis.location?.assign(previewUrl)
+  })
+  const exportButton = overlay.querySelector("#workPreflightExport")
+  exportButton?.addEventListener("click", () => {
+    if (exportButton.disabled) return
+    runButtonAction(exportButton, async () => {
+      const feedbackKey = `preflight-export-${work.id}`
+      showToast("正在加密作品…", "info", {key:feedbackKey, duration:0})
+      try {
+        const json = exportWorkAsJSON(work.id)
+        if (!json) throw new Error("作品数据无法读取")
+        const encrypted = await encryptWorkPackage(json)
+        downloadBlob(
+          new Blob([encrypted], {type:"application/vnd.tuuru.work"}),
+          `${work.title || "作品"}.tuuru`,
+        )
+        showToast("加密作品已导出", "success", {key:feedbackKey})
+        overlay.remove()
+      } catch (error) {
+        showToast(`导出失败：${error instanceof Error ? error.message : "未知错误"}`, "error", {key:feedbackKey})
+      }
+    }, {pendingText:"正在打包…"})
+  })
   const routeButton = overlay.querySelector("#workRoutePreflightRun")
   const routeResults = overlay.querySelector("#workRoutePreflightResults")
-  routeButton?.addEventListener("click", () => {
+  function runRouteInspection() {
+    if (!routeButton) return
     routeButton.disabled = true
     routeButton.textContent = "正在检查…"
     if (routeResults) routeResults.innerHTML = '<p class="work-route-preflight-running" role="status">正在遍历作品路线…</p>'
@@ -147,36 +191,58 @@ export function openWorkPreflight(workId) {
       routeButton.textContent = "重新检查"
       routeButton.disabled = false
     })
-  })
+  }
+  routeButton?.addEventListener("click", runRouteInspection)
+  runRouteInspection()
+
+  function rememberPreflightReturn() {
+    try {
+      sessionStorage.setItem("tuuru_preflight_return", JSON.stringify({
+        workId:work.id,
+        savedAt:Date.now(),
+      }))
+    } catch {}
+  }
+
+  function openLocator(locator) {
+    if (!locator) return
+    rememberPreflightReturn()
+    overlay.remove()
+    if (locator.surface === "work-info") {
+      globalThis.editWorkInfo?.(work.id)
+      return
+    }
+    if (locator.surface === "phone") {
+      openPhoneAppModal(work.id, locator.appType || "profile")
+      return
+    }
+    writeArticleEditorViewState(work.id, {
+      nodeId:locator.nodeId,
+      collapsedChapterIds:[],
+    })
+    navigate(`/edit/${work.id}`)
+  }
+
   overlay.addEventListener("click", event => {
+    const issueButton = event.target.closest("[data-work-preflight-issue]")
+    if (issueButton) {
+      const issue = preflightReport.issues[Number(issueButton.dataset.workPreflightIssue)]
+      openLocator(issue?.locator)
+      return
+    }
     const sizeButton = event.target.closest("[data-work-size-locate]")
     if (sizeButton) {
       const asset = sizeReport.assets.find(item => item.id === sizeButton.dataset.workSizeLocate)
       if (!asset) return
-      overlay.remove()
-      if (asset.locator.surface === "work-info") {
-        globalThis.editWorkInfo?.(work.id)
-        return
-      }
-      if (asset.locator.surface === "phone") {
-        openPhoneAppModal(work.id, asset.locator.appType || "profile")
-        return
-      }
-      writeArticleEditorViewState(work.id, {
-        nodeId:asset.locator.nodeId,
-        collapsedChapterIds:[],
-      })
-      navigate(`/edit/${work.id}`)
+      openLocator(asset.locator)
       return
     }
     const editButton = event.target.closest("[data-route-preflight-node]")
     if (!editButton) return
-    writeArticleEditorViewState(work.id, {
+    openLocator({
+      surface:"article",
       nodeId:editButton.dataset.routePreflightNode,
-      collapsedChapterIds:[],
     })
-    overlay.remove()
-    navigate(`/edit/${work.id}`)
   })
   return overlay
 }

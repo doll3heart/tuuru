@@ -6,11 +6,13 @@ import {
   applyReaderIdentity,
   clearReaderProgress,
   createReaderSlot,
+  dismissReaderWorkUpdate,
   emptyReaderLibrary,
   readReaderLibrary,
   readerActiveSlot,
   readerBook,
   readerBookStatus,
+  reconcileReaderWorkUpdate,
   rememberReaderWork,
   removeReaderBook,
   removeReaderBookmark,
@@ -18,10 +20,13 @@ import {
   removeReaderSlot,
   renameReaderSlot,
   restoreArticleReadingState,
+  restoreReaderBook,
+  restoreReaderBookmark,
   saveReaderPlaceholders,
   saveReaderProgress,
   saveReaderIdentity,
   setReaderCompletion,
+  setReaderBookPinned,
   switchReaderSlot,
   toggleReaderBookmark,
   updateReaderBookmark,
@@ -114,6 +119,40 @@ test("reader library remembers bounded detached book metadata", () => {
   assert.equal(reopened.books[0].lastOpenedAt, 200)
   assert.equal(reopened.books[0].completedAt, 0)
   assert.deepEqual(reopened.books[0].bookmarks, [])
+})
+
+test("books can be pinned independently and keep their pin through refresh and storage", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work(), 100)
+  library = rememberReaderWork(library, work({ id:"work-b", title:"第二本" }), 110)
+  const beforePin = library
+
+  const pinned = setReaderBookPinned(library, "work-a", true, 200)
+  assert.equal(readerBook(beforePin, "work-a").pinnedAt, undefined)
+  assert.equal(readerBook(pinned, "work-a").pinnedAt, 200)
+  assert.equal(readerBook(pinned, "work-b").pinnedAt, undefined)
+
+  const repeated = setReaderBookPinned(pinned, "work-a", true, 300)
+  assert.equal(readerBook(repeated, "work-a").pinnedAt, 200)
+
+  const reopened = rememberReaderWork(repeated, work({ title:"重新导入后的标题" }), 400)
+  assert.equal(readerBook(reopened, "work-a").pinnedAt, 200)
+
+  const reconciled = reconcileReaderWorkUpdate(
+    reopened,
+    work(),
+    work({ title:"作者更新后的标题" }),
+    { now:500, markUpdated:true },
+  )
+  assert.equal(readerBook(reconciled, "work-a").pinnedAt, 200)
+
+  const storage = memoryStorage()
+  assert.equal(writeReaderLibrary(storage, reconciled), true)
+  const restored = readReaderLibrary(storage)
+  assert.equal(readerBook(restored, "work-a").pinnedAt, 200)
+
+  const unpinned = setReaderBookPinned(restored, "work-a", false, 600)
+  assert.equal(readerBook(unpinned, "work-a").pinnedAt, undefined)
+  assert.deepEqual(setReaderBookPinned(unpinned, "missing", true, 700), unpinned)
 })
 
 test("placeholder and progress updates are immutable and survive storage round trips", () => {
@@ -463,6 +502,113 @@ test("refreshing a work body preserves every reader-owned slot and identity fiel
   assert.deepEqual(refreshed.identities, library.identities)
 })
 
+test("work updates migrate placeholder values by id, unique key, and unique label across slots", () => {
+  const previousWork = work({
+    placeholders:[
+      {id:"same-id", key:"name", label:"姓名"},
+      {id:"old-nickname", key:"nickname", label:"昵称"},
+      {id:"old-pronoun", key:"old-pronoun-key", label:"称谓"},
+      {id:"ambiguous-a", key:"a", label:"重复标签"},
+      {id:"ambiguous-b", key:"b", label:"重复标签"},
+    ],
+  })
+  let library = rememberReaderWork(emptyReaderLibrary(), previousWork, 100)
+  library = saveReaderPlaceholders(library, "work-a", {
+    "same-id":["云枝"],
+    "old-nickname":["阿云"],
+    "old-pronoun":["小姐"],
+    "ambiguous-a":["甲"],
+    "ambiguous-b":["乙"],
+  }, 110)
+  library = createReaderSlot(library, "work-a", {id:"slot-two", name:"二周目"}, 120)
+  library = saveReaderPlaceholders(library, "work-a", {
+    "same-id":["迟雨"],
+    "old-nickname":["小雨"],
+    "old-pronoun":["同学"],
+  }, 130)
+
+  const incomingWork = work({
+    placeholders:[
+      {id:"same-id", key:"name", label:"姓名"},
+      {id:"new-nickname", key:"nickname", label:"新昵称标签"},
+      {id:"new-pronoun", key:"pronoun", label:"称谓"},
+      {id:"new-ambiguous", key:"new-ambiguous", label:"重复标签"},
+    ],
+  })
+  const migrated = reconcileReaderWorkUpdate(library, previousWork, incomingWork, {
+    now:200,
+    markUpdated:true,
+  })
+  const book = readerBook(migrated, "work-a")
+
+  assert.deepEqual(book.slots[0].placeholderValues, {
+    "same-id":["云枝"],
+    "new-nickname":["阿云"],
+    "new-pronoun":["小姐"],
+  })
+  assert.deepEqual(book.slots[1].placeholderValues, {
+    "same-id":["迟雨"],
+    "new-nickname":["小雨"],
+    "new-pronoun":["同学"],
+  })
+  assert.equal(book.placeholderValues["new-ambiguous"], undefined)
+  assert.equal(book.unseenUpdateAt, 200)
+  assert.equal(readerBook(dismissReaderWorkUpdate(migrated, "work-a"), "work-a").unseenUpdateAt, undefined)
+})
+
+test("work updates preserve valid bookmarks and repair removed nodes to nearby content", () => {
+  const previousWork = work({
+    chapters:[{id:"chapter-a", name:"第一章"}],
+    nodes:[
+      {id:"start", chapterId:"chapter-a", title:"开场", content:"<p>起点</p>", choices:[]},
+      {id:"removed-ending", chapterId:"chapter-a", title:"月台", content:"<p>雨停了</p>", choices:[]},
+    ],
+  })
+  let library = rememberReaderWork(emptyReaderLibrary(), previousWork, 100)
+  library = toggleReaderBookmark(library, "work-a", {
+    id:"bookmark-valid",
+    kind:"article",
+    label:"开场",
+    note:"原样保留",
+    path:["start"],
+    choiceMemory:{},
+    interactionSelections:{},
+  }, 110)
+  library = toggleReaderBookmark(library, "work-a", {
+    id:"bookmark-moved",
+    kind:"article",
+    label:"月台",
+    note:"不要丢掉这条备注",
+    path:["start", "removed-ending"],
+    choiceMemory:{},
+    interactionSelections:{},
+  }, 120)
+
+  const incomingWork = work({
+    chapters:[{id:"chapter-a", name:"第一章"}],
+    nodes:[
+      {id:"start", chapterId:"chapter-a", title:"开场", content:"<p>起点</p>", choices:[]},
+      {id:"ending-v2", chapterId:"chapter-a", title:"月台", content:"<p>雨终于停了</p>", choices:[]},
+    ],
+  })
+  const migrated = reconcileReaderWorkUpdate(library, previousWork, incomingWork, {now:200})
+  const bookmarks = readerBook(migrated, "work-a").bookmarks
+  const valid = bookmarks.find(bookmark => bookmark.id === "bookmark-valid")
+  const moved = bookmarks.find(bookmark => bookmark.id === "bookmark-moved")
+
+  assert.deepEqual(valid.path, ["start"])
+  assert.equal(valid.updateStatus, undefined)
+  assert.deepEqual(moved.path, ["start", "ending-v2"])
+  assert.equal(moved.updateStatus, "moved")
+  assert.equal(moved.label, "月台")
+  assert.equal(moved.note, "不要丢掉这条备注")
+
+  const storage = memoryStorage()
+  assert.equal(writeReaderLibrary(storage, migrated), true)
+  const reopened = readerBook(readReaderLibrary(storage), "work-a")
+  assert.equal(reopened.bookmarks.find(bookmark => bookmark.id === "bookmark-moved").updateStatus, "moved")
+})
+
 test("bookmark labels and notes can be edited without changing their route snapshot", () => {
   let library = rememberReaderWork(emptyReaderLibrary(), work(), 100)
   library = toggleReaderBookmark(library, "work-a", {
@@ -590,4 +736,33 @@ test("article progress restoration rejects stale routes and prunes stale selecti
     kind:"article",
     path:["start"],
   }), null)
+})
+
+test("restore reader bookmark and book only repairs the missing reader record", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work(), 100)
+  library = rememberReaderWork(library, work({ id:"work-b", title:"另一部作品" }), 101)
+  const bookmark = {
+    id:"bookmark-undo",
+    kind:"article",
+    label:"想回来的地方",
+    note:"",
+    savedAt:120,
+    path:["start"],
+    choiceMemory:{},
+    interactionSelections:{},
+  }
+  library = toggleReaderBookmark(library, "work-a", bookmark, bookmark.savedAt)
+  const untouched = readerBook(library, "work-b")
+  const removedBookmark = removeReaderBookmark(library, "work-a", bookmark.id)
+  const restoredBookmark = restoreReaderBookmark(removedBookmark, "work-a", bookmark)
+  assert.equal(readerBook(restoredBookmark, "work-a").bookmarks[0].id, bookmark.id)
+  assert.deepEqual(readerBook(restoredBookmark, "work-b"), untouched)
+
+  const removedBook = readerBook(restoredBookmark, "work-a")
+  const withoutBook = removeReaderBook(restoredBookmark, "work-a")
+  const restoredBook = restoreReaderBook(withoutBook, removedBook)
+  assert.equal(readerBook(restoredBook, "work-a").title, "山茶书简")
+  assert.deepEqual(readerBook(restoredBook, "work-b"), untouched)
+  assert.equal(restoredBook.books.filter(book => book.id === "work-a").length, 1)
+  assert.deepEqual(restoreReaderBook(restoredBook, removedBook), restoredBook)
 })

@@ -399,11 +399,14 @@ test("private author notes switch in the existing side panel and never change wo
   const worldbuilding = root.querySelector('[data-author-note="worldbuilding"]')
   worldbuilding.value = "雨季持续三个月"
   worldbuilding.dispatchEvent(new Event("input", { bubbles:true }))
+  assert.equal(root.querySelector("[data-author-notes-status]").textContent, "编辑中")
+  assert.equal(root.querySelector("[data-author-notes-status]").dataset.saveState, "editing")
   await new Promise(resolve => setTimeout(resolve, 220))
 
   const stored = JSON.parse(localStorage.getItem("tuuru_article_author_notes"))
   assert.equal(stored.works[work.id].worldbuilding, "雨季持续三个月")
   assert.equal(root.querySelector("[data-author-notes-status]").textContent, "已保存")
+  assert.equal(root.querySelector("[data-author-notes-status]").dataset.saveState, "saved")
   assert.equal(
     root.querySelector('[data-a="note-section"][data-section="worldbuilding"] [data-note-count]').textContent,
     "7",
