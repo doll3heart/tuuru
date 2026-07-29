@@ -983,6 +983,25 @@ test("reader App preview uses the dynamic desktop scale variable", () => {
   )
 })
 
+test("mobile appearance history reserves its full height before the first settings group", () => {
+  assert.match(
+    readerCss,
+    /@media \(max-width: 860px\)\s*\{[\s\S]*?\.app-appearance-controls,[\s\S]*?\.rs-controls\s*\{[^}]*padding:\s*0 16px 24px;[^}]*\}/,
+  )
+  assert.match(
+    readerCss,
+    /@media \(max-width: 860px\)\s*\{[\s\S]*?\.appearance-workbench-history\s*\{[^}]*margin:\s*0;[^}]*\}/,
+  )
+  assert.match(
+    readerCss,
+    /@media \(max-width: 860px\)\s*\{[\s\S]*?\.appearance-workbench-history\s*\{[^}]*background:\s*var\(--c-surface\);[^}]*\}/,
+  )
+  assert.doesNotMatch(
+    readerCss,
+    /\.appearance-workbench-history\s*\{[^}]*margin-top:\s*-\d/,
+  )
+})
+
 test("reader message wallpaper readability stays local and protects dark backgrounds", async t => {
   installDom(t)
   localStorage.setItem("moirain_phoneCustom", JSON.stringify({

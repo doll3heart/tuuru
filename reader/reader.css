@@ -4252,11 +4252,12 @@ body.rd-interactive-scene-active {
   .phone-appearance-controls,
   .profile-appearance-controls,
   .rs-controls {
-    padding: 16px 16px 24px;
+    padding: 0 16px 24px;
   }
   .appearance-workbench-history {
-    margin-top: -16px;
+    margin: 0;
     padding-top: 8px;
+    background: var(--c-surface);
   }
   .appearance-range-value-input {
     min-height: 38px;
