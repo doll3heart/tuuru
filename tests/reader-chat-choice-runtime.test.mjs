@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
 
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
+const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 const sharedChatCss = readFileSync(new URL("../css/phone-chat.css", import.meta.url), "utf8")
 
 function installDom(t) {
@@ -224,6 +225,13 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
   assert.ok(document.querySelector("#chatMsgArea.chat-msg-area"))
   assert.ok(document.querySelector(".rd-chat-message.chat-msg"))
   assert.ok(document.querySelector(".rd-chat-composer.chat-input-bar.chat-composer"))
+  const choiceField = document.querySelector(".rd-chat-choice-field")
+  const initialChoiceList = document.querySelector("#rdChoiceList")
+  assert.ok(choiceField)
+  assert.equal(document.getElementById("chatInput").parentElement, choiceField)
+  assert.equal(initialChoiceList.parentElement, choiceField)
+  assert.match(readerCss, /\.rd-chat-choice-list\s*\{[^}]*bottom:\s*100%/s)
+  assert.match(readerCss, /\.rd-reply-option\s*\{[^}]*text-align:\s*center/s)
   assert.match(sharedChatCss, /\.phone-frame \.chat-msg-area\s*\{[^}]*scrollbar-width:\s*none/s)
   assert.match(sharedChatCss, /\.phone-frame \.chat-msg-area::-webkit-scrollbar\s*\{[^}]*display:\s*none/s)
   assert.match(readerSource, /rd-app-preview-chat chat-author-shell chat-reader-shell/)

@@ -261,7 +261,7 @@ test("a contact face URL becomes the authored background for video calls only", 
   assert.equal(scene.classList.contains("has-contact-video-background"), false)
 })
 
-test("the completed call remains visible, focuses Hang Up, and restores its card", async t => {
+test("the completed call collapses to a compact, replayable duration record", async t => {
   installDom(t)
   seedPhoneWork(callPhoneWork({ messages: [{
     id: "call-1",
@@ -282,9 +282,16 @@ test("the completed call remains visible, focuses Hang Up, and restores its card
 
   hangup.click()
   assert.equal(document.querySelector(".rd-call-scene"), null)
-  const card = document.querySelector('.rd-call-card[data-call-key="0-0"]')
-  assert.ok(card)
-  assert.equal(document.activeElement, card)
+  const record = document.querySelector('.rd-call-record[data-call-key="0-0"]')
+  assert.ok(record)
+  assert.match(record.textContent, /语音通话\s*已通话 00:\d{2}/)
+  assert.equal(record.querySelector("strong"), null, "the ended state should not repeat the contact name")
+  assert.equal(document.activeElement, record)
+
+  record.click()
+  scene = document.querySelector(".rd-call-scene")
+  assert.ok(scene, "the compact record should still replay the authored call")
+  assert.match(scene.textContent, /第一句/)
 })
 
 test("early Hang Up restores its card and reopening restarts at line one", async t => {
@@ -300,11 +307,11 @@ test("early Hang Up restores its card and reopening restarts at line one", async
   let scene = await openFirstCall("reader-call-reopen")
   scene.querySelector(".rd-call-advance").click()
   scene.querySelector(".rd-call-hangup").click()
-  const card = document.querySelector('.rd-call-card[data-call-key="0-0"]')
-  assert.ok(card)
-  assert.equal(document.activeElement, card)
+  const record = document.querySelector('.rd-call-record[data-call-key="0-0"]')
+  assert.ok(record)
+  assert.equal(document.activeElement, record)
 
-  card.click()
+  record.click()
   scene = document.querySelector(".rd-call-scene")
   assert.match(scene.textContent, /第一句/)
   assert.doesNotMatch(scene.outerHTML, /第二句|第三句/)

@@ -13,6 +13,7 @@ import {
   readerBook,
   readerBookStatus,
   reconcileReaderWorkUpdate,
+  rememberReaderPhoneAccess,
   rememberReaderWork,
   removeReaderBook,
   removeReaderBookmark,
@@ -99,6 +100,7 @@ test("reader library remembers bounded detached book metadata", () => {
       createdAt:100,
       updatedAt:100,
       identityId:"",
+      phoneAccess:{},
       placeholderValues:{},
       progress:null,
       completedAt:0,
@@ -765,4 +767,44 @@ test("restore reader bookmark and book only repairs the missing reader record", 
   assert.deepEqual(readerBook(restoredBook, "work-b"), untouched)
   assert.equal(restoredBook.books.filter(book => book.id === "work-a").length, 1)
   assert.deepEqual(restoreReaderBook(restoredBook, removedBook), restoredBook)
+})
+
+test("phone access approval belongs only to the active reading slot", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  library = rememberReaderPhoneAccess(library, "work-a", "memo", "contact-a", 110)
+
+  let book = readerBook(library, "work-a")
+  assert.deepEqual(readerActiveSlot(book).phoneAccess, { memo:"contact-a" })
+
+  library = createReaderSlot(library, "work-a", { id:"slot-two", name:"第二条线" }, 120)
+  book = readerBook(library, "work-a")
+  assert.deepEqual(readerActiveSlot(book).phoneAccess, {})
+
+  library = rememberReaderPhoneAccess(library, "work-a", "memo", "contact-b", 130)
+  library = switchReaderSlot(library, "work-a", "reader-slot-default", 140)
+  book = readerBook(library, "work-a")
+  assert.deepEqual(readerActiveSlot(book).phoneAccess, { memo:"contact-a" })
+
+  const roundTrip = readReaderLibrary({
+    getItem:() => JSON.stringify(library),
+  })
+  assert.deepEqual(readerActiveSlot(readerBook(roundTrip, "work-a")).phoneAccess, {
+    memo:"contact-a",
+  })
+})
+
+test("phone access approval ignores invalid identifiers", () => {
+  const library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  assert.deepEqual(
+    rememberReaderPhoneAccess(library, "work-a", "", "contact-a", 110),
+    library,
+  )
+  assert.deepEqual(
+    rememberReaderPhoneAccess(library, "work-a", "memo", " contact-a ", 110),
+    library,
+  )
+  assert.deepEqual(
+    rememberReaderPhoneAccess(library, "work-a", "__proto__", "contact-a", 110),
+    library,
+  )
 })

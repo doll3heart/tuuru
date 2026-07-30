@@ -120,6 +120,16 @@ import {
 } from './interactive-scene-entry.js'
 import { createBookCoverHold } from './book-cover-hold.js'
 import {
+  clearAppearanceDraft,
+  readAppearanceDraft,
+  writeAppearanceDraft,
+} from './appearance-draft-session.js'
+import {
+  readerImageAttributes,
+  scheduleReaderImagePredecode,
+} from './reader-media-loading.js'
+import { createReaderLayerHistory } from './reader-layer-history.js'
+import {
   compareReaderSlots,
   readerJourneyDirectory,
 } from './reader-journey-insights.js'
@@ -134,6 +144,7 @@ import {
   readerBook,
   readerBookStatus,
   reconcileReaderWorkUpdate,
+  rememberReaderPhoneAccess,
   rememberReaderWork,
   removeReaderBook,
   removeReaderBookmark,
@@ -163,6 +174,7 @@ import {
 
 // ---- helpers ----
 const READER_DEFAULT_APP_ICON_SURFACE = '#f0f0f0'
+const readerLayerHistory = createReaderLayerHistory(window)
 
 function esc(s) {
   if (!s) return ''
@@ -371,6 +383,30 @@ function readerPhoneText(value) {
     valuesMap: _work && _work.readerPhValues || {},
     usePlaceholderMode: false,
   })
+}
+
+function estimatedReaderCallDurationSeconds(message) {
+  var authoredDuration = Number(message && message.callDuration)
+  if (Number.isFinite(authoredDuration) && authoredDuration > 0) {
+    return Math.min(359999, Math.max(1, Math.round(authoredDuration)))
+  }
+  var rawLines = Array.isArray(message && message.callLines)
+    ? message.callLines
+    : [message && message.text]
+  var lines = rawLines.map(readerPhoneText).map(function(line) {
+    return String(line || '').replace(/\s+/g, '')
+  }).filter(Boolean)
+  if (!lines.length) return 1
+  return Math.min(359999, lines.reduce(function(total, line) {
+    return total + Math.max(2, Math.ceil(line.length / 4))
+  }, 0))
+}
+
+function formatReaderCallDuration(seconds) {
+  var safeSeconds = Math.min(359999, Math.max(0, Math.round(Number(seconds) || 0)))
+  var minutes = Math.floor(safeSeconds / 60)
+  var remainder = safeSeconds % 60
+  return String(minutes).padStart(2, '0') + ':' + String(remainder).padStart(2, '0')
 }
 
 function readerPhoneData(phoneData) {
@@ -790,7 +826,7 @@ document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'hidden') flushReaderPositionSave()
 })
 
-function closeReaderUnlockedSearchPreview(restoreFocus) {
+function finalizeReaderUnlockedSearchPreviewClose(restoreFocus) {
   if (!_readerUnlockedSearchPreview) return
   var resultButton = _readerUnlockedSearchPreview._resultButton || null
   _readerUnlockedSearchPreview.remove()
@@ -800,9 +836,17 @@ function closeReaderUnlockedSearchPreview(restoreFocus) {
   }
 }
 
-function closeReaderUnlockedSearch(options) {
+function closeReaderUnlockedSearchPreview(restoreFocus) {
+  if (readerLayerHistory.has('reader-search-preview')) {
+    readerLayerHistory.close('reader-search-preview', { restoreFocus:restoreFocus })
+    return
+  }
+  finalizeReaderUnlockedSearchPreviewClose(restoreFocus)
+}
+
+function finalizeReaderUnlockedSearchClose(options) {
   var settings = options || {}
-  closeReaderUnlockedSearchPreview(false)
+  finalizeReaderUnlockedSearchPreviewClose(false)
   if (_readerUnlockedSearchPanel) _readerUnlockedSearchPanel.remove()
   _readerUnlockedSearchPanel = null
   var invoker = _readerUnlockedSearchInvoker
@@ -811,6 +855,15 @@ function closeReaderUnlockedSearch(options) {
   _readerUnlockedSearchPosition = null
   if (settings.restorePosition !== false) restoreArticleReadingPosition(readingPosition)
   if (settings.restoreFocus !== false && invoker && invoker.isConnected && invoker.focus) invoker.focus()
+}
+
+function closeReaderUnlockedSearch(options) {
+  closeReaderUnlockedSearchPreview(false)
+  if (readerLayerHistory.has('reader-search')) {
+    readerLayerHistory.close('reader-search', { options:options || {} })
+    return
+  }
+  finalizeReaderUnlockedSearchClose(options)
 }
 
 function setArticleImmersiveToolbarVisible(visible) {
@@ -930,6 +983,9 @@ function openReaderUnlockedSearchPreview(entry, resultButton) {
   overlay.appendChild(card)
   document.body.appendChild(overlay)
   _readerUnlockedSearchPreview = overlay
+  readerLayerHistory.open('reader-search-preview', function(event) {
+    finalizeReaderUnlockedSearchPreviewClose(event.restoreFocus)
+  })
   closeButton.onclick = function() { closeReaderUnlockedSearchPreview(true) }
   overlay.onclick = function(event) {
     if (event.target === overlay) closeReaderUnlockedSearchPreview(true)
@@ -979,6 +1035,9 @@ function openReaderUnlockedSearch(trigger) {
   ].join('')
   document.body.appendChild(panel)
   _readerUnlockedSearchPanel = panel
+  readerLayerHistory.open('reader-search', function(event) {
+    finalizeReaderUnlockedSearchClose(event.options)
+  })
 
   var index = buildUnlockedReaderSearchIndex(substitutedUnlockedSearchWork(), _articlePath, {
     choiceMemory:_articleChoiceMemory,
@@ -1774,7 +1833,7 @@ function refreshBookshelfPage() {
   bindBookshelfPage(panel)
 }
 
-function closeReaderImportDialog(options) {
+function finalizeReaderImportDialogClose(options) {
   options = options || {}
   var overlay = _readerImportOverlay
   var invoker = _readerImportInvoker
@@ -1786,6 +1845,14 @@ function closeReaderImportDialog(options) {
   if (overlay) overlay.remove()
   document.body.classList.remove('rd-import-open')
   if (!lifecycle && options.restoreFocus !== false && invoker && document.contains(invoker)) invoker.focus()
+}
+
+function closeReaderImportDialog(options) {
+  if (readerLayerHistory.has('reader-import')) {
+    readerLayerHistory.close('reader-import', { options:options || {} })
+    return
+  }
+  finalizeReaderImportDialogClose(options)
 }
 
 function openReaderImportDialog(invoker, options) {
@@ -1809,6 +1876,9 @@ function openReaderImportDialog(invoker, options) {
   document.body.appendChild(overlay)
   document.body.classList.add('rd-import-open')
   _readerImportOverlay = overlay
+  readerLayerHistory.open('reader-import', function(event) {
+    finalizeReaderImportDialogClose(event.options)
+  })
   setupImport(overlay)
 
   var dialog = overlay.querySelector('.rd-import-dialog')
@@ -2113,9 +2183,16 @@ function openReaderBookManager(workId, invoker) {
     }
     overlay.remove()
   }
+  function dismissManager(options) {
+    if (readerLayerHistory.has('book-manager')) {
+      readerLayerHistory.close('book-manager', { options:options || {} })
+      return
+    }
+    removeManager(options)
+  }
   function close() {
     closeReaderUnlockedSearchPreview(false)
-    removeManager({restoreFocus:true})
+    dismissManager({restoreFocus:true})
     focusReaderBookInvoker(workId, invoker)
   }
   function saveValues() {
@@ -2151,6 +2228,10 @@ function openReaderBookManager(workId, invoker) {
     invoker:invoker,
     initialFocus:overlay.querySelector('.rd-book-manager-close'),
     onRequestClose:close,
+  })
+  readerLayerHistory.open('book-manager', function(event) {
+    removeManager(event.options)
+    focusReaderBookInvoker(workId, invoker)
   })
   var slotManageButton = overlay.querySelector('[data-reader-slot-manage]')
   var slotManagePanel = overlay.querySelector('.rd-reader-slot-manage')
@@ -2302,13 +2383,13 @@ function openReaderBookManager(workId, invoker) {
   if (saveBookButton) saveBookButton.onclick = saveValues
   overlay.querySelector('[data-reader-book-continue]').onclick = function() {
     if (!saveValues()) return
-    removeManager({restoreFocus:false})
+    dismissManager({restoreFocus:false})
     openReaderBookById(workId)
   }
   var restartBookButton = overlay.querySelector('[data-reader-book-restart]')
   if (restartBookButton) restartBookButton.onclick = function() {
       if (!saveValues()) return
-      removeManager({restoreFocus:false})
+      dismissManager({restoreFocus:false})
       openReaderBookById(workId, {restart:true})
     }
   overlay.querySelector('[data-reader-book-completion]').onclick = function() {
@@ -2499,7 +2580,7 @@ function openReaderBookManager(workId, invoker) {
         interactionSelections:bookmark.interactionSelections,
         checkpoints:latestBook?.progress?.checkpoints || [],
       }, Date.now()))
-      removeManager({restoreFocus:false})
+      dismissManager({restoreFocus:false})
       openReaderBookById(workId)
     }
   })
@@ -2523,7 +2604,7 @@ function openReaderBookManager(workId, invoker) {
         nextProgress,
         Date.now(),
       ))
-      removeManager({restoreFocus:false})
+      dismissManager({restoreFocus:false})
       openReaderBookById(workId)
     }
   })
@@ -4139,7 +4220,7 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
   var activeTrigger = triggerElement && triggerElement.isConnected ? triggerElement : document.activeElement
   var dialog = ov.querySelector('.rs-sheet')
   var closeButton = ov.querySelector('#rsClose')
-  function closePanel(options) {
+  function finalizePanelClose(options) {
     var restoreFocus = !options || options.restoreFocus !== false
     var restorePosition = !options || options.restorePosition !== false
     var previewStyle = document.getElementById('reader-article-preview-user-css')
@@ -4148,6 +4229,16 @@ function openReaderSettingsPanel(triggerElement, panelOptions) {
     if (restorePosition) restoreArticleReadingPosition(readingPosition)
     if (restoreFocus && activeTrigger && activeTrigger.isConnected && activeTrigger.focus) activeTrigger.focus()
   }
+  function closePanel(options) {
+    if (readerLayerHistory.has('article-appearance')) {
+      readerLayerHistory.close('article-appearance', { options:options || {} })
+      return
+    }
+    finalizePanelClose(options)
+  }
+  readerLayerHistory.open('article-appearance', function(event) {
+    finalizePanelClose(event.options)
+  })
   ov.addEventListener('click', function(e) { if (e.target === ov) closePanel() })
   closeButton.onclick = function() { closePanel() }
   bindReaderAppearancePackageTransfer(ov, {
@@ -5385,7 +5476,41 @@ function bindReaderPhoneFlowCue(root, work, onFinish) {
   }
 }
 
-function readerPhoneFlowNotificationHtml(phoneData, step) {
+function readerPhoneFlowPlainText(value) {
+  var shell = document.createElement('div')
+  shell.innerHTML = String(value == null ? '' : value)
+  return String(shell.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function readerPhoneFlowMessagePreview(message) {
+  if (!message || typeof message !== 'object') return '新消息'
+  if (message.type === 'call') return message.callMode === 'video' ? '邀请你进行视频通话' : '邀请你进行语音通话'
+  if (message.type === 'image') return '[图片]'
+  if (message.type === 'voice') return '[语音]' + (message.duration ? ' ' + message.duration + '秒' : '')
+  if (message.type === 'redpacket') return '[红包] ¥' + Number(message.redpacketAmount || 0).toFixed(2)
+  if (message.type === 'transfer') return '[转账] ¥' + Number(message.transferAmount || 0).toFixed(2)
+  if (message.type === 'takeaway') return '[外卖] ' + String(message.takeawayShop || message.takeawayOrder || '订单')
+  if (message.type === 'familycard') return '[亲属卡]'
+  if (message.type === 'time') return readerPhoneFlowPlainText(message.time) || '时间标记'
+  return readerPhoneFlowPlainText(message.text) || '新消息'
+}
+
+function readerPhoneFlowItemPreview(type, item) {
+  var source = item && typeof item === 'object' ? item : {}
+  if (type === 'memo') return readerPhoneFlowPlainText(source.content) || '新备忘录'
+  if (type === 'shopping') {
+    var shoppingName = readerPhoneFlowPlainText(source.name) || '购物记录'
+    var shoppingPrice = Number(source.price)
+    return Number.isFinite(shoppingPrice) && shoppingPrice > 0 ? shoppingName + ' · ¥' + shoppingPrice.toFixed(2) : shoppingName
+  }
+  if (type === 'forum') return readerPhoneFlowPlainText(source.title || source.content) || '新帖子'
+  if (type === 'moments') return readerPhoneFlowPlainText(source.content) || '新动态'
+  if (type === 'gallery') return readerPhoneFlowPlainText(source.caption || source.name) || '新照片'
+  if (type === 'browser') return readerPhoneFlowPlainText(source.title || source.url) || '新浏览记录'
+  return '有一段新内容，点击查看'
+}
+
+function readerPhoneFlowNotificationHtml(phoneData, step, custom) {
   if (!step) return ''
   var appType = phoneReadingFlowAppType(step)
   var target = resolvePhoneReadingFlowStep(phoneData, step)
@@ -5405,34 +5530,49 @@ function readerPhoneFlowNotificationHtml(phoneData, step) {
     ? fallbackLabels.moments
     : (app ? readerAppName(app) : (fallbackLabels[step.type] || 'App'))
   var safeIcon = sanitizeIconHtml(app && app.icon || appLabel.charAt(0)) || esc(appLabel.charAt(0))
-  var headline = String(step.label || appLabel).trim()
-  var detailLabels = {
-    memo: '有一条备忘录等待查看',
-    shopping: '有一条购物记录等待查看',
-    forum: '有一篇帖子等待查看',
-    moments: '有一条动态等待查看',
-    gallery: '有一张照片等待查看',
-    browser: '有一条浏览记录等待查看',
-  }
-  var detail = detailLabels[step.type] || '有一段新内容，点击查看'
-
   var contacts = Array.isArray(phoneData && phoneData.contacts) ? phoneData.contacts : []
+  var itemContactId = step.contactId != null
+    ? step.contactId
+    : (target.item && target.item.contactId != null ? target.item.contactId : null)
+  var contact = contacts.find(function(item) { return String(item && item.id) === String(itemContactId) }) || null
+  var headline = contact && contact.name ? String(contact.name) : String(step.label || appLabel).trim()
+  var detail = readerPhoneFlowItemPreview(step.type, target.item)
+  var visualUrl = ''
+  var visualFallback = appLabel.charAt(0)
+  var visualClass = 'is-app-icon'
+  var rc = custom && typeof custom === 'object' ? custom : {}
+
   if (step.type === 'messages' && target.chat) {
     var chat = target.chat
-    var contact = contacts.find(function(item) {
+    var messageContact = contacts.find(function(item) {
+      return target.message && target.message.senderId != null && String(target.message.senderId) === String(item && item.id)
+    }) || contacts.find(function(item) {
       return Array.isArray(chat.contactIds) && chat.contactIds.some(function(id) { return String(id) === String(item && item.id) })
-    })
+    }) || contact
     headline = chat.type === 'group' ? (chat.groupName || '群聊') : (contact && contact.name || '新消息')
-    detail = '有一段新对话，点击查看'
+    if (chat.type !== 'group' && messageContact && messageContact.name) headline = messageContact.name
+    detail = readerPhoneFlowMessagePreview(target.message)
+    visualUrl = chat.type === 'group' ? String(chat.groupAvatarUrl || '') : String(messageContact && messageContact.avatarUrl || '')
+    visualFallback = headline.charAt(0) || '消'
+    visualClass = 'is-contact-avatar'
+  } else {
+    visualUrl = readerCustomIconUrl(rc.customIcons && rc.customIcons[appType])
   }
 
-  var h = '<button type="button" class="phone-flow-notification" data-flow-notification-app="' + escapeHtmlAttribute(appType) + '" aria-label="打开' + escapeHtmlAttribute(appLabel + '：' + headline) + '">'
-  h += '<span class="phone-flow-notification-icon" aria-hidden="true">' + safeIcon + '</span>'
+  var h = '<button type="button" class="phone-flow-notification" data-flow-notification-app="' + escapeHtmlAttribute(appType) + '" aria-label="打开' + escapeHtmlAttribute(appLabel + '：' + headline + '，' + detail) + '">'
+  h += '<span class="phone-flow-notification-icon ' + visualClass + '" aria-hidden="true"'
+  if (visualClass === 'is-contact-avatar') h += ' style="--phone-flow-avatar-bg:' + sanitizeCssColor(avatarColor(String(itemContactId || headline))) + '"'
+  h += '>'
+  if (visualUrl) h += '<img src="' + escapeHtmlAttribute(visualUrl) + '" alt="">'
+  else if (visualClass === 'is-app-icon') h += safeIcon
+  else h += esc(visualFallback)
+  h += '</span>'
   h += '<span class="phone-flow-notification-copy">'
   h += '<span class="phone-flow-notification-meta"><strong>' + esc(appLabel) + '</strong><span>刚刚</span></span>'
   h += '<b>' + esc(headline) + '</b>'
   h += '<span>' + esc(detail) + '</span>'
   h += '</span>'
+  h += '<span class="phone-flow-notification-chevron" aria-hidden="true">›</span>'
   h += '</button>'
   return h
 }
@@ -5463,6 +5603,10 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
 
   var h = ''
   var usesDefaultWallpaper = (skin.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && skin.wallpaperType !== 'image' && !skin.wallpaperImage
+  if (skin.wallpaperType === 'image' && skin.wallpaperImage) {
+    scheduleReaderImagePredecode(skin.wallpaperImage)
+  }
+  if (skin.topBgImage) scheduleReaderImagePredecode(skin.topBgImage)
   var readerBgStyle = '--phone-bg:' + sanitizeCssColor(skin.wallpaper || '#eee6e7') + ';'
   readerBgStyle += '--phone-radius:' + (skin.borderRadius ?? 18) + 'px;'
   readerBgStyle += '--phone-font:' + safePhoneCustomFontFamily(skin.fontFamily, readerPhoneCustomDefaults().fontFamily) + ';'
@@ -5481,7 +5625,7 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   if (skin.showDynamicIsland !== false) {
     h += '<div class="phone-island"><div class="phone-island-pill" data-island-style="' + normalizeDynamicIslandStyle(skin.dynamicIslandStyle) + '"></div></div>'
   }
-  h += readerPhoneFlowNotificationHtml(pd, flowStep)
+  h += readerPhoneFlowNotificationHtml(pd, flowStep, rc)
 
   var coverBg = skin.topBgImage || skin.wallpaperImage || ''
   h += '<div class="phone-profile"'
@@ -5660,12 +5804,30 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     activeContactIndex = hasRequestedContact ? requestedContactIndex : 0
   }
   var activeContact = activeContactIndex >= 0 ? contacts[activeContactIndex] : null
+  var activeSlot = _work && _work.id ? readerActiveSlot(savedReaderBook(_work.id)) : null
+  var approvedContactId = activeSlot && activeSlot.phoneAccess
+    ? activeSlot.phoneAccess[type]
+    : ''
+  var connectionPreviouslyApproved = !!activeContact && approvedContactId === activeContact.id
+
+  function approveActiveConnection() {
+    if (_readerPersistenceEnabled && _work && _work.id && activeContact) {
+      commitReaderLibraryState(rememberReaderPhoneAccess(
+        getReaderLibraryState(),
+        _work.id,
+        type,
+        activeContact.id,
+        Date.now(),
+      ))
+    }
+    openReaderApp(type, activeContactIndex, true, flowStep)
+  }
 
   function belongsToActiveContact(item) {
     return !activeContact || item.contactId === activeContact.id
   }
 
-  function backToDesktop() {
+  function returnToPhoneDesktop() {
     if (inOverlay && typeof _work._directOverlayClose === 'function') {
       _work._directOverlayClose()
       return
@@ -5679,6 +5841,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       focusReaderAppIcon(document, type)
     }
   }
+  function backToDesktop() {
+    if (readerLayerHistory.has('phone-app')) {
+      readerLayerHistory.close('phone-app')
+      return
+    }
+    returnToPhoneDesktop()
+  }
+  readerLayerHistory.open('phone-app', returnToPhoneDesktop)
 
   function wrapPanel(title, bodyHtml) {
     var panelType = String(type || '').replace(/[^a-z0-9_-]/gi, '')
@@ -5772,7 +5942,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var confirm = phoneFrame.querySelector('[data-connection-action="confirm"]')
     if (cancel) cancel.onclick = backToDesktop
     if (confirm) {
-      confirm.onclick = function() { openReaderApp(type, activeContactIndex, true, flowStep) }
+      confirm.onclick = approveActiveConnection
       confirm.focus()
     }
   }
@@ -5821,7 +5991,11 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var cancel = phoneFrame.querySelector('[data-connection-action="cancel"]')
     var confirm = phoneFrame.querySelector('[data-connection-action="confirm"]')
     if (cancel) cancel.onclick = backToDesktop
-    if (confirm) confirm.onclick = function() { openReaderApp(type, selectedIndex, true, flowStep) }
+    if (confirm) confirm.onclick = function() {
+      activeContactIndex = selectedIndex
+      activeContact = contacts[selectedIndex]
+      approveActiveConnection()
+    }
     var selectedSource = phoneFrame.querySelector('.rd-connection-source.selected')
     if (selectedSource) selectedSource.focus()
   }
@@ -5851,7 +6025,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     return
   }
 
-  if (lockedApp && contacts.length > 0 && connectionConfirmed !== true) {
+  if (lockedApp && contacts.length > 0 && connectionConfirmed !== true && !connectionPreviouslyApproved) {
     if (hasAuthoredConnection) showConnectionGate()
     else showConnectionPicker()
     return
@@ -6048,7 +6222,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       var forumVars = '--rd-forum-card:' + sanitizeCssColor(forumVisual.cardBg) + ';--rd-forum-radius:' + boundedReaderSetting(getAppSettings('forum').cardRadius, 0, 0, 16) + 'px;--rd-forum-avatar-radius:' + forumVisual.avatarRadius + ';--rd-forum-title:' + sanitizeCssColor(forumVisual.titleColor) + ';--rd-forum-title-size:' + boundedReaderSetting(getAppSettings('forum').titleSize, 13, 10, 18) + 'px;--rd-forum-time:' + sanitizeCssColor(forumVisual.timeColor)
       h += '<button type="button" class="rd-post-card' + (flowStep && String(p.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-post-index="' + postIndex + '" aria-label="' + escapeHtmlAttribute('查看帖子 ' + (p.title || '')) + '" style="' + forumVars + '">'
       h += '<span class="rd-forum-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(p.contactId)) + '">'
-      if (forumIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(forumIdentity.avatar) + '" alt="">'
+      if (forumIdentity.avatar) h += '<img src="' + escapeHtmlAttribute(forumIdentity.avatar) + '" alt=""' + readerImageAttributes({eager:true}) + '>'
       else h += esc((forumIdentity.name || '?').charAt(0))
       h += '</span>'
       h += '<span class="rd-forum-copy"><span class="rd-forum-title-line"><span class="rd-forum-title">' + esc(p.title) + '</span><span class="rd-forum-post-states">'
@@ -6105,7 +6279,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       items.forEach(function(p) {
         grid += '<button type="button" class="gallery-photo-card rd-gallery-photo' + (flowStep && String(p.id) === String(flowStep.itemId) ? ' is-flow-target' : '') + '" data-photo-id="' + escapeHtmlAttribute(p.id) + '" aria-pressed="false">'
         if (p.imageUrl) {
-          grid += '<img src="' + escapeHtmlAttribute(p.imageUrl) + '" alt="' + escapeHtmlAttribute(p.caption || '') + '" onerror="this.style.display=\'none\'">'
+          grid += '<img src="' + escapeHtmlAttribute(p.imageUrl) + '" alt="' + escapeHtmlAttribute(p.caption || '') + '"' + readerImageAttributes() + ' onerror="this.style.display=\'none\'">'
         } else {
           grid += '<span class="gallery-photo-placeholder rd-gallery-photo-placeholder"><span class="gallery-photo-text">' + esc(p.caption || '照片') + '</span></span>'
         }
@@ -6391,7 +6565,19 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     chatRoot.insertAdjacentHTML('beforeend', h)
     var pip = chatRoot.querySelector('.rd-inline-forum-pip')
     var close = pip.querySelector('.rd-inline-forum-close')
-    close.onclick = function() { pip.remove(); if (trigger && trigger.isConnected) trigger.focus() }
+    function closeInlineForumPost() {
+      pip.remove()
+      if (trigger && trigger.isConnected) trigger.focus()
+    }
+    function requestInlineForumPostClose() {
+      if (readerLayerHistory.has('phone-pip')) {
+        readerLayerHistory.close('phone-pip')
+        return
+      }
+      closeInlineForumPost()
+    }
+    readerLayerHistory.open('phone-pip', closeInlineForumPost)
+    close.onclick = requestInlineForumPostClose
     close.focus()
   }
 
@@ -6416,12 +6602,14 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       choiceRuns: new Map(),
       flowTypedMessageIds: new Set(),
       claimedMessageIds: new Set(),
+      endedCallIds: new Set(),
       flowGeneratedPlayback: null,
     }
     phoneChoiceSession.chats.set(chatSessionKey, chatSession)
   }
   if (!(chatSession.flowTypedMessageIds instanceof Set)) chatSession.flowTypedMessageIds = new Set()
   if (!(chatSession.claimedMessageIds instanceof Set)) chatSession.claimedMessageIds = new Set()
+  if (!(chatSession.endedCallIds instanceof Set)) chatSession.endedCallIds = new Set()
   ch = chatSession.chat
   var openedCallScenes = Object.create(null)
   var mayAutoOpenCall = true
@@ -6505,6 +6693,23 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     return !visibleIds || visibleIds.has(String(message && message.id))
   }
 
+  function callWasCompletedInFlow(message) {
+    if (!flowEnabled || !message || message.id == null) return false
+    var completedStepCount = Math.min(flowSession.index, flowSession.sequence.length)
+    for (var stepIndex = 0; stepIndex < completedStepCount; stepIndex++) {
+      var step = flowSession.sequence[stepIndex]
+      if (!step || step.type !== 'messages') continue
+      if (String(step.itemId) !== String(message.id)) continue
+      if (step.chatId != null && String(step.chatId) !== String(ch && ch.id)) continue
+      return true
+    }
+    return false
+  }
+
+  function callHasEnded(message) {
+    return chatSession.endedCallIds.has(String(message && message.id || '')) || callWasCompletedInFlow(message)
+  }
+
   function currentFlowChoicePending(rounds) {
     if (!flowStep) return false
     for (var roundIndex = 0; roundIndex < rounds.length; roundIndex++) {
@@ -6531,11 +6736,19 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     if (nextStep) focusReaderAppIcon(document, phoneReadingFlowAppType(nextStep))
   }
 
-  function backToList() {
+  function returnToChatList() {
     clearChatFlowTimers()
     openReaderApp('messages')
     focusReaderControl(frame, '.rd-chat-card[data-chat-index="' + chatIndex + '"]')
   }
+  function backToList() {
+    if (readerLayerHistory.has('phone-detail')) {
+      readerLayerHistory.close('phone-detail')
+      return
+    }
+    returnToChatList()
+  }
+  readerLayerHistory.open('phone-detail', returnToChatList)
 
   function getChatName() {
     if (ch.type === 'group') return ch.groupName || '群聊'
@@ -6626,6 +6839,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
         hangup.focus()
       }
       hangup.onclick = function() {
+        chatSession.endedCallIds.add(String(msg.id || callKey))
         if (flowTarget && flowTarget.kind !== 'round' && String(flowTarget.item && flowTarget.item.id) === String(msg.id)) {
           finishChatFlowStep()
           return
@@ -6708,6 +6922,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     var autoCall = null
 
     // ---- BUILD HTML ----
+    if (ast.chatBgImage) scheduleReaderImagePredecode(ast.chatBgImage)
     var chatBackgroundImage = ast.chatBgImage ? 'url("' + ast.chatBgImage + '")' : 'none'
     var chatTone = readerChatTonePresentation(ast.chatBgTone)
     var h = '<div class="rd-phone-app-panel rd-phone-app-messages chat-author-shell chat-reader-shell" style="display:flex;flex-direction:column;height:100%;position:absolute;left:0;right:0;top:0;bottom:0;z-index:10;font-size:12px;--chat-editor-screen:' + sanitizeCssColor(ast.chatBg) + ';--chat-editor-image:' + escapeHtmlAttribute(chatBackgroundImage) + ';--chat-bg-size:' + ast.chatBgFit + ';--chat-bg-position:' + ast.chatBgPositionX + '% ' + ast.chatBgPositionY + '%;--chat-bg-overlay-color:' + chatTone.color + ';--chat-bg-overlay-opacity:' + chatTone.opacity + ';--chat-bubble-weight:' + ast.bubbleFontWeight + ';--chat-send-bg:' + sanitizeCssColor(ast.sendButtonBg, { fallback: '#cda9b1' }) + ';--chat-send-ink:' + readerReadableTextColor(ast.sendButtonBg) + ';' + readerBubbleSkinVariables(ast) + readerChatReadabilityVariables(ast) + '">'
@@ -6739,10 +6954,17 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           var callIdentity = resolveContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: chatName })
           var callName = callIdentity.name || chatName
           var callLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
+          var callEnded = callHasEnded(msg)
+          var callDuration = formatReaderCallDuration(estimatedReaderCallDurationSeconds(msg))
           callMessages.push({ key: callKey, message: msg })
-          if (mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
-          h += '<button type="button" class="rd-call-card' + (isFlowTargetCall(msg, round) ? ' is-flow-target' : '') + '" data-call-key="' + callKey + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" aria-label="' + escapeHtmlAttribute('打开与' + callName + '的' + callLabel) + '">'
-          h += '<span>' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span><strong>' + esc(callName) + '</strong><small>' + callLabel + '</small></span><b>›</b></button>'
+          if (!callEnded && mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
+          if (callEnded) {
+            h += '<button type="button" class="rd-call-card rd-call-record" style="--rd-call-record-bg:' + sanitizeCssColor(ast.otherBubbleBg, { fallback: '#fff' }) + ';--rd-call-record-ink:' + sanitizeCssColor(ast.otherBubbleText, { fallback: '#333' }) + '" data-call-key="' + callKey + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" aria-label="' + escapeHtmlAttribute('重新查看与' + callName + '的' + callLabel + '，已通话 ' + callDuration) + '">'
+            h += '<span class="rd-call-record-icon" aria-hidden="true">' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span class="rd-call-record-copy">' + callLabel + '<small>已通话 ' + callDuration + '</small></span></button>'
+          } else {
+            h += '<button type="button" class="rd-call-card' + (isFlowTargetCall(msg, round) ? ' is-flow-target' : '') + '" data-call-key="' + callKey + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" aria-label="' + escapeHtmlAttribute('打开与' + callName + '的' + callLabel) + '">'
+            h += '<span>' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span><strong>' + esc(callName) + '</strong><small>' + callLabel + '</small></span><b>›</b></button>'
+          }
           continue
         }
         var isSelf = msg.senderId === 'self'
@@ -6778,7 +7000,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
         if (msg.type === 'image') {
           h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + '">'
-          h += '<img src="' + esc(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
+          h += '<img src="' + esc(msg.image || '') + '"' + readerImageAttributes() + ' style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
           h += '</div>'
         } else if (msg.type === 'link') {
           var inlineForumPost = msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
@@ -6842,7 +7064,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     }
     h += '</div>'
 
-    // Choice popup panel
+    // Bottom input bar
+    h += '<div class="chat-input-bar chat-composer rd-chat-composer' + (allChoices.length > 0 ? ' has-choices' : '') + '">'
+    h += '<div class="rd-chat-choice-field">'
     if (allChoices.length > 0) {
       h += '<div id="rdChoiceList" class="rd-chat-choice-list" role="listbox" aria-label="选择回复" hidden>'
       for (var ac = 0; ac < allChoices.length; ac++) {
@@ -6851,10 +7075,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       }
       h += '</div>'
     }
-
-    // Bottom input bar
-    h += '<div class="chat-input-bar chat-composer rd-chat-composer' + (allChoices.length > 0 ? ' has-choices' : '') + '">'
     h += '<input id="chatInput" class="rd-chat-choice-trigger" readonly aria-label="' + (allChoices.length > 0 ? '选择一条完整回复' : '暂无可用回复') + '" aria-haspopup="listbox" aria-expanded="false"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList"' : ' disabled') + ' placeholder="' + (allChoices.length > 0 ? '点击选择回复...' : '暂无可用选项') + '" value="">'
+    h += '</div>'
     h += '<button type="button" id="chatSendBtn" class="chat-send-btn rd-chat-choice-toggle" aria-label="打开回复选项"' + (allChoices.length > 0 ? ' aria-controls="rdChoiceList" aria-expanded="false"' : ' disabled') + '>▶</button>'
     h += '</div>'
 
@@ -7142,10 +7364,18 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
     }).map(function(entry) { return entry.comment })
   }
 
-  function backToList() {
+  function returnToForumList() {
     openReaderApp('forum')
     focusReaderControl(frame, '.rd-post-card[data-post-index="' + postIndex + '"]')
   }
+  function backToList() {
+    if (readerLayerHistory.has('phone-detail')) {
+      readerLayerHistory.close('phone-detail')
+      return
+    }
+    returnToForumList()
+  }
+  readerLayerHistory.open('phone-detail', returnToForumList)
 
   function findForumCommentsById(items, serializedId, matches) {
     ;(Array.isArray(items) ? items : []).forEach(function(comment) {
@@ -7697,7 +7927,14 @@ function phoneAppearanceRange(label, id, min, max, step, value, unit) {
 }
 
 function openReaderCustomizePanel(triggerElement) {
-  var ct = getPhoneCustom()
+  var persistedPhoneAppearance = getPhoneCustom()
+  var restoredPhoneAppearanceDraft = readAppearanceDraft('phone-appearance')
+  var ct = normalizePhoneCustom(Object.assign(
+    {},
+    persistedPhoneAppearance,
+    restoredPhoneAppearanceDraft || {},
+  ))
+  var persistedPhoneAppearanceSignature = JSON.stringify(persistedPhoneAppearance)
   var wallpaperPresets = [
     { name:'极昼白', color:'#f5f0e8' }, { name:'水色', color:'#d0e8f5' },
     { name:'樱粉', color:'#f5e8f0' }, { name:'薄荷', color:'#e8f5f0' },
@@ -7757,6 +7994,7 @@ function openReaderCustomizePanel(triggerElement) {
     if (!validation.ok) throw new Error(validation.error)
     ct.customCss = cssDraft ? cssDraft.value : ct.customCss
     ct = savePhoneCustom(ct)
+    clearAppearanceDraft('phone-appearance')
     applyCustomFonts()
     applyPhoneCustomCss(ct)
     renderCustomPage()
@@ -7772,7 +8010,8 @@ function openReaderCustomizePanel(triggerElement) {
   cancelButton.id = 'cuCancel'
   bindReaderAppearancePackageTransfer(ov, {
     onImported:function() {
-      ov.closeReaderModal()
+      clearAppearanceDraft('phone-appearance')
+      ov.forceCloseReaderModal()
       renderCustomPage()
       var nextTrigger = document.querySelector('[data-reader-phone-control="appearance"]')
       openReaderCustomizePanel(nextTrigger)
@@ -7861,6 +8100,18 @@ function openReaderCustomizePanel(triggerElement) {
 
   renderFontList()
   renderDraftPreview()
+  if (restoredPhoneAppearanceDraft) {
+    setLiveMessage('已恢复刚才未保存的调整', false)
+  }
+  ov.setReaderBeforeClose(function() {
+    if (JSON.stringify(ct) === persistedPhoneAppearanceSignature) {
+      clearAppearanceDraft('phone-appearance')
+      return true
+    }
+    writeAppearanceDraft('phone-appearance', ct)
+    showReaderToast('已暂存刚才的手机外观调整')
+    return true
+  })
 
   ov.querySelectorAll('[data-cu-color]').forEach(function(button) {
     button.onclick = function() {
@@ -8143,7 +8394,14 @@ function openReaderCustomizePanel(triggerElement) {
 }
 
 function openReaderProfilePanel(triggerElement) {
-  var ct = getPhoneCustom()
+  var persistedProfileAppearance = getPhoneCustom()
+  var restoredProfileAppearanceDraft = readAppearanceDraft('profile-appearance')
+  var ct = normalizePhoneCustom(Object.assign(
+    {},
+    persistedProfileAppearance,
+    restoredProfileAppearanceDraft || {},
+  ))
+  var persistedProfileAppearanceSignature = JSON.stringify(persistedProfileAppearance)
   var identitySettings = cuRow('昵称',
     '<input class="rd-input" id="rpName" value="' + escapeHtmlAttribute(ct.readerId || '') + '" placeholder="默认使用作品昵称">')
   var avatarSettings = cuRow('头像',
@@ -8169,6 +8427,7 @@ function openReaderProfilePanel(triggerElement) {
     ct.readerAvatar = avatarInput && avatarInput.value.trim() ? avatarInput.value.trim() : null
     ct.topBgImage = coverInput && coverInput.value.trim() ? coverInput.value.trim() : null
     savePhoneCustom(ct)
+    clearAppearanceDraft('profile-appearance')
     renderCustomPage()
     showReaderToast('个人信息已保存')
   }, triggerElement)
@@ -8229,6 +8488,20 @@ function openReaderProfilePanel(triggerElement) {
   var clearAv = ov.querySelector('#rpClearAv'); if (clearAv) clearAv.onclick = function() { setProfileImageDraft('#rpAvatarUrl', '#rpAvatarPreview', '#rpAvatarPreviewImage', null) }
   var clearTop = ov.querySelector('#rpClearTop'); if (clearTop) clearTop.onclick = function() { setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', null) }
   renderProfilePreview()
+  if (restoredProfileAppearanceDraft) {
+    var restoredStatus = ov.querySelector('.phone-appearance-status')
+    if (restoredStatus) restoredStatus.textContent = '已恢复刚才未保存的调整'
+  }
+  ov.setReaderBeforeClose(function() {
+    var draft = currentProfileDraft()
+    if (JSON.stringify(draft) === persistedProfileAppearanceSignature) {
+      clearAppearanceDraft('profile-appearance')
+      return true
+    }
+    writeAppearanceDraft('profile-appearance', draft)
+    showReaderToast('已暂存刚才的个人信息调整')
+    return true
+  })
   bindReaderAppearanceSectionStates(ov)
   bindReaderAppearanceUndo(ov, {
     capture:currentProfileDraft,
@@ -8523,6 +8796,8 @@ function readerMessageUsesBubbleShell(message) {
 function readerBubbleSkinVariables(settings) {
   var selfSkin = normalizedReaderBubbleSkin(settings, 'self')
   var otherSkin = normalizedReaderBubbleSkin(settings, 'other')
+  if (selfSkin.image) scheduleReaderImagePredecode(selfSkin.image)
+  if (otherSkin.image) scheduleReaderImagePredecode(otherSkin.image)
   var selfMinWidth = Math.min(250, Math.round(116 * selfSkin.size / 100))
   var selfMinHeight = Math.round(56 * selfSkin.size / 100)
   var selfMaxWidth = Math.min(260, Math.round(190 * selfSkin.size / 100))
@@ -8898,13 +9173,22 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
     if (customTab) customTab.focus()
   }
 
-  function closeModal(reason, force) {
+  function finalizeModalClose() {
     if (closed) return
-    if (!force && beforeClose && beforeClose(reason || 'programmatic') === false) return
     closed = true
     ov.removeEventListener('keydown', onModalKeydown)
     ov.remove()
     restoreModalFocus()
+  }
+
+  function closeModal(reason, force) {
+    if (closed) return
+    if (!force && beforeClose && beforeClose(reason || 'programmatic') === false) return
+    if (readerLayerHistory.has('appearance-modal')) {
+      readerLayerHistory.close('appearance-modal', { reason:reason || 'programmatic' })
+      return
+    }
+    finalizeModalClose()
   }
 
   function modalFocusables() {
@@ -8943,6 +9227,10 @@ function openCuModal(title, bodyHtml, onSave, returnFocus) {
   ov.setReaderBeforeClose = function(callback) {
     beforeClose = typeof callback === 'function' ? callback : null
   }
+  readerLayerHistory.open('appearance-modal', function(event) {
+    if (event.source === 'history' && beforeClose) beforeClose('history')
+    finalizeModalClose()
+  })
   ov.addEventListener('keydown', onModalKeydown)
   ov.addEventListener('click', function(e) { if (e.target === ov) closeModal('backdrop') })
   closeButton.onclick = function() { closeModal('button') }
@@ -9686,7 +9974,7 @@ function readerAppPreviewBody(type, settings) {
     var galleryVars = '--rd-gallery-columns:' + gallerySettings.columns + ';--rd-gallery-radius:' + gallerySettings.imageRadius + 'px;--rd-gallery-gap:' + gallerySettings.gap + 'px'
     return '<div class="gallery-bar"><span class="gallery-bar-title">最近项目 (' + photos.length + ')</span></div><div class="gallery-grid rd-gallery-grid" style="' + galleryVars + '">' + photos.map(function(photo) {
       var cell = '<button type="button" class="gallery-photo-card rd-gallery-photo" tabindex="-1" aria-pressed="false">'
-      if (photo.imageUrl) cell += '<img src="' + escapeHtmlAttribute(photo.imageUrl) + '" alt="">'
+      if (photo.imageUrl) cell += '<img src="' + escapeHtmlAttribute(photo.imageUrl) + '" alt=""' + readerImageAttributes() + '>'
       else cell += '<span class="gallery-photo-placeholder rd-gallery-photo-placeholder"><span class="gallery-photo-text">' + esc(photo.caption || '照片') + '</span></span>'
       return cell + '</button>'
     }).join('') + '</div>'
@@ -10036,6 +10324,14 @@ function openReaderAppSettings(type, trigger) {
   var initialSettingsSnapshot = JSON.parse(JSON.stringify(persistedSettings))
   var appIconDraft = ct.customIcons[type] || ''
   var initialIconSnapshot = appIconDraft
+  var appAppearanceDraftKey = 'app-appearance:' + type
+  var restoredAppAppearanceDraft = readAppearanceDraft(appAppearanceDraftKey)
+  if (restoredAppAppearanceDraft && readerPlainRecord(restoredAppAppearanceDraft.settings)) {
+    s = Object.assign({}, s, restoredAppAppearanceDraft.settings)
+    if (typeof restoredAppAppearanceDraft.icon === 'string') {
+      appIconDraft = restoredAppAppearanceDraft.icon
+    }
+  }
   var callBackgroundDraft = type === 'messages'
     ? normalizedReaderCallBackgroundSettings(s)
     : null
@@ -10349,6 +10645,7 @@ function openReaderAppSettings(type, trigger) {
     ct.appSettings[type] = s
     try {
       savePhoneCustom(ct)
+      clearAppearanceDraft(appAppearanceDraftKey)
     } catch (error) {
       var callBackgroundStorageError = modal.querySelector('#cuCallBackgroundError')
       if (callBackgroundStorageError) {
@@ -10409,16 +10706,17 @@ function openReaderAppSettings(type, trigger) {
     return JSON.stringify(readerAppDraftSnapshot(settings)) !== initialDraftSignature
   }
   ov.setReaderBeforeClose(function() {
-    if (!ov._readerAppDraftDirty()) return true
-    showReaderToast('还有未保存修改', 'info', {
-      actionLabel:'放弃修改',
-      duration:5000,
-      onAction:function() {
-        if (ov.isConnected) ov.forceCloseReaderModal()
-      }
-    })
-    return false
+    if (!ov._readerAppDraftDirty()) {
+      clearAppearanceDraft(appAppearanceDraftKey)
+      return true
+    }
+    writeAppearanceDraft(appAppearanceDraftKey, readerAppDraftSnapshot())
+    showReaderToast('已暂存刚才的 ' + (labels[type] || 'App') + ' 美化调整')
+    return true
   })
+  if (restoredAppAppearanceDraft) {
+    showReaderToast('已恢复刚才未保存的 ' + (labels[type] || 'App') + ' 美化调整')
+  }
 
   function showOriginalReaderAppPreview() {
     if (!ov.isConnected || appAppearanceDialog.classList.contains('is-comparing-original')) return

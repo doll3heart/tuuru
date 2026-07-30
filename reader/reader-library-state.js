@@ -86,6 +86,24 @@ function normalizedIdMap(value) {
   return result
 }
 
+function normalizedPhoneAccess(value) {
+  if (!plainRecord(value)) return {}
+  const result = {}
+  for (const appType of Object.keys(value)) {
+    const contactId = ownData(value, appType)
+    if (
+      !exactId(appType)
+      || appType === "__proto__"
+      || appType === "prototype"
+      || appType === "constructor"
+      || !exactId(contactId)
+    ) continue
+    result[appType] = contactId
+    if (Object.keys(result).length >= 20) break
+  }
+  return result
+}
+
 function normalizedInteractionSelections(value) {
   if (!plainRecord(value)) return {}
   const result = {}
@@ -240,6 +258,7 @@ function normalizedSlot(value, definitions) {
     createdAt:timestamp(ownData(value, "createdAt")),
     updatedAt:timestamp(ownData(value, "updatedAt")),
     identityId:exactId(ownData(value, "identityId")) ? ownData(value, "identityId") : "",
+    phoneAccess:normalizedPhoneAccess(ownData(value, "phoneAccess")),
     placeholderValues:normalizedPlaceholderValues(ownData(value, "placeholderValues"), definitions),
     progress:normalizedProgress(ownData(value, "progress")),
     completedAt:timestamp(ownData(value, "completedAt")),
@@ -254,6 +273,7 @@ function legacySlot(value, definitions, fallbackTime) {
     createdAt:timestamp(fallbackTime),
     updatedAt:timestamp(fallbackTime),
     identityId:"",
+    phoneAccess:{},
     placeholderValues:normalizedPlaceholderValues(ownData(value, "placeholderValues"), definitions),
     progress:normalizedProgress(ownData(value, "progress")),
     completedAt:timestamp(ownData(value, "completedAt")),
@@ -441,6 +461,7 @@ export function rememberReaderWork(library, work, now = Date.now()) {
     createdAt:openedAt,
     updatedAt:openedAt,
     identityId:"",
+    phoneAccess:{},
     placeholderValues:{},
     progress:null,
     completedAt:0,
@@ -482,6 +503,7 @@ export function createReaderSlot(library, workId, candidate, now = Date.now()) {
       createdAt:savedAt,
       updatedAt:savedAt,
       identityId:active?.identityId || "",
+      phoneAccess:{},
       placeholderValues:normalizedPlaceholderValues(active?.placeholderValues, book.placeholderDefinitions),
       progress:null,
       completedAt:0,
@@ -602,6 +624,31 @@ export function saveReaderPlaceholders(library, workId, values, now = Date.now()
     }, slot => ({
       ...slot,
       placeholderValues:normalizedPlaceholderValues(values, book.placeholderDefinitions),
+      updatedAt:timestamp(now, slot.updatedAt),
+    }))
+    : book))
+}
+
+export function rememberReaderPhoneAccess(library, workId, appType, contactId, now = Date.now()) {
+  const current = normalizedLibrary(library)
+  if (
+    !exactId(workId)
+    || !exactId(appType)
+    || appType === "__proto__"
+    || appType === "prototype"
+    || appType === "constructor"
+    || !exactId(contactId)
+  ) return current
+  return withBooks(current, current.books.map(book => book.id === workId
+    ? updateActiveBookSlot({
+      ...book,
+      lastOpenedAt:timestamp(now, book.lastOpenedAt),
+    }, slot => ({
+      ...slot,
+      phoneAccess:{
+        ...slot.phoneAccess,
+        [appType]:contactId,
+      },
       updatedAt:timestamp(now, slot.updatedAt),
     }))
     : book))

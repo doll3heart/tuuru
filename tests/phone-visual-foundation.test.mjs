@@ -43,3 +43,15 @@ test("representative apps share the same card surface language", () => {
 test("memo cards do not render a decorative thick side stripe", () => {
   assert.doesNotMatch(phone, /border-left\s*:\s*3px/)
 })
+
+test("conversation action control stays visually tiny without losing its touch target", () => {
+  const action = rule(".message-chat-action-button")
+  const hitArea = rule(".message-chat-action-button::before")
+  const icon = rule(".message-chat-action-button span")
+  assert.match(action, /width\s*:\s*22px/)
+  assert.match(action, /height\s*:\s*22px/)
+  assert.match(hitArea, /inset\s*:\s*-11px/)
+  assert.match(phone, /<span aria-hidden="true">⋯<\/span>/)
+  assert.doesNotMatch(phone, /•••/)
+  assert.match(icon, /letter-spacing\s*:\s*0/)
+})

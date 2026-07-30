@@ -93,6 +93,7 @@ test("bounded phone mode covers narrow portrait and coarse-pointer landscape", (
   const reader = joinedRuleBodies(".phone-reader")
   const frame = joinedRuleBodies(".phone-reader > .phone-frame")
   const desktop = joinedRuleBodies(".phone-reader > .phone-frame > #phoneDesktopReader")
+  const notification = joinedRuleBodies(".phone-reader > .phone-frame .phone-flow-notification")
 
   assert.match(reader, /position\s*:\s*fixed/)
   assert.match(reader, /inset\s*:\s*0/)
@@ -107,10 +108,15 @@ test("bounded phone mode covers narrow portrait and coarse-pointer landscape", (
   assert.match(frame, /height\s*:\s*100%/)
   assert.match(frame, /min-height\s*:\s*0/)
   assert.match(frame, /max-height\s*:\s*100%/)
+  assert.match(frame, /max-width\s*:\s*none/)
+  assert.match(frame, /border\s*:\s*none/)
+  assert.match(frame, /border-radius\s*:\s*0/)
+  assert.match(frame, /box-shadow\s*:\s*none/)
 
   assert.match(desktop, /min-height\s*:\s*0\s*!important/)
   assert.match(desktop, /overflow-y\s*:\s*auto/)
   assert.match(desktop, /overscroll-behavior\s*:\s*contain/)
+  assert.match(notification, /top\s*:\s*calc\(var\(--reader-safe-top\)\s*\+\s*60px\)/)
 
   assert.equal(ruleBodiesFor(".phone-frame").length, 1)
 })
@@ -182,10 +188,15 @@ test("article phone overlay uses bounded classes and clears its runtime context"
   assert.match(wrapper, /height\s*:\s*700px/)
   assert.match(wrapper, /max-height\s*:\s*100%/)
   assert.match(wrapper, /min-height\s*:\s*0/)
+  assert.match(wrapper, /width\s*:\s*100%/)
+  assert.match(wrapper, /max-width\s*:\s*none/)
 
   assert.match(frame, /height\s*:\s*100%/)
   assert.match(frame, /min-height\s*:\s*0/)
   assert.match(frame, /max-height\s*:\s*100%/)
+  assert.match(frame, /border\s*:\s*none/)
+  assert.match(frame, /border-radius\s*:\s*0/)
+  assert.match(frame, /box-shadow\s*:\s*none/)
 
   assert.match(desktop, /min-height\s*:\s*0\s*!important/)
   assert.match(desktop, /overflow-y\s*:\s*auto/)

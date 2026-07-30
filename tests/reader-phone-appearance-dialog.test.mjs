@@ -154,6 +154,32 @@ test("phone appearance invalid CSS stays unapplied and cancel preserves exact st
   assert.equal(document.activeElement, trigger)
 })
 
+test("phone appearance restores valid adjustments after an accidental close", async t => {
+  installDom(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    borderRadius:18,
+    fontSize:12,
+    customCss:"",
+  }))
+  await import(`../reader/reader.js?phone-appearance-draft=${Date.now()}-${Math.random()}`)
+
+  openPhoneAppearance()
+  const originalStorage = localStorage.getItem("moirain_phoneCustom")
+  const radius = document.getElementById("cuRadius")
+  radius.value = "30"
+  dispatchInput(radius)
+  document.getElementById("cuCancel").click()
+
+  assert.equal(document.querySelector(".cu-modal-overlay"), null)
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), originalStorage)
+
+  openPhoneAppearance()
+  assert.equal(document.getElementById("cuRadius").value, "30")
+  assert.match(document.getElementById("cuLiveStatus").textContent, /已恢复/)
+  document.getElementById("cuSave").click()
+  assert.equal(JSON.parse(localStorage.getItem("moirain_phoneCustom")).borderRadius, 30)
+})
+
 test("saved phone appearance reaches the standalone reader phone", async t => {
   installDom(t)
   const work = {
@@ -285,4 +311,24 @@ test("saved reader profile images can be replaced and cleared after reopening", 
 
   stored = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
   assert.equal(stored.topBgImage, null)
+})
+
+test("reader profile restores an accidentally closed draft", async t => {
+  installDom(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({ readerId:"原昵称" }))
+  await import(`../reader/reader.js?reader-profile-draft=${Date.now()}-${Math.random()}`)
+
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('[data-reader-phone-control="profile"]').click()
+  const name = document.getElementById("rpName")
+  name.value = "暂存昵称"
+  name.dispatchEvent(new Event("input", { bubbles:true }))
+  document.getElementById("rpCancel").click()
+
+  assert.equal(JSON.parse(localStorage.getItem("moirain_phoneCustom")).readerId, "原昵称")
+  document.querySelector('[data-reader-phone-control="profile"]').click()
+  assert.equal(document.getElementById("rpName").value, "暂存昵称")
+  assert.match(document.querySelector(".phone-appearance-status").textContent, /已恢复/)
+  document.getElementById("rpSave").click()
+  assert.equal(JSON.parse(localStorage.getItem("moirain_phoneCustom")).readerId, "暂存昵称")
 })

@@ -138,7 +138,7 @@ test("both reader phone renderers are wired to the shared grid helper", () => {
   assert.match(icons, /top\s*:\s*var\(--phone-grid-y/)
 })
 
-test("bounded mobile article overlays stay borderless without exceeding the legacy width", () => {
+test("bounded mobile article overlays fill the viewport while preserving legacy grid positions", () => {
   const bounded = atRuleBody(
     /@media\s*\(max-width:\s*480px\)\s*,\s*\(max-height:\s*500px\)\s*and\s*\(pointer:\s*coarse\)/,
   )
@@ -150,13 +150,15 @@ test("bounded mobile article overlays stay borderless without exceeding the lega
   assert.match(overlay, /padding\s*:\s*var\(--reader-safe-top\)\s+var\(--reader-safe-right\)\s+var\(--reader-safe-bottom\)\s+var\(--reader-safe-left\)/)
   assert.match(baseWrapper, /width\s*:\s*360px/)
   assert.match(baseWrapper, /max-width\s*:\s*100%/)
-  assert.doesNotMatch(boundedWrapper, /width\s*:/)
+  assert.match(boundedWrapper, /width\s*:\s*100%/)
+  assert.match(boundedWrapper, /max-width\s*:\s*none/)
   assert.match(boundedWrapper, /height\s*:\s*100%/)
   assert.match(frame, /border\s*:\s*none/)
   assert.match(frame, /border-radius\s*:\s*0/)
+  assert.match(frame, /box-shadow\s*:\s*none/)
 
-  assert.deepEqual([320, 390, 844].map(width => Math.min(width, 360)), [320, 360, 360])
   assert.equal(getPhoneGridPosition(360, 3, 0).left, 260)
+  assert.equal(getPhoneGridPosition(390, 3, 0).left, 260)
 })
 
 test("grid coordinates preserve numeric strings and reject non-finite values", () => {

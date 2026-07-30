@@ -4638,6 +4638,87 @@ function openMessagesEditor(frame, wid, pd) {
   var moments = pd.moments || []
   var managesModuleContactVisibility = Array.isArray(pd.visibleContactIds)
   var activeTab = 'chats'
+  var messageChatActionMenu = null
+  var messageChatActionMenuCleanup = null
+
+  function closeMessageChatActionMenu() {
+    if (messageChatActionMenuCleanup) messageChatActionMenuCleanup()
+    messageChatActionMenu?.remove()
+    messageChatActionMenu = null
+    messageChatActionMenuCleanup = null
+  }
+
+  function focusMessageChatAction(chatId) {
+    Array.from(frame.querySelectorAll('[data-chat-actions]')).find(function(button) {
+      return String(button.dataset.chatActions) === String(chatId)
+    })?.focus()
+  }
+
+  function openMessageChatActionMenu(button) {
+    closeMessageChatActionMenu()
+    var chatId = button.dataset.chatActions
+    var chat = chats.find(function(item) { return String(item.id) === String(chatId) })
+    if (!chat) return
+    var menu = document.createElement('div')
+    menu.className = 'message-chat-action-menu'
+    menu.setAttribute('role', 'menu')
+    menu.setAttribute('aria-label', '会话操作')
+    menu.innerHTML = '<button type="button" role="menuitemcheckbox" data-chat-pin="' + escapeHtmlAttribute(chatId) + '" aria-checked="' + (chat.pinned === true ? 'true' : 'false') + '">' + (chat.pinned === true ? '取消置顶' : '置顶会话') + '</button>'
+      + '<button type="button" role="menuitem" class="danger" data-chat-del="' + escapeHtmlAttribute(chatId) + '">删除会话</button>'
+
+    function closeOnOutside(event) {
+      if (!menu.contains(event.target) && event.target !== button) closeMessageChatActionMenu()
+    }
+    function closeOnKey(event) {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeMessageChatActionMenu()
+      button.focus()
+    }
+    function cleanupMenuListeners() {
+      document.removeEventListener('pointerdown', closeOnOutside)
+      document.removeEventListener('keydown', closeOnKey)
+      window.removeEventListener('resize', closeMessageChatActionMenu)
+      window.removeEventListener('scroll', closeMessageChatActionMenu, true)
+      button.setAttribute('aria-expanded', 'false')
+    }
+
+    menu.onclick = function(event) {
+      var pinButton = event.target.closest('[data-chat-pin]')
+      if (pinButton) {
+        event.stopPropagation()
+        var result = toggleChatPinned(chats, chatId)
+        if (!result.ok) return
+        closeMessageChatActionMenu()
+        chats = result.chats
+        saveData()
+        renderMessages()
+        focusMessageChatAction(chatId)
+        return
+      }
+      var deleteButton = event.target.closest('[data-chat-del]')
+      if (!deleteButton) return
+      event.stopPropagation()
+      var ordered = orderedChats(chats)
+      var removedIndex = ordered.findIndex(function(item) { return String(item.id) === String(chatId) })
+      var nextFocusId = ordered[removedIndex + 1]?.id || ordered[removedIndex - 1]?.id || ''
+      closeMessageChatActionMenu()
+      deleteChat(chatId)
+      if (nextFocusId) focusMessageChatAction(nextFocusId)
+    }
+
+    document.body.appendChild(menu)
+    messageChatActionMenu = menu
+    messageChatActionMenuCleanup = cleanupMenuListeners
+    button.setAttribute('aria-expanded', 'true')
+    var rect = button.getBoundingClientRect()
+    placeFixedMenuWithinViewport(menu, { x:rect.right, y:rect.bottom + 4 })
+    document.addEventListener('pointerdown', closeOnOutside)
+    document.addEventListener('keydown', closeOnKey)
+    window.addEventListener('resize', closeMessageChatActionMenu)
+    window.addEventListener('scroll', closeMessageChatActionMenu, true)
+    menu.querySelector('button')?.focus()
+  }
 
   function messageContactVisibilityState() {
     var contactIds = new Set(contacts.map(function(contact) { return String(contact.id) }))
@@ -4806,6 +4887,7 @@ function openMessagesEditor(frame, wid, pd) {
   }
 
   function renderMessages() {
+    closeMessageChatActionMenu()
     var body = frame.querySelector('#msgBody')
     if (!body) return
 
@@ -4837,9 +4919,7 @@ function openMessagesEditor(frame, wid, pd) {
         h += '<div class="forum-list-title">' + esc(name) + (ch.pinned === true ? '<span class="message-chat-pinned-label">置顶</span>' : '') + '</div>'
         h += '<div style="font-size:.68rem;color:var(--c-text2)">' + (ch.type === 'group' ? '群聊 ' + (ch.contactIds.length + 1) + '人' : '') + '</div>'
         h += '</div><div class="message-chat-controls">'
-        h += '<button type="button" class="message-chat-pin' + (ch.pinned === true ? ' active' : '') + '" data-chat-pin="' + escapeHtmlAttribute(ch.id) + '" aria-pressed="' + (ch.pinned === true ? 'true' : 'false') + '" aria-label="' + (ch.pinned === true ? '取消置顶' : '置顶会话') + '" title="' + (ch.pinned === true ? '取消置顶' : '置顶会话') + '">⌃</button>'
-        h += '<button type="button" class="message-chat-drag" data-chat-drag="' + escapeHtmlAttribute(ch.id) + '" aria-label="拖动调整会话顺序；也可用上下方向键" title="拖动排序">↕</button>'
-        h += '<button type="button" class="browser-del message-chat-delete" data-chat-del="' + escapeHtmlAttribute(ch.id) + '" aria-label="删除会话">×</button></div>'
+        h += '<button type="button" class="message-chat-action-button' + (ch.pinned === true ? ' active' : '') + '" data-chat-actions="' + escapeHtmlAttribute(ch.id) + '" aria-haspopup="menu" aria-expanded="false" aria-label="会话操作；长按拖动排序；也可用上下方向键排序" title="轻点管理，长按拖动排序"><span aria-hidden="true">⋯</span></button></div>'
         h += '</div>'
       })
     } else if (activeTab === 'contacts') {
@@ -5140,64 +5220,94 @@ function bindMsgEvents() {
       }
     }
 
-    function focusChatHandle(chatId) {
-      Array.from(frame.querySelectorAll('[data-chat-drag]')).find(function(handle) {
-        return String(handle.dataset.chatDrag) === String(chatId)
-      })?.focus()
-    }
-
     function applyChatOrder(result, focusId) {
       if (!result?.ok) return false
       chats = result.chats
       saveData()
       renderMessages()
-      focusChatHandle(focusId)
+      focusMessageChatAction(focusId)
       return true
     }
 
-    frame.querySelectorAll('[data-chat-pin]').forEach(function(button) {
-      button.onclick = function(event) {
+    frame.querySelectorAll('[data-chat-actions]').forEach(function(handle) {
+      var suppressClick = false
+      handle.onclick = function(event) {
         event.preventDefault()
         event.stopPropagation()
-        var result = toggleChatPinned(chats, button.dataset.chatPin)
-        if (result.ok) applyChatOrder(result, button.dataset.chatPin)
+        if (suppressClick) {
+          suppressClick = false
+          return
+        }
+        openMessageChatActionMenu(handle)
       }
-    })
-
-    frame.querySelectorAll('[data-chat-drag]').forEach(function(handle) {
       handle.onkeydown = function(event) {
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
         event.preventDefault()
         event.stopPropagation()
         var ordered = orderedChats(chats)
-        var sourceIndex = ordered.findIndex(function(chat) { return String(chat.id) === String(handle.dataset.chatDrag) })
+        var sourceIndex = ordered.findIndex(function(chat) { return String(chat.id) === String(handle.dataset.chatActions) })
         var target = ordered[sourceIndex + (event.key === 'ArrowUp' ? -1 : 1)]
         if (!target) return
         applyChatOrder(
-          reorderChats(ordered, handle.dataset.chatDrag, target.id, event.key === 'ArrowUp' ? 'before' : 'after'),
-          handle.dataset.chatDrag
+          reorderChats(ordered, handle.dataset.chatActions, target.id, event.key === 'ArrowUp' ? 'before' : 'after'),
+          handle.dataset.chatActions
         )
       }
       handle.onpointerdown = function(event) {
         if (event.button !== 0 && event.pointerType !== 'touch' && event.pointerType !== 'pen') return
-        event.preventDefault()
         event.stopPropagation()
-        var sourceId = handle.dataset.chatDrag
+        closeMessageChatActionMenu()
+        var sourceId = handle.dataset.chatActions
         var sourceCard = handle.closest('.message-chat-card')
+        var startX = event.clientX
         var startY = event.clientY
+        var holdTimer = null
+        var holdActive = false
+        var dragging = false
         var targetId = ''
         var targetPosition = 'before'
         var targetCard = null
         try { handle.setPointerCapture(event.pointerId) } catch (_) {}
+
+        holdTimer = setTimeout(function() {
+          holdTimer = null
+          holdActive = true
+          suppressClick = true
+          handle.classList.add('is-long-press')
+          sourceCard?.classList.add('is-message-chat-dragging')
+          try { navigator.vibrate?.(12) } catch (_) {}
+        }, 420)
+
         function clearTarget() {
           targetCard?.classList.remove('message-chat-drop-before', 'message-chat-drop-after')
           targetCard = null
           targetId = ''
         }
+        function finish(commit) {
+          if (holdTimer) clearTimeout(holdTimer)
+          holdTimer = null
+          document.removeEventListener('pointermove', move)
+          document.removeEventListener('pointerup', up)
+          document.removeEventListener('pointercancel', cancel)
+          handle.classList.remove('is-long-press')
+          sourceCard?.classList.remove('is-message-chat-dragging')
+          var finalId = targetId
+          var finalPosition = targetPosition
+          clearTarget()
+          if (commit && dragging && finalId) applyChatOrder(reorderChats(chats, sourceId, finalId, finalPosition), sourceId)
+        }
         function move(moveEvent) {
-          if (moveEvent.pointerId !== event.pointerId || Math.abs(moveEvent.clientY - startY) < 6) return
+          if (moveEvent.pointerId !== event.pointerId) return
+          if (!holdActive) {
+            if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) > 8 && holdTimer) {
+              clearTimeout(holdTimer)
+              holdTimer = null
+            }
+            return
+          }
+          if (Math.abs(moveEvent.clientY - startY) < 6) return
           moveEvent.preventDefault()
-          sourceCard?.classList.add('is-message-chat-dragging')
+          dragging = true
           var candidate = document.elementFromPoint?.(moveEvent.clientX, moveEvent.clientY)?.closest?.('.message-chat-card[data-chat-id]')
           if (!candidate || candidate === sourceCard) { clearTarget(); return }
           var rect = candidate.getBoundingClientRect()
@@ -5209,17 +5319,12 @@ function bindMsgEvents() {
           targetPosition = position
           candidate.classList.add(position === 'after' ? 'message-chat-drop-after' : 'message-chat-drop-before')
         }
-        function finish(commit) {
-          document.removeEventListener('pointermove', move)
-          document.removeEventListener('pointerup', up)
-          document.removeEventListener('pointercancel', cancel)
-          sourceCard?.classList.remove('is-message-chat-dragging')
-          var finalId = targetId
-          var finalPosition = targetPosition
-          clearTarget()
-          if (commit && finalId) applyChatOrder(reorderChats(chats, sourceId, finalId, finalPosition), sourceId)
+        function up(upEvent) {
+          if (upEvent.pointerId !== event.pointerId) return
+          var wasHeld = holdActive
+          finish(true)
+          if (wasHeld) setTimeout(function() { suppressClick = false }, 0)
         }
-        function up(upEvent) { if (upEvent.pointerId === event.pointerId) finish(true) }
         function cancel(cancelEvent) { if (cancelEvent.pointerId === event.pointerId) finish(false) }
         document.addEventListener('pointermove', move, { passive:false })
         document.addEventListener('pointerup', up)

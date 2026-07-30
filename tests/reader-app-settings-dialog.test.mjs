@@ -1024,7 +1024,7 @@ test("reader message wallpaper readability stays local and protects dark backgro
   assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-time-color"), "#b0b8c4")
 })
 
-test("reader App settings expose an honest dirty draft and guarded discard", async t => {
+test("reader App settings restore an accidentally closed draft", async t => {
   installDom(t)
   await import(`../reader/reader.js?reader-app-dirty-draft=${Date.now()}-${Math.random()}`)
 
@@ -1041,11 +1041,17 @@ test("reader App settings expose an honest dirty draft and guarded discard", asy
   assert.match(status.textContent, /未保存/)
 
   document.getElementById("cuModalClose").click()
-  assert.ok(document.querySelector(".app-appearance-workbench"))
-  const discard = document.querySelector('[data-feedback-action]')
-  assert.equal(discard.textContent, "放弃修改")
-  discard.click()
   assert.equal(document.querySelector(".app-appearance-workbench"), null)
+  assert.equal(localStorage.getItem("moirain_phoneCustom"), null)
+
+  openNamedAppSettings("messages")
+  assert.equal(document.getElementById("cuBubbleFs").value, "15")
+  assert.equal(document.getElementById("cuModalSave").disabled, false)
+  document.getElementById("cuModalSave").click()
+  assert.equal(
+    JSON.parse(localStorage.getItem("moirain_phoneCustom")).appSettings.messages.bubbleFontSize,
+    15,
+  )
 })
 
 test("reader App Restore Default is draft-only and immediately undoable", async t => {
@@ -1235,10 +1241,10 @@ test("call preset changes stay draft-only until Save and Cancel preserves raw st
   assert.equal(document.querySelector('#cuCallBackgroundPreview').dataset.callBackground, "water")
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
   document.getElementById("cuModalCancel").click()
-  document.querySelector('[data-feedback-action]').click()
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
 
   openNamedAppSettings("messages")
+  assert.equal(document.querySelector('#cuCallBackgroundPreview').dataset.callBackground, "water")
   document.querySelector('[data-cu-call-background-preset="rose"]').click()
   document.getElementById("cuModalSave").click()
   const saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
@@ -1294,12 +1300,14 @@ test("all non-Save call background dismissals preserve raw storage", async t => 
     assert.equal(localStorage.getItem("moirain_phoneCustom"), originalRaw)
 
     dismissal.dismiss()
-    const discard = document.querySelector('[data-feedback-action]')
-    assert.equal(discard.textContent, "放弃修改")
-    discard.click()
-
     assert.equal(document.querySelector(".cu-modal-overlay"), null, `${dismissal.name} closes the modal`)
     assert.equal(localStorage.getItem("moirain_phoneCustom"), originalRaw, `${dismissal.name} preserves storage`)
+
+    openNamedAppSettings("messages")
+    assert.equal(document.querySelector("#cuCallBackgroundPreview").dataset.callBackground, "water")
+    document.querySelector('[data-cu-call-background-preset="rose"]').click()
+    dismissal.dismiss()
+    assert.equal(document.querySelector(".cu-modal-overlay"), null)
   }
 })
 

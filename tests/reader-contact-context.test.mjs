@@ -200,6 +200,33 @@ test("configured locked Apps require reader confirmation and keep the authored s
   }
 })
 
+test("a confirmed phone source opens directly when the same slot revisits it", async t => {
+  installDom(t)
+  const work = phoneWork()
+  work.id = "reader-remembers-character-access"
+  work.phoneData.appConnections = {
+    memo: { contactId:work.phoneData.contacts[1].id, prompt:"只在第一次确认。" },
+  }
+  seedPhoneWork(work)
+
+  await import(`../reader/reader.js?reader-remembers-character-access=${Date.now()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="memo"]').click()
+
+  const firstGate = document.querySelector(".rd-connection-gate")
+  assert.ok(firstGate)
+  firstGate.querySelector('[data-connection-action="confirm"]').click()
+  assert.equal(document.querySelector(".rd-connection-gate"), null)
+  assert.match(document.querySelector(".phone-frame").textContent, /Bob memo/)
+
+  document.querySelector(".rd-back-btn").click()
+  document.querySelector('[data-app-type="memo"]').click()
+
+  assert.equal(document.querySelector(".rd-connection-gate"), null)
+  assert.match(document.querySelector(".phone-frame").textContent, /Bob memo/)
+})
+
 test("reader can decline a configured character connection without seeing its content", async t => {
   installDom(t)
   const work = phoneWork()

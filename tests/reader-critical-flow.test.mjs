@@ -123,6 +123,34 @@ test("non-message flow cues do not use a side-tab accent border", () => {
   assert.doesNotMatch(cueRule, /border-left\s*:/)
 })
 
+test("flow notifications stay above the phone profile and retain reduced motion", () => {
+  assert.match(
+    readerCss,
+    /\.phone-frame\s*>\s*\.phone-flow-notification\s*\{[^}]*z-index\s*:\s*20/,
+  )
+  assert.match(
+    readerCss,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.phone-flow-notification\s*\{[^}]*animation\s*:\s*none/,
+  )
+})
+
+test("inline forum picture-in-picture overrides direct-child panel positioning", () => {
+  assert.match(
+    readerCss,
+    /\.rd-phone-app-panel\s*>\s*\.rd-inline-forum-pip\s*\{[^}]*position\s*:\s*absolute[^}]*z-index\s*:\s*40/,
+  )
+})
+
+test("completed call records occupy separate centered rows", () => {
+  const recordRule = readerCss.slice(
+    readerCss.indexOf(".rd-call-card.rd-call-record {"),
+    readerCss.indexOf(".rd-call-card.rd-call-record > .rd-call-record-icon"),
+  )
+  assert.match(recordRule, /width:\s*max-content/)
+  assert.match(recordRule, /margin:\s*4px auto/)
+  assert.match(recordRule, /display:\s*flex/)
+})
+
 test("article nodes flow as chapter text with a one-and-a-half paragraph boundary", () => {
   const contentRule = readerCss.slice(
     readerCss.indexOf(".article-content {"),
@@ -313,13 +341,18 @@ test("ordinary article interactions record the response then continue chapter te
 
 test("standalone author flow guides one conversation and schedules calls", async t => {
   installDom(t)
-  await startWork(flowPhoneWork(), "standalone-reading-flow")
+  const work = flowPhoneWork()
+  work.phoneData.contacts[0].avatarUrl = "data:image/png;base64,iVBORw0KGgo="
+  await startWork(work, "standalone-reading-flow")
 
   assert.equal(document.querySelectorAll(".phone-flow-badge").length, 1)
   assert.ok(document.querySelector('[data-app-type="messages"] .phone-flow-badge'))
   const notification = document.querySelector(".phone-flow-notification")
   assert.ok(notification, "the current conversation should arrive as a phone notification")
-  assert.match(notification.textContent, /林澈.*有一段新对话/)
+  assert.match(notification.textContent, /消息.*林澈.*第一项消息/s)
+  const notificationVisual = notification.querySelector(".phone-flow-notification-icon")
+  assert.ok(notificationVisual.classList.contains("is-contact-avatar"))
+  assert.equal(notificationVisual.querySelector("img")?.getAttribute("src"), work.phoneData.contacts[0].avatarUrl)
 
   notification.click()
   assert.ok(document.getElementById("chatMsgArea"), "the current chat step should open directly")
@@ -352,6 +385,35 @@ test("standalone author flow guides one conversation and schedules calls", async
   document.querySelector(".rd-call-hangup").click()
   assert.ok(document.getElementById("phoneDesktopReader"))
   assert.ok(document.querySelector('[data-app-type="memo"] .phone-flow-badge'))
+
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  const endedCall = document.querySelector('.rd-call-record[data-message-id="call-1"]')
+  assert.ok(endedCall, "a call already completed by the reading flow should stay compact when the chat is reopened")
+  assert.match(endedCall.textContent, /语音通话\s*已通话 00:\d{2}/)
+})
+
+test("group message flow notifications use the group avatar and open that conversation", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "group-flow-notification"
+  work.phoneData.chats[0].type = "group"
+  work.phoneData.chats[0].groupName = "夜航组"
+  work.phoneData.chats[0].groupAvatarUrl = "data:image/png;base64,iVBORw0KGgo="
+
+  await startWork(work, work.id)
+
+  const notification = document.querySelector('.phone-flow-notification[data-flow-notification-app="messages"]')
+  assert.ok(notification)
+  assert.match(notification.textContent, /消息.*夜航组.*第一项消息/s)
+  assert.equal(
+    notification.querySelector(".phone-flow-notification-icon img")?.getAttribute("src"),
+    work.phoneData.chats[0].groupAvatarUrl,
+  )
+
+  notification.click()
+  assert.ok(document.getElementById("chatMsgArea"))
+  assert.match(document.querySelector(".chat-round-title")?.textContent || "", /夜航组/)
 })
 
 test("phone flow notifications guide memo and shopping modules", async t => {
@@ -383,7 +445,9 @@ test("phone flow notifications guide memo and shopping modules", async t => {
 
   let notification = document.querySelector('.phone-flow-notification[data-flow-notification-app="memo"]')
   assert.ok(notification, "memo must receive the same phone notification guide as Messages")
-  assert.match(notification.textContent, /备忘录.*林澈/)
+  assert.match(notification.textContent, /备忘录.*林澈.*第三项备忘录/s)
+  assert.ok(notification.querySelector(".phone-flow-notification-icon").classList.contains("is-app-icon"))
+  assert.match(notification.querySelector(".phone-flow-notification-icon").textContent, /N/)
   notification.click()
   assert.ok(document.querySelector('.rd-connection-gate[data-connection-state="choose"]'))
   document.querySelector('[data-connection-action="confirm"]').click()
@@ -593,6 +657,7 @@ test("reader opens an authored forum post inside a closable chat picture-in-pict
   card.click()
   const pip = document.querySelector(".rd-inline-forum-pip")
   assert.match(pip?.textContent || "", /夜雨讨论.*这是内联帖子正文/s)
+  assert.equal(pip.parentElement.classList.contains("chat-reader-shell"), true)
   pip.querySelector(".rd-inline-forum-close").click()
   assert.equal(document.querySelector(".rd-inline-forum-pip"), null)
   assert.equal(document.activeElement, card)

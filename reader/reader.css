@@ -1820,7 +1820,7 @@ body.rd-theme-gray .article-meta { color: #333; }
 .chat-link-card strong,.chat-takeaway-card strong{font-size:.72rem;color:#44363a}.chat-link-card span,.chat-takeaway-card span{font-size:.61rem;line-height:1.4;color:#6d5c61;overflow-wrap:anywhere}
 .chat-link-card:focus-visible,.chat-takeaway-card:focus-visible{outline:2px solid #805d67;outline-offset:2px}.chat-takeaway-card b{font-size:.82rem;color:#5b3f47}.chat-takeaway-card small{font-size:.57rem;color:#76666b}.chat-takeaway-card .chat-takeaway-type{font-weight:700;letter-spacing:.08em;color:#805d67}
 .rd-inline-forum-card{font:inherit;text-align:left;cursor:pointer}.chat-link-card.is-unavailable{opacity:.65}
-.rd-inline-forum-pip{position:absolute;z-index:40;inset:54px 12px 58px;display:flex;min-height:0;flex-direction:column;overflow:hidden;border:1px solid #bda9ae;border-radius:12px;background:#fffaf9;color:#44363a;box-shadow:0 14px 34px rgba(54,35,40,.28)}
+.rd-phone-app-panel > .rd-inline-forum-pip{position:absolute;z-index:40;inset:54px 12px 58px;display:flex;min-height:0;flex-direction:column;overflow:hidden;border:1px solid #bda9ae;border-radius:12px;background:#fffaf9;color:#44363a;box-shadow:0 14px 34px rgba(54,35,40,.28)}
 .rd-inline-forum-pip-head{display:flex;min-height:42px;align-items:center;justify-content:space-between;padding:0 10px 0 14px;border-bottom:1px solid #d7c7cb;background:#eee5e7;font-size:.72rem;letter-spacing:.05em}.rd-inline-forum-close{display:grid;width:32px;height:32px;place-items:center;border:0;border-radius:50%;background:transparent;color:#5f4b51;font-size:1.15rem;cursor:pointer}.rd-inline-forum-close:hover{background:#dfd0d4}.rd-inline-forum-close:focus-visible{outline:2px solid #805d67;outline-offset:-2px}
 .rd-inline-forum-pip-scroll{min-height:0;overflow-y:auto;padding:14px}.rd-inline-forum-author{display:flex;align-items:center;gap:8px;margin-bottom:14px}.rd-inline-forum-author>span:last-child{display:flex;min-width:0;flex-direction:column}.rd-inline-forum-author strong{font-size:.72rem}.rd-inline-forum-author time{font-size:.58rem;color:#857177}.rd-inline-forum-avatar{display:grid;width:30px;height:30px;flex:0 0 auto;place-items:center;overflow:hidden;border-radius:50%;background:var(--rd-avatar-bg,#c7a1aa);color:#fff;font-size:.68rem}.rd-inline-forum-avatar img{width:100%;height:100%;object-fit:cover}.rd-inline-forum-pip h3{margin:0 0 8px;font-size:1rem;line-height:1.35}.rd-inline-forum-content{white-space:pre-wrap;font-size:.75rem;line-height:1.7;overflow-wrap:anywhere}.rd-inline-forum-images{display:grid;gap:8px;margin-top:12px}.rd-inline-forum-images img{width:100%;max-height:220px;border-radius:8px;object-fit:cover}
 .rd-memo-note.is-flow-target,
@@ -2087,45 +2087,59 @@ body.rd-theme-gray .article-meta { color: #333; }
   left: 12px;
   right: 12px;
   z-index: 20;
-  min-height: 70px;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--rd-choice-gap, 10px);
-  padding: 10px 12px;
+  display: grid;
+  min-height: 88px;
+  grid-template-columns: 42px minmax(0, 1fr) 16px;
+  align-items: start;
+  gap: 11px;
+  padding: 11px 10px 11px 12px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 13px;
   background: rgba(255, 250, 249, .98);
   color: var(--phone-system-text);
-  box-shadow: 0 5px 8px rgba(78, 56, 63, .24);
+  box-shadow: 0 6px 8px rgba(78, 56, 63, .24);
   font: inherit;
   text-align: left;
   cursor: pointer;
-  animation: phoneFlowNotificationIn .28s cubic-bezier(.22, 1, .36, 1) both;
+  animation: phoneFlowNotificationIn .26s cubic-bezier(.22, 1, .36, 1) both;
 }
+.phone-frame > .phone-flow-notification { z-index: 20; }
 .phone-flow-notification:hover { background: #fffdfc; }
 .phone-flow-notification:active { transform: translateY(1px); }
 .phone-flow-notification:focus-visible { outline: 2px solid var(--phone-system-primary); outline-offset: 2px; }
 .phone-flow-notification-icon {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 42px;
+  height: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  overflow: hidden;
+  border-radius: 10px;
   background: var(--phone-system-primary);
   color: var(--phone-system-primary-ink);
   font-size: 13px;
   font-weight: 750;
 }
-.phone-flow-notification-icon svg { width: 22px; height: 22px; }
+.phone-flow-notification-icon.is-contact-avatar { background: var(--phone-flow-avatar-bg, var(--phone-system-primary)); color: #fff; }
+.phone-flow-notification-icon img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.phone-flow-notification-icon svg { width: 24px; height: 24px; }
 .phone-flow-notification-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.3; }
-.phone-flow-notification-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--phone-system-muted); font-size: 9px; }
-.phone-flow-notification-meta strong { color: var(--phone-system-text); font-size: 9px; font-weight: 700; }
-.phone-flow-notification-copy > b { margin-top: 3px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.phone-flow-notification-copy > span:last-child { margin-top: 2px; overflow: hidden; color: var(--phone-system-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.phone-flow-notification-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--phone-system-muted); font-size: 10px; }
+.phone-flow-notification-meta strong { overflow: hidden; color: var(--phone-system-text); font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.phone-flow-notification-copy > b { margin-top: 4px; overflow: hidden; font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.phone-flow-notification-copy > span:last-child {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--phone-system-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.phone-flow-notification-chevron { align-self: center; color: var(--phone-system-muted); font-size: 20px; font-weight: 300; line-height: 1; }
 @keyframes phoneFlowNotificationIn {
-  from { opacity: 0; transform: translateY(-10px); }
+  from { opacity: 0; transform: translateY(-10px) scale(.985); }
   to { opacity: 1; transform: translateY(0); }
 }
 .phone-frame.phone-default-wallpaper .phone-desktop {
@@ -2891,18 +2905,22 @@ body.rd-theme-gray .article-meta { color: #333; }
   }
   .phone-reader > .phone-frame {
     width: 100%;
-    max-width: 360px;
+    max-width: none;
     height: 100%;
     min-height: 0;
     max-height: 100%;
     border: none;
     border-radius: 0;
+    box-shadow: none;
   }
   .phone-reader > .phone-frame > #phoneDesktopReader {
     min-height: 0 !important;
     overflow-y: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+  }
+  .phone-reader > .phone-frame .phone-flow-notification {
+    top: calc(var(--reader-safe-top) + 60px);
   }
   .reader-back {
     top: calc(var(--reader-safe-top) + 8px);
@@ -2944,11 +2962,14 @@ body.rd-theme-gray .article-meta { color: #333; }
     padding: var(--reader-safe-top) var(--reader-safe-right) var(--reader-safe-bottom) var(--reader-safe-left);
   }
   .rd-pm-phone-wrap {
+    width: 100%;
+    max-width: none;
     height: 100%;
   }
   .rd-pm-phone-wrap > .phone-frame {
     border: none;
     border-radius: 0;
+    box-shadow: none;
   }
 }
 
@@ -4685,6 +4706,23 @@ body.rd-interactive-scene-active {
   gap: 6px;
   margin-bottom: 10px;
 }
+
+@supports (content-visibility: auto) {
+  .rd-chat-message,
+  .rd-chat-time,
+  .rd-post-card,
+  .rd-memo-note,
+  .rd-gallery-photo,
+  .rd-browser-entry {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 72px;
+  }
+
+  .rd-gallery-photo {
+    contain-intrinsic-size: auto 112px;
+  }
+}
+
 .rd-chat-message.is-self { flex-direction: row-reverse; }
 .rd-chat-message-body {
   min-width: 0;
@@ -4712,16 +4750,23 @@ body.rd-interactive-scene-active {
   outline: 2px solid #765862;
   outline-offset: 2px;
 }
+.rd-chat-choice-field {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+}
 .rd-chat-choice-list {
   position: absolute;
-  right: 6px;
-  bottom: 43px;
-  left: 6px;
+  right: 0;
+  bottom: 100%;
+  left: 0;
   z-index: 30;
   max-height: 200px;
   overflow-y: auto;
   border: 1px solid #c8b7bc;
-  border-radius: 5px;
+  border-radius: 5px 5px 0 0;
   background: #fff;
   box-shadow: 0 -4px 8px rgba(66, 47, 54, .13);
 }
@@ -4737,7 +4782,7 @@ body.rd-interactive-scene-active {
   background: #fff;
   color: #493b40;
   font: 500 11px/1.45 var(--font);
-  text-align: left;
+  text-align: center;
   cursor: pointer;
 }
 .rd-reply-option:last-child { border-bottom: 0; }
@@ -4752,6 +4797,7 @@ body.rd-interactive-scene-active {
   background: #f5f6f8;
 }
 .rd-chat-choice-trigger {
+  width: 100%;
   min-width: 0;
   height: 30px;
   flex: 1;
@@ -4819,6 +4865,52 @@ body.rd-interactive-scene-active {
 .rd-call-card small { font-size: 8px; color: #f8edf0; }
 .rd-call-card b { text-align: center; font-size: 16px; }
 .rd-call-card:focus-visible { outline: 2px solid var(--c-primary-hover); outline-offset: 2px; }
+
+.rd-call-card.rd-call-record {
+  width: max-content;
+  max-width: calc(100% - 12px);
+  min-height: 30px;
+  margin: 4px auto;
+  padding: 5px 9px 5px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  border-color: color-mix(in srgb, var(--rd-call-record-ink, #333) 14%, transparent);
+  border-radius: 8px;
+  background: var(--rd-call-record-bg, #fff);
+  color: var(--rd-call-record-ink, #333);
+  box-shadow: 1px 1px rgba(74, 50, 57, .12);
+  font-size: 9px;
+  line-height: 1.3;
+}
+.rd-call-card.rd-call-record > .rd-call-record-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 0;
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  color: inherit;
+  font-size: 9px;
+}
+.rd-call-card.rd-call-record > .rd-call-record-copy {
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+.rd-call-card.rd-call-record small {
+  color: inherit;
+  font-size: 8px;
+  opacity: .62;
+}
+.rd-call-card.rd-call-record:hover {
+  border-color: color-mix(in srgb, var(--rd-call-record-ink, #333) 26%, transparent);
+  transform: translateY(-1px);
+}
 
 .rd-call-scene {
   --rd-call-ink: #ffffff;

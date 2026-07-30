@@ -71,10 +71,15 @@ test("bounded phone editors fit short screens without clipping their desktop", (
   )
   assert.match(wrap, /min-height\s*:\s*0/)
   assert.match(wrap, /overflow\s*:\s*hidden/)
+  assert.match(wrap, /padding\s*:\s*0/)
 
   assert.match(frame, /height\s*:\s*100%/)
   assert.match(frame, /min-height\s*:\s*0/)
-  assert.match(frame, /max-height\s*:\s*680px/)
+  assert.match(frame, /max-width\s*:\s*none/)
+  assert.match(frame, /max-height\s*:\s*none/)
+  assert.match(frame, /border\s*:\s*0/)
+  assert.match(frame, /border-radius\s*:\s*0/)
+  assert.match(frame, /box-shadow\s*:\s*none/)
   assert.doesNotMatch(frame, /min-height\s*:\s*(?:600|680)px/)
 
   assert.match(desktop, /min-height\s*:\s*0/)

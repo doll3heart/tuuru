@@ -121,16 +121,27 @@ test("single and group conversations can be pinned and reordered inside their se
     const ids = () => Array.from(overlay.querySelectorAll("[data-chat-id]")).map(card => card.dataset.chatId)
     assert.deepEqual(ids(), ["pinned-a", "normal-a", "normal-b"])
 
-    overlay.querySelector('[data-chat-pin="normal-b"]').click()
+    const normalActions = overlay.querySelector('[data-chat-actions="normal-b"]')
+    assert.ok(normalActions)
+    assert.equal(
+      overlay.querySelector('[data-chat-id="normal-b"] .message-chat-controls').querySelectorAll("button").length,
+      1,
+      "conversation cards should expose one consolidated action button",
+    )
+    normalActions.click()
+    const actionMenu = document.querySelector(".message-chat-action-menu")
+    assert.ok(actionMenu)
+    assert.ok(actionMenu.querySelector('[data-chat-del="normal-b"]'))
+    actionMenu.querySelector('[data-chat-pin="normal-b"]').click()
     assert.deepEqual(ids(), ["normal-b", "pinned-a", "normal-a"])
     assert.equal(draft.snapshot().phoneData.chats[0].id, "normal-b")
     assert.equal(draft.snapshot().phoneData.chats[0].pinned, true)
 
-    const handle = overlay.querySelector('[data-chat-drag="pinned-a"]')
+    const handle = overlay.querySelector('[data-chat-actions="pinned-a"]')
     handle.dispatchEvent(new window.KeyboardEvent("keydown", { key:"ArrowUp", bubbles:true }))
     assert.deepEqual(ids(), ["pinned-a", "normal-b", "normal-a"])
     assert.deepEqual(draft.snapshot().phoneData.chats.map(chat => chat.id), ["pinned-a", "normal-b", "normal-a"])
-    assert.equal(document.activeElement?.dataset.chatDrag, "pinned-a")
+    assert.equal(document.activeElement?.dataset.chatActions, "pinned-a")
   } finally {
     closeFixture(fixture)
   }
@@ -779,8 +790,12 @@ test("chat ids and avatar urls cannot inject attributes into author message view
 
     overlay.querySelector("#chatBack").click()
     const chatCard = overlay.querySelector("[data-chat-id]")
-    const deleteButton = overlay.querySelector("[data-chat-del]")
+    const actionButton = overlay.querySelector("[data-chat-actions]")
     assert.equal(chatCard.dataset.chatId, maliciousChatId)
+    assert.equal(actionButton.dataset.chatActions, maliciousChatId)
+    assert.equal(actionButton.hasAttribute("data-pwned"), false)
+    actionButton.click()
+    const deleteButton = document.querySelector("[data-chat-del]")
     assert.equal(deleteButton.dataset.chatDel, maliciousChatId)
     assert.equal(chatCard.hasAttribute("data-pwned"), false)
     assert.equal(deleteButton.hasAttribute("data-pwned"), false)
