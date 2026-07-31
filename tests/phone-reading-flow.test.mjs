@@ -36,6 +36,24 @@ test("the author reading-flow builder keeps every chat field in authored order",
   assert.match(messageSteps[1].label, /语音通话/)
 })
 
+test("reading-flow labels explain story events, cards, and call outcomes", () => {
+  const data = phoneData()
+  data.chats[0].rounds[0].messages.push(
+    { id:"event-1", type:"system-event", eventKind:"recall", actorName:"林澈" },
+    { id:"location-1", type:"location", locationName:"白石街" },
+    { id:"file-1", type:"file", fileName:"夜巡表.pdf" },
+    { id:"missed-1", type:"call", callMode:"voice", callStatus:"missed" },
+  )
+  const labels = buildPhoneReadingFlowSequence(data)
+    .filter(step => ["event-1", "location-1", "file-1", "missed-1"].includes(step.itemId))
+    .map(step => step.label)
+
+  assert.match(labels[0], /撤回/)
+  assert.match(labels[1], /白石街/)
+  assert.match(labels[2], /夜巡表/)
+  assert.match(labels[3], /无人接听/)
+})
+
 test("reading-flow sequence reorder is detached and rejects invalid indexes", () => {
   const sequence = [
     { type:"messages", itemId:"message-1" },

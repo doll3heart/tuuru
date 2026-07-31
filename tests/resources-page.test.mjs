@@ -257,11 +257,21 @@ test("the tutorial explains article message contact visibility without reviving 
 test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {
   for (const feature of [
     "App 排列", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
-    "外卖卡片", "消息编辑菜单", "会话置顶与排序", "消息回复选项", "聊天轮次", "语音与视频通话",
+    "外卖卡片", "消息编辑菜单", "消息多选与转发", "会话置顶与排序", "消息回复选项", "聊天轮次", "语音与视频通话",
     "动态", "论坛", "楼中楼回复关系", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
   ]) {
     assert.match(source, new RegExp(feature))
   }
+})
+
+test("the message tutorial explains the distilled composer and multi-select forwarding", () => {
+  assert.match(source, /选中系统时会生成居中的系统提示/)
+  assert.match(source, /右键或长按下一条消息.*在前插入时间/s)
+  assert.match(source, /长按任意消息.*右键消息.*多选/s)
+  assert.match(source, /不需要手填聊天记录/)
+  assert.match(source, /长按消息；电脑右键消息.*撤回.*发送失败/s)
+  assert.match(source, /发送失败时[^。]*先看到消息发出[^。]*迅速消失/)
+  assert.match(source, /撤回时[^。]*可点开查看原文的系统提示/)
 })
 
 test("the shopping tutorial explains how to edit an existing product card", () => {

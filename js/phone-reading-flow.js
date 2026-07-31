@@ -1,3 +1,5 @@
+import { chatStoryMessageLabel } from "./chat-story-events.js"
+
 const FLOW_COLLECTIONS = Object.freeze({
   memo: "memos",
   shopping: "shoppingItems",
@@ -25,6 +27,17 @@ function contactName(phoneData, contactId) {
 
 function messageLabel(message) {
   if (!message || typeof message !== "object") return "消息"
+  if (
+    message.type === "system-event"
+    || message.type === "contact-event"
+    || message.type === "contact-card"
+    || message.type === "file"
+    || message.type === "music"
+    || message.type === "forward"
+    || message.type === "schedule"
+    || message.type === "location"
+    || (message.type === "call" && message.callStatus)
+  ) return chatStoryMessageLabel(message)
   if (message.type === "call") return message.callMode === "video" ? "视频通话" : "语音通话"
   if (message.type === "redpacket") return `红包 ¥${Number(message.redpacketAmount || 0).toFixed(2)}`
   if (message.type === "transfer") return `转账 ¥${Number(message.transferAmount || 0).toFixed(2)}`

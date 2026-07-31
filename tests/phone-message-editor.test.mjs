@@ -107,6 +107,125 @@ test("the author message page exposes the demo editor skeleton", async () => {
   }
 })
 
+test("the author preview uses the same voice playback and transcript vocabulary as the reader", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "voice-preview",
+    type: "voice",
+    senderId: "contact-1",
+    text: "别担心，我很快就到。",
+    duration: 3,
+  })
+  const fixture = await openSingleChat("message-editor-voice-preview", phoneData)
+  const { overlay } = fixture
+
+  try {
+    const voice = overlay.querySelector('[data-voice-message-id="voice-preview"]')
+    assert.ok(voice)
+    assert.ok(voice.querySelector(".rd-voice-playback"))
+    const transcriptToggle = voice.querySelector(".rd-voice-transcript-toggle")
+    const transcript = voice.querySelector(".rd-voice-transcript")
+    assert.ok(transcriptToggle)
+    assert.equal(transcript.hidden, true)
+    transcriptToggle.click()
+    assert.equal(transcript.hidden, false)
+    assert.match(transcript.textContent, /别担心/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("saved story events remain editable without occupying the attachment sheet", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"legacy-recall",
+    type:"system-event",
+    eventKind:"recall",
+    actorContactId:"contact-1",
+    originalText:"别回头。",
+    allowReveal:true,
+  })
+  const fixture = await openSingleChat("message-editor-story-event", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    const eventRow = overlay.querySelector('[data-message-id="legacy-recall"]')
+    assert.match(eventRow?.textContent || "", /撤回/)
+    eventRow.dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:24,
+      clientY:24,
+    }))
+    const editAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "编辑")
+    assert.ok(editAction)
+    editAction.click()
+    const editor = overlay.querySelector(".chat-event-editor")
+    assert.ok(editor)
+    editor.querySelector("#chatEventOriginal").value = "别再回头。"
+    editor.querySelector("#chatEventSave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.type, "system-event")
+    assert.equal(saved.eventKind, "recall")
+    assert.equal(saved.actorContactId, "contact-1")
+    assert.equal(saved.originalText, "别再回头。")
+    assert.equal(saved.allowReveal, true)
+    assert.match(overlay.querySelector(".chat-story-system-row").textContent, /撤回/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("rich story cards share the paged plus sheet and save structured content", async () => {
+  const fixture = await openSingleChat("message-editor-rich-card")
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector("#chatPlusBtn").click()
+    overlay.querySelector("#chatToolNext").click()
+    const fileButton = overlay.querySelector('[data-chat-tool="file"]')
+    assert.ok(fileButton)
+    fileButton.click()
+    document.querySelector("#amFileName").value = "夜巡值班表.pdf"
+    document.querySelector("#amFileType").value = "PDF"
+    document.querySelector("#amFileSize").value = "1.2 MB"
+    document.querySelector("#amFileContent").value = "23:00 北门交接"
+    document.querySelector("#amSave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.type, "file")
+    assert.equal(saved.fileName, "夜巡值班表.pdf")
+    assert.equal(saved.fileContent, "23:00 北门交接")
+    assert.match(overlay.querySelector(".chat-file-card").textContent, /1.2 MB/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("call outcomes can be authored without inventing call dialogue", async () => {
+  const fixture = await openSingleChat("message-editor-call-outcome")
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector("#chatPlusBtn").click()
+    overlay.querySelector('[data-chat-tool="voice-call"]').click()
+    const editor = overlay.querySelector(".chat-call-editor")
+    editor.querySelector("#chatCallStatus").value = "missed"
+    editor.querySelector("#chatCallStatus").dispatchEvent(new window.Event("change", { bubbles:true }))
+    assert.equal(editor.querySelector("#chatCallLines").closest(".chat-call-field").hidden, true)
+    editor.querySelector("#chatCallSave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.callStatus, "missed")
+    assert.deepEqual(saved.callLines, [])
+    assert.match(overlay.querySelector(".chat-story-call-outcome").textContent, /无人接听/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("single and group conversations can be pinned and reordered inside their section", async () => {
   const phoneData = makePhoneData()
   phoneData.chats = [
@@ -164,8 +283,73 @@ test("system time messages open the same author menu and can be deleted", async 
     }))
     const items = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
     assert.ok(items.length > 0)
+    assert.equal(items.some(item => item.textContent === "撤回"), false)
+    assert.equal(items.some(item => item.textContent === "发送失败"), false)
     items.at(-1).click()
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 0)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("a written message can be recalled and restored from its context menu", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"recall-source",
+    type:"text",
+    senderId:"contact-1",
+    text:"别回头，我在楼下。",
+    time:"今晚 22:10",
+    customMetadata:{ keep:true },
+  })
+  const fixture = await openSingleChat("message-context-recall", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector('[data-message-id="recall-source"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:24,
+      clientY:24,
+    }))
+    const recallAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "撤回")
+    assert.ok(recallAction)
+    recallAction.click()
+
+    let saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.id, "recall-source")
+    assert.equal(saved.type, "system-event")
+    assert.equal(saved.eventKind, "recall")
+    assert.equal(saved.actorContactId, "contact-1")
+    assert.equal(saved.originalText, "别回头，我在楼下。")
+    assert.equal(saved.allowReveal, true)
+    assert.deepEqual(saved.recalledMessage, {
+      id:"recall-source",
+      type:"text",
+      senderId:"contact-1",
+      text:"别回头，我在楼下。",
+      time:"今晚 22:10",
+      customMetadata:{ keep:true },
+    })
+    assert.equal(document.querySelector("#chatEventSave"), null)
+    assert.match(overlay.querySelector('[data-message-id="recall-source"]')?.textContent || "", /撤回/)
+
+    overlay.querySelector('[data-message-id="recall-source"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:24,
+      clientY:24,
+    }))
+    const restoreAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "取消撤回")
+    assert.ok(restoreAction)
+    restoreAction.click()
+
+    saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.type, "text")
+    assert.equal(saved.text, "别回头，我在楼下。")
+    assert.deepEqual(saved.customMetadata, { keep:true })
   } finally {
     closeFixture(fixture)
   }
@@ -516,7 +700,30 @@ test("the selected speaker owns each complete sentence added by the author", asy
   }
 })
 
-test("the author multi-function tools open as an in-editor sheet", async () => {
+test("the system remains a composer speaker and creates a system message instead of a time marker", async () => {
+  const fixture = await openSingleChat("message-editor-system-speaker")
+  const { draft, overlay } = fixture
+
+  try {
+    const systemSpeaker = overlay.querySelector('.chat-speaker-btn[data-sender-id="system"]')
+    assert.ok(systemSpeaker)
+    systemSpeaker.click()
+
+    const input = overlay.querySelector("#chatInput")
+    input.value = "你撤回了一条消息"
+    overlay.querySelector("#chatSendBtn").click()
+
+    const message = draft.snapshot().phoneData.chats[0].rounds[0].messages.at(-1)
+    assert.equal(message.type, "system")
+    assert.equal(message.senderId, "system")
+    assert.equal(message.text, "你撤回了一条消息")
+    assert.match(overlay.querySelector('[data-message-id="' + message.id + '"]')?.textContent || "", /你撤回了一条消息/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("the author attachment sheet keeps only actual attachments and cards", async () => {
   const fixture = await openSingleChat("message-editor-tool-sheet")
   const { overlay } = fixture
 
@@ -538,10 +745,20 @@ test("the author multi-function tools open as an in-editor sheet", async () => {
       "voice",
       "transfer",
       "location",
-      "time",
-      "system",
     ]) {
       assert.ok(sheet.querySelector(`[data-chat-tool="${tool}"]`), `missing ${tool} tool`)
+    }
+    for (const redundantTool of ["time", "system", "forward", "status-event", "contact-event", "group-event"]) {
+      assert.equal(sheet.querySelector(`[data-chat-tool="${redundantTool}"]`), null)
+    }
+
+    sheet.querySelector("#chatToolNext").click()
+    const secondPage = shell.querySelector(".chat-tool-sheet")
+    assert.ok(secondPage.querySelector('[data-chat-tool="schedule"]'))
+    assert.match(secondPage.querySelector(".chat-tool-pager")?.textContent || "", /2\s*\/\s*2/)
+    assert.equal(secondPage.querySelector("#chatToolNext").disabled, true)
+    for (const redundantTool of ["time", "system", "forward", "status-event", "contact-event", "group-event"]) {
+      assert.equal(secondPage.querySelector(`[data-chat-tool="${redundantTool}"]`), null)
     }
 
     assert.ok(sheet.querySelector("#chatToolClose"), "missing the tool sheet close button")
@@ -550,6 +767,59 @@ test("the author multi-function tools open as an in-editor sheet", async () => {
       bodyModalCount,
       "opening tools should not append a generic document-level modal",
     )
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("message multi-select forwards an automatic transcript to other contacts", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts.push({ id:"contact-2", name:"周宁", avatarUrl:"" })
+  phoneData.chats[0].rounds[0].messages.push(
+    { id:"source-a", type:"text", senderId:"contact-1", text:"钥匙在花盆下面。" },
+    { id:"source-b", type:"file", senderId:"self", fileName:"值班表.pdf", fileType:"PDF" },
+  )
+  const fixture = await openSingleChat("message-editor-multi-forward", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector('[data-message-id="source-a"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:24,
+      clientY:24,
+    }))
+    const multiAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "多选")
+    assert.ok(multiAction)
+    multiAction.click()
+
+    assert.ok(overlay.querySelector(".chat-multi-select-bar"))
+    assert.equal(overlay.querySelector("#chatInput"), null)
+    assert.ok(overlay.querySelector('[data-message-id="source-a"]').classList.contains("is-selected"))
+    overlay.querySelector('[data-message-id="source-b"]').click()
+    assert.match(overlay.querySelector(".chat-multi-select-count").textContent, /2/)
+
+    overlay.querySelector("#chatMultiForward").click()
+    const recipient = document.querySelector('[data-forward-recipient="contact-2"]')
+    assert.ok(recipient)
+    assert.equal(document.querySelector('[data-forward-recipient="contact-1"]'), null)
+    recipient.click()
+    document.querySelector("#chatForwardConfirm").click()
+
+    const saved = draft.snapshot().phoneData
+    const destination = saved.chats.find(chat => chat.type === "single" && chat.contactIds[0] === "contact-2")
+    assert.ok(destination)
+    const forwarded = destination.rounds[0].messages.at(-1)
+    assert.equal(forwarded.type, "forward")
+    assert.equal(forwarded.senderId, "self")
+    assert.equal(forwarded.forwardItems.length, 2)
+    assert.deepEqual(forwarded.forwardItems.map(item => item.text), [
+      "钥匙在花盆下面。",
+      "文件：值班表.pdf",
+    ])
+    assert.equal(overlay.querySelector(".chat-multi-select-bar"), null)
+    assert.ok(overlay.querySelector("#chatInput"))
   } finally {
     closeFixture(fixture)
   }
@@ -586,6 +856,7 @@ test("takeaway lives in the plus sheet while ending a round lives in the header 
 
     shell.querySelector("#chatBgBtn").click()
     assert.ok(document.querySelector("#chatEndRound"))
+    assert.equal(document.querySelector("#chatManageGroup"), null)
     assert.equal(document.querySelector("#bsSelfColor"), null)
     document.querySelector("#chatEndRound").click()
     assert.equal(draft.snapshot().phoneData.chats[0].rounds.length, 2)
@@ -603,7 +874,6 @@ test("author link cards can target an existing forum post", async () => {
   try {
     const shell = overlay.querySelector(".chat-author-shell")
     shell.querySelector("#chatPlusBtn").click()
-    shell.querySelector("#chatToolNext").click()
     shell.querySelector('[data-chat-tool="link"]').click()
     const postSelect = document.querySelector("#amForumPost")
     assert.ok(postSelect)
@@ -614,6 +884,75 @@ test("author link cards can target an existing forum post", async () => {
     assert.equal(message.forumPostId, "post-1")
     assert.equal(message.linkTitle, "夜雨讨论")
     assert.match(overlay.querySelector(".chat-link-card")?.textContent || "", /内联论坛帖子/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("author link cards can open existing App content and require completion", async () => {
+  const phoneData = makePhoneData()
+  phoneData.memos = [{ id:"memo-1", contactId:"contact-1", content:"<p>钥匙放在花盆下。</p>", time:"今晚" }]
+  const fixture = await openSingleChat("message-editor-cross-app-card", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector("#chatPlusBtn").click()
+    overlay.querySelector('[data-chat-tool="link"]').click()
+
+    const targetSelect = document.querySelector("#amAppTarget")
+    const memoOption = Array.from(targetSelect.options).find(option => option.dataset.targetApp === "memo")
+    assert.ok(memoOption)
+    targetSelect.value = memoOption.value
+    targetSelect.dispatchEvent(new window.Event("change", { bubbles:true }))
+    document.querySelector("#amActionMode").value = "required"
+    document.querySelector("#amSave").click()
+
+    const message = draft.snapshot().phoneData.chats[0].rounds[0].messages.at(-1)
+    assert.equal(message.type, "link")
+    assert.equal(message.targetApp, "memo")
+    assert.equal(message.targetItemId, "memo-1")
+    assert.equal(message.targetContactId, "contact-1")
+    assert.equal(message.actionRequired, true)
+    assert.equal(message.forumPostId, "")
+    assert.match(overlay.querySelector(".chat-link-card")?.textContent || "", /备忘录/)
+    assert.match(overlay.querySelector(".chat-link-card")?.textContent || "", /需查看/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("quote replies use the selected speaker and summarize rich cards", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"file-source",
+    type:"file",
+    senderId:"contact-1",
+    fileName:"线索.pdf",
+    fileType:"PDF",
+  })
+  const fixture = await openSingleChat("message-editor-rich-quote", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector('.chat-speaker-btn[data-sender-id="self"]').click()
+    overlay.querySelector('[data-message-id="file-source"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:24,
+      clientY:24,
+    }))
+    const quoteAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item")).find(button => button.textContent === "引用")
+    assert.ok(quoteAction)
+    quoteAction.click()
+    document.querySelector("#quoteMsgText").value = "我会核对。"
+    document.querySelector("#quoteMsgSave").click()
+
+    const quoted = draft.snapshot().phoneData.chats[0].rounds[0].messages.at(-1)
+    assert.equal(quoted.senderId, "self")
+    assert.equal(quoted.quoteId, "file-source")
+    assert.equal(quoted.quoteText, "文件：线索.pdf")
+    assert.equal(quoted.quoteSenderName, "林澈")
+    assert.match(overlay.querySelector('[data-quote-target="file-source"]')?.textContent || "", /文件：线索\.pdf/)
   } finally {
     closeFixture(fixture)
   }

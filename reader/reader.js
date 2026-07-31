@@ -10,6 +10,30 @@ import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 import { parsePngDimensionsFromDataUrl, readerPngDimensionError } from './png-import-policy.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 import { advanceCallPlayback, createCallPlaybackState } from './call-playback.js'
+import {
+  advanceVoicePlayback,
+  createVoicePlaybackState,
+  pauseVoicePlayback,
+  playVoicePlayback,
+  resetVoicePlayback,
+  toggleVoiceTranscript,
+  voicePlaybackProgress,
+  voicePlaybackRemainingLabel,
+} from './voice-playback.js'
+import {
+  applyChatStoryMessage,
+  chatStoryMessageLabel,
+  createChatStoryState,
+  normalizeChatStoryMessage,
+  storyEventText,
+} from '../js/chat-story-events.js'
+import {
+  chatMessageQuoteSummary,
+  listChatAppTargets,
+  messageActionLabel,
+  messageRequiresAction,
+  normalizeChatAppTarget,
+} from '../js/chat-message-actions.js'
 import { applyChatChoice, rollbackChatChoice } from '../js/chat-choice-runtime.js'
 import { applyThreadChoice, rollbackThreadChoice } from '../js/thread-choice-runtime.js'
 import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
@@ -347,6 +371,7 @@ var _activeReaderCollectionId = ''
 var _readerCollectionValues = Object.create(null)
 var _readerPhoneChoiceSession = null
 var _readerPhoneFlowSession = null
+var _readerActiveVoicePlaybackStop = null
 var _editorPreviewMode = false
 var _readerPersistenceEnabled = true
 var _readerImportOverlay = null
@@ -437,7 +462,9 @@ function resetReaderPhoneChoiceSession(work) {
     moments: null,
     momentChoiceRuns: new Map(),
     chats: new Map(),
-    forumPosts: new Map()
+    forumPosts: new Map(),
+    storyContactOverrides: new Map(),
+    storyGroupOverrides: new Map(),
   }
   return _readerPhoneChoiceSession
 }
@@ -458,6 +485,22 @@ function render(el, html) {
 
 function editorHomeUrl() {
   return buildAuthorReturnUrl(globalThis.location?.href ?? globalThis.window?.location?.href)
+}
+
+function readerPhoneDataWithStoryState(phoneData) {
+  var data = readerPhoneData(phoneData)
+  var session = readerPhoneChoiceSession(_work)
+  if (!(session.storyContactOverrides instanceof Map)) session.storyContactOverrides = new Map()
+  if (!(session.storyGroupOverrides instanceof Map)) session.storyGroupOverrides = new Map()
+  data.contacts = (data.contacts || []).map(function(contact) {
+    var override = session.storyContactOverrides.get(String(contact && contact.id || ''))
+    return override ? Object.assign({}, contact, override) : contact
+  })
+  data.chats = (data.chats || []).map(function(chat) {
+    var override = session.storyGroupOverrides.get(String(chat && chat.id || ''))
+    return override ? Object.assign({}, chat, override) : chat
+  })
+  return data
 }
 
 function renderEditorPreviewError(message) {
@@ -5683,7 +5726,7 @@ function renderPhoneReader() {
     render('app', '<div class="drop-zone"><p>手机数据为空</p><button type="button" class="drop-btn" data-reader-home>返回</button></div>')
     return
   }
-  var pd = readerPhoneData(_work.phoneData)
+  var pd = readerPhoneDataWithStoryState(_work.phoneData)
   var rc = getPhoneCustom()
   var flowStep = currentReaderPhoneFlowStep(_work)
   if (_readerPendingReadingPosition?.kind !== 'phone') _readerPhoneLocation = null
@@ -5760,8 +5803,15 @@ function readerRichTextHasContent(value) {
   return shell.textContent.replace(/\u00a0/g, ' ').trim().length > 0
 }
 
+function stopActiveReaderVoicePlayback() {
+  var stop = _readerActiveVoicePlaybackStop
+  _readerActiveVoicePlaybackStop = null
+  if (typeof stop === 'function') stop()
+}
+
 // ---- Reader App Panels ----
-function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
+function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, navigationContext) {
+  stopActiveReaderVoicePlayback()
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
@@ -5772,7 +5822,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     contactIndex:Number.isInteger(Number(contactIndex)) ? Number(contactIndex) : -1,
   }
   applyReaderAppCustomCss(type, getAppSettings(type))
-  var pd = readerPhoneData(_work.phoneData)
+  var pd = readerPhoneDataWithStoryState(_work.phoneData)
   var flowTarget = flowStep ? resolvePhoneReadingFlowStep(pd, flowStep) : null
   var contacts = pd.contacts || []
   var w = _work
@@ -5820,7 +5870,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
         Date.now(),
       ))
     }
-    openReaderApp(type, activeContactIndex, true, flowStep)
+    openReaderApp(type, activeContactIndex, true, flowStep, navigationContext)
   }
 
   function belongsToActiveContact(item) {
@@ -5828,6 +5878,22 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
   }
 
   function returnToPhoneDesktop() {
+    if (navigationContext?.origin?.kind === 'chat') {
+      var origin = navigationContext.origin
+      _readerPendingReadingPosition = {
+        kind:'phone',
+        appType:'messages',
+        view:'chat',
+        itemId:String(origin.chatId || ''),
+        contactIndex:-1,
+        scrollTop:Number(origin.scrollTop || 0),
+        anchorId:String(origin.messageId || ''),
+        anchorOffset:Number(origin.anchorOffset || 0),
+        returnHighlightId:String(origin.messageId || ''),
+      }
+      openReaderApp('messages')
+      return
+    }
     if (inOverlay && typeof _work._directOverlayClose === 'function') {
       _work._directOverlayClose()
       return
@@ -5849,6 +5915,32 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     returnToPhoneDesktop()
   }
   readerLayerHistory.open('phone-app', returnToPhoneDesktop)
+
+  function focusDeepLinkedAppItem() {
+    if (navigationContext?.targetApp !== type || !navigationContext.targetItemId) return
+    var targetSelectors = {
+      memo:'[data-memo-id]',
+      shopping:'[data-shopping-id]',
+      gallery:'[data-photo-id]',
+      browser:'[data-history-id]',
+      contacts:'[data-contact-id]',
+    }
+    var selector = targetSelectors[type]
+    if (!selector) return
+    var targetElement = Array.from(phoneFrame.querySelectorAll(selector)).find(function(element) {
+      var itemId = element.dataset.memoId
+        || element.dataset.shoppingId
+        || element.dataset.photoId
+        || element.dataset.historyId
+        || element.dataset.contactId
+      return String(itemId || '') === String(navigationContext.targetItemId)
+    })
+    if (!targetElement) return
+    targetElement.classList.add('is-deep-link-target')
+    if (!targetElement.hasAttribute('tabindex')) targetElement.tabIndex = -1
+    if (typeof targetElement.scrollIntoView === 'function') targetElement.scrollIntoView({block:'center', behavior:'auto'})
+    if (typeof targetElement.focus === 'function') targetElement.focus({preventScroll:true})
+  }
 
   function wrapPanel(title, bodyHtml) {
     var panelType = String(type || '').replace(/[^a-z0-9_-]/gi, '')
@@ -5879,6 +5971,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       _readerPendingReadingPosition = null
       scheduleReaderPositionSave()
     }
+    focusDeepLinkedAppItem()
   }
 
   function contactContextHtml() {
@@ -5907,7 +6000,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     select.onchange = function() {
       var nextIndex = Number(select.value)
       if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= contacts.length) return
-      openReaderApp(type, nextIndex, undefined, flowStep)
+      openReaderApp(type, nextIndex, undefined, flowStep, navigationContext)
       focusReaderControl(phoneFrame, '.rd-contact-select')
     }
   }
@@ -6240,6 +6333,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
         openReaderForumPost(phoneFrame, w, pd, posts[index].id, index)
       }
     })
+    if (navigationContext?.targetApp === 'forum') {
+      var linkedPostIndex = posts.findIndex(function(post) {
+        return String(post.id) === String(navigationContext.targetItemId)
+      })
+      if (linkedPostIndex >= 0) {
+        openReaderForumPost(phoneFrame, w, pd, posts[linkedPostIndex].id, linkedPostIndex, navigationContext)
+      }
+    }
   } else if (type === 'memo') {
     var memos = (pd.memos || []).filter(belongsToActiveContact).filter(function(memo) {
       return readerRichTextHasContent(memo && memo.content) || String(memo && memo.time || '').trim()
@@ -6450,6 +6551,16 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
       var orderTab = phoneFrame.querySelector('#rdShopOrderTab')
       if (orderTab) activateShopTab(orderTab, false)
     }
+    if (navigationContext?.targetApp === 'shopping') {
+      var linkedShoppingItem = items.find(function(item) {
+        return String(item.id) === String(navigationContext.targetItemId)
+      })
+      if (linkedShoppingItem?.status === 'order') {
+        var linkedOrderTab = phoneFrame.querySelector('#rdShopOrderTab')
+        if (linkedOrderTab) activateShopTab(linkedOrderTab, false)
+      }
+      focusDeepLinkedAppItem()
+    }
   } else if (type === 'profile') {
     var profileName = rc.readerId || pd.skin?.readerId || '读者'
     var profileAvatar = rc.readerAvatar || pd.skin?.readerAvatar || ''
@@ -6468,7 +6579,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep) {
     var h = '<div class="rd-contact-book" style="' + contactVars + '">'
     if (contacts.length === 0) h += '<div class="rd-app-empty">暂无联系人</div>'
     contacts.forEach(function(c) {
-      h += '<div class="rd-contact-entry">'
+      h += '<div class="rd-contact-entry" data-contact-id="' + escapeHtmlAttribute(c.id) + '">'
       h += '<div class="rd-contact-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(c.id)) + '">'
       if (c.avatarUrl) h += '<img src="' + escapeHtmlAttribute(c.avatarUrl) + '" alt="">'
       else h += esc((c.name || '?').charAt(0))
@@ -6496,12 +6607,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     ? pd.skin.readerAvatar.trim()
     : ''
   var readerChatAvatar = readerCustom.readerAvatar || authoredReaderAvatar
-  var chatMentionNames = ch.type === 'group'
-    ? [readerChatName].concat((ch.contactIds || []).map(function(contactId) {
-        var contact = contacts.find(function(candidate) { return candidate.id === contactId })
-        return contactDisplayName(contact, 'messages', contact?.name || '')
-      })).concat(readerPlaceholderMentionNames()).filter(Boolean)
-    : []
+  var chatMentionNames = []
   var flowSession = readerPhoneFlowSession(w)
   var flowEnabled = flowSession.enabled
   var flowTarget = null
@@ -6510,6 +6616,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   var chatFlowRenderToken = 0
   var CHAT_FLOW_CHARACTER_DELAY = 110
   var CHAT_FLOW_MESSAGE_GAP = 800
+  var CHAT_TRANSIENT_HOLD_MS = 520
+  var CHAT_TRANSIENT_EXIT_MS = 160
 
   function clearChatFlowTimers() {
     if (chatFlowTypingTimer !== null) clearTimeout(chatFlowTypingTimer)
@@ -6581,6 +6689,32 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     close.focus()
   }
 
+  function openChatStoryDetail(title, contentHtml, trigger) {
+    var previous = frame.querySelector('.rd-chat-story-pip')
+    if (previous) previous.remove()
+    var h = '<section class="rd-chat-story-pip" role="dialog" aria-label="' + escapeHtmlAttribute(title) + '">'
+    h += '<header class="rd-chat-story-pip-head"><strong>' + esc(title) + '</strong><button type="button" class="rd-chat-story-pip-close" aria-label="关闭详情">×</button></header>'
+    h += '<div class="rd-chat-story-pip-scroll">' + contentHtml + '</div></section>'
+    var chatRoot = frame.firstElementChild || frame
+    chatRoot.insertAdjacentHTML('beforeend', h)
+    var pip = chatRoot.querySelector('.rd-chat-story-pip')
+    var close = pip.querySelector('.rd-chat-story-pip-close')
+    function closeDetail() {
+      pip.remove()
+      if (trigger && trigger.isConnected) trigger.focus()
+    }
+    function requestClose() {
+      if (readerLayerHistory.has('phone-pip')) {
+        readerLayerHistory.close('phone-pip')
+        return
+      }
+      closeDetail()
+    }
+    readerLayerHistory.open('phone-pip', closeDetail)
+    close.onclick = requestClose
+    close.focus()
+  }
+
   function isFlowTargetMessage(message, round) {
     if (!flowStep) return false
     var playbackId = currentFlowPlaybackMessageId()
@@ -6603,6 +6737,15 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       flowTypedMessageIds: new Set(),
       claimedMessageIds: new Set(),
       endedCallIds: new Set(),
+      voicePlaybacks: new Map(),
+      revealedEventIds: new Set(),
+      retriedEventIds: new Set(),
+      burnedEventIds: new Set(),
+      reactedEventIds: new Set(),
+      eventResponses: new Map(),
+      completedActionIds: new Set(),
+      transientMessageStartedAt: new Map(),
+      settledTransientMessageIds: new Set(),
       flowGeneratedPlayback: null,
     }
     phoneChoiceSession.chats.set(chatSessionKey, chatSession)
@@ -6610,9 +6753,23 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   if (!(chatSession.flowTypedMessageIds instanceof Set)) chatSession.flowTypedMessageIds = new Set()
   if (!(chatSession.claimedMessageIds instanceof Set)) chatSession.claimedMessageIds = new Set()
   if (!(chatSession.endedCallIds instanceof Set)) chatSession.endedCallIds = new Set()
+  if (!(chatSession.voicePlaybacks instanceof Map)) chatSession.voicePlaybacks = new Map()
+  if (!(chatSession.revealedEventIds instanceof Set)) chatSession.revealedEventIds = new Set()
+  if (!(chatSession.retriedEventIds instanceof Set)) chatSession.retriedEventIds = new Set()
+  if (!(chatSession.burnedEventIds instanceof Set)) chatSession.burnedEventIds = new Set()
+  if (!(chatSession.reactedEventIds instanceof Set)) chatSession.reactedEventIds = new Set()
+  if (!(chatSession.eventResponses instanceof Map)) chatSession.eventResponses = new Map()
+  if (!(chatSession.completedActionIds instanceof Set)) chatSession.completedActionIds = new Set()
+  if (!(chatSession.transientMessageStartedAt instanceof Map)) chatSession.transientMessageStartedAt = new Map()
+  if (!(chatSession.settledTransientMessageIds instanceof Set)) chatSession.settledTransientMessageIds = new Set()
   ch = chatSession.chat
   var openedCallScenes = Object.create(null)
   var mayAutoOpenCall = true
+  var voicePlaybackTimer = null
+  var activeVoiceMessageId = ''
+  var voicePlaybackLastTick = 0
+  var storyEventTimers = new Map()
+  var transientMessageTimers = new Set()
   var choiceRuns = chatSession.choiceRuns
   var knownMessageIds = new Set()
   var generatedMessageSequence = 0
@@ -6707,7 +6864,155 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   }
 
   function callHasEnded(message) {
-    return chatSession.endedCallIds.has(String(message && message.id || '')) || callWasCompletedInFlow(message)
+    var normalized = normalizeChatStoryMessage(message)
+    return normalized.callStatus !== 'pending'
+      || chatSession.endedCallIds.has(String(message && message.id || ''))
+      || callWasCompletedInFlow(message)
+  }
+
+  function voicePlaybackForMessage(message) {
+    var messageId = String(message && message.id || '')
+    var state = chatSession.voicePlaybacks.get(messageId)
+    if (state) return state
+    var resolvedText = readerPhoneText(message && message.text)
+    var duration = message && message.duration
+      ? message.duration
+      : Math.max(1, Math.round(resolvedText.length * 0.3))
+    state = createVoicePlaybackState(duration)
+    chatSession.voicePlaybacks.set(messageId, state)
+    return state
+  }
+
+  function voiceMessageRoot(messageId) {
+    var roots = frame.querySelectorAll('.rd-voice-message')
+    for (var index = 0; index < roots.length; index++) {
+      if (String(roots[index].dataset.voiceMessageId) === String(messageId)) return roots[index]
+    }
+    return null
+  }
+
+  function renderVoiceMessagePlayback(messageId) {
+    var state = chatSession.voicePlaybacks.get(String(messageId))
+    var root = voiceMessageRoot(messageId)
+    if (!state || !root) return
+    root.dataset.voiceStatus = state.status
+    root.classList.toggle('is-playing', state.status === 'playing')
+    root.classList.toggle('is-paused', state.status === 'paused')
+    root.classList.toggle('is-completed', state.status === 'completed')
+
+    var playback = root.querySelector('.rd-voice-playback')
+    var icon = root.querySelector('.rd-voice-state-icon')
+    var remaining = root.querySelector('.rd-voice-remaining')
+    var transcriptToggle = root.querySelector('.rd-voice-transcript-toggle')
+    var transcript = root.querySelector('.rd-voice-transcript')
+    var bars = root.querySelectorAll('.rd-voice-bar')
+    var progress = voicePlaybackProgress(state)
+    var activeBars = state.status === 'playing' && progress === 0
+      ? Math.min(1, bars.length)
+      : Math.ceil(progress * bars.length)
+
+    if (playback) {
+      playback.setAttribute('aria-pressed', state.status === 'playing' ? 'true' : 'false')
+      playback.setAttribute('aria-label', state.status === 'playing'
+        ? '暂停语音消息'
+        : state.status === 'completed'
+          ? '重新播放语音消息'
+          : '播放语音消息')
+    }
+    if (icon) icon.textContent = state.status === 'playing' ? 'Ⅱ' : state.status === 'completed' ? '↻' : '▶'
+    if (remaining) remaining.textContent = voicePlaybackRemainingLabel(state)
+    bars.forEach(function(bar, index) {
+      bar.classList.toggle('is-active', index < activeBars)
+    })
+    if (transcriptToggle) {
+      transcriptToggle.setAttribute('aria-expanded', state.transcriptVisible ? 'true' : 'false')
+      transcriptToggle.textContent = state.transcriptVisible ? '收起转写' : '转写'
+    }
+    if (transcript) transcript.hidden = !state.transcriptVisible
+  }
+
+  function clearVoicePlaybackTimer() {
+    if (voicePlaybackTimer !== null) clearInterval(voicePlaybackTimer)
+    voicePlaybackTimer = null
+    voicePlaybackLastTick = 0
+  }
+
+  function stopVoicePlayback(reset) {
+    clearVoicePlaybackTimer()
+    var messageId = activeVoiceMessageId
+    activeVoiceMessageId = ''
+    if (_readerActiveVoicePlaybackStop === stopVoicePlaybackForNavigation) {
+      _readerActiveVoicePlaybackStop = null
+    }
+    if (!messageId) return
+    var state = chatSession.voicePlaybacks.get(messageId)
+    if (!state) return
+    chatSession.voicePlaybacks.set(messageId, reset ? resetVoicePlayback(state) : pauseVoicePlayback(state))
+    renderVoiceMessagePlayback(messageId)
+  }
+
+  function stopVoicePlaybackForNavigation() {
+    stopVoicePlayback(true)
+  }
+
+  function clearStoryEventTimers(expireOpenBurns) {
+    storyEventTimers.forEach(function(entry, eventId) {
+      clearTimeout(entry)
+      if (expireOpenBurns) {
+        chatSession.revealedEventIds.delete(String(eventId))
+        chatSession.burnedEventIds.add(String(eventId))
+      }
+    })
+    storyEventTimers.clear()
+  }
+
+  function tickVoicePlayback() {
+    if (!activeVoiceMessageId) return
+    var now = Date.now()
+    var delta = voicePlaybackLastTick > 0 ? now - voicePlaybackLastTick : 0
+    voicePlaybackLastTick = now
+    var state = chatSession.voicePlaybacks.get(activeVoiceMessageId)
+    if (!state) {
+      stopVoicePlayback(true)
+      return
+    }
+    state = advanceVoicePlayback(state, delta)
+    chatSession.voicePlaybacks.set(activeVoiceMessageId, state)
+    renderVoiceMessagePlayback(activeVoiceMessageId)
+    if (state.status === 'completed') {
+      clearVoicePlaybackTimer()
+      activeVoiceMessageId = ''
+      if (_readerActiveVoicePlaybackStop === stopVoicePlaybackForNavigation) {
+        _readerActiveVoicePlaybackStop = null
+      }
+    }
+  }
+
+  function startVoicePlayback(messageId) {
+    messageId = String(messageId || '')
+    if (activeVoiceMessageId && activeVoiceMessageId !== messageId) stopVoicePlayback(true)
+    var state = chatSession.voicePlaybacks.get(messageId)
+    if (!state) return
+    state = playVoicePlayback(state)
+    chatSession.voicePlaybacks.set(messageId, state)
+    activeVoiceMessageId = messageId
+    voicePlaybackLastTick = Date.now()
+    _readerActiveVoicePlaybackStop = stopVoicePlaybackForNavigation
+    clearVoicePlaybackTimer()
+    voicePlaybackLastTick = Date.now()
+    voicePlaybackTimer = setInterval(tickVoicePlayback, 100)
+    renderVoiceMessagePlayback(messageId)
+  }
+
+  function toggleVoicePlayback(messageId) {
+    messageId = String(messageId || '')
+    var state = chatSession.voicePlaybacks.get(messageId)
+    if (!state) return
+    if (state.status === 'playing' && activeVoiceMessageId === messageId) {
+      stopVoicePlayback(false)
+      return
+    }
+    startVoicePlayback(messageId)
   }
 
   function currentFlowChoicePending(rounds) {
@@ -6724,6 +7029,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   }
 
   function finishChatFlowStep() {
+    stopVoicePlayback(true)
+    clearStoryEventTimers(true)
     clearChatFlowTimers()
     var nextStep = advanceReaderPhoneFlow(w)
     refreshChatFlowContext()
@@ -6737,6 +7044,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   }
 
   function returnToChatList() {
+    stopVoicePlayback(true)
+    clearStoryEventTimers(true)
     clearChatFlowTimers()
     openReaderApp('messages')
     focusReaderControl(frame, '.rd-chat-card[data-chat-index="' + chatIndex + '"]')
@@ -6756,6 +7065,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   }
 
   function openCallScene(msg, callKey) {
+    stopVoicePlayback(true)
+    clearStoryEventTimers(true)
     clearChatFlowTimers()
     mayAutoOpenCall = false
     openedCallScenes[callKey] = true
@@ -6859,10 +7170,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   }
 
   function renderChat() {
+    stopVoicePlayback(true)
+    clearStoryEventTimers(true)
     clearChatFlowTimers()
+    transientMessageTimers.forEach(function(timer) { clearTimeout(timer) })
+    transientMessageTimers.clear()
     chatFlowRenderToken += 1
     var renderToken = chatFlowRenderToken
-    var chatName = getChatName()
     var ast = appStyle('messages')
     var rounds = Array.isArray(ch.rounds) ? ch.rounds : []
     var legacyMessages = Array.isArray(ch.messages) ? ch.messages : []
@@ -6875,8 +7189,75 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       migrationRound.messages = (Array.isArray(migrationRound.messages) ? migrationRound.messages : []).concat(legacyMessages)
       ch.messages = []
     }
+
+    function messageActionIsComplete(message) {
+      var messageId = String(message && message.id || '')
+      if (!messageId) return false
+      if (message?.type === 'music' && !safeMessageCardUrl(message.musicUrl)) return true
+      if (
+        message?.senderId === 'self'
+        && ['redpacket', 'transfer', 'familycard', 'takeaway'].includes(message?.type)
+      ) return true
+      if (chatSession.completedActionIds.has(messageId)) return true
+      if (chatSession.claimedMessageIds.has(messageId)) return true
+      if (message?.type === 'schedule' && chatSession.eventResponses.has(messageId)) return true
+      return false
+    }
+
+    function messageActionStateHtml(message) {
+      var label = messageActionLabel(message, messageActionIsComplete(message))
+      if (!label) return ''
+      return '<small class="chat-action-state' + (messageActionIsComplete(message) ? ' is-complete' : '') + '" data-message-action-state="' + escapeHtmlAttribute(message.id) + '">' + esc(label) + '</small>'
+    }
     ensureReaderChatMessageIds(rounds)
     var visibleMessageIds = flowVisibleMessageIds()
+    var storyState = createChatStoryState({ contacts:contacts }, ch)
+    for (var storyRoundIndex = 0; storyRoundIndex < rounds.length; storyRoundIndex++) {
+      var storyMessages = Array.isArray(rounds[storyRoundIndex].messages) ? rounds[storyRoundIndex].messages : []
+      for (var storyMessageIndex = 0; storyMessageIndex < storyMessages.length; storyMessageIndex++) {
+        var storyMessage = storyMessages[storyMessageIndex]
+        if (!isMessageVisible(storyMessage, visibleMessageIds)) continue
+        storyState = applyChatStoryMessage(storyState, storyMessage)
+      }
+    }
+    contacts = storyState.contacts
+    pd.contacts = contacts
+    if (ch.type === 'group') {
+      ch.groupName = storyState.group.groupName
+      ch.groupAvatarUrl = storyState.group.groupAvatarUrl
+      ch.contactIds = storyState.group.contactIds
+      ch.groupOwnerId = storyState.group.groupOwnerId
+      ch.groupAdminIds = storyState.group.groupAdminIds
+      ch.groupTitles = storyState.group.groupTitles
+    }
+    var storySession = readerPhoneChoiceSession(w)
+    if (!(storySession.storyContactOverrides instanceof Map)) storySession.storyContactOverrides = new Map()
+    if (!(storySession.storyGroupOverrides instanceof Map)) storySession.storyGroupOverrides = new Map()
+    contacts.forEach(function(contact) {
+      storySession.storyContactOverrides.set(String(contact && contact.id || ''), {
+        name:contact && contact.name || '',
+        avatarUrl:contact && contact.avatarUrl || '',
+        messageAvatarUrl:contact && contact.messageAvatarUrl || '',
+        note:contact && contact.note || '',
+      })
+    })
+    if (ch.type === 'group') {
+      storySession.storyGroupOverrides.set(String(ch.id || ''), {
+        groupName:ch.groupName || '',
+        groupAvatarUrl:ch.groupAvatarUrl || '',
+        contactIds:(ch.contactIds || []).slice(),
+        groupOwnerId:ch.groupOwnerId || '',
+        groupAdminIds:(ch.groupAdminIds || []).slice(),
+        groupTitles:Object.assign({}, ch.groupTitles || {}),
+      })
+    }
+    chatMentionNames = ch.type === 'group'
+      ? [readerChatName].concat((ch.contactIds || []).map(function(contactId) {
+          var mentionContact = contacts.find(function(candidate) { return candidate.id === contactId })
+          return contactDisplayName(mentionContact, 'messages', mentionContact?.name || '')
+        })).concat(readerPlaceholderMentionNames()).filter(Boolean)
+      : []
+    var chatName = getChatName()
 
     // The latest authored choice group stays active until it has produced a run.
     // While that run exists, older groups do not resurface underneath it.
@@ -6917,6 +7298,60 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
     })
 
     var avSz = ast.avatarSize + 'px'
+    var transientRowsToSchedule = []
+
+    function transientMessageState(kind, messageId) {
+      var key = kind + ':' + String(messageId || '')
+      if (chatSession.settledTransientMessageIds.has(key)) return { key:key, settled:true }
+      var now = Date.now()
+      var startedAt = Number(chatSession.transientMessageStartedAt.get(key))
+      if (!Number.isFinite(startedAt)) {
+        startedAt = now
+        chatSession.transientMessageStartedAt.set(key, startedAt)
+      }
+      var exitMs = shouldUseMotion(true) ? CHAT_TRANSIENT_EXIT_MS : 0
+      var elapsed = Math.max(0, now - startedAt)
+      var totalMs = CHAT_TRANSIENT_HOLD_MS + exitMs
+      if (elapsed >= totalMs) {
+        chatSession.settledTransientMessageIds.add(key)
+        return { key:key, settled:true }
+      }
+      return {
+        key:key,
+        settled:false,
+        fadeDelay:Math.max(0, CHAT_TRANSIENT_HOLD_MS - elapsed),
+        settleDelay:Math.max(0, totalMs - elapsed),
+      }
+    }
+
+    function transientMessagePreview(sourceMessage, outerMessageId, kind, transitionKey) {
+      var source = sourceMessage || {}
+      var isSelfPreview = source.senderId === 'self'
+      var previewSkinClass = readerBubbleSkinClass(ast, isSelfPreview ? 'self' : 'other')
+      var previewText = readerPhoneText(source.text || chatMessageQuoteSummary(source))
+      var previewBubbleStyle = isSelfPreview
+        ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
+        : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
+      var preview = '<div class="chat-msg rd-chat-message rd-chat-transient-message ' + (isSelfPreview ? 'self is-self' : 'other is-other') + '" data-message-id="' + escapeHtmlAttribute(outerMessageId) + '" data-transient-kind="' + escapeHtmlAttribute(kind) + '" data-transient-key="' + escapeHtmlAttribute(transitionKey) + '">'
+      if (isSelfPreview) {
+        preview += '<div class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerChatName) + '" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerChatName)) + '">'
+        if (readerChatAvatar) preview += '<img src="' + escapeHtmlAttribute(readerChatAvatar) + '" alt="">'
+        else preview += '<span>' + esc((readerChatName || '我').charAt(0)) + '</span>'
+        preview += '</div>'
+      } else {
+        var previewContact = contacts.find(function(contact) { return String(contact.id) === String(source.senderId) })
+        var previewIdentity = resolveContactIdentity(pd, source.senderId, { surface:'messages', authoredName:previewContact?.name || '?' })
+        var previewAvatar = previewIdentity.avatar || ''
+        var previewAvatarStyle = previewContact
+          ? (previewAvatar ? 'background-image:url(' + escapeHtmlAttribute(previewAvatar) + ');background-size:cover' : 'background:' + avatarColor(source.senderId))
+          : 'background:#ccc'
+        preview += '<div class="chat-avatar" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';' + previewAvatarStyle + '">'
+        if (!previewAvatar) preview += '<span>' + esc((previewIdentity.name || '?').charAt(0)) + '</span>'
+        preview += '</div>'
+      }
+      preview += '<div class="rd-chat-message-body"><div class="chat-bubble' + previewSkinClass + '" style="' + previewBubbleStyle + '">' + esc(previewText) + '</div></div></div>'
+      return preview
+    }
 
     var callMessages = []
     var autoCall = null
@@ -6943,10 +7378,17 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       for (var mi = 0; mi < round.messages.length; mi++) {
         var msg = round.messages[mi]
         if (!isMessageVisible(msg, visibleMessageIds)) continue
+        var failedTransition = msg.failed === true ? transientMessageState('failed', msg.id) : null
+        if (failedTransition && failedTransition.settled) continue
+        if (failedTransition) transientRowsToSchedule.push({ kind:'failed', state:failedTransition })
         renderedVisibleCount++
         if (msg.type === 'time') {
           if (!shouldShowPhoneTimestamp(pd, msg.time)) continue
           h += '<div class="rd-chat-time' + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" style="text-align:center;padding:6px 0;font-size:.62rem;color:var(--chat-time-color,#b0b8c4)">' + esc(msg.time || '') + '</div>'
+          continue
+        }
+        if (msg.type === 'system') {
+          h += '<div class="rd-chat-system' + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" role="status"><span>' + esc(msg.text || '') + '</span></div>'
           continue
         }
         if (msg.type === 'call') {
@@ -6954,11 +7396,16 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           var callIdentity = resolveContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: chatName })
           var callName = callIdentity.name || chatName
           var callLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
+          var normalizedCall = normalizeChatStoryMessage(msg)
+          var authoredCallOutcome = normalizedCall.callStatus !== 'pending'
           var callEnded = callHasEnded(msg)
           var callDuration = formatReaderCallDuration(estimatedReaderCallDurationSeconds(msg))
-          callMessages.push({ key: callKey, message: msg })
-          if (!callEnded && mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
-          if (callEnded) {
+          if (!authoredCallOutcome) callMessages.push({ key: callKey, message: msg })
+          if (!authoredCallOutcome && !callEnded && mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
+          if (authoredCallOutcome) {
+            h += '<div class="rd-call-card rd-call-record rd-call-outcome" style="--rd-call-record-bg:' + sanitizeCssColor(ast.otherBubbleBg, { fallback: '#fff' }) + ';--rd-call-record-ink:' + sanitizeCssColor(ast.otherBubbleText, { fallback: '#333' }) + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" role="status">'
+            h += '<span class="rd-call-record-icon" aria-hidden="true">' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span class="rd-call-record-copy">' + esc(callLabel) + '<small>' + esc(chatStoryMessageLabel(msg).replace(callLabel + ' · ', '')) + '</small></span></div>'
+          } else if (callEnded) {
             h += '<button type="button" class="rd-call-card rd-call-record" style="--rd-call-record-bg:' + sanitizeCssColor(ast.otherBubbleBg, { fallback: '#fff' }) + ';--rd-call-record-ink:' + sanitizeCssColor(ast.otherBubbleText, { fallback: '#333' }) + '" data-call-key="' + callKey + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" aria-label="' + escapeHtmlAttribute('重新查看与' + callName + '的' + callLabel + '，已通话 ' + callDuration) + '">'
             h += '<span class="rd-call-record-icon" aria-hidden="true">' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span class="rd-call-record-copy">' + callLabel + '<small>已通话 ' + callDuration + '</small></span></button>'
           } else {
@@ -6967,11 +7414,67 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           }
           continue
         }
+        if (msg.type === 'system-event' || msg.type === 'contact-event') {
+          var normalizedEvent = normalizeChatStoryMessage(msg)
+          var eventActorContact = contacts.find(function(contact) { return String(contact.id) === String(normalizedEvent.actorContactId || normalizedEvent.targetContactId) })
+          var eventTargetContact = contacts.find(function(contact) { return String(contact.id) === String(normalizedEvent.targetContactId) })
+          var eventActorName = normalizedEvent.actorContactId === 'self' ? '你' : (eventActorContact ? contactDisplayName(eventActorContact, 'messages') : '对方')
+          var eventTargetName = eventTargetContact ? contactDisplayName(eventTargetContact, 'messages') : '你'
+          var eventCopy = storyEventText(Object.assign({}, msg, { actorName:eventActorName, targetName:eventTargetName }))
+          var eventId = String(msg.id || (ri + '-' + mi))
+          var eventResponse = chatSession.eventResponses.get(eventId) || ''
+          var eventRevealed = chatSession.revealedEventIds.has(eventId)
+          var eventBurned = chatSession.burnedEventIds.has(eventId)
+          var eventRetried = chatSession.retriedEventIds.has(eventId)
+          var eventReacted = chatSession.reactedEventIds.has(eventId)
+          var recallTransition = normalizedEvent.eventKind === 'recall' && msg.recalledMessage
+            ? transientMessageState('recall', eventId)
+            : null
+          if (recallTransition && !recallTransition.settled) {
+            transientRowsToSchedule.push({ kind:'recall', state:recallTransition })
+            h += '<div class="rd-chat-recall-transition" data-transient-wrapper="' + escapeHtmlAttribute(recallTransition.key) + '">'
+            h += transientMessagePreview(msg.recalledMessage, msg.id, 'recall', recallTransition.key)
+            h += '<template data-transient-event-template="' + escapeHtmlAttribute(recallTransition.key) + '">'
+          }
+          h += '<div class="rd-chat-story-event rd-chat-story-event-' + escapeHtmlAttribute(normalizedEvent.eventKind) + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" data-story-event-id="' + escapeHtmlAttribute(eventId) + '">'
+          if (normalizedEvent.eventKind === 'typing') {
+            h += '<span class="rd-chat-typing"><span>' + esc(eventCopy.replace(/…$/, '')) + '</span><span class="rd-chat-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></span>'
+          } else {
+            h += '<span class="rd-chat-story-event-copy">' + esc(eventRetried && normalizedEvent.eventKind === 'send-failed' ? '消息已重新发送' : eventCopy) + '</span>'
+          }
+          if (normalizedEvent.eventKind === 'recall' && normalizedEvent.allowReveal && normalizedEvent.originalText) {
+            h += '<button type="button" class="rd-story-event-action" data-story-reveal="recall" aria-expanded="' + (eventRevealed ? 'true' : 'false') + '">' + (eventRevealed ? '收起原文' : '查看原文') + '</button>'
+            h += '<span class="rd-story-event-detail"' + (eventRevealed ? '' : ' hidden') + '>' + esc(readerPhoneText(normalizedEvent.originalText)) + '</span>'
+          }
+          if (normalizedEvent.eventKind === 'burn' && normalizedEvent.originalText) {
+            if (eventBurned) {
+              h += '<span class="rd-story-event-expired">内容已焚毁</span>'
+            } else {
+              h += '<button type="button" class="rd-story-event-action" data-story-reveal="burn" data-burn-seconds="' + normalizedEvent.burnSeconds + '" aria-expanded="' + (eventRevealed ? 'true' : 'false') + '">' + (eventRevealed ? '查看中' : '打开') + '</button>'
+              h += '<span class="rd-story-event-detail"' + (eventRevealed ? '' : ' hidden') + '>' + esc(readerPhoneText(normalizedEvent.originalText)) + '</span>'
+            }
+          }
+          if (normalizedEvent.eventKind === 'send-failed' && !eventRetried) {
+            h += '<button type="button" class="rd-story-event-action" data-story-retry>重新发送</button>'
+          }
+          if (normalizedEvent.eventKind === 'reaction') {
+            h += '<button type="button" class="rd-story-event-action is-reaction' + (eventReacted ? ' selected' : '') + '" data-story-reaction aria-pressed="' + (eventReacted ? 'true' : 'false') + '">' + esc(normalizedEvent.reaction || '♡') + '</button>'
+          }
+          if (normalizedEvent.eventKind === 'friend-request') {
+            h += '<span class="rd-story-event-actions">'
+            if (eventResponse) h += '<span class="rd-story-event-response">' + (eventResponse === 'accepted' ? '已同意' : '已拒绝') + '</span>'
+            else h += '<button type="button" class="rd-story-event-action" data-story-response="declined">拒绝</button><button type="button" class="rd-story-event-action primary" data-story-response="accepted">同意</button>'
+            h += '</span>'
+          }
+          h += '</div>'
+          if (recallTransition && !recallTransition.settled) h += '</template></div>'
+          continue
+        }
         var isSelf = msg.senderId === 'self'
         var bubbleSkinClass = readerBubbleSkinClass(ast, isSelf ? 'self' : 'other')
         var bubbleSkinRowClass = readerMessageUsesBubbleShell(msg) ? bubbleSkinClass : ''
         var reselectRunKey = reselectRunsByReply.get(messageLocationKey(ri, msg.id)) || ''
-        h += '<div class="chat-msg rd-chat-message ' + (isSelf ? 'self is-self' : 'other is-other') + bubbleSkinRowClass + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '">'
+        h += '<div class="chat-msg rd-chat-message ' + (isSelf ? 'self is-self' : 'other is-other') + bubbleSkinRowClass + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + (failedTransition ? ' rd-chat-transient-message' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '"' + (failedTransition ? ' data-transient-kind="failed" data-transient-key="' + escapeHtmlAttribute(failedTransition.key) + '"' : '') + '>'
         if (isSelf) {
           h += '<div class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerChatName) + '" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerChatName)) + '">'
           if (readerChatAvatar) h += '<img src="' + escapeHtmlAttribute(readerChatAvatar) + '" alt="">'
@@ -7003,12 +7506,22 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           h += '<img src="' + esc(msg.image || '') + '"' + readerImageAttributes() + ' style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
           h += '</div>'
         } else if (msg.type === 'link') {
-          var inlineForumPost = msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
-          if (inlineForumPost) h += '<button type="button" class="chat-link-card rd-inline-forum-card" data-inline-forum-post-id="' + escapeHtmlAttribute(msg.forumPostId) + '"><strong>' + esc(msg.linkTitle || inlineForumPost.title || '帖子') + '</strong><span>论坛帖子 · 点击查看</span></button>'
+          var chatAppTarget = normalizeChatAppTarget(msg)
+          var chatAppTargetEntry = listChatAppTargets(pd).find(function(target) {
+            return target.appType === chatAppTarget.appType && String(target.itemId) === String(chatAppTarget.itemId)
+          })
+          var linkActionState = messageActionLabel(msg, messageActionIsComplete(msg))
+          var explicitAppTarget = Boolean(msg.targetApp)
+          var inlineForumPost = !explicitAppTarget && msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
+          if (explicitAppTarget && chatAppTargetEntry) {
+            h += '<button type="button" class="chat-link-card rd-chat-deep-link" data-chat-deep-link="' + escapeHtmlAttribute(msg.id) + '" data-target-app="' + escapeHtmlAttribute(chatAppTarget.appType) + '" data-target-item="' + escapeHtmlAttribute(chatAppTarget.itemId) + '" data-target-contact="' + escapeHtmlAttribute(chatAppTarget.contactId) + '"><span class="chat-story-card-kicker">' + esc(chatAppTargetEntry.detail) + '</span><strong>' + esc(msg.linkTitle || chatAppTargetEntry.label) + '</strong><span>点击进入对应 App</span>' + (linkActionState ? '<small class="chat-action-state' + (messageActionIsComplete(msg) ? ' is-complete' : '') + '" data-message-action-state="' + escapeHtmlAttribute(msg.id) + '">' + esc(linkActionState) + '</small>' : '') + '</button>'
+          } else if (explicitAppTarget) {
+            h += '<div class="chat-link-card is-unavailable"><strong>' + esc(msg.linkTitle || '作品内内容') + '</strong><span>关联内容已不存在</span></div>'
+          } else if (inlineForumPost) h += '<button type="button" class="chat-link-card rd-inline-forum-card" data-inline-forum-post-id="' + escapeHtmlAttribute(msg.forumPostId) + '"><strong>' + esc(msg.linkTitle || inlineForumPost.title || '帖子') + '</strong><span>论坛帖子 · 点击查看</span></button>'
           else if (msg.forumPostId) h += '<div class="chat-link-card is-unavailable"><strong>' + esc(msg.linkTitle || '帖子') + '</strong><span>关联帖子已不存在</span></div>'
           else {
             var cardLinkUrl = safeMessageCardUrl(msg.linkUrl)
-            if (cardLinkUrl) h += '<a class="chat-link-card" href="' + escapeHtmlAttribute(cardLinkUrl) + '" target="_blank" rel="noopener noreferrer"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></a>'
+            if (cardLinkUrl) h += '<a class="chat-link-card rd-external-message-link" data-external-message-id="' + escapeHtmlAttribute(msg.id) + '" href="' + escapeHtmlAttribute(cardLinkUrl) + '" target="_blank" rel="noopener noreferrer"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span>' + (linkActionState ? '<small class="chat-action-state' + (messageActionIsComplete(msg) ? ' is-complete' : '') + '" data-message-action-state="' + escapeHtmlAttribute(msg.id) + '">' + esc(linkActionState) + '</small>' : '') + '</a>'
             else h += '<div class="chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></div>'
           }
         } else if (msg.type === 'redpacket') {
@@ -7025,24 +7538,71 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           var takeawayExternalAttrs = takeawayTarget.opensApp ? '' : ' target="_blank" rel="noopener noreferrer"'
           var takeawayClaimed = chatSession.claimedMessageIds.has(String(msg.id))
           h += '<div class="rd-claimable-takeaway rd-claimable-card' + (takeawayClaimed ? ' is-claimed' : '') + '"><a class="chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayTarget.href) + '"' + takeawayExternalAttrs + '><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>¥' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>' + (!isSelf ? '<button type="button" class="rd-card-claim rd-takeaway-claim" data-claim-message-id="' + escapeHtmlAttribute(msg.id) + '" data-claimed-label="已领取"' + (takeawayClaimed ? ' disabled' : '') + '>' + (takeawayClaimed ? '已领取' : '领取') + '</button>' : '') + '</div>'
+        } else if (msg.type === 'location') {
+          h += '<button type="button" class="chat-story-card chat-location-card rd-chat-story-card" data-story-card="location" data-story-message-id="' + escapeHtmlAttribute(msg.id) + '">'
+          if (msg.locationImage) h += '<img src="' + escapeHtmlAttribute(msg.locationImage) + '"' + readerImageAttributes() + ' alt="">'
+          h += '<span class="chat-story-card-kicker">位置</span><strong>' + esc(msg.locationName || msg.text || '未命名地点') + '</strong><small>' + esc(msg.locationAddress || '点击查看地点') + '</small>' + messageActionStateHtml(msg) + '</button>'
+        } else if (msg.type === 'contact-card') {
+          var sharedContact = contacts.find(function(contact) { return String(contact.id) === String(msg.targetContactId) })
+          var sharedContactName = msg.contactName || (sharedContact && contactDisplayName(sharedContact, 'messages')) || '联系人'
+          h += '<button type="button" class="chat-story-card chat-contact-card rd-chat-story-card" data-story-card="contact-card" data-story-message-id="' + escapeHtmlAttribute(msg.id) + '"><span class="chat-story-card-mark">'
+          if (sharedContact && sharedContact.avatarUrl) h += '<img src="' + escapeHtmlAttribute(sharedContact.avatarUrl) + '" alt="">'
+          else h += esc(sharedContactName.charAt(0))
+          h += '</span><span><span class="chat-story-card-kicker">联系人名片</span><strong>' + esc(sharedContactName) + '</strong><small>' + esc(msg.contactNote || '点击查看联系人') + '</small>' + messageActionStateHtml(msg) + '</span></button>'
+        } else if (msg.type === 'file') {
+          h += '<button type="button" class="chat-story-card chat-file-card rd-chat-story-card" data-story-card="file" data-story-message-id="' + escapeHtmlAttribute(msg.id) + '"><span class="chat-story-card-mark">文</span><span><span class="chat-story-card-kicker">文件</span><strong>' + esc(msg.fileName || '未命名文件') + '</strong><small>' + esc([msg.fileType, msg.fileSize].filter(Boolean).join(' · ') || '点击查看内容') + '</small>' + messageActionStateHtml(msg) + '</span></button>'
+        } else if (msg.type === 'music') {
+          var musicUrl = safeMessageCardUrl(msg.musicUrl)
+          var musicTag = musicUrl ? 'a' : 'div'
+          h += '<' + musicTag + ' class="chat-story-card chat-music-card rd-chat-story-card"' + (musicUrl ? ' data-external-message-id="' + escapeHtmlAttribute(msg.id) + '" href="' + escapeHtmlAttribute(musicUrl) + '" target="_blank" rel="noopener noreferrer"' : '') + '>'
+          if (msg.musicCover) h += '<img src="' + escapeHtmlAttribute(msg.musicCover) + '"' + readerImageAttributes() + ' alt="">'
+          else h += '<span class="chat-story-card-mark">♪</span>'
+          h += '<span><span class="chat-story-card-kicker">音乐分享</span><strong>' + esc(msg.musicTitle || '未命名音乐') + '</strong><small>' + esc(msg.musicArtist || (musicUrl ? '点击打开' : '仅展示')) + '</small>' + messageActionStateHtml(msg) + '</span></' + musicTag + '>'
+        } else if (msg.type === 'forward') {
+          h += '<button type="button" class="chat-story-card chat-forward-card rd-chat-story-card" data-story-card="forward" data-story-message-id="' + escapeHtmlAttribute(msg.id) + '"><span class="chat-story-card-kicker">合并转发</span><strong>' + esc(msg.forwardTitle || '聊天记录') + '</strong><small>' + (Array.isArray(msg.forwardItems) ? msg.forwardItems.length : 0) + ' 条消息 · 点击查看</small>' + messageActionStateHtml(msg) + '</button>'
+        } else if (msg.type === 'schedule') {
+          var scheduleResponse = chatSession.eventResponses.get(String(msg.id)) || ''
+          h += '<div class="chat-story-card chat-schedule-card rd-chat-story-card" data-story-card="schedule" data-story-message-id="' + escapeHtmlAttribute(msg.id) + '"><span class="chat-story-card-kicker">日程邀请</span><strong>' + esc(msg.scheduleTitle || '未命名日程') + '</strong><small>' + esc([msg.scheduleTime, msg.scheduleLocation].filter(Boolean).join(' · ') || '等待回应') + '</small>'
+          if (msg.scheduleDetails) h += '<p>' + esc(readerPhoneText(msg.scheduleDetails)) + '</p>'
+          h += '<div class="chat-story-card-actions">'
+          if (scheduleResponse) h += '<span class="rd-story-event-response">' + (scheduleResponse === 'accepted' ? '已' + esc(msg.acceptLabel || '接受') : '已' + esc(msg.declineLabel || '拒绝')) + '</span>'
+          else h += '<button type="button" data-schedule-response="declined">' + esc(msg.declineLabel || '拒绝') + '</button><button type="button" class="primary" data-schedule-response="accepted">' + esc(msg.acceptLabel || '接受') + '</button>'
+          h += '</div>' + messageActionStateHtml(msg) + '</div>'
         } else if (msg.type === 'voice') {
           var resolvedMessageText = readerPhoneText(msg.text)
-          var dur = msg.duration || Math.max(1, Math.round(resolvedMessageText.length * 0.3))
+          var voiceState = voicePlaybackForMessage(msg)
+          var dur = Math.max(1, Math.round(voiceState.durationMs / 1000))
           var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))
           var bars = ''
+          var voiceProgress = voicePlaybackProgress(voiceState)
+          var activeVoiceBars = voiceState.status === 'playing' && voiceProgress === 0
+            ? 1
+            : Math.ceil(voiceProgress * barCount)
           for (var bi = 0; bi < barCount; bi++) {
             var bh = 4 + Math.abs(Math.sin(bi * 0.7 + 1.5)) * 14
-            bars += '<rect x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
+            bars += '<rect class="rd-voice-bar' + (bi < activeVoiceBars ? ' is-active' : '') + '" x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
           }
-          h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + ';cursor:pointer;min-width:100px" onclick="var t=this.querySelector(\'.cv-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'">'
-          h += '<svg width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
-          h += '<span style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
-          h += '<span class="cv-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(resolvedMessageText) + '</span>'
+          var voiceTranscriptId = 'rdVoiceTranscript-' + ri + '-' + mi
+          var voicePlaybackLabel = voiceState.status === 'playing'
+            ? '暂停语音消息'
+            : voiceState.status === 'completed'
+              ? '重新播放语音消息'
+              : '播放语音消息'
+          h += '<div class="chat-bubble' + bubbleSkinClass + ' rd-voice-message' + (voiceState.status === 'playing' ? ' is-playing' : '') + (voiceState.status === 'paused' ? ' is-paused' : '') + (voiceState.status === 'completed' ? ' is-completed' : '') + '" data-voice-message-id="' + escapeHtmlAttribute(msg.id) + '" data-voice-status="' + voiceState.status + '" style="' + bubbleStyle + ';min-width:120px">'
+          h += '<button type="button" class="rd-voice-playback" aria-label="' + voicePlaybackLabel + '" aria-pressed="' + (voiceState.status === 'playing' ? 'true' : 'false') + '">'
+          h += '<span class="rd-voice-state-icon" aria-hidden="true">' + (voiceState.status === 'playing' ? 'Ⅱ' : voiceState.status === 'completed' ? '↻' : '▶') + '</span>'
+          h += '<svg class="rd-voice-wave" width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" aria-hidden="true">' + bars + '</svg>'
+          h += '<span class="rd-voice-remaining" aria-live="polite">' + voicePlaybackRemainingLabel(voiceState) + '</span>'
+          h += '</button>'
+          h += '<button type="button" class="rd-voice-transcript-toggle" aria-controls="' + voiceTranscriptId + '" aria-expanded="' + (voiceState.transcriptVisible ? 'true' : 'false') + '">' + (voiceState.transcriptVisible ? '收起转写' : '转写') + '</button>'
+          h += '<span id="' + voiceTranscriptId + '" class="rd-voice-transcript"' + (voiceState.transcriptVisible ? '' : ' hidden') + '>' + esc(resolvedMessageText) + '</span>'
           h += '</div>'
         } else {
           h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + '">'
-          if (msg.quoteId && msg.quoteText) {
-            h += '<div style="font-size:.6rem;opacity:.7;margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid rgba(0,0,0,.1)">引用：' + esc(msg.quoteText.substring(0, 40)) + '</div>'
+          if (msg.quoteId) {
+            var quotedSourceMessage = storyMessageById(msg.quoteId)
+            var quotedSummary = msg.quoteText || chatMessageQuoteSummary(quotedSourceMessage)
+            h += '<button type="button" class="chat-quote-preview" data-quote-target="' + escapeHtmlAttribute(msg.quoteId) + '"><span>' + esc(msg.quoteSenderName || '引用消息') + '</span><strong>' + esc(quotedSummary.substring(0, 54)) + '</strong></button>'
           }
           var streamsCurrentText = isFlowTargetMessage(msg, round) && !chatSession.flowTypedMessageIds.has(String(msg.id))
           if (streamsCurrentText) {
@@ -7082,9 +7642,47 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
 
     h += '</div>'
     frame.innerHTML = h
+
+    function trackTransientTimer(callback, delay) {
+      var timer = setTimeout(function() {
+        transientMessageTimers.delete(timer)
+        callback()
+      }, Math.max(0, delay))
+      transientMessageTimers.add(timer)
+    }
+
+    transientRowsToSchedule.forEach(function(entry) {
+      var transientRow = Array.from(frame.querySelectorAll('[data-transient-key]')).find(function(row) {
+        return String(row.dataset.transientKey) === String(entry.state.key)
+      })
+      if (!transientRow) return
+      var beginExit = function() {
+        if (transientRow.isConnected) transientRow.classList.add('is-leaving')
+      }
+      if (entry.state.fadeDelay <= 0) beginExit()
+      else trackTransientTimer(beginExit, entry.state.fadeDelay)
+      trackTransientTimer(function() {
+        chatSession.settledTransientMessageIds.add(entry.state.key)
+        if (!transientRow.isConnected) return
+        if (entry.kind === 'failed') {
+          transientRow.remove()
+          return
+        }
+        var wrapper = transientRow.closest('[data-transient-wrapper]')
+        var template = wrapper && wrapper.querySelector('template[data-transient-event-template]')
+        var eventRow = template && template.content.firstElementChild
+          ? template.content.firstElementChild.cloneNode(true)
+          : null
+        if (!wrapper || !eventRow) return
+        wrapper.replaceWith(eventRow)
+        bindChatStoryEventRow(eventRow)
+      }, entry.state.settleDelay)
+    })
+
     var chatMessageArea = frame.querySelector('#chatMsgArea')
     if (chatMessageArea) chatMessageArea.scrollTop = chatMessageArea.scrollHeight
     bindPhoneReadingPosition(chatMessageArea)
+    var pendingChatReturnPosition = _readerPendingReadingPosition
     if (
       _readerPendingReadingPosition?.kind === 'phone'
       && _readerPendingReadingPosition.appType === 'messages'
@@ -7094,6 +7692,16 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       restorePhoneReadingScroll(_readerPendingReadingPosition, chatMessageArea)
       _readerPendingReadingPosition = null
       scheduleReaderPositionSave()
+    }
+    if (pendingChatReturnPosition?.returnHighlightId) {
+      var returnedMessage = Array.from(frame.querySelectorAll('[data-message-id]')).find(function(message) {
+        return String(message.dataset.messageId) === String(pendingChatReturnPosition.returnHighlightId)
+      })
+      if (returnedMessage) {
+        returnedMessage.classList.add('is-return-target')
+        if (!returnedMessage.hasAttribute('tabindex')) returnedMessage.tabIndex = -1
+        returnedMessage.focus({preventScroll:true})
+      }
     }
 
     if (autoCall) {
@@ -7111,11 +7719,31 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       }
     })
 
+    frame.querySelectorAll('.rd-voice-playback').forEach(function(button) {
+      button.onclick = function() {
+        var message = button.closest('.rd-voice-message')
+        if (message) toggleVoicePlayback(message.dataset.voiceMessageId)
+      }
+    })
+
+    frame.querySelectorAll('.rd-voice-transcript-toggle').forEach(function(button) {
+      button.onclick = function() {
+        var message = button.closest('.rd-voice-message')
+        var messageId = String(message && message.dataset.voiceMessageId || '')
+        var state = chatSession.voicePlaybacks.get(messageId)
+        if (!state) return
+        chatSession.voicePlaybacks.set(messageId, toggleVoiceTranscript(state))
+        renderVoiceMessagePlayback(messageId)
+      }
+    })
+
     frame.querySelectorAll('.rd-card-claim').forEach(function(button) {
       button.onclick = function(e) {
         e.preventDefault()
         e.stopPropagation()
-        chatSession.claimedMessageIds.add(String(button.dataset.claimMessageId || ''))
+        var claimedMessageId = String(button.dataset.claimMessageId || '')
+        chatSession.claimedMessageIds.add(claimedMessageId)
+        completeMessageAction(claimedMessageId)
         button.textContent = button.dataset.claimedLabel || '已领取'
         button.disabled = true
         button.closest('.rd-claimable-card')?.classList.add('is-claimed')
@@ -7124,6 +7752,196 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
 
     frame.querySelectorAll('.rd-inline-forum-card').forEach(function(card) {
       card.onclick = function() { openInlineForumPost(card.dataset.inlineForumPostId, card) }
+    })
+
+    function storyMessageById(messageId) {
+      for (var storyRound = 0; storyRound < rounds.length; storyRound++) {
+        var messages = Array.isArray(rounds[storyRound] && rounds[storyRound].messages) ? rounds[storyRound].messages : []
+        for (var storyIndex = 0; storyIndex < messages.length; storyIndex++) {
+          if (String(messages[storyIndex] && messages[storyIndex].id) === String(messageId)) return messages[storyIndex]
+        }
+      }
+      return null
+    }
+
+    function completeMessageAction(messageId, options) {
+      var normalizedMessageId = String(messageId || '')
+      var message = storyMessageById(normalizedMessageId)
+      if (!message || !messageRequiresAction(message)) return
+      chatSession.completedActionIds.add(normalizedMessageId)
+      frame.querySelectorAll('[data-message-action-state]').forEach(function(state) {
+        if (String(state.dataset.messageActionState) !== normalizedMessageId) return
+        state.textContent = messageActionLabel(message, true)
+        state.classList.add('is-complete')
+      })
+      if (
+        options?.deferFlowResume !== true
+        &&
+        flowStep
+        && String(currentFlowPlaybackMessageId() || '') === normalizedMessageId
+        && chatSession.flowTypedMessageIds.has(normalizedMessageId)
+        && !currentFlowChoicePending(rounds)
+        && !chatFlowAdvanceTimer
+      ) {
+        scheduleNextChatFlowMessage()
+      }
+    }
+
+    frame.querySelectorAll('[data-chat-deep-link]').forEach(function(card) {
+      card.onclick = function() {
+        var messageId = String(card.dataset.chatDeepLink || '')
+        var sourceMessage = card.closest('[data-message-id]')
+        var sourceRect = sourceMessage?.getBoundingClientRect()
+        var areaRect = chatMessageArea?.getBoundingClientRect()
+        var targetContactId = String(card.dataset.targetContact || '')
+        var targetContactIndex = contacts.findIndex(function(contact) {
+          return String(contact.id) === targetContactId
+        })
+        completeMessageAction(messageId, {deferFlowResume:true})
+        openReaderApp(
+          card.dataset.targetApp,
+          targetContactIndex >= 0 ? targetContactIndex : undefined,
+          true,
+          undefined,
+          {
+            targetApp:String(card.dataset.targetApp || ''),
+            targetItemId:String(card.dataset.targetItem || ''),
+            targetContactId:targetContactId,
+            origin:{
+              kind:'chat',
+              chatId:String(ch && ch.id || ''),
+              messageId:messageId,
+              scrollTop:Number(chatMessageArea?.scrollTop || 0),
+              anchorOffset:sourceRect && areaRect ? Number(sourceRect.top - areaRect.top) : 0,
+            },
+          },
+        )
+      }
+    })
+
+    frame.querySelectorAll('[data-external-message-id]').forEach(function(link) {
+      link.addEventListener('click', function() {
+        completeMessageAction(link.dataset.externalMessageId)
+      })
+    })
+
+    frame.querySelectorAll('.chat-quote-preview[data-quote-target]').forEach(function(quote) {
+      quote.onclick = function(event) {
+        event.preventDefault()
+        event.stopPropagation()
+        var target = Array.from(frame.querySelectorAll('[data-message-id]')).find(function(message) {
+          return String(message.dataset.messageId) === String(quote.dataset.quoteTarget)
+        })
+        if (!target) return
+        if (!target.hasAttribute('tabindex')) target.tabIndex = -1
+        if (typeof target.scrollIntoView === 'function') target.scrollIntoView({block:'center', behavior:shouldUseMotion(true) ? 'smooth' : 'auto'})
+        target.classList.add('is-quote-target')
+        target.focus({preventScroll:true})
+        setTimeout(function() {
+          if (target.isConnected) target.classList.remove('is-quote-target')
+        }, shouldUseMotion(true) ? 1200 : 0)
+      }
+    })
+
+    function bindChatStoryEventRow(eventRow) {
+      var eventId = String(eventRow.dataset.storyEventId || '')
+      var reveal = eventRow.querySelector('[data-story-reveal]')
+      if (reveal) {
+        reveal.onclick = function() {
+          if (reveal.dataset.storyReveal === 'burn') {
+            if (chatSession.burnedEventIds.has(eventId) || storyEventTimers.has(eventId)) return
+            chatSession.revealedEventIds.add(eventId)
+            reveal.textContent = '查看中'
+            reveal.disabled = true
+            reveal.setAttribute('aria-expanded', 'true')
+            var burnDetail = eventRow.querySelector('.rd-story-event-detail')
+            if (burnDetail) burnDetail.hidden = false
+            var burnSeconds = Math.max(1, Math.min(60, parseInt(reveal.dataset.burnSeconds, 10) || 5))
+            storyEventTimers.set(eventId, setTimeout(function() {
+              storyEventTimers.delete(eventId)
+              chatSession.revealedEventIds.delete(eventId)
+              chatSession.burnedEventIds.add(eventId)
+              if (!eventRow.isConnected) return
+              if (burnDetail) {
+                burnDetail.hidden = true
+                burnDetail.textContent = ''
+              }
+              reveal.replaceWith(Object.assign(document.createElement('span'), {
+                className:'rd-story-event-expired',
+                textContent:'内容已焚毁',
+              }))
+            }, burnSeconds * 1000))
+            return
+          }
+          if (chatSession.revealedEventIds.has(eventId)) chatSession.revealedEventIds.delete(eventId)
+          else chatSession.revealedEventIds.add(eventId)
+          renderChat()
+        }
+      }
+      var retry = eventRow.querySelector('[data-story-retry]')
+      if (retry) retry.onclick = function() {
+        chatSession.retriedEventIds.add(eventId)
+        renderChat()
+      }
+      var reaction = eventRow.querySelector('[data-story-reaction]')
+      if (reaction) reaction.onclick = function() {
+        if (chatSession.reactedEventIds.has(eventId)) chatSession.reactedEventIds.delete(eventId)
+        else chatSession.reactedEventIds.add(eventId)
+        renderChat()
+      }
+      eventRow.querySelectorAll('[data-story-response]').forEach(function(button) {
+        button.onclick = function() {
+          chatSession.eventResponses.set(eventId, button.dataset.storyResponse)
+          renderChat()
+        }
+      })
+    }
+
+    frame.querySelectorAll('.rd-chat-story-event').forEach(bindChatStoryEventRow)
+
+    frame.querySelectorAll('.rd-chat-story-card[data-story-card]').forEach(function(card) {
+      card.onclick = function(event) {
+        if (event.target.closest('[data-schedule-response]')) return
+        var message = storyMessageById(card.dataset.storyMessageId)
+        if (!message) return
+        var kind = card.dataset.storyCard
+        completeMessageAction(message.id)
+        if (kind === 'location') {
+          var locationHtml = ''
+          if (message.locationImage) locationHtml += '<img class="rd-chat-story-detail-image" src="' + escapeHtmlAttribute(message.locationImage) + '" alt="">'
+          locationHtml += '<h3>' + esc(message.locationName || message.text || '未命名地点') + '</h3><p>' + esc(message.locationAddress || '作者未填写详细地址') + '</p>'
+          openChatStoryDetail('位置', locationHtml, card)
+        } else if (kind === 'contact-card') {
+          var contact = contacts.find(function(item) { return String(item.id) === String(message.targetContactId) })
+          var contactName = message.contactName || (contact && contactDisplayName(contact, 'messages')) || '联系人'
+          var contactHtml = '<div class="rd-chat-story-contact-detail">'
+          if (contact && contact.avatarUrl) contactHtml += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
+          else contactHtml += '<span>' + esc(contactName.charAt(0)) + '</span>'
+          contactHtml += '<div><h3>' + esc(contactName) + '</h3><p>' + esc(message.contactNote || (contact && contact.note) || '暂无附言') + '</p></div></div>'
+          openChatStoryDetail('联系人名片', contactHtml, card)
+        } else if (kind === 'file') {
+          var fileHtml = '<div class="rd-chat-story-file-meta"><strong>' + esc(message.fileName || '未命名文件') + '</strong><span>' + esc([message.fileType, message.fileSize].filter(Boolean).join(' · ')) + '</span></div><pre class="rd-chat-story-file-content">' + esc(readerPhoneText(message.fileContent || '文件没有可预览的正文。')) + '</pre>'
+          openChatStoryDetail('文件预览', fileHtml, card)
+        } else if (kind === 'forward') {
+          var forwardHtml = '<div class="rd-chat-story-forward-list">'
+          ;(message.forwardItems || []).forEach(function(item) {
+            forwardHtml += '<div><strong>' + esc(readerPhoneText(item.sender || '未知')) + '</strong><p>' + esc(readerPhoneText(item.text || '')) + '</p></div>'
+          })
+          forwardHtml += '</div>'
+          openChatStoryDetail(message.forwardTitle || '聊天记录', forwardHtml, card)
+        }
+      }
+    })
+
+    frame.querySelectorAll('[data-schedule-response]').forEach(function(button) {
+      button.onclick = function() {
+        var card = button.closest('[data-story-message-id]')
+        var messageId = String(card && card.dataset.storyMessageId || '')
+        if (!messageId) return
+        chatSession.eventResponses.set(messageId, button.dataset.scheduleResponse)
+        completeMessageAction(messageId)
+        renderChat()
+      }
     })
 
     var chatInput = frame.querySelector('#chatInput')
@@ -7163,7 +7981,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       return chatFlowRenderToken === renderToken && frame.isConnected
     }
 
-    function scheduleNextChatFlowMessage() {
+    function scheduleNextChatFlowMessage(delayMs) {
       if (!flowStep) return
       chatFlowAdvanceTimer = setTimeout(function() {
         chatFlowAdvanceTimer = null
@@ -7178,11 +7996,16 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           chatSession.flowGeneratedPlayback = null
         }
         finishChatFlowStep()
-      }, CHAT_FLOW_MESSAGE_GAP)
+      }, Number.isFinite(delayMs) ? Math.max(0, delayMs) : CHAT_FLOW_MESSAGE_GAP)
     }
 
     function finishCurrentChatFlowMessage(messageId) {
       chatSession.flowTypedMessageIds.add(String(messageId))
+      var completedMessage = findFlowPlaybackMessage(messageId)
+      if (completedMessage && messageRequiresAction(completedMessage) && !messageActionIsComplete(completedMessage)) {
+        setChoiceAvailability(false)
+        return
+      }
       if (currentFlowChoicePending(rounds)) {
         setChoiceAvailability(true)
         return
@@ -7197,9 +8020,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       var message = findFlowPlaybackMessage(messageId)
       if (!message) return
       var alreadyComplete = chatSession.flowTypedMessageIds.has(String(messageId))
-      setChoiceAvailability(!currentFlowChoicePending(rounds) || alreadyComplete)
+      var actionPending = messageRequiresAction(message) && !messageActionIsComplete(message)
+      setChoiceAvailability((!currentFlowChoicePending(rounds) || alreadyComplete) && !actionPending)
       if (alreadyComplete) {
-        if (!currentFlowChoicePending(rounds)) scheduleNextChatFlowMessage()
+        if (!currentFlowChoicePending(rounds) && !actionPending) scheduleNextChatFlowMessage()
         return
       }
 
@@ -7209,9 +8033,21 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
           stream = element.querySelector('.rd-flow-stream-text')
         }
       })
-      var streamsText = !message.type || message.type === 'text'
+      var streamsText = (!message.type || message.type === 'text') && message.failed !== true
       if (!streamsText || !stream) {
-        finishCurrentChatFlowMessage(messageId)
+        chatSession.flowTypedMessageIds.add(String(messageId))
+        if (messageRequiresAction(message) && !messageActionIsComplete(message)) {
+          setChoiceAvailability(false)
+          return
+        }
+        if (currentFlowChoicePending(rounds)) {
+          setChoiceAvailability(true)
+          return
+        }
+        var eventDelay = message.type === 'system-event' && message.eventKind === 'typing'
+          ? Math.max(300, Math.min(30000, Number(message.durationMs) || 1800))
+          : CHAT_FLOW_MESSAGE_GAP
+        scheduleNextChatFlowMessage(eventDelay)
         return
       }
 
@@ -7314,7 +8150,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
 }
 
 // ---- Forum post viewer ----
-function openReaderForumPost(frame, w, pd, postId, postIndex) {
+function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext) {
   var posts = pd.forumPosts || []
   var sourcePost = posts.find(function(p) { return p.id === postId })
   if (!sourcePost) return
@@ -7365,6 +8201,24 @@ function openReaderForumPost(frame, w, pd, postId, postIndex) {
   }
 
   function returnToForumList() {
+    if (navigationContext?.origin?.kind === 'chat') {
+      if (readerLayerHistory.has('phone-app')) readerLayerHistory.close('phone-app')
+      else {
+        _readerPendingReadingPosition = {
+          kind:'phone',
+          appType:'messages',
+          view:'chat',
+          itemId:String(navigationContext.origin.chatId || ''),
+          contactIndex:-1,
+          scrollTop:Number(navigationContext.origin.scrollTop || 0),
+          anchorId:String(navigationContext.origin.messageId || ''),
+          anchorOffset:Number(navigationContext.origin.anchorOffset || 0),
+          returnHighlightId:String(navigationContext.origin.messageId || ''),
+        }
+        openReaderApp('messages')
+      }
+      return
+    }
     openReaderApp('forum')
     focusReaderControl(frame, '.rd-post-card[data-post-index="' + postIndex + '"]')
   }

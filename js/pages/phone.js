@@ -35,6 +35,19 @@ import { mergeNpcPack, readNpcPacks, saveNpcPack } from "../npc-bundles.js"
 import { referencedMessageContactIds } from "../phone-module-draft.js"
 import { findWorkReferences } from "../work-references.js"
 import { openDeletionImpactDialog } from "../deletion-impact-ui.js"
+import {
+  CHAT_CALL_STATUSES,
+  chatStoryMessageLabel,
+  normalizeChatStoryMessage,
+  storyEventText,
+} from "../chat-story-events.js"
+import {
+  CHAT_ACTIONABLE_MESSAGE_TYPES,
+  chatMessageQuoteSummary,
+  listChatAppTargets,
+  messageActionLabel,
+  normalizeChatAppTarget,
+} from "../chat-message-actions.js"
 
 var _workId = null
 var _dragState = null
@@ -5398,6 +5411,8 @@ function openChatEditor(frame, wid, chatId, pd) {
   }
   if (migratedChatShape) updateWork(wid, { phoneData: pd })
   var activeSpeakerId = (ch.contactIds && ch.contactIds[0]) || 'self'
+  var multiSelectActive = false
+  var selectedMessageIds = new Set()
 
   function save() {
     pd.chats = chats
@@ -5418,23 +5433,54 @@ function openChatEditor(frame, wid, chatId, pd) {
       return '<option value="' + escapeHtmlAttribute(id) + '">' + esc(c ? c.name : '未知') + '</option>'
     }).join('')
 
-    var typeLabels = { text:'文字', image:'图片', link:'链接', redpacket:'红包', transfer:'转账', familycard:'亲属卡', takeaway:'外卖卡片' }
+    var typeLabels = {
+      text:'文字',
+      image:'图片',
+      link:'链接',
+      redpacket:'红包',
+      transfer:'转账',
+      familycard:'亲属卡',
+      takeaway:'外卖卡片',
+      location:'位置',
+      'contact-card':'联系人名片',
+      file:'文件',
+      music:'音乐分享',
+      forward:'合并转发',
+      schedule:'日程邀请',
+    }
     var typeLabel = typeLabels[type] || '消息'
     var extraHtml = ''
+    var contactOptionsHtml = contacts.map(function(contact) {
+      return '<option value="' + escapeHtmlAttribute(contact.id) + '">' + esc(contactDisplayName(contact, 'messages')) + '</option>'
+    }).join('')
     var forumPostOptions = (pd.forumPosts || []).map(function(post) {
       return '<option value="' + escapeHtmlAttribute(post.id) + '">' + esc(post.title || '未命名帖子') + '</option>'
     }).join('')
+    var appTargets = listChatAppTargets(pd)
+    var appTargetOptions = appTargets.map(function(target, index) {
+      return '<option value="' + index + '" data-target-app="' + escapeHtmlAttribute(target.appType) + '" data-target-item="' + escapeHtmlAttribute(target.itemId) + '" data-target-contact="' + escapeHtmlAttribute(target.contactId) + '">' + esc(target.detail + ' · ' + target.label) + '</option>'
+    }).join('')
+    var actionHtml = CHAT_ACTIONABLE_MESSAGE_TYPES.indexOf(type) >= 0
+      ? '<div class="form-group chat-action-requirement"><label class="form-label">阅读动作</label><select id="amActionMode" class="form-select"><option value="display">仅展示</option><option value="required">需要读者处理后继续</option></select><div class="form-hint">选择“需要处理”后，阅读流程会等待读者查看、领取或回应。</div></div>'
+      : ''
     if (type === 'image') extraHtml = '<div class="form-group"><label class="form-label">图片URL</label><input id="amImg" class="form-input" placeholder="https://..."></div>'
-    else if (type === 'link') extraHtml = '<div class="form-group"><label class="form-label">链接标题</label><input id="amLinkTitle" class="form-input" placeholder="不填则使用帖子标题"><label class="form-label">链接内容</label><select id="amForumPost" class="form-select"><option value="">外部网址</option>' + forumPostOptions + '</select><div class="form-hint">选择作品内帖子后，读者会在聊天里画中画查看。</div><label class="form-label" style="margin-top:10px">外部网址</label><input id="amLinkUrl" class="form-input" placeholder="https://..."></div>'
+    else if (type === 'link') extraHtml = '<div class="form-group"><label class="form-label">卡片标题</label><input id="amLinkTitle" class="form-input" placeholder="不填则使用内容标题"><label class="form-label">作品内内容</label><select id="amAppTarget" class="form-select"><option value="">不关联，使用外部网址</option>' + appTargetOptions + '</select><div class="form-hint">读者点击后会进入对应 App，并可原路返回这条消息。</div><select id="amForumPost" class="form-select" hidden aria-hidden="true" tabindex="-1"><option value=""></option>' + forumPostOptions + '</select><label class="form-label" style="margin-top:10px">外部网址</label><input id="amLinkUrl" class="form-input" placeholder="https://..."></div>'
     else if (type === 'redpacket') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amRpAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">祝福语</label><input id="amRpMsg" class="form-input" placeholder="恭喜发财"></div>'
     else if (type === 'transfer') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amTrAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">备注</label><input id="amTrNote" class="form-input" placeholder="转账"></div>'
     else if (type === 'familycard') extraHtml = '<div class="form-group"><label class="form-label">亲属关系</label><input id="amFcRel" class="form-input" placeholder="例如：爸爸/妈妈/姐姐"><label class="form-label">金额</label><input id="amFcAmt" class="form-input" type="number" step="0.01" placeholder="0.00"></div>'
     else if (type === 'takeaway') extraHtml = '<div class="form-group"><label class="form-label">商家</label><input id="amTkShop" class="form-input" placeholder="例如：春风小馆"><label class="form-label">订单内容</label><textarea id="amTkOrder" class="form-textarea" placeholder="例如：番茄牛腩饭 × 1，少辣"></textarea><label class="form-label">金额</label><input id="amTkAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">状态</label><input id="amTkStatus" class="form-input" placeholder="例如：骑手正在配送"></div>'
+    else if (type === 'location') extraHtml = '<div class="form-group"><label class="form-label">地点名称</label><input id="amLocationName" class="form-input" placeholder="例如：旧城区车站"><label class="form-label">详细地址</label><input id="amLocationAddress" class="form-input" placeholder="例如：白石街 17 号"><label class="form-label">地图预览图（可选）</label><input id="amLocationImage" class="form-input" placeholder="图片 URL"></div>'
+    else if (type === 'contact-card') extraHtml = '<div class="form-group"><label class="form-label">联系人</label><select id="amContactTarget" class="form-select"><option value="">自定义名片</option>' + contactOptionsHtml + '</select><label class="form-label">显示名称</label><input id="amContactName" class="form-input" placeholder="选择联系人后可留空"><label class="form-label">名片附言</label><input id="amContactNote" class="form-input" placeholder="例如：这是负责接应的人"></div>'
+    else if (type === 'file') extraHtml = '<div class="form-group"><label class="form-label">文件名</label><input id="amFileName" class="form-input" placeholder="例如：夜巡值班表.pdf"><label class="form-label">类型与大小</label><div class="form-row"><input id="amFileType" class="form-input" placeholder="PDF"><input id="amFileSize" class="form-input" placeholder="1.2 MB"></div><label class="form-label">打开后显示的正文</label><textarea id="amFileContent" class="form-textarea" placeholder="文件内容会在小手机画中画里显示"></textarea></div>'
+    else if (type === 'music') extraHtml = '<div class="form-group"><label class="form-label">歌曲名</label><input id="amMusicTitle" class="form-input" placeholder="例如：失眠航线"><label class="form-label">歌手</label><input id="amMusicArtist" class="form-input" placeholder="歌手名"><label class="form-label">封面（可选）</label><input id="amMusicCover" class="form-input" placeholder="图片 URL"><label class="form-label">外部链接（可选）</label><input id="amMusicUrl" class="form-input" placeholder="https://..."></div>'
+    else if (type === 'forward') extraHtml = '<div class="form-group"><label class="form-label">转发标题</label><input id="amForwardTitle" class="form-input" placeholder="例如：与林晚的聊天记录"><label class="form-label">聊天记录</label><textarea id="amForwardItems" class="form-textarea" placeholder="每行一条：&#10;林晚：你到哪里了？&#10;我：马上到。"></textarea><div class="form-hint">使用“发送者：内容”的格式，每行一条。</div></div>'
+    else if (type === 'schedule') extraHtml = '<div class="form-group"><label class="form-label">日程标题</label><input id="amScheduleTitle" class="form-input" placeholder="例如：车站接应"><label class="form-label">时间</label><input id="amScheduleTime" class="form-input" placeholder="例如：今晚 23:40"><label class="form-label">地点</label><input id="amScheduleLocation" class="form-input" placeholder="旧城区车站"><label class="form-label">说明</label><textarea id="amScheduleDetails" class="form-textarea" placeholder="需要携带的物品或注意事项"></textarea><label class="form-label">操作文字</label><div class="form-row"><input id="amScheduleAccept" class="form-input" placeholder="接受"><input id="amScheduleDecline" class="form-input" placeholder="拒绝"></div></div>'
 
     var isEditing = Boolean(editingMessage)
     var ov = modal((isEditing ? '编辑' : '添加') + typeLabel,
-      (type !== 'image' && type !== 'redpacket' && type !== 'transfer' && type !== 'familycard' && type !== 'takeaway' ? '<div class="form-group"><textarea id="amText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>' : '') +
+      (['image', 'redpacket', 'transfer', 'familycard', 'takeaway', 'location', 'contact-card', 'file', 'music', 'forward', 'schedule'].indexOf(type) < 0 ? '<div class="form-group"><textarea id="amText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>' : '') +
       extraHtml +
+      actionHtml +
       '<div class="form-group"><label class="form-label">发送者</label><select id="amSender" class="form-select">' + optionsHtml + '</select></div>',
       '<button id="amSave" class="btn btn-primary btn-sm">' + (isEditing ? '保存' : '添加') + '</button><button id="amCancel" class="btn btn-ghost btn-sm">取消</button>')
 
@@ -5446,6 +5492,12 @@ function openChatEditor(frame, wid, chatId, pd) {
         ov.querySelector('#amLinkTitle').value = editingMessage.linkTitle || ''
         ov.querySelector('#amForumPost').value = editingMessage.forumPostId || ''
         ov.querySelector('#amLinkUrl').value = editingMessage.linkUrl || ''
+        var editingTarget = normalizeChatAppTarget(editingMessage)
+        var editingTargetIndex = appTargets.findIndex(function(target) {
+          return target.appType === editingTarget.appType
+            && String(target.itemId) === String(editingTarget.itemId)
+        })
+        ov.querySelector('#amAppTarget').value = editingTargetIndex >= 0 ? String(editingTargetIndex) : ''
       }
       if (type === 'redpacket') {
         ov.querySelector('#amRpAmt').value = editingMessage.redpacketAmount ?? ''
@@ -5465,6 +5517,67 @@ function openChatEditor(frame, wid, chatId, pd) {
         ov.querySelector('#amTkAmt').value = editingMessage.takeawayAmount ?? ''
         ov.querySelector('#amTkStatus').value = editingMessage.takeawayStatus || ''
       }
+      if (type === 'location') {
+        ov.querySelector('#amLocationName').value = editingMessage.locationName || editingMessage.text || ''
+        ov.querySelector('#amLocationAddress').value = editingMessage.locationAddress || ''
+        ov.querySelector('#amLocationImage').value = editingMessage.locationImage || ''
+      }
+      if (type === 'contact-card') {
+        ov.querySelector('#amContactTarget').value = editingMessage.targetContactId || ''
+        ov.querySelector('#amContactName').value = editingMessage.contactName || ''
+        ov.querySelector('#amContactNote').value = editingMessage.contactNote || ''
+      }
+      if (type === 'file') {
+        ov.querySelector('#amFileName').value = editingMessage.fileName || ''
+        ov.querySelector('#amFileType').value = editingMessage.fileType || ''
+        ov.querySelector('#amFileSize').value = editingMessage.fileSize || ''
+        ov.querySelector('#amFileContent').value = editingMessage.fileContent || ''
+      }
+      if (type === 'music') {
+        ov.querySelector('#amMusicTitle').value = editingMessage.musicTitle || ''
+        ov.querySelector('#amMusicArtist').value = editingMessage.musicArtist || ''
+        ov.querySelector('#amMusicCover').value = editingMessage.musicCover || ''
+        ov.querySelector('#amMusicUrl').value = editingMessage.musicUrl || ''
+      }
+      if (type === 'forward') {
+        ov.querySelector('#amForwardTitle').value = editingMessage.forwardTitle || ''
+        ov.querySelector('#amForwardItems').value = (editingMessage.forwardItems || []).map(function(item) {
+          return (item.sender || '') + '：' + (item.text || '')
+        }).join('\n')
+      }
+      if (type === 'schedule') {
+        ov.querySelector('#amScheduleTitle').value = editingMessage.scheduleTitle || ''
+        ov.querySelector('#amScheduleTime').value = editingMessage.scheduleTime || ''
+        ov.querySelector('#amScheduleLocation').value = editingMessage.scheduleLocation || ''
+        ov.querySelector('#amScheduleDetails').value = editingMessage.scheduleDetails || ''
+        ov.querySelector('#amScheduleAccept').value = editingMessage.acceptLabel || ''
+        ov.querySelector('#amScheduleDecline').value = editingMessage.declineLabel || ''
+      }
+      if (ov.querySelector('#amActionMode')) {
+        ov.querySelector('#amActionMode').value = editingMessage.actionRequired === true ? 'required' : 'display'
+      }
+    }
+
+    var appTargetSelect = ov.querySelector('#amAppTarget')
+    function syncLinkTargetFields() {
+      if (!appTargetSelect) return
+      var selectedTarget = appTargetSelect.value === '' ? null : appTargets[Number(appTargetSelect.value)]
+      var internal = Boolean(selectedTarget)
+      var linkUrlInput = ov.querySelector('#amLinkUrl')
+      if (linkUrlInput) {
+        linkUrlInput.disabled = internal
+        linkUrlInput.placeholder = internal ? '已使用作品内内容' : 'https://...'
+      }
+      var legacyForumSelect = ov.querySelector('#amForumPost')
+      if (legacyForumSelect) {
+        legacyForumSelect.value = selectedTarget && selectedTarget.appType === 'forum'
+          ? selectedTarget.itemId
+          : ''
+      }
+    }
+    if (appTargetSelect) {
+      appTargetSelect.onchange = syncLinkTargetFields
+      syncLinkTargetFields()
     }
 
     ov.querySelector('#amSave').onclick = function() {
@@ -5474,12 +5587,22 @@ function openChatEditor(frame, wid, chatId, pd) {
       msg.type = type
       if (type === 'image') msg.image = ov.querySelector('#amImg').value.trim()
       if (type === 'link') {
-        var forumPostId = ov.querySelector('#amForumPost').value
-        var linkedForumPost = (pd.forumPosts || []).find(function(post) { return String(post.id) === String(forumPostId) })
-        msg.forumPostId = forumPostId
-        msg.linkTitle = ov.querySelector('#amLinkTitle').value.trim() || (linkedForumPost && linkedForumPost.title) || '链接'
-        msg.linkUrl = forumPostId ? '' : ov.querySelector('#amLinkUrl').value.trim()
+        var selectedTargetValue = ov.querySelector('#amAppTarget').value
+        var selectedTarget = selectedTargetValue === '' ? null : appTargets[Number(selectedTargetValue)]
+        var legacyForumPostId = ov.querySelector('#amForumPost').value
+        if (!selectedTarget && legacyForumPostId) {
+          selectedTarget = appTargets.find(function(target) {
+            return target.appType === 'forum' && String(target.itemId) === String(legacyForumPostId)
+          })
+        }
+        msg.targetApp = selectedTarget ? selectedTarget.appType : ''
+        msg.targetItemId = selectedTarget ? selectedTarget.itemId : ''
+        msg.targetContactId = selectedTarget ? selectedTarget.contactId : ''
+        msg.forumPostId = selectedTarget && selectedTarget.appType === 'forum' ? selectedTarget.itemId : ''
+        msg.linkTitle = ov.querySelector('#amLinkTitle').value.trim() || (selectedTarget && selectedTarget.label) || '链接'
+        msg.linkUrl = selectedTarget ? '' : ov.querySelector('#amLinkUrl').value.trim()
       }
+      if (ov.querySelector('#amActionMode')) msg.actionRequired = ov.querySelector('#amActionMode').value === 'required'
       if (type === 'redpacket') { msg.redpacketAmount = parseFloat(ov.querySelector('#amRpAmt').value) || 0; msg.redpacketMsg = ov.querySelector('#amRpMsg').value.trim() || '恭喜发财' }
       if (type === 'transfer') { msg.transferAmount = parseFloat(ov.querySelector('#amTrAmt').value) || 0; msg.transferNote = ov.querySelector('#amTrNote').value.trim() || '转账' }
       if (type === 'familycard') { msg.fcRelation = ov.querySelector('#amFcRel').value.trim() || '亲人'; msg.fcAmount = parseFloat(ov.querySelector('#amFcAmt').value) || 0 }
@@ -5489,6 +5612,51 @@ function openChatEditor(frame, wid, chatId, pd) {
         msg.takeawayAmount = parseFloat(ov.querySelector('#amTkAmt').value) || 0
         msg.takeawayStatus = ov.querySelector('#amTkStatus').value.trim() || '订单进行中'
         if (!msg.takeawayOrder) { ov.querySelector('#amTkOrder').focus(); return }
+      }
+      if (type === 'location') {
+        msg.locationName = ov.querySelector('#amLocationName').value.trim()
+        msg.locationAddress = ov.querySelector('#amLocationAddress').value.trim()
+        msg.locationImage = ov.querySelector('#amLocationImage').value.trim()
+        msg.text = msg.locationName
+        if (!msg.locationName) { ov.querySelector('#amLocationName').focus(); return }
+      }
+      if (type === 'contact-card') {
+        var contactTargetId = ov.querySelector('#amContactTarget').value
+        var contactTarget = contacts.find(function(contact) { return String(contact.id) === String(contactTargetId) })
+        msg.targetContactId = contactTargetId
+        msg.contactName = ov.querySelector('#amContactName').value.trim() || (contactTarget && contactDisplayName(contactTarget, 'messages')) || '联系人'
+        msg.contactNote = ov.querySelector('#amContactNote').value.trim()
+      }
+      if (type === 'file') {
+        msg.fileName = ov.querySelector('#amFileName').value.trim()
+        msg.fileType = ov.querySelector('#amFileType').value.trim()
+        msg.fileSize = ov.querySelector('#amFileSize').value.trim()
+        msg.fileContent = ov.querySelector('#amFileContent').value.trim()
+        if (!msg.fileName) { ov.querySelector('#amFileName').focus(); return }
+      }
+      if (type === 'music') {
+        msg.musicTitle = ov.querySelector('#amMusicTitle').value.trim()
+        msg.musicArtist = ov.querySelector('#amMusicArtist').value.trim()
+        msg.musicCover = ov.querySelector('#amMusicCover').value.trim()
+        msg.musicUrl = ov.querySelector('#amMusicUrl').value.trim()
+        if (!msg.musicTitle) { ov.querySelector('#amMusicTitle').focus(); return }
+      }
+      if (type === 'forward') {
+        msg.forwardTitle = ov.querySelector('#amForwardTitle').value.trim() || '聊天记录'
+        msg.forwardItems = ov.querySelector('#amForwardItems').value.split(/\r?\n/).map(function(line) {
+          var match = line.match(/^([^：:]+)[：:]\s*(.*)$/)
+          return match ? { sender:match[1].trim(), text:match[2].trim() } : { sender:'', text:line.trim() }
+        }).filter(function(item) { return item.sender || item.text })
+        if (!msg.forwardItems.length) { ov.querySelector('#amForwardItems').focus(); return }
+      }
+      if (type === 'schedule') {
+        msg.scheduleTitle = ov.querySelector('#amScheduleTitle').value.trim()
+        msg.scheduleTime = ov.querySelector('#amScheduleTime').value.trim()
+        msg.scheduleLocation = ov.querySelector('#amScheduleLocation').value.trim()
+        msg.scheduleDetails = ov.querySelector('#amScheduleDetails').value.trim()
+        msg.acceptLabel = ov.querySelector('#amScheduleAccept').value.trim() || '接受'
+        msg.declineLabel = ov.querySelector('#amScheduleDecline').value.trim() || '拒绝'
+        if (!msg.scheduleTitle) { ov.querySelector('#amScheduleTitle').focus(); return }
       }
       if (!editingMessage) {
         var currentRound = ch.rounds[ch.rounds.length - 1]
@@ -5557,20 +5725,44 @@ function openChatEditor(frame, wid, chatId, pd) {
       return '<option value="' + escapeHtmlAttribute(senderId) + '"' + (senderId === defaultSender ? ' selected' : '') + '>' + esc(getSpeakerName(senderId)) + '</option>'
     }).join('')
     var callLabel = mode === 'video' ? '视频通话' : '语音通话'
+    var selectedCallStatus = editingMessage && CHAT_CALL_STATUSES.includes(editingMessage.callStatus)
+      ? editingMessage.callStatus
+      : 'pending'
+    var callStatusOptions = [
+      ['pending', '进入通话剧情'],
+      ['completed', '直接显示已通话'],
+      ['cancelled', '对方已取消'],
+      ['rejected', '对方已拒绝'],
+      ['missed', '无人接听'],
+      ['busy', '对方忙线'],
+      ['interrupted', '通话中断'],
+      ['video-switch', '切换为视频通话'],
+    ]
     var h = '<section class="chat-tool-sheet chat-call-editor" aria-label="编辑' + callLabel + '">'
     h += '<div class="chat-tool-head"><div><strong>' + callLabel + '</strong><small>每行是一句台词</small></div><button type="button" id="chatCallClose" aria-label="关闭通话编辑">×</button></div>'
     h += '<label class="chat-call-field"><span>通话角色</span><select id="chatCallSender">' + senderOptions + '</select></label>'
+    h += '<label class="chat-call-field"><span>通话结果</span><select id="chatCallStatus">' + callStatusOptions.map(function(option) {
+      return '<option value="' + option[0] + '"' + (option[0] === selectedCallStatus ? ' selected' : '') + '>' + option[1] + '</option>'
+    }).join('') + '</select></label>'
     h += '<label class="chat-call-field grow"><span>通话台词</span><textarea id="chatCallLines" placeholder="你先别说话，听我讲。&#10;那家花店今天开门了。"></textarea></label>'
     h += '<div class="chat-call-actions"><button type="button" id="chatCallCancel">取消</button><button type="button" id="chatCallSave">' + (editingMessage ? '保存通话' : '添加通话') + '</button></div>'
     h += '</section>'
     shell.insertAdjacentHTML('beforeend', h)
     var panel = shell.querySelector('.chat-call-editor')
     if (editingMessage) panel.querySelector('#chatCallLines').value = (editingMessage.callLines || []).join('\n')
+    var callLinesField = panel.querySelector('#chatCallLines').closest('.chat-call-field')
+    function refreshCallStatus() {
+      var status = panel.querySelector('#chatCallStatus').value
+      callLinesField.hidden = status !== 'pending' && status !== 'completed'
+    }
+    panel.querySelector('#chatCallStatus').onchange = refreshCallStatus
+    refreshCallStatus()
     panel.querySelector('#chatCallClose').onclick = function() { panel.remove() }
     panel.querySelector('#chatCallCancel').onclick = function() { panel.remove() }
     panel.querySelector('#chatCallSave').onclick = function() {
       var lines = panel.querySelector('#chatCallLines').value.split('\n').map(function(line) { return line.trim() }).filter(Boolean)
-      if (!lines.length) {
+      var callStatus = panel.querySelector('#chatCallStatus').value
+      if (callStatus === 'pending' && !lines.length) {
         panel.querySelector('#chatCallLines').focus()
         return
       }
@@ -5578,9 +5770,11 @@ function openChatEditor(frame, wid, chatId, pd) {
       var msg = editingMessage || { id: uid(), time: new Date().toLocaleString(), allowHangup: true }
       msg.type = 'call'
       msg.callMode = mode
+      msg.callStatus = callStatus
       msg.senderId = senderId
       msg.text = callLabel
       msg.callLines = lines
+      msg.ended = callStatus === 'completed'
       if (!editingMessage) currentRound().messages.push(msg)
       save()
       renderChat()
@@ -5627,6 +5821,148 @@ function openChatEditor(frame, wid, chatId, pd) {
     panel.querySelector('#chatStoryText').focus()
   }
 
+  function showStoryEventEditor(category, editingMessage) {
+    var shell = frame.querySelector('.chat-author-shell')
+    if (!shell) return
+    var existing = shell.querySelector('.chat-tool-sheet')
+    if (existing) existing.remove()
+    var kinds = category === 'contact'
+      ? [
+        ['contact-update', '更新联系人资料'],
+        ['relationship', '删除、拉黑或恢复好友'],
+        ['friend-request', '好友申请'],
+      ]
+      : category === 'group'
+        ? [
+          ['group-join', '加入群聊'],
+          ['group-leave', '退出群聊'],
+          ['group-remove', '移出群聊'],
+          ['group-invite', '邀请加入群聊'],
+          ['owner-transfer', '转让群主'],
+          ['admin-change', '管理员变更'],
+          ['group-rename', '修改群名'],
+          ['group-avatar', '修改群头像'],
+          ['group-title', '修改群头衔'],
+          ['announcement', '群公告'],
+          ['mute', '禁言'],
+        ]
+        : [
+          ['typing', '正在输入'],
+          ['read', '已读'],
+          ['unread', '未读'],
+          ['rejected', '消息被拒收'],
+          ['send-failed', '发送失败'],
+          ['recall', '撤回消息'],
+          ['burn', '阅后即焚'],
+          ['nudge', '拍一拍'],
+          ['reaction', '表情回应'],
+          ['edited', '消息已编辑'],
+        ]
+    var selectedKind = editingMessage && editingMessage.eventKind || kinds[0][0]
+    var contactOptions = '<option value="">不指定角色</option>' + contacts.map(function(contact) {
+      return '<option value="' + escapeHtmlAttribute(contact.id) + '">' + esc(contactDisplayName(contact, 'messages')) + '</option>'
+    }).join('')
+    var h = '<section class="chat-tool-sheet chat-event-editor" aria-label="编辑剧情事件">'
+    h += '<div class="chat-tool-head"><div><strong>' + (category === 'contact' ? '联系人变化' : category === 'group' ? '群聊事件' : '消息状态事件') + '</strong><small>作为一条剧情消息加入</small></div><button type="button" id="chatEventClose" aria-label="关闭事件编辑">×</button></div>'
+    h += '<label class="chat-call-field"><span>事件</span><select id="chatEventKind">' + kinds.map(function(item) {
+      return '<option value="' + item[0] + '"' + (item[0] === selectedKind ? ' selected' : '') + '>' + item[1] + '</option>'
+    }).join('') + '</select></label>'
+    h += '<label class="chat-call-field" data-event-field="actor"><span>发起角色</span><select id="chatEventActor">' + contactOptions + '</select></label>'
+    h += '<label class="chat-call-field" data-event-field="target"><span>变化对象</span><select id="chatEventTarget">' + contactOptions + '</select></label>'
+    h += '<label class="chat-call-field" data-event-field="copy"><span>自定义提示文字（可选）</span><input id="chatEventText" placeholder="留空使用自然默认文案"></label>'
+    h += '<label class="chat-call-field grow" data-event-field="original"><span>原消息或详细内容</span><textarea id="chatEventOriginal" placeholder="撤回前的内容、群公告或编辑后的消息"></textarea></label>'
+    h += '<label class="chat-call-field" data-event-field="duration"><span>持续时间</span><input id="chatEventDuration" type="number" min="1" max="60" step="1" value="3"></label>'
+    h += '<label class="chat-event-check" data-event-field="reveal"><input id="chatEventReveal" type="checkbox">允许读者查看撤回内容</label>'
+    h += '<label class="chat-call-field" data-event-field="reaction"><span>回应符号</span><input id="chatEventReaction" maxlength="8" placeholder="例如：♡、？、无语"></label>'
+    h += '<label class="chat-call-field" data-event-field="relationship"><span>关系结果</span><select id="chatEventRelationship"><option value="blocked">拉黑</option><option value="deleted">删除好友</option><option value="friend">恢复好友</option></select></label>'
+    h += '<label class="chat-call-field" data-event-field="role"><span>管理员操作</span><select id="chatEventRole"><option value="add">设为管理员</option><option value="remove">取消管理员</option></select></label>'
+    h += '<label class="chat-call-field" data-event-field="name"><span>新名称或头衔</span><input id="chatEventName" placeholder="新的昵称、群名或头衔"></label>'
+    h += '<label class="chat-call-field" data-event-field="avatar"><span>新头像</span><input id="chatEventAvatar" placeholder="图片 URL"></label>'
+    h += '<label class="chat-call-field grow" data-event-field="bio"><span>新签名</span><textarea id="chatEventBio" placeholder="联系人资料中的新签名"></textarea></label>'
+    h += '<div class="chat-call-actions"><button type="button" id="chatEventCancel">取消</button><button type="button" id="chatEventSave">' + (editingMessage ? '保存事件' : '添加事件') + '</button></div>'
+    h += '</section>'
+    shell.insertAdjacentHTML('beforeend', h)
+    var panel = shell.querySelector('.chat-event-editor')
+    var kindInput = panel.querySelector('#chatEventKind')
+    var fieldMap = {
+      typing:['actor', 'copy', 'duration'],
+      read:['copy'],
+      unread:['copy'],
+      rejected:['copy'],
+      'send-failed':['copy', 'original'],
+      recall:['actor', 'copy', 'original', 'reveal'],
+      burn:['actor', 'copy', 'original', 'duration'],
+      nudge:['actor', 'target', 'copy'],
+      reaction:['actor', 'copy', 'reaction'],
+      edited:['actor', 'copy', 'original'],
+      'contact-update':['target', 'copy', 'name', 'avatar', 'bio'],
+      relationship:['target', 'copy', 'relationship'],
+      'friend-request':['actor', 'copy', 'original'],
+      'group-join':['target', 'copy'],
+      'group-leave':['target', 'copy'],
+      'group-remove':['target', 'copy'],
+      'group-invite':['actor', 'target', 'copy'],
+      'owner-transfer':['target', 'copy'],
+      'admin-change':['target', 'copy', 'role'],
+      'group-rename':['copy', 'name'],
+      'group-avatar':['copy', 'avatar'],
+      'group-title':['target', 'copy', 'name'],
+      announcement:['copy', 'original'],
+      mute:['target', 'copy', 'duration'],
+    }
+    function refreshEventFields() {
+      var visible = fieldMap[kindInput.value] || ['copy']
+      panel.querySelectorAll('[data-event-field]').forEach(function(field) {
+        field.hidden = visible.indexOf(field.dataset.eventField) < 0
+      })
+    }
+    kindInput.onchange = refreshEventFields
+    if (editingMessage) {
+      panel.querySelector('#chatEventActor').value = editingMessage.actorContactId || ''
+      panel.querySelector('#chatEventTarget').value = editingMessage.targetContactId || ''
+      panel.querySelector('#chatEventText').value = editingMessage.text || ''
+      panel.querySelector('#chatEventOriginal').value = editingMessage.originalText || ''
+      panel.querySelector('#chatEventDuration').value = editingMessage.eventKind === 'burn'
+        ? (editingMessage.burnSeconds || 5)
+        : Math.max(1, Math.round((editingMessage.durationMs || 3000) / 1000))
+      panel.querySelector('#chatEventReveal').checked = editingMessage.allowReveal === true
+      panel.querySelector('#chatEventReaction').value = editingMessage.reaction || ''
+      panel.querySelector('#chatEventRelationship').value = editingMessage.relationshipState || 'blocked'
+      panel.querySelector('#chatEventRole').value = editingMessage.roleChange || 'add'
+      panel.querySelector('#chatEventName').value = editingMessage.newName || ''
+      panel.querySelector('#chatEventAvatar').value = editingMessage.newAvatarUrl || ''
+      panel.querySelector('#chatEventBio').value = editingMessage.newBio || ''
+    }
+    refreshEventFields()
+    function closeEventEditor() { panel.remove() }
+    panel.querySelector('#chatEventClose').onclick = closeEventEditor
+    panel.querySelector('#chatEventCancel').onclick = closeEventEditor
+    panel.querySelector('#chatEventSave').onclick = function() {
+      var kind = kindInput.value
+      var seconds = Math.max(1, Math.min(60, parseInt(panel.querySelector('#chatEventDuration').value, 10) || 3))
+      var msg = editingMessage || { id:uid(), time:new Date().toLocaleString() }
+      msg.type = category === 'contact' ? 'contact-event' : 'system-event'
+      msg.senderId = 'system'
+      msg.eventKind = kind
+      msg.actorContactId = panel.querySelector('#chatEventActor').value
+      msg.targetContactId = panel.querySelector('#chatEventTarget').value
+      msg.text = panel.querySelector('#chatEventText').value.trim()
+      msg.originalText = panel.querySelector('#chatEventOriginal').value.trim()
+      msg.durationMs = seconds * 1000
+      msg.burnSeconds = seconds
+      msg.allowReveal = panel.querySelector('#chatEventReveal').checked
+      msg.reaction = panel.querySelector('#chatEventReaction').value.trim()
+      msg.relationshipState = panel.querySelector('#chatEventRelationship').value
+      msg.roleChange = panel.querySelector('#chatEventRole').value
+      msg.newName = panel.querySelector('#chatEventName').value.trim()
+      msg.newAvatarUrl = panel.querySelector('#chatEventAvatar').value.trim()
+      msg.newBio = panel.querySelector('#chatEventBio').value.trim()
+      if (!editingMessage) currentRound().messages.push(msg)
+      save()
+      renderChat()
+    }
+  }
+
   function showPlusMenu(page) {
     var shell = frame.querySelector('.chat-author-shell')
     if (!shell) return
@@ -5635,10 +5971,11 @@ function openChatEditor(frame, wid, chatId, pd) {
     page = page === 1 ? 1 : 0
     var firstPage = [
       ['image', '▧', '图片'], ['voice-call', '☎', '语音通话'], ['video-call', '▣', '视频通话'], ['voice', '♪', '语音消息'],
-      ['transfer', '¥', '转账'], ['location', '⌖', '位置'], ['time', '◷', '日期时间'], ['system', '!', '系统消息']
+      ['transfer', '¥', '转账'], ['location', '⌖', '位置'], ['link', '↗', '链接'], ['redpacket', '封', '红包']
     ]
     var secondPage = [
-      ['link', '↗', '链接'], ['redpacket', '封', '红包'], ['familycard', '卡', '亲属卡'], ['takeaway', '餐', '外卖卡片']
+      ['familycard', '卡', '亲属卡'], ['takeaway', '餐', '外卖卡片'], ['contact-card', '人', '联系人名片'],
+      ['file', '文', '文件'], ['music', '♪', '音乐分享'], ['schedule', '历', '日程邀请']
     ]
     var tools = page === 0 ? firstPage : secondPage
     var h = '<section class="chat-tool-sheet" aria-label="添加剧情内容">'
@@ -5649,13 +5986,13 @@ function openChatEditor(frame, wid, chatId, pd) {
     })
 
     h += '</div>'
-    h += '<div class="chat-tool-pager"><button type="button" id="chatToolPrev"' + (page === 0 ? ' disabled' : '') + ' aria-label="上一页">‹</button><span><b>' + (page === 0 ? '●' : '○') + '</b> ' + (page === 1 ? '●' : '○') + '</span><button type="button" id="chatToolNext"' + (page === 1 ? ' disabled' : '') + ' aria-label="下一页">›</button></div>'
+    h += '<div class="chat-tool-pager"><button type="button" id="chatToolPrev"' + (page === 0 ? ' disabled' : '') + ' aria-label="上一页">‹</button><span>第 ' + (page + 1) + ' / 2 页</span><button type="button" id="chatToolNext"' + (page === 1 ? ' disabled' : '') + ' aria-label="下一页">›</button></div>'
     h += '</section>'
     shell.insertAdjacentHTML('beforeend', h)
     var sheet = shell.querySelector('.chat-tool-sheet')
     sheet.querySelector('#chatToolClose').onclick = function() { sheet.remove() }
-    sheet.querySelector('#chatToolPrev').onclick = function() { showPlusMenu(0) }
-    sheet.querySelector('#chatToolNext').onclick = function() { showPlusMenu(1) }
+    sheet.querySelector('#chatToolPrev').onclick = function() { showPlusMenu(Math.max(0, page - 1)) }
+    sheet.querySelector('#chatToolNext').onclick = function() { showPlusMenu(Math.min(1, page + 1)) }
 
     function closeAnd(run) {
       sheet.remove()
@@ -5670,18 +6007,15 @@ function openChatEditor(frame, wid, chatId, pd) {
     bindTool('video-call', function() { showCallEditor('video') })
     bindTool('voice', function() { closeAnd(addVoiceMessage) })
     bindTool('transfer', function() { closeAnd(function() { addMsg('transfer') }) })
-    bindTool('location', function() { showInlineStoryEditor('location', '添加位置', '例如：旧城区 · 白石街 17 号') })
-    bindTool('time', function() { showInlineStoryEditor('time', '添加日期时间', '例如：今天 09:38') })
-    bindTool('system', function() {
-      activeSpeakerId = 'system'
-      renderChat()
-      var input = frame.querySelector('#chatInput')
-      if (input) input.focus()
-    })
+    bindTool('location', function() { closeAnd(function() { addMsg('location') }) })
     bindTool('link', function() { closeAnd(function() { addMsg('link') }) })
     bindTool('redpacket', function() { closeAnd(function() { addMsg('redpacket') }) })
     bindTool('familycard', function() { closeAnd(function() { addMsg('familycard') }) })
     bindTool('takeaway', function() { closeAnd(function() { addMsg('takeaway') }) })
+    bindTool('contact-card', function() { closeAnd(function() { addMsg('contact-card') }) })
+    bindTool('file', function() { closeAnd(function() { addMsg('file') }) })
+    bindTool('music', function() { closeAnd(function() { addMsg('music') }) })
+    bindTool('schedule', function() { closeAnd(function() { addMsg('schedule') }) })
   }
 
   function deleteRound(roundIdx) {
@@ -5722,6 +6056,97 @@ function openChatEditor(frame, wid, chatId, pd) {
       ch.rounds.push(round)
     }
     return round
+  }
+
+  function messageSelectionId(message, roundIndex, messageIndex) {
+    return String(message?.id || (roundIndex + ':' + messageIndex))
+  }
+
+  function selectedMessagesInOrder() {
+    var selected = []
+    ch.rounds.forEach(function(round, roundIndex) {
+      ;(round.messages || []).forEach(function(message, messageIndex) {
+        if (selectedMessageIds.has(messageSelectionId(message, roundIndex, messageIndex))) selected.push(message)
+      })
+    })
+    return selected
+  }
+
+  function showForwardRecipients() {
+    var selectedMessages = selectedMessagesInOrder()
+    if (!selectedMessages.length) return
+    var excludedContactId = ch.type === 'single' ? String(ch.contactIds?.[0] || '') : ''
+    var recipients = contacts.filter(function(contact) { return String(contact.id) !== excludedContactId })
+    var h = '<div class="chat-forward-summary"><strong>已选 ' + selectedMessages.length + ' 条消息</strong><span>选择一个或多个联系人，聊天记录会自动整理成转发卡片。</span></div>'
+    h += '<div class="chat-forward-recipients" role="group" aria-label="选择转发联系人">'
+    recipients.forEach(function(contact) {
+      var avatar = contactAvatar(contact, 'messages')
+      var avatarStyle = avatar
+        ? 'background-image:url(' + escapeHtmlAttribute(avatar) + ');background-size:cover;background-position:center'
+        : 'background:' + avatarColor(contact.id)
+      h += '<label class="chat-forward-recipient"><input type="checkbox" data-forward-recipient="' + escapeHtmlAttribute(contact.id) + '"><span class="chat-forward-recipient-avatar" aria-hidden="true" style="' + escapeHtmlAttribute(avatarStyle) + '">' + (avatar ? '' : esc((contactDisplayName(contact, 'messages') || '?').charAt(0))) + '</span><span>' + esc(contactDisplayName(contact, 'messages')) + '</span></label>'
+    })
+    if (!recipients.length) h += '<p class="chat-forward-empty">没有其他联系人可以接收这次转发。</p>'
+    h += '</div>'
+    var ov = modal('转发给联系人', h, '<button id="chatForwardConfirm" class="btn btn-primary btn-sm" disabled>转发</button><button id="chatForwardCancel" class="btn btn-ghost btn-sm">取消</button>')
+    var confirmButton = ov.querySelector('#chatForwardConfirm')
+    function updateConfirmState() {
+      confirmButton.disabled = !ov.querySelector('[data-forward-recipient]:checked')
+    }
+    ov.querySelectorAll('[data-forward-recipient]').forEach(function(input) {
+      input.onchange = updateConfirmState
+    })
+    ov.querySelector('#chatForwardCancel').onclick = function() { ov.remove() }
+    confirmButton.onclick = function() {
+      var recipientIds = Array.from(ov.querySelectorAll('[data-forward-recipient]:checked')).map(function(input) { return input.dataset.forwardRecipient })
+      if (!recipientIds.length) return
+      var forwardItems = selectedMessages.map(function(message) {
+        return {
+          sender: message.type === 'time' || message.type === 'system' || message.type === 'system-event' || message.type === 'contact-event'
+            ? '系统'
+            : getSpeakerName(message.senderId),
+          text: chatMessageQuoteSummary(message),
+        }
+      })
+      var forwardTitle = '来自「' + getChatName() + '」的聊天记录'
+      recipientIds.forEach(function(contactId) {
+        var destination = chats.find(function(chat) {
+          return chat.type === 'single' && String(chat.contactIds?.[0]) === String(contactId)
+        })
+        if (!destination) {
+          destination = {
+            id:uid(),
+            type:'single',
+            contactIds:[contactId],
+            groupName:'',
+            messages:[],
+            rounds:[{ id:uid(), label:'第1轮', messages:[] }],
+          }
+          chats.push(destination)
+        }
+        if (!Array.isArray(destination.rounds)) destination.rounds = []
+        var destinationRound = destination.rounds[destination.rounds.length - 1]
+        if (!destinationRound) {
+          destinationRound = { id:uid(), label:'第1轮', messages:[] }
+          destination.rounds.push(destinationRound)
+        }
+        if (!Array.isArray(destinationRound.messages)) destinationRound.messages = []
+        destinationRound.messages.push({
+          id:uid(),
+          type:'forward',
+          senderId:'self',
+          forwardTitle:forwardTitle,
+          forwardItems:forwardItems.map(function(item) { return Object.assign({}, item) }),
+          time:new Date().toLocaleString(),
+        })
+      })
+      multiSelectActive = false
+      selectedMessageIds.clear()
+      save()
+      ov.remove()
+      renderChat()
+      showToast('已转发给 ' + recipientIds.length + ' 位联系人')
+    }
   }
 
   function showGroupEditor() {
@@ -5806,21 +6231,29 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (messageCount === 0) h += '<div class="chat-empty-cue"><span>01</span><p>选择发言人，写下这一轮的第一句。</p></div>'
     h += '</div>'
 
-    h += '<div class="chat-author-controls">'
-    h += '<div class="chat-speaker-strip" role="toolbar" aria-label="选择发言人">'
-    h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === 'self' ? ' active' : '') + '" data-speaker="reader" data-sender-id="self">读者</button>'
-    ;(ch.contactIds || []).forEach(function(contactId) {
-      h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === contactId ? ' active' : '') + '" data-speaker="contact" data-sender-id="' + escapeHtmlAttribute(contactId) + '">' + esc(getSpeakerName(contactId)) + '</button>'
-    })
-    h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === 'system' ? ' active' : '') + '" data-speaker="system" data-sender-id="system">系统</button>'
-    h += '<button type="button" class="chat-speaker-btn add" data-speaker="add" aria-label="更多发言人">＋</button>'
-    h += '</div>'
-    h += '<div class="chat-input-bar chat-composer">'
-    h += '<button class="chat-btn-icon" id="chatPlusBtn" type="button" aria-label="添加剧情内容">＋</button>'
-    h += '<input id="chatInput" aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
-    h += '<button class="chat-send-btn" id="chatSendBtn" type="button">添加</button>'
-    h += '</div>'
-    h += '</div>'
+    if (multiSelectActive) {
+      h += '<div class="chat-multi-select-bar" role="toolbar" aria-label="多选消息操作">'
+      h += '<button type="button" id="chatMultiCancel">取消</button>'
+      h += '<strong class="chat-multi-select-count">已选 ' + selectedMessageIds.size + ' 条</strong>'
+      h += '<button type="button" id="chatMultiForward"' + (selectedMessageIds.size ? '' : ' disabled') + '>转发</button>'
+      h += '</div>'
+    } else {
+      h += '<div class="chat-author-controls">'
+      h += '<div class="chat-speaker-strip" role="toolbar" aria-label="选择发言人">'
+      h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === 'self' ? ' active' : '') + '" data-speaker="reader" data-sender-id="self">读者</button>'
+      ;(ch.contactIds || []).forEach(function(contactId) {
+        h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === contactId ? ' active' : '') + '" data-speaker="contact" data-sender-id="' + escapeHtmlAttribute(contactId) + '">' + esc(getSpeakerName(contactId)) + '</button>'
+      })
+      h += '<button type="button" class="chat-speaker-btn' + (activeSpeakerId === 'system' ? ' active' : '') + '" data-speaker="system" data-sender-id="system">系统</button>'
+      h += '<button type="button" class="chat-speaker-btn add" data-speaker="add" aria-label="更多发言人">＋</button>'
+      h += '</div>'
+      h += '<div class="chat-input-bar chat-composer">'
+      h += '<button class="chat-btn-icon" id="chatPlusBtn" type="button" aria-label="添加剧情内容">＋</button>'
+      h += '<input id="chatInput" aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
+      h += '<button class="chat-send-btn" id="chatSendBtn" type="button">添加</button>'
+      h += '</div>'
+      h += '</div>'
+    }
 
     h += '<div class="chat-editor-modebar">'
     h += '<button type="button" id="chatModeBack" aria-label="返回消息列表">↶</button>'
@@ -5833,13 +6266,34 @@ function openChatEditor(frame, wid, chatId, pd) {
   }
 
   function renderMessageBubble(msg, mi, ri) {
+    var selectionId = messageSelectionId(msg, ri, mi)
+    var selectionClass = multiSelectActive
+      ? ' is-selectable' + (selectedMessageIds.has(selectionId) ? ' is-selected' : '')
+      : ''
     if (msg.type === 'time') {
-      return '<div class="chat-time-stamp" data-ri="' + ri + '" data-mi="' + mi + '">' + esc(msg.time || '') + '</div>'
+      return '<div class="chat-time-stamp' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '">' + esc(msg.time || '') + '</div>'
+    }
+    if (msg.type === 'system') {
+      return '<div class="chat-msg chat-story-system-row' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '"><span>' + esc(msg.text || '') + '</span></div>'
+    }
+    if (msg.type === 'system-event' || msg.type === 'contact-event') {
+      var eventActor = contacts.find(function(contact) { return String(contact.id) === String(msg.actorContactId || msg.targetContactId) })
+      var eventTarget = contacts.find(function(contact) { return String(contact.id) === String(msg.targetContactId) })
+      var eventCopy = storyEventText(Object.assign({}, msg, {
+        actorName:msg.actorContactId === 'self' ? '读者' : (eventActor ? contactDisplayName(eventActor, 'messages') : '对方'),
+        targetName:eventTarget ? contactDisplayName(eventTarget, 'messages') : '你',
+      }))
+      var eventDetail = (msg.eventKind === 'recall' && msg.allowReveal && msg.originalText)
+        ? '<small>读者可查看撤回内容</small>'
+        : (msg.eventKind === 'burn' && msg.originalText)
+          ? '<small>阅后 ' + Math.max(1, parseInt(msg.burnSeconds, 10) || 5) + ' 秒隐藏</small>'
+          : ''
+      return '<div class="chat-msg chat-story-system-row' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '"><span>' + esc(eventCopy) + eventDetail + '</span></div>'
     }
     var isSelf = msg.senderId === 'self'
     var showAsSelf = isSelf
     var senderName = isSelf ? '读者' : (contacts.find(function(c) { return c.id === msg.senderId }) || {}).name || '未知'
-    var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative">'
+    var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative">'
     if (msg.senderId !== 'self') {
       var sc = contacts.find(function(c) { return c.id === msg.senderId })
       var messageAvatar = contactAvatar(sc, 'messages')
@@ -5854,13 +6308,17 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (msg.type === 'image') {
       h += '<div class="chat-bubble"><img src="' + escapeHtmlAttribute(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'"></div>'
     } else if (msg.type === 'link') {
-      var authoredForumPost = msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
-      if (msg.forumPostId) {
-        h += '<div class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || (authoredForumPost && authoredForumPost.title) || '帖子') + '</strong><span>' + (authoredForumPost ? '内联论坛帖子 · 读者点击后画中画查看' : '关联帖子已不存在') + '</span></div>'
+      var authoredLinkTarget = normalizeChatAppTarget(msg)
+      var authoredTargetEntry = listChatAppTargets(pd).find(function(target) {
+        return target.appType === authoredLinkTarget.appType && String(target.itemId) === String(authoredLinkTarget.itemId)
+      })
+      var actionLabel = messageActionLabel(msg, false)
+      if (authoredLinkTarget.appType) {
+        h += '<div class="chat-bubble chat-link-card"><span class="chat-story-card-kicker">' + esc(authoredTargetEntry ? authoredTargetEntry.detail : '作品内内容') + '</span><strong>' + esc(msg.linkTitle || (authoredTargetEntry && authoredTargetEntry.label) || '内容') + '</strong><span>' + (authoredTargetEntry ? (authoredLinkTarget.appType === 'forum' ? '内联论坛帖子 · 读者点击后进入论坛 App' : '读者点击后进入对应 App') : '关联内容已不存在') + '</span>' + (actionLabel ? '<small class="chat-action-state is-required">' + esc(actionLabel) + '</small>' : '') + '</div>'
       } else {
         var linkUrl = safeMessageCardUrl(msg.linkUrl)
         var linkTag = linkUrl ? 'a href="' + escapeHtmlAttribute(linkUrl) + '" target="_blank" rel="noopener noreferrer"' : 'div'
-        h += '<' + linkTag + ' class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span></' + (linkUrl ? 'a' : 'div') + '>'
+        h += '<' + linkTag + ' class="chat-bubble chat-link-card"><strong>' + esc(msg.linkTitle || '链接') + '</strong><span>' + esc(msg.linkUrl || '') + '</span>' + (actionLabel ? '<small class="chat-action-state is-required">' + esc(actionLabel) + '</small>' : '') + '</' + (linkUrl ? 'a' : 'div') + '>'
       }
     } else if (msg.type === 'redpacket') {
       h += '<div class="chat-bubble chat-payment-card chat-payment-redpacket rp-card"><div class="chat-payment-main rp-top"><div class="chat-payment-type">红包</div><div class="chat-payment-amount rp-amount">&yen;' + (msg.redpacketAmount || 0).toFixed(2) + '</div><div class="chat-payment-note rp-label">' + esc(msg.redpacketMsg || '恭喜发财') + '</div></div><div class="chat-payment-footer rp-bottom">红包</div></div>'
@@ -5875,30 +6333,58 @@ function openChatEditor(frame, wid, chatId, pd) {
       var takeawayTarget = buildTakeawayOpenTarget(msg.takeawayShop, msg.takeawayOrder)
       var takeawayExternalAttrs = takeawayTarget.opensApp ? '' : ' target="_blank" rel="noopener noreferrer"'
       h += '<a class="chat-bubble chat-takeaway-card" href="' + escapeHtmlAttribute(takeawayTarget.href) + '"' + takeawayExternalAttrs + '><span class="chat-takeaway-type">外卖</span><strong>' + esc(msg.takeawayShop || '外卖订单') + '</strong><span>' + esc(msg.takeawayOrder || '') + '</span><b>&yen;' + (msg.takeawayAmount || 0).toFixed(2) + '</b><small>' + esc(msg.takeawayStatus || '订单进行中') + ' · 点击查看</small></a>'
+    } else if (msg.type === 'location') {
+      h += '<div class="chat-story-card chat-location-card">'
+      if (msg.locationImage) h += '<img src="' + escapeHtmlAttribute(msg.locationImage) + '" alt="">'
+      h += '<span class="chat-story-card-kicker">位置</span><strong>' + esc(msg.locationName || msg.text || '未命名地点') + '</strong><small>' + esc(msg.locationAddress || '点击查看地点') + '</small></div>'
+    } else if (msg.type === 'contact-card') {
+      var cardContact = contacts.find(function(contact) { return String(contact.id) === String(msg.targetContactId) })
+      var cardContactName = msg.contactName || (cardContact && contactDisplayName(cardContact, 'messages')) || '联系人'
+      h += '<div class="chat-story-card chat-contact-card"><span class="chat-story-card-mark">人</span><span><span class="chat-story-card-kicker">联系人名片</span><strong>' + esc(cardContactName) + '</strong><small>' + esc(msg.contactNote || '点击查看联系人') + '</small></span></div>'
+    } else if (msg.type === 'file') {
+      h += '<div class="chat-story-card chat-file-card"><span class="chat-story-card-mark">文</span><span><span class="chat-story-card-kicker">文件</span><strong>' + esc(msg.fileName || '未命名文件') + '</strong><small>' + esc([msg.fileType, msg.fileSize].filter(Boolean).join(' · ') || '点击查看内容') + '</small></span></div>'
+    } else if (msg.type === 'music') {
+      h += '<div class="chat-story-card chat-music-card">'
+      if (msg.musicCover) h += '<img src="' + escapeHtmlAttribute(msg.musicCover) + '" alt="">'
+      else h += '<span class="chat-story-card-mark">♪</span>'
+      h += '<span><span class="chat-story-card-kicker">音乐分享</span><strong>' + esc(msg.musicTitle || '未命名音乐') + '</strong><small>' + esc(msg.musicArtist || '点击打开') + '</small></span></div>'
+    } else if (msg.type === 'forward') {
+      h += '<div class="chat-story-card chat-forward-card"><span class="chat-story-card-kicker">合并转发</span><strong>' + esc(msg.forwardTitle || '聊天记录') + '</strong><small>' + (Array.isArray(msg.forwardItems) ? msg.forwardItems.length : 0) + ' 条消息 · 点击查看</small></div>'
+    } else if (msg.type === 'schedule') {
+      h += '<div class="chat-story-card chat-schedule-card"><span class="chat-story-card-kicker">日程邀请</span><strong>' + esc(msg.scheduleTitle || '未命名日程') + '</strong><small>' + esc([msg.scheduleTime, msg.scheduleLocation].filter(Boolean).join(' · ') || '等待回应') + '</small><div class="chat-story-card-actions"><span>' + esc(msg.acceptLabel || '接受') + '</span><span>' + esc(msg.declineLabel || '拒绝') + '</span></div></div>'
     } else if (msg.type === 'call') {
       var callModeLabel = msg.callMode === 'video' ? 'VIDEO CALL' : 'VOICE CALL'
-      h += '<div class="chat-bubble chat-call-card">'
-      h += '<span class="chat-call-card-tag">' + callModeLabel + '</span>'
-      h += '<strong>' + esc(senderName) + '</strong>'
-      h += '<small>' + esc((msg.callLines && msg.callLines[0]) || '通话剧情') + '</small>'
-      h += '</div>'
+      if (msg.callStatus && msg.callStatus !== 'pending') {
+        h += '<div class="chat-story-call-outcome"><span>' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span>' + esc(chatStoryMessageLabel(msg)) + '</span></div>'
+      } else {
+        h += '<div class="chat-bubble chat-call-card">'
+        h += '<span class="chat-call-card-tag">' + callModeLabel + '</span>'
+        h += '<strong>' + esc(senderName) + '</strong>'
+        h += '<small>' + esc((msg.callLines && msg.callLines[0]) || '通话剧情') + '</small>'
+        h += '</div>'
+      }
     } else if (msg.type === 'voice') {
       var dur = msg.duration || Math.max(1, Math.round((msg.text || '').length * 0.3))
       var barCount = Math.min(20, Math.max(4, Math.round(dur * 3)))
       var bars = ''
       for (var bi = 0; bi < barCount; bi++) {
         var bh = 4 + Math.abs(Math.sin(bi * 0.7 + 1.5)) * 14
-        bars += '<rect x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
+        bars += '<rect class="rd-voice-bar" x="' + (bi * 5) + '" y="' + (20 - bh) / 2 + '" width="3" height="' + bh + '" rx="1.5"/>'
       }
-      h += '<div class="chat-bubble chat-voice-bubble" onclick="var t=this.querySelector(\'.chat-voice-text\');t.style.display=t.style.display==\'none\'?\'block\':\'none\'" style="cursor:pointer;min-width:100px">'
-      h += '<svg class="chat-voice-wave" width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" style="fill:currentColor;opacity:.7">' + bars + '</svg>'
-      h += '<span class="chat-voice-dur" style="font-size:.65rem;margin-left:4px;opacity:.6">' + dur + '"</span>'
-      h += '<span class="chat-voice-text" style="display:none;font-size:.75rem;margin-top:4px;line-height:1.4">' + esc(msg.text || '') + '</span>'
+      var voicePreviewTranscriptId = 'authorVoiceTranscript-' + ri + '-' + mi
+      h += '<div class="chat-bubble chat-voice-bubble rd-voice-message" data-voice-message-id="' + escapeHtmlAttribute(msg.id) + '" data-voice-status="idle">'
+      h += '<button type="button" class="rd-voice-playback" aria-label="语音播放样式预览" aria-pressed="false">'
+      h += '<span class="rd-voice-state-icon" aria-hidden="true">▶</span>'
+      h += '<svg class="rd-voice-wave" width="' + (barCount * 5 + 2) + '" height="20" viewBox="0 0 ' + (barCount * 5 + 2) + ' 20" aria-hidden="true">' + bars + '</svg>'
+      h += '<span class="rd-voice-remaining">' + Math.floor(dur / 60) + ':' + String(dur % 60).padStart(2, '0') + '</span>'
+      h += '</button>'
+      h += '<button type="button" class="rd-voice-transcript-toggle" aria-controls="' + voicePreviewTranscriptId + '" aria-expanded="false">转写</button>'
+      h += '<span id="' + voicePreviewTranscriptId + '" class="rd-voice-transcript" hidden>' + esc(msg.text || '') + '</span>'
       h += '</div>'
     } else {
       h += '<div class="chat-bubble">'
       if (msg.quoteId && msg.quoteText) {
-        h += '<div style="font-size:.65rem;color:var(--c-text2);margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--c-border)"><span style="opacity:.6">引用：</span>' + esc(msg.quoteText.substring(0, 50)) + '</div>'
+        h += '<button type="button" class="chat-quote-preview" data-quote-target="' + escapeHtmlAttribute(msg.quoteId) + '"><span>' + esc(msg.quoteSenderName || '引用消息') + '</span><strong>' + esc(msg.quoteText.substring(0, 54)) + '</strong></button>'
       }
       var groupMentionNames = ch.type === 'group' ? ['读者'].concat((ch.contactIds || []).map(getSpeakerName)) : []
       h += renderAuthorMentionText(msg.text || '', groupMentionNames) + '</div>'
@@ -5919,6 +6405,32 @@ function openChatEditor(frame, wid, chatId, pd) {
   }
 
   function bindChatEvents() {
+    frame.querySelectorAll('.rd-voice-playback').forEach(function(button) {
+      button.onclick = function() {
+        var root = button.closest('.rd-voice-message')
+        if (!root) return
+        var isPlaying = root.dataset.voiceStatus === 'playing'
+        root.dataset.voiceStatus = isPlaying ? 'paused' : 'playing'
+        button.setAttribute('aria-pressed', isPlaying ? 'false' : 'true')
+        var icon = button.querySelector('.rd-voice-state-icon')
+        if (icon) icon.textContent = isPlaying ? '▶' : 'Ⅱ'
+        root.querySelectorAll('.rd-voice-bar').forEach(function(bar, index) {
+          bar.classList.toggle('is-active', !isPlaying && index % 3 !== 2)
+        })
+      }
+    })
+
+    frame.querySelectorAll('.rd-voice-transcript-toggle').forEach(function(button) {
+      button.onclick = function() {
+        var root = button.closest('.rd-voice-message')
+        var transcript = root && root.querySelector('.rd-voice-transcript')
+        if (!transcript) return
+        transcript.hidden = !transcript.hidden
+        button.setAttribute('aria-expanded', transcript.hidden ? 'false' : 'true')
+        button.textContent = transcript.hidden ? '转写' : '收起转写'
+      }
+    })
+
     var backBtn = frame.querySelector('#chatBack')
     if (backBtn) backBtn.onclick = function() { openMessagesEditor(frame, wid, pd) }
     var modeBackBtn = frame.querySelector('#chatModeBack')
@@ -5929,6 +6441,15 @@ function openChatEditor(frame, wid, chatId, pd) {
       var state = frame.querySelector('#chatSaveState')
       if (state) state.textContent = '已保存'
     }
+
+    var multiCancelButton = frame.querySelector('#chatMultiCancel')
+    if (multiCancelButton) multiCancelButton.onclick = function() {
+      multiSelectActive = false
+      selectedMessageIds.clear()
+      renderChat()
+    }
+    var multiForwardButton = frame.querySelector('#chatMultiForward')
+    if (multiForwardButton) multiForwardButton.onclick = showForwardRecipients
 
     var speakerButtons = frame.querySelectorAll('.chat-speaker-btn[data-sender-id]')
     speakerButtons.forEach(function(button) {
@@ -5973,7 +6494,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       var text = chatInput.value.trim()
       if (!text) return
       var msg = activeSpeakerId === 'system'
-        ? { id: uid(), type: 'time', time: text }
+        ? { id:uid(), senderId:'system', type:'system', text:text, time:new Date().toLocaleString() }
         : { id: uid(), senderId: activeSpeakerId, text: text, time: new Date().toLocaleString(), type: 'text' }
       currentRound().messages.push(msg)
       save()
@@ -6024,6 +6545,14 @@ function openChatEditor(frame, wid, chatId, pd) {
         var msg = round.messages[mi]
         if (!msg) return
 
+        if (multiSelectActive) {
+          var selectionId = messageSelectionId(msg, ri, mi)
+          if (selectedMessageIds.has(selectionId)) selectedMessageIds.delete(selectionId)
+          else selectedMessageIds.add(selectionId)
+          renderChat()
+          return
+        }
+
         // Remove any existing popup
         var existing = document.querySelector('.chat-ctx-menu')
         if (existing) {
@@ -6068,15 +6597,24 @@ function openChatEditor(frame, wid, chatId, pd) {
             addVoiceMessage(msg)
             return
           }
+          if (msg.type === 'system-event' || msg.type === 'contact-event') {
+            var eventCategory = msg.type === 'contact-event'
+              ? 'contact'
+              : (String(msg.eventKind || '').indexOf('group-') === 0 || ['owner-transfer', 'admin-change', 'announcement', 'mute'].indexOf(msg.eventKind) >= 0)
+                ? 'group'
+                : 'status'
+            showStoryEventEditor(eventCategory, msg)
+            return
+          }
           if (msg.type === 'time') {
             showInlineStoryEditor('time', '编辑日期时间', '例如：2026年7月23日 08:30', msg)
             return
           }
-          if (msg.type === 'location') {
-            showInlineStoryEditor('location', '编辑位置', '例如：旧城区车站', msg)
+          if (['image', 'link', 'redpacket', 'transfer', 'familycard', 'takeaway'].indexOf(msg.type) >= 0) {
+            addMsg(msg.type, msg)
             return
           }
-          if (['image', 'link', 'redpacket', 'transfer', 'familycard', 'takeaway'].indexOf(msg.type) >= 0) {
+          if (['location', 'contact-card', 'file', 'music', 'forward', 'schedule'].indexOf(msg.type) >= 0) {
             addMsg(msg.type, msg)
             return
           }
@@ -6088,19 +6626,56 @@ function openChatEditor(frame, wid, chatId, pd) {
 
         addItem('引用', function() {
           var qId = msg.id
-          var qText = msg.text || ''
-          if (msg.type === 'image') qText = '[图片]'
-          var ov = modal('引用消息', '<div style="font-size:.7rem;color:var(--c-text2);padding:4px 8px;background:var(--c-surface2);margin-bottom:8px">引用：' + esc(qText.substring(0, 40)) + '</div><div class="form-group"><textarea id="quoteMsgText" class="form-textarea" placeholder="回复内容" style="min-height:60px"></textarea></div>',
+          var qText = chatMessageQuoteSummary(msg)
+          var qSenderName = msg.senderId ? getSpeakerName(msg.senderId) : '系统'
+          var quoteSenderId = activeSpeakerId === 'system' ? 'self' : activeSpeakerId
+          var ov = modal('引用消息', '<div class="chat-quote-compose-preview"><span>' + esc(qSenderName) + '</span><strong>' + esc(qText.substring(0, 54)) + '</strong></div><div class="form-group"><label class="form-label">以「' + esc(getSpeakerName(quoteSenderId)) + '」回复</label><textarea id="quoteMsgText" class="form-textarea" placeholder="回复内容" style="min-height:60px"></textarea></div>',
             '<button id="quoteMsgSave" class="btn btn-primary btn-sm">发送</button><button id="quoteMsgCancel" class="btn btn-ghost btn-sm">取消</button>')
           ov.querySelector('#quoteMsgSave').onclick = function() {
             var text = ov.querySelector('#quoteMsgText').value.trim()
             if (!text) return
-            var newMsg = { id: uid(), senderId: msg.senderId, text: text, time: new Date().toLocaleString(), type: 'text', quoteId: qId, quoteText: qText }
+            var newMsg = { id: uid(), senderId: quoteSenderId, text: text, time: new Date().toLocaleString(), type: 'text', quoteId: qId, quoteText: qText, quoteSenderName:qSenderName }
             round.messages.push(newMsg)
             save(); ov.remove(); renderChat()
           }
           ov.querySelector('#quoteMsgCancel').onclick = function() { ov.remove() }
         })
+
+        addItem('多选', function() {
+          multiSelectActive = true
+          selectedMessageIds.clear()
+          selectedMessageIds.add(messageSelectionId(msg, ri, mi))
+          renderChat()
+        })
+
+        var canTransitionMessage = ['time', 'system', 'system-event', 'contact-event'].indexOf(msg.type) < 0
+        if (canTransitionMessage && msg.failed !== true) {
+          addItem('撤回', function() {
+            var originalMessage = JSON.parse(JSON.stringify(msg))
+            var recallEvent = {
+              id:msg.id || uid(),
+              type:'system-event',
+              eventKind:'recall',
+              senderId:'system',
+              actorContactId:msg.senderId || '',
+              originalText:chatMessageQuoteSummary(msg),
+              allowReveal:true,
+              recalledMessage:originalMessage,
+              time:msg.time || new Date().toLocaleString(),
+            }
+            round.messages.splice(mi, 1, recallEvent)
+            save()
+            renderChat()
+          })
+        } else if (msg.type === 'system-event' && msg.eventKind === 'recall' && msg.recalledMessage) {
+          addItem('取消撤回', function() {
+            var restoredMessage = JSON.parse(JSON.stringify(msg.recalledMessage))
+            restoredMessage.id = msg.id || restoredMessage.id || uid()
+            round.messages.splice(mi, 1, restoredMessage)
+            save()
+            renderChat()
+          })
+        }
 
         addItem('在前插入时间', function() {
           var ov = modal('插入时间', '<div class="form-group"><input id="insTimeVal" class="form-input" value="' + esc(new Date().toLocaleString().replace(/:\d{2}$/, '')) + '" placeholder="时间文本"></div>',
@@ -6236,10 +6811,12 @@ function openChatEditor(frame, wid, chatId, pd) {
           ov.querySelector('#chCancel').onclick = function() { ov.remove() }
         })
 
-        var failItem = addItem(msg.failed ? '✓ 取消失败' : '发送失败', function() {
-          msg.failed = !msg.failed
-          save(); renderChat()
-        })
+        if (canTransitionMessage) {
+          addItem(msg.failed ? '✓ 取消失败' : '发送失败', function() {
+            msg.failed = !msg.failed
+            save(); renderChat()
+          })
+        }
 
         var delItem = addItem('删除', function() {
           deleteMessage(ri, mi)
@@ -6255,8 +6832,22 @@ function openChatEditor(frame, wid, chatId, pd) {
       })
     }
 
+    msgArea.addEventListener('click', function(e) {
+      if (!multiSelectActive) return
+      var messageElement = e.target.closest('.chat-msg, .chat-time-stamp')
+      if (!messageElement) return
+      e.preventDefault()
+      e.stopPropagation()
+      var selectionId = messageElement.dataset.selectionId
+      if (!selectionId) return
+      if (selectedMessageIds.has(selectionId)) selectedMessageIds.delete(selectionId)
+      else selectedMessageIds.add(selectionId)
+      renderChat()
+    })
+
     // Choice button clicks (delegate from msgArea)
     msgArea.addEventListener('click', function(e) {
+      if (multiSelectActive) return
       var btn = e.target.closest('.chat-choice-btn')
       if (!btn) return
       e.preventDefault()
