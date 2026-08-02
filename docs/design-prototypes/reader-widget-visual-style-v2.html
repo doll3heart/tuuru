@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tuuru 组件视觉皮肤方向稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f2eff0;
+      --ink: #332d30;
+      --muted: #746a6e;
+      --line: #d9d1d4;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: var(--font);
+    }
+    button { font: inherit; }
+    .page { width: min(1500px, 100%); margin: 0 auto; padding: 42px clamp(18px, 4vw, 64px) 72px; }
+    .page-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .page-head h1 { margin: 0; font-size: clamp(24px, 3vw, 40px); letter-spacing: -.025em; }
+    .page-head p { max-width: 54ch; margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    .asset-switch {
+      flex: 0 0 auto;
+      min-height: 42px;
+      padding: 0 16px;
+      border: 1px solid #9d8b91;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .asset-switch:hover { background: #e8e0e3; }
+    .asset-switch:focus-visible { outline: 2px solid #74535e; outline-offset: 3px; }
+    .page[data-assets="off"] .deco { display: none; }
+
+    .theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+    .theme {
+      --bg: #f9eff2;
+      --surface: rgba(255, 251, 252, .78);
+      --surface-strong: #fffafb;
+      --soft: #f2dfe5;
+      --accent: #a8677a;
+      --text: #533f46;
+      --text-muted: #826e75;
+      --stroke: rgba(121, 77, 91, .32);
+      --glint: rgba(255, 255, 255, .7);
+      position: relative;
+      overflow: hidden;
+      min-height: 610px;
+      padding: 24px;
+      background: var(--bg);
+      border-radius: 16px;
+      color: var(--text);
+    }
+    .theme::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, color-mix(in srgb, var(--accent) 16%, transparent) 1.2px, transparent 1.4px);
+      background-size: 17px 17px;
+      opacity: .35;
+      pointer-events: none;
+    }
+    .theme-mint {
+      --bg: #ecf8f3;
+      --surface: rgba(248, 255, 252, .76);
+      --surface-strong: #f9fffc;
+      --soft: #d4eee3;
+      --accent: #4d8b78;
+      --text: #345b50;
+      --text-muted: #668379;
+      --stroke: rgba(61, 117, 99, .3);
+    }
+    .theme-blue {
+      --bg: #edf4fb;
+      --surface: rgba(250, 253, 255, .8);
+      --surface-strong: #fbfdff;
+      --soft: #dceaf7;
+      --accent: #5d7f9f;
+      --text: #3d5266;
+      --text-muted: #6c8194;
+      --stroke: rgba(66, 95, 121, .28);
+    }
+    .theme-mono {
+      --bg: #f4f3f4;
+      --surface: rgba(255, 255, 255, .82);
+      --surface-strong: #fff;
+      --soft: #e6e1e4;
+      --accent: #886773;
+      --text: #42383c;
+      --text-muted: #786b70;
+      --stroke: rgba(54, 45, 49, .25);
+    }
+    .theme-head {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .theme-head strong { display: block; font-size: 18px; }
+    .theme-head span { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+    .swatches { display: flex; gap: 5px; }
+    .swatches i { width: 17px; height: 17px; border: 1px solid var(--stroke); border-radius: 50%; background: var(--surface-strong); }
+    .swatches i:nth-child(2) { background: var(--soft); }
+    .swatches i:nth-child(3) { background: var(--accent); }
+
+    .components {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .widget {
+      position: relative;
+      overflow: hidden;
+      min-height: 128px;
+      padding: 14px;
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: inset 0 1px var(--glint), 2px 3px 0 color-mix(in srgb, var(--accent) 9%, transparent);
+      backdrop-filter: blur(5px);
+    }
+    .widget.wide { grid-column: 1 / -1; min-height: 118px; }
+    .widget::after {
+      content: "";
+      position: absolute;
+      inset: 5px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 54%, transparent);
+      border-radius: 8px;
+      pointer-events: none;
+    }
+    .widget-label { color: var(--text-muted); font-size: 10px; line-height: 1.3; }
+    .widget-title { margin-top: 5px; font-size: 16px; font-weight: 750; line-height: 1.3; }
+    .widget-detail { margin-top: 4px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+
+    .resume {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 118px;
+      align-items: center;
+      gap: 16px;
+      padding: 18px 20px;
+    }
+    .resume-progress { height: 5px; margin-top: 14px; overflow: hidden; border-radius: 999px; background: var(--soft); }
+    .resume-progress span { display: block; width: 68%; height: 100%; background: var(--accent); }
+    .resume-calendar { align-self: stretch; display: grid; place-items: center; border-left: 1px dashed var(--stroke); text-align: center; }
+    .resume-calendar b { display: block; font: 750 28px/1 Georgia, serif; }
+    .resume-calendar small { color: var(--text-muted); font-size: 9px; }
+
+    .status { display: grid; gap: 9px; }
+    .chat-row { display: flex; align-items: center; gap: 8px; }
+    .chat-row.right { flex-direction: row-reverse; }
+    .avatar {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      width: 33px;
+      height: 33px;
+      flex: 0 0 33px;
+      place-items: center;
+      border: 1px solid var(--stroke);
+      border-radius: 9px;
+      background: var(--soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .bubble {
+      min-width: 0;
+      padding: 8px 10px;
+      border: 1px solid color-mix(in srgb, var(--stroke) 70%, transparent);
+      border-radius: 11px 11px 11px 3px;
+      background: var(--surface-strong);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+    .right .bubble { border-radius: 11px 11px 3px; background: var(--soft); }
+
+    .voice { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 12px; }
+    .disc {
+      position: relative;
+      z-index: 1;
+      width: 68px;
+      height: 68px;
+      border: 9px double color-mix(in srgb, var(--accent) 72%, var(--surface-strong));
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: inset 0 0 0 11px color-mix(in srgb, var(--soft) 70%, var(--accent));
+    }
+    .disc::after { content: ""; position: absolute; inset: 24px; border-radius: 50%; background: var(--surface-strong); }
+    .wave { display: flex; height: 19px; align-items: center; gap: 2px; margin-top: 9px; }
+    .wave i { width: 2px; height: 9px; border-radius: 2px; background: var(--accent); }
+    .wave i:nth-child(2), .wave i:nth-child(5) { height: 17px; }
+    .wave i:nth-child(3), .wave i:nth-child(6) { height: 12px; }
+
+    .gallery { display: grid; grid-template-columns: 1fr 74px; gap: 10px; }
+    .photo {
+      min-height: 84px;
+      border: 5px solid var(--surface-strong);
+      border-bottom-width: 16px;
+      border-radius: 4px;
+      background:
+        radial-gradient(circle at 68% 28%, color-mix(in srgb, var(--accent) 42%, white) 0 12px, transparent 13px),
+        linear-gradient(160deg, transparent 46%, color-mix(in srgb, var(--accent) 28%, var(--soft)) 47%);
+      box-shadow: 1px 2px 0 var(--stroke);
+    }
+    .mini-stack { display: grid; gap: 7px; }
+    .mini-photo { min-height: 35px; border: 3px solid var(--surface-strong); background: var(--soft); box-shadow: 1px 1px 0 var(--stroke); }
+
+    .sealed { display: grid; place-items: center; text-align: center; }
+    .seal-mark {
+      display: grid;
+      width: 45px;
+      height: 45px;
+      place-items: center;
+      margin-bottom: 7px;
+      border: 1px solid var(--accent);
+      border-radius: 50%;
+      background: var(--soft);
+      color: var(--accent);
+      font: 700 18px/1 Georgia, serif;
+    }
+    .sealed .widget-detail { max-width: 16ch; }
+
+    .clues { display: grid; grid-template-columns: repeat(3, 1fr); align-items: center; gap: 8px; }
+    .clue {
+      min-height: 70px;
+      display: grid;
+      place-items: center;
+      padding: 8px 5px;
+      border: 1px solid var(--stroke);
+      border-radius: 7px;
+      background: var(--surface-strong);
+      color: var(--text-muted);
+      font-size: 9px;
+      line-height: 1.35;
+      text-align: center;
+    }
+    .clue:nth-child(2) { transform: translateY(7px); background: var(--soft); }
+
+    .deco { position: absolute; z-index: 3; object-fit: contain; pointer-events: none; }
+    .rose-rabbits { right: -17px; bottom: -15px; width: 95px; transform: rotate(-5deg); }
+    .rose-bouquet { right: -14px; top: -20px; width: 82px; opacity: .9; }
+    .mono-stars { right: -9px; bottom: -6px; width: 76px; opacity: .56; }
+    .mono-bow { right: -10px; top: -16px; width: 72px; opacity: .5; }
+    .silver-hearts { right: -6px; bottom: -4px; width: 69px; opacity: .46; }
+    .has-deco .widget-title, .has-deco .widget-detail { max-width: calc(100% - 54px); }
+
+    .theme-foot {
+      position: relative;
+      z-index: 2;
+      margin-top: 14px;
+      color: var(--text-muted);
+      font-size: 10px;
+      line-height: 1.55;
+    }
+    @media (max-width: 920px) {
+      .theme-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .page { padding: 24px 12px 48px; }
+      .page-head { align-items: stretch; flex-direction: column; }
+      .asset-switch { align-self: flex-start; }
+      .theme { min-height: 0; padding: 16px; border-radius: 12px; }
+      .components { grid-template-columns: 1fr; }
+      .widget.wide { grid-column: auto; }
+      .resume { grid-template-columns: minmax(0, 1fr) 82px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page" id="page" data-assets="on">
+    <header class="page-head">
+      <div>
+        <h1>组件视觉皮肤方向稿</h1>
+        <p>不改变现有组件功能与尺寸，只比较颜色、透明度、描边、装饰与文字层级。四套都能在没有图片素材时独立成立。</p>
+      </div>
+      <button class="asset-switch" id="assetSwitch" type="button" aria-pressed="true">隐藏素材，看纯 CSS</button>
+    </header>
+
+    <div class="theme-grid">
+      <section class="theme theme-rose">
+        <header class="theme-head"><div><strong>糖霜粉</strong><span>柔粉描边 · 奶白半透 · 小面积蝴蝶结</span></div><div class="swatches"><i></i><i></i><i></i></div></header>
+        <div class="components">
+          <article class="widget wide resume has-deco"><div><div class="widget-label">阅读续页</div><div class="widget-title">暮色中的回声</div><div class="widget-detail">上次读到：旧站台的雨</div><div class="resume-progress"><span></span></div></div><div class="resume-calendar"><div><small>今天</small><b>27</b><small>周六</small></div></div><img class="deco rose-bouquet" src="assets/widget-style-v2/rose-bouquet.png" alt=""></article>
+          <article class="widget status"><div class="chat-row"><span class="avatar">林</span><span class="bubble">到旧站台了吗？</span></div><div class="chat-row right"><span class="avatar">我</span><span class="bubble">快到了。</span></div></article>
+          <article class="widget voice"><span class="disc"></span><div><div class="widget-label">最近语音</div><div class="widget-title">00:17</div><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i></div></div></article>
+          <article class="widget wide gallery has-deco"><div class="photo"></div><div class="mini-stack"><span class="mini-photo"></span><span class="mini-photo"></span></div><img class="deco rose-rabbits" src="assets/widget-style-v2/rose-rabbits.png" alt=""></article>
+        </div>
+        <p class="theme-foot">素材仅出现在角落，不遮挡正文；关闭素材后仍保留完整层次。</p>
+      </section>
+
+      <section class="theme theme-mint">
+        <header class="theme-head"><div><strong>薄荷奶冻</strong><span>清透薄荷 · 白色内线 · 轻盈圆角</span></div><div class="swatches"><i></i><i></i><i></i></div></header>
+        <div class="components">
+          <article class="widget wide resume"><div><div class="widget-label">阅读续页</div><div class="widget-title">暮色中的回声</div><div class="widget-detail">上次读到：旧站台的雨</div><div class="resume-progress"><span></span></div></div><div class="resume-calendar"><div><small>今天</small><b>27</b><small>周六</small></div></div></article>
+          <article class="widget sealed has-deco"><div><span class="seal-mark">T</span><div class="widget-title">未拆内容</div><div class="widget-detail">继续阅读后开启</div></div><img class="deco silver-hearts" src="assets/widget-style-v2/silver-hearts.png" alt=""></article>
+          <article class="widget status"><div class="chat-row"><span class="avatar">林</span><span class="bubble">我在北门等你。</span></div><div class="chat-row right"><span class="avatar">我</span><span class="bubble">别走开。</span></div></article>
+          <article class="widget wide clues"><span class="clue">车票<br>21:30</span><span class="clue">北门<br>钥匙</span><span class="clue">未读<br>备忘</span></article>
+        </div>
+        <p class="theme-foot">适合颜色较浅的壁纸，强调清楚但不做高饱和荧光。</p>
+      </section>
+
+      <section class="theme theme-blue">
+        <header class="theme-head"><div><strong>雾蓝银边</strong><span>冷调雾蓝 · 银灰细线 · 低对比照片框</span></div><div class="swatches"><i></i><i></i><i></i></div></header>
+        <div class="components">
+          <article class="widget wide resume has-deco"><div><div class="widget-label">阅读续页</div><div class="widget-title">暮色中的回声</div><div class="widget-detail">上次读到：旧站台的雨</div><div class="resume-progress"><span></span></div></div><div class="resume-calendar"><div><small>今天</small><b>27</b><small>周六</small></div></div><img class="deco mono-stars" src="assets/widget-style-v2/mono-stars.png" alt=""></article>
+          <article class="widget voice"><span class="disc"></span><div><div class="widget-label">林晚的留言</div><div class="widget-title">00:17</div><div class="wave"><i></i><i></i><i></i><i></i><i></i><i></i></div></div></article>
+          <article class="widget sealed"><div><span class="seal-mark">T</span><div class="widget-title">待开启</div><div class="widget-detail">下一段剧情</div></div></article>
+          <article class="widget wide gallery"><div class="photo"></div><div class="mini-stack"><span class="mini-photo"></span><span class="mini-photo"></span></div></article>
+        </div>
+        <p class="theme-foot">银灰装饰只作为边缘标记，主体仍跟随作品本身的内容。</p>
+      </section>
+
+      <section class="theme theme-mono">
+        <header class="theme-head"><div><strong>白桃灰</strong><span>奶白表面 · 灰粉点色 · 最克制的一套</span></div><div class="swatches"><i></i><i></i><i></i></div></header>
+        <div class="components">
+          <article class="widget wide resume"><div><div class="widget-label">阅读续页</div><div class="widget-title">暮色中的回声</div><div class="widget-detail">上次读到：旧站台的雨</div><div class="resume-progress"><span></span></div></div><div class="resume-calendar"><div><small>今天</small><b>27</b><small>周六</small></div></div></article>
+          <article class="widget status"><div class="chat-row"><span class="avatar">林</span><span class="bubble">今晚见。</span></div><div class="chat-row right"><span class="avatar">我</span><span class="bubble">好。</span></div></article>
+          <article class="widget sealed has-deco"><div><span class="seal-mark">T</span><div class="widget-title">今日来信</div><div class="widget-detail">来自林晚</div></div><img class="deco mono-bow" src="assets/widget-style-v2/mono-bow.png" alt=""></article>
+          <article class="widget wide clues"><span class="clue">照片<br>03</span><span class="clue">日程<br>今晚</span><span class="clue">消息<br>01</span></article>
+        </div>
+        <p class="theme-foot">作为基础皮肤最不挑壁纸，也方便作者只换一个强调色。</p>
+      </section>
+    </div>
+  </main>
+  <script>
+    const page = document.querySelector('#page');
+    const button = document.querySelector('#assetSwitch');
+    button.addEventListener('click', () => {
+      const next = page.dataset.assets === 'on' ? 'off' : 'on';
+      page.dataset.assets = next;
+      button.setAttribute('aria-pressed', String(next === 'on'));
+      button.textContent = next === 'on' ? '隐藏素材，看纯 CSS' : '显示素材点缀';
+    });
+  </script>
+</body>
+</html>

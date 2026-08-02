@@ -44,15 +44,17 @@ function ruleBodiesFor(cssText, selector) {
   return bodies.join("\n")
 }
 
-test("the runtime phone exposes reusable chrome classes", () => {
+test("the runtime phone exposes reusable chrome and delegates the profile to the home component renderer", () => {
   const builder = sourceBetween("function buildPhoneHTML", "// ====== PHONE READER")
 
-  for (const className of ["phone-island", "phone-profile", "phone-home-bar"]) {
+  for (const className of ["phone-island", "phone-home-bar"]) {
     assert.match(builder, new RegExp(`class=["']${className}["']`), className)
   }
+  assert.match(builder, /renderReaderPhoneHome/)
+  assert.match(readerSource, /function readerPhoneIdentityCardMarkup[\s\S]*class="phone-profile"/)
   assert.doesNotMatch(
     builder,
-    /class=["'](?:phone-island|phone-profile|phone-home-bar)["'][^>]*display\s*:/,
+    /class=["'](?:phone-island|phone-home-bar)["'][^>]*display\s*:/,
   )
 })
 
@@ -62,9 +64,11 @@ test("short coarse-pointer readers reserve their height for Apps", () => {
   )
 
   for (const host of [".phone-reader", ".rd-pm-phone-wrap"]) {
-    for (const chrome of [".phone-island", ".phone-profile", ".phone-home-bar"]) {
+    for (const chrome of [".phone-island", ".phone-home-bar"]) {
       const selector = `${host} > .phone-frame > ${chrome}`
       assert.match(ruleBodiesFor(short, selector), /display\s*:\s*none/, selector)
     }
+    const profileSelector = `${host} > .phone-frame .phone-home-item.is-profile`
+    assert.match(ruleBodiesFor(short, profileSelector), /display\s*:\s*none/, profileSelector)
   }
 })

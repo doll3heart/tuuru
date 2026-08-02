@@ -6,7 +6,6 @@ import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { decryptWorkPackage, isEncryptedWorkPackage } from '../js/work-package.js'
-import { phoneGridContainerStyle, phoneGridItemStyle } from './phone-grid.js'
 import { parsePngDimensionsFromDataUrl, readerPngDimensionError } from './png-import-policy.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 import { advanceCallPlayback, createCallPlaybackState } from './call-playback.js'
@@ -70,6 +69,32 @@ import { visiblePhoneModuleContacts } from '../js/phone-module-draft.js'
 import { effectiveForbiddenWords } from '../js/forbidden-words.js'
 import { shouldShowPhoneTimestamp } from '../js/phone-timestamps.js'
 import { normalizeDynamicIslandStyle } from '../js/phone-dynamic-island.js'
+import {
+  PHONE_CUSTOM_DECORATION_MAX_ITEMS,
+  PHONE_CUSTOM_DECORATION_SIZES,
+  PHONE_DESKTOP_WIDGET_FIELDS,
+  PHONE_DESKTOP_WIDGET_PRODUCTS,
+  defaultPhoneDesktopWidgets,
+  normalizePhoneDesktopWidgets,
+  phoneCustomDecorationSizeForDimensions,
+  renderPhoneCustomDecoration,
+  renderPhoneDesktopWidget,
+  renderPhoneDesktopWidgets,
+} from './phone-desktop-widgets.js'
+import {
+  PHONE_HOME_CELL_HEIGHT,
+  PHONE_HOME_CELL_WIDTH,
+  PHONE_HOME_COLUMNS,
+  PHONE_HOME_MAX_PAGES,
+  PHONE_HOME_ROWS,
+  movePhoneHomeItem,
+  normalizePhoneHomeLayout,
+  phoneHomeDefinitions,
+  phoneHomeFootprint,
+  phoneHomeItemStyle,
+  setPhoneHomePageCount,
+} from './phone-home-layout.js'
+import { syncPhoneWidgetSystemTime } from './phone-widget-time.js'
 import {
   addReaderLocalFont,
   deleteReaderLocalFont,
@@ -3859,8 +3884,8 @@ function saveReaderSettings(data) {
 function readerAppearancePackageTransferMarkup() {
   return '<section class="reader-appearance-transfer" aria-labelledby="readerAppearanceTransferTitle">' +
     '<div class="rs-group-heading"><span id="readerAppearanceTransferTitle">美化包</span><small>文章、手机与 App 外观可一起分享</small></div>' +
-    '<p>仅包含外观设置。不会包含昵称 / ID、头像、简介、作品、书架、密码或阅读记录。</p>' +
-    '<p class="reader-appearance-transfer-assets">会包含你主动设置的壁纸、个人主页顶部图、字体和图标；分享前请确认这些素材适合公开。</p>' +
+    '<p>仅包含外观设置。不会包含昵称 / ID、头像、简介、作品、书架、密码或阅读记录；组件便签也只留在本机。</p>' +
+    '<p class="reader-appearance-transfer-assets">会包含你主动设置的壁纸、个人主页顶部图、字体、图标和桌面组件外观；分享前请确认这些素材适合公开。</p>' +
     '<div class="reader-appearance-transfer-actions">' +
     '<button type="button" class="rs-action-btn" data-reader-appearance-export>导出美化包</button>' +
     '<button type="button" class="rs-action-btn subtle" data-reader-appearance-import>导入美化包</button>' +
@@ -3885,7 +3910,15 @@ function installReaderAppearancePackage(raw) {
   var appearance = inspectReaderAppearancePackage(raw)
   validateReaderAppearancePackageCss(appearance)
   var article = normalizeReaderAppearance(appearance.article)
-  var phone = normalizePhoneCustom(readerOwnDataRecord(getPhoneCustom(), appearance.phone))
+  var currentPhone = getPhoneCustom()
+  var importedPhone = readerOwnDataRecord(appearance.phone)
+  if (importedPhone.desktopWidgets) {
+    importedPhone.desktopWidgets = readerOwnDataRecord(
+      importedPhone.desktopWidgets,
+      { note:currentPhone.desktopWidgets.note },
+    )
+  }
+  var phone = normalizePhoneCustom(readerOwnDataRecord(currentPhone, importedPhone))
   var articleKey = 'moirain_readerSettings'
   var phoneKey = 'moirain_phoneCustom'
   var previousArticle = localStorage.getItem(articleKey)
@@ -5620,6 +5653,188 @@ function readerPhoneFlowNotificationHtml(phoneData, step, custom) {
   return h
 }
 
+function readerPhoneDesktopWidgetContext(flowStep) {
+  var sequence = _work ? readerPhoneFlowSession(_work).sequence || [] : []
+  var index = _work ? readerPhoneFlowSession(_work).index || 0 : 0
+  var total = sequence.length
+  var percent = total ? Math.round(Math.min(total, index) / total * 100) : 0
+  var progressLabel = total
+    ? (index > 0 ? '继续第 ' + Math.min(index + 1, total) + ' 步' : '从第一步开始')
+    : '继续阅读'
+  return {
+    workTitle:_work && _work.title || '',
+    progressLabel:progressLabel,
+    progressPercent:percent,
+    sealedLabel:flowStep ? '下一段剧情待开启' : '继续探索作品',
+  }
+}
+
+function readerPhoneVisibleApps(apps) {
+  return (Array.isArray(apps) ? apps : []).filter(function(app) {
+    return app && app.enabled !== false && !['settings', 'customize', 'profile'].includes(app.type)
+  }).filter(function(app, index, source) {
+    return source.findIndex(function(candidate) { return candidate.type === app.type }) === index
+  })
+}
+
+function readerPhoneHomeLayout(ct, apps) {
+  var visibleApps = readerPhoneVisibleApps(apps)
+  var definitions = phoneHomeDefinitions(ct.desktopWidgets, visibleApps.map(function(app) { return app.type }))
+  var candidate = ct.homeLayout
+  if (!candidate) {
+    candidate = {
+      pageCount:1,
+      items:visibleApps.map(function(app, index) {
+        var x = Number.isInteger(Number(app.desktopX)) ? Number(app.desktopX) * 2 : (index % 4) * 2
+        var y = Number.isInteger(Number(app.desktopY)) ? Number(app.desktopY) * 2 : Math.floor(index / 4) * 2
+        return { key:'app:' + app.type, page:0, x:x, y:y }
+      })
+    }
+  }
+  return { definitions:definitions, layout:normalizePhoneHomeLayout(candidate, definitions), apps:visibleApps }
+}
+
+function readerPhoneHomeAppMarkup(app, ct, skin, flowStep, preview) {
+  var customIcon = readerCustomIconUrl(ct.customIcons && ct.customIcons[app.type])
+  var appName = readerAppName(app)
+  var isFlowApp = !!flowStep && phoneReadingFlowAppType(flowStep) === app.type
+  var dataAttribute = preview ? ' data-app="' + escapeHtmlAttribute(app.type || '') + '"' : ' data-app-type="' + escapeHtmlAttribute(app.type || '') + '"'
+  var h = '<button type="button" class="phone-app-icon' + (preview ? ' rd-app-icon' : '') + '" aria-label="' + escapeHtmlAttribute(appName) + '"' + dataAttribute + '>'
+  h += '<span class="phone-icon-body' + (skin.showIconShadow === false ? '' : ' icon-shadow') + '" style="background:' + READER_DEFAULT_APP_ICON_SURFACE + ';position:relative">'
+  var safeAppIcon = sanitizeIconHtml(app.icon || '?') || '?'
+  if (customIcon) {
+    h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" onerror="this.style.display=\'none\'">'
+    h += '<span class="phone-icon-char is-icon-fallback">' + safeAppIcon + '</span>'
+  } else {
+    h += '<span class="phone-icon-char">' + safeAppIcon + '</span>'
+  }
+  if (app.hasUpdate || isFlowApp) h += '<span class="phone-flow-badge" aria-hidden="true"></span>'
+  h += '</span>'
+  if (skin.showAppLabels !== false) h += '<span class="phone-icon-label">' + esc(appName) + '</span>'
+  h += '</button>'
+  return h
+}
+
+function readerPhoneIdentityCardMarkup(ct, skin) {
+  var coverBg = skin.topBgImage || skin.wallpaperImage || ''
+  var h = '<div class="phone-profile"'
+  if (coverBg) h += ' style="background-image:url(' + escapeHtmlAttribute(coverBg) + ');background-size:cover;background-position:center"'
+  h += '>'
+  h += '<div class="phone-profile-overlay"></div>'
+  h += '<div class="phone-widget-copy">'
+  h += '<div class="phone-widget-kicker">READER ID</div>'
+  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
+  h += '<div class="phone-profile-signature">' + esc(skin.readerSignature || '') + '</div>'
+  h += '</div>'
+  h += '<div class="phone-avatar">'
+  if (skin.readerAvatar) h += '<img src="' + escapeHtmlAttribute(skin.readerAvatar) + '" alt="">'
+  h += '</div></div>'
+  return h
+}
+
+function renderReaderPhoneHome(ct, apps, phoneData, context, options) {
+  var homeOptions = readerPlainRecord(options)
+  var home = readerPhoneHomeLayout(ct, apps)
+  var activePage = Math.min(Math.max(0, Number(homeOptions.activePage) || 0), home.layout.pageCount - 1)
+  var renderPageCount = Math.min(PHONE_HOME_MAX_PAGES, home.layout.pageCount + (homeOptions.editable ? 1 : 0))
+  var contextData = readerOwnDataRecord(context, { staticPreview:homeOptions.editable === true })
+  var appByType = new Map(home.apps.map(function(app) { return [app.type, app] }))
+  var customDecorationById = new Map((ct.desktopWidgets.customDecorations || []).map(function(item) { return [item.id, item] }))
+  var definitionByKey = new Map(home.definitions.map(function(definition) { return [definition.key, definition] }))
+  var desktopId = homeOptions.preview ? '' : ' id="phoneDesktopReader"'
+  var h = '<section' + desktopId + ' class="phone-home' + (homeOptions.editable ? ' is-editable' : '') + '" data-phone-home-active="' + activePage + '" data-phone-home-pages="' + home.layout.pageCount + '">'
+  h += '<div class="phone-home-viewport"><div class="phone-home-track" style="transform:translateX(-' + (activePage * 100) + '%)">'
+  for (var pageIndex = 0; pageIndex < renderPageCount; pageIndex++) {
+    var isNewPage = pageIndex >= home.layout.pageCount
+    h += '<div class="phone-home-page' + (isNewPage ? ' is-new-page' : '') + '" data-phone-home-page-index="' + pageIndex + '" aria-label="第 ' + (pageIndex + 1) + ' 屏">'
+    if (isNewPage) h += '<span class="phone-home-new-page-hint">拖到这里，新建第 ' + (pageIndex + 1) + ' 屏</span>'
+    home.layout.items.filter(function(item) { return item.page === pageIndex }).forEach(function(item) {
+      var definition = definitionByKey.get(item.key)
+      if (!definition) return
+      var footprint = phoneHomeFootprint(definition)
+      var style = phoneHomeItemStyle(item) + '--phone-home-width:' + (footprint.width * PHONE_HOME_CELL_WIDTH) + 'px;--phone-home-height:' + (footprint.height * PHONE_HOME_CELL_HEIGHT) + 'px;'
+      var label = definition.kind === 'app'
+        ? readerAppName(appByType.get(definition.id) || { type:definition.id, name:definition.id })
+        : (definition.kind === 'profile'
+          ? '读者身份卡'
+          : (definition.kind === 'custom'
+            ? ((customDecorationById.get(definition.id) || {}).name || '自定义装饰')
+            : phoneDesktopWidgetDefinition(definition.id).label))
+      h += '<div class="phone-home-item is-' + definition.kind + '" data-phone-home-key="' + escapeHtmlAttribute(item.key) + '" data-phone-home-kind="' + definition.kind + '" data-phone-home-size="' + escapeHtmlAttribute(definition.size || '') + '" data-phone-home-item-page="' + item.page + '" style="' + escapeHtmlAttribute(style) + '" tabindex="0" role="group" aria-label="' + escapeHtmlAttribute(label + '，可移动') + '">'
+      if (definition.kind === 'app') {
+        var app = appByType.get(definition.id)
+        if (app) h += readerPhoneHomeAppMarkup(app, ct, ct, homeOptions.flowStep, homeOptions.preview)
+      } else if (definition.kind === 'profile') {
+        h += readerPhoneIdentityCardMarkup(ct, ct)
+      } else if (definition.kind === 'custom') {
+        h += renderPhoneCustomDecoration(ct.desktopWidgets, definition.id)
+      } else {
+        h += renderPhoneDesktopWidget(ct.desktopWidgets, definition.id, phoneData, contextData)
+      }
+      h += '</div>'
+    })
+    h += '</div>'
+  }
+  h += '</div></div>'
+  h += '<nav class="phone-home-pager" aria-label="桌面屏幕切换"><button type="button" class="phone-home-page-arrow" data-phone-home-prev aria-label="上一屏"' + (activePage === 0 ? ' disabled' : '') + '>‹</button><span class="phone-home-page-dots">'
+  for (var dotIndex = 0; dotIndex < home.layout.pageCount; dotIndex++) {
+    h += '<button type="button" class="phone-home-page-dot' + (dotIndex === activePage ? ' is-active' : '') + '" data-phone-home-page="' + dotIndex + '" aria-label="前往第 ' + (dotIndex + 1) + ' 屏" aria-current="' + (dotIndex === activePage ? 'page' : 'false') + '"></button>'
+  }
+  h += '</span><button type="button" class="phone-home-page-arrow" data-phone-home-next aria-label="下一屏"' + (activePage >= home.layout.pageCount - 1 ? ' disabled' : '') + '>›</button>'
+  if (homeOptions.editable && home.layout.pageCount < PHONE_HOME_MAX_PAGES) h += '<button type="button" class="phone-home-add-page" data-phone-home-add-page>＋ 新屏</button>'
+  h += '</nav><span class="phone-home-screen-label" aria-live="polite">第 ' + (activePage + 1) + ' / ' + home.layout.pageCount + ' 屏</span></section>'
+  return { html:h, layout:home.layout, definitions:home.definitions }
+}
+
+function bindReaderPhoneHomePager(root) {
+  if (!root) return
+  syncPhoneWidgetSystemTime(root)
+  ensureReaderPhoneSystemTime(root)
+  root.querySelectorAll('.phone-home').forEach(function(home) {
+    var pageCount = Math.max(1, Number(home.dataset.phoneHomePages) || 1)
+    function show(page) {
+      var active = Math.min(Math.max(0, page), pageCount - 1)
+      home.dataset.phoneHomeActive = String(active)
+      var track = home.querySelector('.phone-home-track')
+      if (track) track.style.transform = 'translateX(-' + (active * 100) + '%)'
+      home.querySelectorAll('[data-phone-home-page]').forEach(function(dot) {
+        var selected = Number(dot.dataset.phoneHomePage) === active
+        dot.classList.toggle('is-active', selected)
+        dot.setAttribute('aria-current', selected ? 'page' : 'false')
+      })
+      var previous = home.querySelector('[data-phone-home-prev]')
+      var next = home.querySelector('[data-phone-home-next]')
+      if (previous) previous.disabled = active === 0
+      if (next) next.disabled = active >= pageCount - 1
+      var label = home.querySelector('.phone-home-screen-label')
+      if (label) label.textContent = '第 ' + (active + 1) + ' / ' + pageCount + ' 屏'
+    }
+    home.onclick = function(event) {
+      var dot = event.target.closest('[data-phone-home-page]')
+      if (dot) return show(Number(dot.dataset.phoneHomePage))
+      if (event.target.closest('[data-phone-home-prev]')) return show(Number(home.dataset.phoneHomeActive) - 1)
+      if (event.target.closest('[data-phone-home-next]')) return show(Number(home.dataset.phoneHomeActive) + 1)
+    }
+  })
+}
+
+var _readerPhoneSystemTimeTimer = null
+var _readerPhoneSystemTimeDocument = null
+
+function ensureReaderPhoneSystemTime(root) {
+  var ownerDocument = root.ownerDocument || (root.nodeType === 9 ? root : null)
+  var ownerWindow = ownerDocument && ownerDocument.defaultView
+  if (!ownerDocument || !ownerWindow || typeof ownerWindow.requestAnimationFrame !== 'function') return
+  if (_readerPhoneSystemTimeDocument === ownerDocument && _readerPhoneSystemTimeTimer) return
+  if (_readerPhoneSystemTimeTimer && _readerPhoneSystemTimeDocument?.defaultView) {
+    _readerPhoneSystemTimeDocument.defaultView.clearInterval(_readerPhoneSystemTimeTimer)
+  }
+  _readerPhoneSystemTimeDocument = ownerDocument
+  _readerPhoneSystemTimeTimer = ownerWindow.setInterval(function() {
+    syncPhoneWidgetSystemTime(ownerDocument)
+  }, 30000)
+}
+
 // ====== Build Phone HTML (shared by article overlay and standalone phone) ======
 function buildPhoneHTML(pd, custom, watermark, flowStep) {
   var skin = readerOwnDataRecord(pd.skin)
@@ -5630,6 +5845,7 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   if (rc.borderRadius !== undefined) skin.borderRadius = rc.borderRadius
   if (rc.readerId) skin.readerId = rc.readerId
   if (rc.readerAvatar) skin.readerAvatar = rc.readerAvatar
+  if (rc.readerSignature) skin.readerSignature = rc.readerSignature
   if (rc.topBgImage) skin.topBgImage = rc.topBgImage
   if (rc.showDynamicIsland !== undefined) skin.showDynamicIsland = rc.showDynamicIsland
   skin.dynamicIslandStyle = normalizeDynamicIslandStyle(rc.dynamicIslandStyle || skin.dynamicIslandStyle)
@@ -5670,49 +5886,10 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   }
   h += readerPhoneFlowNotificationHtml(pd, flowStep, rc)
 
-  var coverBg = skin.topBgImage || skin.wallpaperImage || ''
-  h += '<div class="phone-profile"'
-  if (coverBg) h += ' style="background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center"'
-  h += '>'
-  h += '<div class="phone-profile-overlay"></div>'
-  h += '<div class="phone-widget-copy">'
-  h += '<div class="phone-widget-kicker">MY POCKET / READER</div>'
-  h += '<div class="phone-profile-id">' + esc(skin.readerId || '读者') + '</div>'
-  h += '<div class="phone-widget-status"><span></span> LOCAL PROFILE</div>'
-  h += '</div>'
-  h += '<div class="phone-avatar">'
-  if (skin.readerAvatar) h += '<img src="' + esc(skin.readerAvatar) + '" alt="">'
-  h += '</div>'
-  h += '</div>'
-
-  h += '<div id="phoneDesktopReader" class="phone-desktop" style="flex:1;position:relative;min-height:420px;padding:10px 20px;' + phoneGridContainerStyle() + '">'
-  for (var i = 0; i < apps.length; i++) {
-    var app = apps[i]
-    if (app.enabled === false) continue
-    if (app.type === 'settings' || app.type === 'customize' || app.type === 'profile') continue
-    var gridStyle = phoneGridItemStyle(app.desktopX || 0, app.desktopY || 0)
-    var appName = readerAppName(app)
-    var isFlowApp = !!flowStep && phoneReadingFlowAppType(flowStep) === app.type
-    h += '<button type="button" class="phone-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app-type="' + escapeHtmlAttribute(app.type || '') + '" style="' + gridStyle + 'display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;position:absolute;width:72px;border:none!important;box-shadow:none!important">'
-    var customIcon = readerCustomIconUrl(rc.customIcons && rc.customIcons[app.type])
-    h += '<span class="phone-icon-body' + (skin.showIconShadow === false ? '' : ' icon-shadow') + '" style="background:' + READER_DEFAULT_APP_ICON_SURFACE + ';position:relative">'
-    var safeAppIcon = sanitizeIconHtml(app.icon || '?') || '?'
-    if (customIcon) {
-      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:54px;height:54px;object-fit:cover;border-radius:var(--phone-icon-radius,6px)" onerror="this.style.display=\'none\'">'
-      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:none;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
-    } else {
-      h += '<span class="phone-icon-char" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;color:#333;line-height:1">' + safeAppIcon + '</span>'
-    }
-    if (app.hasUpdate || isFlowApp) {
-      h += '<span class="phone-flow-badge" aria-hidden="true"></span>'
-    }
-    h += '</span>'
-    if (skin.showAppLabels !== false) {
-      h += '<span class="phone-icon-label">' + esc(appName) + '</span>'
-    }
-    h += '</button>'
-  }
-  h += '</div>'
+  h += renderReaderPhoneHome(rc, apps, pd, readerPhoneDesktopWidgetContext(flowStep), {
+    flowStep:flowStep,
+    preview:false,
+  }).html
   if (skin.showHomeIndicator !== false) {
     h += '<div class="phone-home-bar"><div class="phone-home-indicator"></div></div>'
   }
@@ -5735,6 +5912,7 @@ function renderPhoneReader() {
   h += buildPhoneHTML(pd, rc, _work.watermark, flowStep)
   h += '</div>'
   render('app', h)
+  bindReaderPhoneHomePager(document)
   saveCurrentReaderProgress()
 
   var icons = document.querySelectorAll('.phone-app-icon')
@@ -5753,6 +5931,11 @@ function renderPhoneReader() {
   icons.forEach(function(icon) {
     icon.onclick = function() {
       openSelectedReaderApp(icon.dataset.appType)
+    }
+  })
+  document.querySelectorAll('.phone-story-widget[data-widget-app]').forEach(function(widget) {
+    widget.onclick = function() {
+      openSelectedReaderApp(widget.dataset.widgetApp)
     }
   })
   var flowNotification = document.querySelector('.phone-flow-notification[data-flow-notification-app]')
@@ -5780,10 +5963,16 @@ function renderPhoneReader() {
 
 function bindOverlayApps(wrapper) {
   var rc = getPhoneCustom()
+  bindReaderPhoneHomePager(wrapper)
   wrapper.querySelectorAll('.phone-app-icon').forEach(function(icon) {
     icon.onclick = function() {
       var type = icon.dataset.appType
       openReaderApp(type)
+    }
+  })
+  wrapper.querySelectorAll('.phone-story-widget[data-widget-app]').forEach(function(widget) {
+    widget.onclick = function() {
+      openReaderApp(widget.dataset.widgetApp)
     }
   })
 }
@@ -8433,11 +8622,12 @@ function readerPhoneCustomDefaults() {
   return {
     wallpaper: '#eee6e7', wallpaperType: 'color', wallpaperImage: null,
     frameColor: '#8f7b81', borderRadius: 18, fontFamily: "'Noto Sans SC', sans-serif",
-    fontSize: 12, readerId: '', readerAvatar: null, topBgImage: null,
+    fontSize: 12, readerId: '', readerAvatar: null, readerSignature: '', topBgImage: null,
     showDynamicIsland: true, dynamicIslandStyle: 'pill', showHomeIndicator: true, showAppLabels: true,
     showIconShadow: true, iconBorderRadius: 6, iconColumns: 4, materialType: 'glass',
     materialOpacity: 65, timeColor: '#ffffff',
-    customCss: '', appBgs: {}, appSettings: {}, customFonts: [], customIcons: {}
+    customCss: '', appBgs: {}, appSettings: {}, customFonts: [], customIcons: {},
+    desktopWidgets: defaultPhoneDesktopWidgets(), homeLayout: null
   }
 }
 
@@ -8476,6 +8666,7 @@ function normalizePhoneCustom(candidate) {
   custom.materialOpacity = boundedPhoneCustomNumber(custom.materialOpacity, defaults.materialOpacity, 20, 100)
   custom.fontFamily = safePhoneCustomFontFamily(custom.fontFamily, defaults.fontFamily)
   custom.readerId = typeof custom.readerId === 'string' ? custom.readerId.slice(0, 80) : ''
+  custom.readerSignature = typeof custom.readerSignature === 'string' ? custom.readerSignature.trim().slice(0, 120) : ''
   ;['showDynamicIsland', 'showHomeIndicator', 'showAppLabels', 'showIconShadow'].forEach(function(key) {
     custom[key] = typeof custom[key] === 'boolean' ? custom[key] : defaults[key]
   })
@@ -8485,6 +8676,10 @@ function normalizePhoneCustom(candidate) {
   custom.appBgs = readerOwnDataRecord(stored.appBgs)
   custom.appSettings = readerOwnDataRecord(stored.appSettings)
   custom.customIcons = readerOwnDataRecord(stored.customIcons)
+  custom.desktopWidgets = normalizePhoneDesktopWidgets(stored.desktopWidgets)
+  custom.homeLayout = stored.homeLayout && typeof stored.homeLayout === 'object'
+    ? normalizePhoneHomeLayout(stored.homeLayout, phoneHomeDefinitions(custom.desktopWidgets))
+    : null
   if (!Array.isArray(custom.customFonts)) custom.customFonts = []
   return custom
 }
@@ -8530,6 +8725,13 @@ function applyReaderAppCustomCss(type, settings, options) {
 }
 
 // ====== Phone Preview ======
+function readerPhoneWidgetPreviewData() {
+  if (_work && _work.phoneData) return readerPhoneDataWithStoryState(_work.phoneData)
+  return {
+    contacts:[], chats:[], photos:[], forumPosts:[], memos:[],
+  }
+}
+
 function renderPhonePreview(ct, options) {
   ct = normalizePhoneCustom(ct)
   var previewOptions = readerPlainRecord(options)
@@ -8545,22 +8747,6 @@ function renderPhonePreview(ct, options) {
   if (ct.showDynamicIsland !== false) {
     h += '<div class="phone-island"><div class="phone-island-pill" data-island-style="' + normalizeDynamicIslandStyle(ct.dynamicIslandStyle) + '"></div></div>'
   }
-  var coverBg = ct.topBgImage || ct.wallpaperImage || ''
-  h += '<div class="phone-profile"'
-  if (coverBg) h += ' style="background-image:url(' + esc(coverBg) + ');background-size:cover;background-position:center"'
-  h += '>'
-  h += '<div class="phone-profile-overlay"></div>'
-  h += '<div class="phone-widget-copy">'
-  h += '<div class="phone-widget-kicker">MY POCKET / READER</div>'
-  h += '<div class="phone-profile-id">' + esc(ct.readerId || '访客') + '</div>'
-  h += '<div class="phone-widget-status"><span></span> LOCAL PROFILE</div>'
-  h += '</div>'
-  h += '<div class="phone-avatar">'
-  if (ct.readerAvatar) h += '<img src="' + esc(ct.readerAvatar) + '" alt="">'
-  h += '</div>'
-  h += '</div>'
-
-  h += '<div class="phone-desktop" style="position:relative;min-height:260px;' + phoneGridContainerStyle() + '">'
   var apps = [
     { type: 'messages', name: '消息',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' },
     { type: 'forum',    name: '论坛',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="12" y2="13"/></svg>' },
@@ -8570,26 +8756,16 @@ function renderPhonePreview(ct, options) {
     { type: 'shopping', name: '购物',  color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>' },
     { type: 'contacts', name: '联系人', color: '#f0f0f0', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>' }
   ]
-  for (var i = 0; i < apps.length; i++) {
-    var app = apps[i]
-    var customIcon = readerCustomIconUrl(ct.customIcons && ct.customIcons[app.type])
-    var appName = readerAppName(app)
-    h += '<button type="button" class="phone-app-icon rd-app-icon" aria-label="' + escapeHtmlAttribute(appName) + '" data-app="' + escapeHtmlAttribute(app.type || '') + '"'
-    h += ' style="' + phoneGridItemStyle(i % 4, Math.floor(i / 4)) + 'border:none!important;box-shadow:none!important">'
-    h += '<span class="phone-icon-body' + (ct.showIconShadow === false ? '' : ' icon-shadow') + '" style="background:' + READER_DEFAULT_APP_ICON_SURFACE + ';">'
-    if (customIcon) {
-      h += '<img src="' + escapeHtmlAttribute(customIcon) + '" alt="" style="width:36px;height:36px;object-fit:contain;border-radius:var(--phone-icon-radius,6px)" onerror="this.style.display=\'none\'">'
-      h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:none;align-items:center;justify-content:center">' + app.icon + '</span>'
-    } else {
-      h += '<span class="phone-icon-char" style="font-size:22px;color:#333;width:36px;height:36px;display:flex;align-items:center;justify-content:center">' + app.icon + '</span>'
-    }
-    h += '</span>'
-    if (ct.showAppLabels !== false) {
-      h += '<span class="phone-icon-label">' + esc(app.name) + '</span>'
-    }
-    h += '</button>'
-  }
-  h += '</div>'
+  h += renderReaderPhoneHome(ct, apps, readerPhoneWidgetPreviewData(), {
+    workTitle:_work && _work.title || '正在阅读',
+    progressLabel:'继续上次阅读',
+    progressPercent:42,
+    sealedLabel:'下一段剧情待开启',
+  }, {
+    activePage:previewOptions.activePage,
+    editable:previewOptions.editable === true,
+    preview:true,
+  }).html
 
   if (ct.showHomeIndicator !== false) {
     h += '<div class="phone-home-bar"><div class="phone-home-indicator"></div></div>'
@@ -8780,6 +8956,122 @@ function phoneAppearanceRange(label, id, min, max, step, value, unit) {
   return '<label class="phone-appearance-range" for="' + id + '"><span>' + esc(label) + '<output id="' + id + 'Val">' + value + esc(unit || '') + '</output></span><input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + value + '"></label>'
 }
 
+function phoneDesktopWidgetDefinition(productId) {
+  return PHONE_DESKTOP_WIDGET_PRODUCTS.find(function(entry) { return entry.id === productId })
+}
+
+function phoneDesktopWidgetPreviewMarkup(candidate, sourceItem) {
+  var config = normalizePhoneDesktopWidgets(candidate)
+  config.items.forEach(function(item) { item.enabled = item.productId === sourceItem.productId })
+  return '<div class="phone-widget-visual" aria-hidden="true">' + renderPhoneDesktopWidgets(config, readerPhoneWidgetPreviewData(), {
+    workTitle:_work && _work.title || '正在阅读',
+    progressLabel:'继续上次阅读',
+    progressPercent:42,
+    sealedLabel:'下一段剧情待开启',
+    staticPreview:true,
+  }) + '</div>'
+}
+
+function phoneDesktopWidgetPhotoControls(definition, item) {
+  if (!definition.photoSlots) return ''
+  return '<div class="phone-widget-photo-controls" aria-label="' + escapeHtmlAttribute(definition.label) + '照片设置">' + Array.from({ length:definition.photoSlots }, function(_, index) {
+    var selected = !!item.photos[index]
+    return '<div class="phone-widget-photo-control" data-cu-widget-photo-product="' + item.productId + '" data-cu-widget-photo-index="' + index + '"><span><strong>照片 ' + (index + 1) + '</strong><small>' + (selected ? '已选择' : '等待添加') + '</small></span><div><button type="button" data-cu-widget-photo-upload="' + item.productId + '" data-cu-widget-photo-index="' + index + '">' + (selected ? '更换' : '选择照片') + '</button>' + (selected ? '<button type="button" class="subtle" data-cu-widget-photo-clear="' + item.productId + '" data-cu-widget-photo-index="' + index + '">清除</button>' : '') + '</div></div>'
+  }).join('') + '<p>照片只保存在这台设备的桌面设置里。</p></div>'
+}
+
+function phoneCustomDecorationSizeDefinition(sizeId) {
+  return PHONE_CUSTOM_DECORATION_SIZES.find(function(size) { return size.id === sizeId }) || PHONE_CUSTOM_DECORATION_SIZES[1]
+}
+
+function phoneCustomDecorationPreviewMarkup(config, decoration) {
+  return '<div class="phone-widget-visual phone-custom-widget-visual" aria-hidden="true">' + renderPhoneCustomDecoration(config, decoration.id) + '</div>'
+}
+
+function phoneCustomDecorationInstalledMarkup(config, decoration) {
+  var size = phoneCustomDecorationSizeDefinition(decoration.size)
+  var escapedId = escapeHtmlAttribute(decoration.id)
+  return '<article class="phone-widget-installed phone-custom-widget-installed" data-cu-custom-widget-installed="' + escapedId + '">' +
+    '<div class="phone-widget-installed-head"><div><strong>' + esc(decoration.name) + '</strong><span>' + size.label + ' · 根据图片比例自动匹配</span></div>' +
+    '<div class="phone-desktop-widget-order"><span class="phone-widget-drag-note">在左侧拖动排屏</span><button type="button" class="phone-widget-remove" data-cu-custom-widget-remove="' + escapedId + '" aria-label="删除自定义装饰' + escapeHtmlAttribute(decoration.name) + '">删除</button></div></div>' +
+    phoneCustomDecorationPreviewMarkup(config, decoration) +
+    '<div class="phone-custom-widget-size-row"><span>占格大小</span><div class="phone-widget-size-switch" role="group" aria-label="' + escapeHtmlAttribute(decoration.name) + '占格大小">' + PHONE_CUSTOM_DECORATION_SIZES.map(function(option) {
+      return '<button type="button" data-cu-custom-widget-size="' + escapedId + '" data-cu-custom-widget-size-value="' + option.id + '" aria-pressed="' + (option.id === decoration.size ? 'true' : 'false') + '">' + option.label + '</button>'
+    }).join('') + '</div></div></article>'
+}
+
+function phoneCustomWidgetUploadActionMarkup(config) {
+  var count = config.customDecorations.length
+  var atLimit = count >= PHONE_CUSTOM_DECORATION_MAX_ITEMS
+  return '<input type="file" accept="image/png,image/jpeg,image/webp" data-cu-custom-widget-file hidden>' +
+    '<span class="sr-only" id="phoneCustomWidgetUploadHint">PNG、JPEG、WebP；自动匹配 2 × 2、4 × 3、8 × 3，占格后仍可调整。</span>' +
+    '<button type="button" class="phone-custom-widget-upload-action" data-cu-custom-widget-upload aria-label="' + (atLimit ? '自定义装饰已达上限' : '上传装饰') + '" aria-describedby="phoneCustomWidgetUploadHint"' + (atLimit ? ' disabled' : '') + '>' + (atLimit ? '已满' : '上传') + '</button>'
+}
+
+function phoneDesktopWidgetInstalledMarkup(config, storeOpen) {
+  var installed = config.items.filter(function(item) { return item.enabled })
+  var customDecorations = config.customDecorations || []
+  var storeLabel = storeOpen ? '收起组件商店' : '逛组件商店'
+  if (!installed.length && !customDecorations.length) {
+    return '<div class="phone-widget-empty"><strong>桌面还是空的</strong><p>去组件商店看看实物效果，喜欢哪个再添加哪个。</p><button type="button" class="rs-action-btn" data-cu-widget-store-toggle aria-expanded="' + (storeOpen ? 'true' : 'false') + '">' + storeLabel + '</button></div>'
+  }
+  var fixedMarkup = installed.map(function(item) {
+    var definition = phoneDesktopWidgetDefinition(item.productId)
+    return '<article class="phone-widget-installed" data-cu-widget-installed="' + item.productId + '">' +
+      '<div class="phone-widget-installed-head"><div><strong>' + esc(definition.label) + '</strong><span>' + esc(definition.hint) + '</span></div>' +
+      '<div class="phone-desktop-widget-order"><span class="phone-widget-drag-note">在左侧拖动排屏</span><button type="button" class="phone-widget-remove" data-cu-widget-remove="' + item.productId + '" aria-label="从桌面移除' + escapeHtmlAttribute(definition.label) + '">移除</button></div></div>' +
+      phoneDesktopWidgetPreviewMarkup(config, item) +
+      phoneDesktopWidgetPhotoControls(definition, item) + phoneDesktopWidgetFieldControls(definition, config) + '</article>'
+  }).join('')
+  var customMarkup = customDecorations.map(function(decoration) {
+    return phoneCustomDecorationInstalledMarkup(config, decoration)
+  }).join('')
+  return '<div class="phone-widget-installed-list">' + fixedMarkup + customMarkup + '</div><div class="phone-widget-store-footer"><button type="button" class="rs-action-btn" data-cu-widget-store-toggle aria-expanded="' + (storeOpen ? 'true' : 'false') + '">' + storeLabel + '</button></div>'
+}
+
+function phoneDesktopWidgetFieldControls(definition, config) {
+  var fieldDefinitions = PHONE_DESKTOP_WIDGET_FIELDS[definition.id] || []
+  if (!fieldDefinitions.length) return ''
+  var values = readerPlainRecord(config.fields && config.fields[definition.id])
+  return '<div class="phone-widget-field-controls" aria-label="' + escapeHtmlAttribute(definition.label + '自定义内容') + '">' + fieldDefinitions.map(function(field) {
+    var type = field.type === 'datetime-local' ? 'datetime-local' : 'text'
+    return '<label><span>' + esc(field.label) + '</span><input class="rd-input" type="' + type + '" maxlength="120" data-cu-widget-field-product="' + escapeHtmlAttribute(definition.id) + '" data-cu-widget-field="' + escapeHtmlAttribute(field.key) + '" value="' + escapeHtmlAttribute(values[field.key] || '') + '"' + (field.placeholder ? ' placeholder="' + escapeHtmlAttribute(field.placeholder) + '"' : '') + '></label>'
+  }).join('') + '</div>'
+}
+
+function phoneDesktopWidgetCategoryLabel(category) {
+  return category === 'function' ? '功能' : category === 'photo' ? '照片' : '纯装饰'
+}
+
+function phoneDesktopWidgetStoreMarkup(config, activeFilter) {
+  var filter = ['function', 'photo', 'decor'].includes(activeFilter) ? activeFilter : 'all'
+  var visibleProducts = PHONE_DESKTOP_WIDGET_PRODUCTS.filter(function(product) { return filter === 'all' || product.category === filter })
+  var filterButtons = [
+    { id:'all', label:'全部' }, { id:'function', label:'功能' }, { id:'photo', label:'照片' }, { id:'decor', label:'纯装饰' }
+  ].map(function(option) {
+    return '<button type="button" data-cu-widget-filter="' + option.id + '" aria-pressed="' + (filter === option.id ? 'true' : 'false') + '">' + option.label + '</button>'
+  }).join('')
+  return '<div class="phone-widget-store" aria-label="组件商店"><div class="phone-widget-store-intro"><div><strong>组件商店</strong><p>26 款均来自通过校稿的 V7 系列；添加后就是左侧真实效果。</p></div><span>' + PHONE_DESKTOP_WIDGET_PRODUCTS.length + ' 款</span></div>' +
+    '<div class="phone-widget-store-filters" role="group" aria-label="筛选组件类型">' + filterButtons + '</div>' +
+    '<div class="phone-widget-store-grid">' + visibleProducts.map(function(definition) {
+      var item = config.items.find(function(entry) { return entry.productId === definition.id })
+      var installed = !!item.enabled
+      return '<article class="phone-widget-store-card" data-cu-widget-store-card="' + item.productId + '">' +
+        phoneDesktopWidgetPreviewMarkup(config, item) +
+        '<div class="phone-widget-store-card-copy"><div><strong>' + esc(definition.label) + '</strong><span>' + phoneDesktopWidgetCategoryLabel(definition.category) + '</span><p>' + esc(definition.hint) + '</p></div>' +
+        '<button type="button" data-cu-widget-add="' + item.productId + '"' + (installed ? ' disabled aria-label="' + escapeHtmlAttribute(definition.label) + '已添加"' : '') + '>' + (installed ? '已添加' : '添加') + '</button></div></article>'
+    }).join('') + '</div></div>'
+}
+
+function phoneDesktopWidgetWorkspaceMarkup(candidate, options) {
+  var config = normalizePhoneDesktopWidgets(candidate)
+  var state = options || {}
+  var installedCount = config.items.filter(function(item) { return item.enabled }).length + config.customDecorations.length
+  return '<div class="phone-widget-workspace-head"><div><strong>我的桌面</strong><span>' + installedCount + ' 个组件</span></div><div class="phone-widget-workspace-actions">' + phoneCustomWidgetUploadActionMarkup(config) + '</div></div>' +
+    '<div class="phone-widget-installed-region">' + phoneDesktopWidgetInstalledMarkup(config, state.storeOpen) + '</div>' +
+    (state.storeOpen ? phoneDesktopWidgetStoreMarkup(config, state.storeFilter) : '')
+}
+
 function openReaderCustomizePanel(triggerElement) {
   var persistedPhoneAppearance = getPhoneCustom()
   var restoredPhoneAppearanceDraft = readAppearanceDraft('phone-appearance')
@@ -8797,7 +9089,7 @@ function openReaderCustomizePanel(triggerElement) {
   ]
   var body = readerAppearancePagerMarkup() +
     '<div class="phone-appearance-layout appearance-workbench-pages" data-appearance-active-page="preview">'
-  body += '<aside class="phone-appearance-preview-pane appearance-workbench-page" data-appearance-page="preview"><div id="phoneAppearancePreview"></div><p class="phone-appearance-status" id="cuLiveStatus" role="status" aria-live="polite">实时预览 · 保存后保留</p></aside>'
+  body += '<aside class="phone-appearance-preview-pane appearance-workbench-page" data-appearance-page="preview"><div id="phoneAppearancePreview"></div><p class="phone-appearance-status" id="cuLiveStatus" role="status" aria-live="polite">按住任意 App 或组件拖动 · 到边缘换屏</p></aside>'
   body += '<div class="phone-appearance-controls appearance-workbench-page" data-appearance-page="controls">'
 
   body += cuSettingsSectionStart('cuPhoneWallpaper', '壁纸与边框', true)
@@ -8812,6 +9104,11 @@ function openReaderCustomizePanel(triggerElement) {
   body += '<label class="rs-color-control">系统标记<input type="color" class="rs-color-input" id="cuTimeColor" value="' + escapeHtmlAttribute(ct.timeColor) + '"></label></div>'
   body += '<div class="phone-appearance-image-row"><input type="url" class="rd-input" id="cuWpUrl" value="' + escapeHtmlAttribute(ct.wallpaperType === 'image' && ct.wallpaperImage && !/^data:/i.test(ct.wallpaperImage) ? ct.wallpaperImage : '') + '" placeholder="背景图片地址"><button type="button" class="rs-action-btn" id="cuApplyBg">应用</button><button type="button" class="rs-action-btn" id="cuUploadBg">本地图片</button><button type="button" class="rs-action-btn subtle" id="cuClearBg">清除</button></div>'
   body += '<p id="cuPhoneWallpaperState" class="cu-chat-background-state" aria-live="polite"></p><p class="rs-field-error" id="cuBgError" role="alert" hidden></p>' + cuSettingsSectionEnd()
+
+  body += cuSettingsSectionStart('cuPhoneWidgets', '桌面组件', false)
+  body += '<div class="rs-group-heading"><small>App 和组件都可在左侧直接拖动；拖到边缘可换屏或新建下一屏，照片仍由你逐格选择</small></div>'
+  body += '<div class="phone-widget-workspace" id="cuWidgetWorkspace">' + phoneDesktopWidgetWorkspaceMarkup(ct.desktopWidgets, { storeOpen:false, storeFilter:'all' }) + '</div>'
+  body += cuSettingsSectionEnd()
 
   body += cuSettingsSectionStart('cuPhoneDimensions', '尺寸与材质', false)
   body += '<div class="rs-group-heading"><small>边框圆角在宽屏手机框和预览中显示</small></div><div class="phone-appearance-range-grid">'
@@ -8860,6 +9157,8 @@ function openReaderCustomizePanel(triggerElement) {
   var previewHost = ov.querySelector('#phoneAppearancePreview')
   var saveButton = ov.querySelector('#cuModalSave')
   var cancelButton = ov.querySelector('#cuModalCancel')
+  var phoneHomeViewState = { activePage:0 }
+  var appearanceUndo = null
   saveButton.id = 'cuSave'
   cancelButton.id = 'cuCancel'
   bindReaderAppearancePackageTransfer(ov, {
@@ -8898,8 +9197,12 @@ function openReaderCustomizePanel(triggerElement) {
       : '<style id="reader-phone-preview-user-css"></style>'
     previewHost.innerHTML = renderPhonePreview(ct, {
       scopeClass: 'reader-phone-css-preview-scope',
-      applyGlobalCss: false
+      applyGlobalCss: false,
+      editable:true,
+      activePage:phoneHomeViewState.activePage,
     }) + style
+    bindReaderPhoneHomePager(previewHost)
+    bindPhoneHomeEditor()
   }
 
   function setLiveMessage(message, isError) {
@@ -8933,7 +9236,7 @@ function openReaderCustomizePanel(triggerElement) {
     ct.customCss = rawCss
     setSaveEnabled(true)
     renderDraftPreview()
-    setLiveMessage('实时预览 · 保存后保留', false)
+    setLiveMessage('按住任意 App 或组件拖动 · 保存后保留', false)
     return true
   }
 
@@ -8949,7 +9252,198 @@ function openReaderCustomizePanel(triggerElement) {
     if (callback) callback()
     ct = normalizePhoneCustom(ct)
     renderDraftPreview()
-    setLiveMessage('实时预览 · 保存后保留', false)
+    setLiveMessage('按住任意 App 或组件拖动 · 保存后保留', false)
+  }
+
+  function currentHomeDefinitions() {
+    return phoneHomeDefinitions(ct.desktopWidgets)
+  }
+
+  function currentHomeLayout() {
+    return normalizePhoneHomeLayout(ct.homeLayout, currentHomeDefinitions())
+  }
+
+  function showEditableHomePage(home, page) {
+    var pageCount = Math.max(1, Number(home.dataset.phoneHomePages) || 1)
+    var maxRenderedPage = Math.min(PHONE_HOME_MAX_PAGES - 1, pageCount)
+    var active = Math.min(Math.max(0, page), maxRenderedPage)
+    phoneHomeViewState.activePage = active
+    home.dataset.phoneHomeActive = String(active)
+    var track = home.querySelector('.phone-home-track')
+    if (track) track.style.transform = 'translateX(-' + (active * 100) + '%)'
+    home.querySelectorAll('[data-phone-home-page]').forEach(function(dot) {
+      var selected = Number(dot.dataset.phoneHomePage) === active
+      dot.classList.toggle('is-active', selected)
+      dot.setAttribute('aria-current', selected ? 'page' : 'false')
+    })
+    var label = home.querySelector('.phone-home-screen-label')
+    if (label) label.textContent = active >= pageCount ? '松手新建第 ' + (active + 1) + ' 屏' : '第 ' + (active + 1) + ' / ' + pageCount + ' 屏'
+  }
+
+  function moveHomeItem(key, target, message) {
+    var definitions = currentHomeDefinitions()
+    ct.homeLayout = movePhoneHomeItem(currentHomeLayout(), definitions, key, target)
+    phoneHomeViewState.activePage = Math.min(target.page, ct.homeLayout.pageCount - 1)
+    updateDraft()
+    var focusTarget = previewHost.querySelector('[data-phone-home-key="' + key + '"]')
+    if (focusTarget) focusTarget.focus({ preventScroll:true })
+    setLiveMessage(message || '桌面位置已更新 · 可继续拖动或保存', false)
+  }
+
+  function bindPhoneHomeEditor() {
+    var home = previewHost.querySelector('.phone-home.is-editable')
+    if (!home) return
+    home.addEventListener('click', function(event) {
+      if (event.target.closest('[data-phone-home-add-page]')) {
+        if (appearanceUndo) appearanceUndo.remember()
+        var definitions = currentHomeDefinitions()
+        var layout = currentHomeLayout()
+        ct.homeLayout = setPhoneHomePageCount(layout, definitions, layout.pageCount + 1)
+        phoneHomeViewState.activePage = ct.homeLayout.pageCount - 1
+        updateDraft()
+        setLiveMessage('已新建第 ' + ct.homeLayout.pageCount + ' 屏 · 可以把 App 或组件拖进来', false)
+        return
+      }
+      var pageControl = event.target.closest('[data-phone-home-page], [data-phone-home-prev], [data-phone-home-next]')
+      if (pageControl) phoneHomeViewState.activePage = Number(home.dataset.phoneHomeActive) || 0
+    })
+
+    home.addEventListener('keydown', function(event) {
+      var item = event.target.closest('[data-phone-home-key]')
+      if (!item) return
+      var direction = {
+        ArrowLeft:[-1, 0], ArrowRight:[1, 0], ArrowUp:[0, -1], ArrowDown:[0, 1],
+      }[event.key]
+      if (!direction && !['PageUp', 'PageDown'].includes(event.key)) return
+      event.preventDefault()
+      var key = item.dataset.phoneHomeKey
+      var definitions = currentHomeDefinitions()
+      var definition = definitions.find(function(entry) { return entry.key === key })
+      var layout = currentHomeLayout()
+      var current = layout.items.find(function(entry) { return entry.key === key })
+      if (!definition || !current) return
+      var footprint = phoneHomeFootprint(definition)
+      var target = { page:current.page, x:current.x, y:current.y }
+      if (event.key === 'PageUp') target.page -= 1
+      else if (event.key === 'PageDown') target.page += 1
+      else {
+        target.x += direction[0]
+        target.y += direction[1]
+        if (target.x < 0 && target.page > 0) { target.page -= 1; target.x = PHONE_HOME_COLUMNS - footprint.width }
+        if (target.x + footprint.width > PHONE_HOME_COLUMNS && target.page < PHONE_HOME_MAX_PAGES - 1) { target.page += 1; target.x = 0 }
+      }
+      target.page = Math.min(PHONE_HOME_MAX_PAGES - 1, Math.max(0, target.page))
+      target.x = Math.min(PHONE_HOME_COLUMNS - footprint.width, Math.max(0, target.x))
+      target.y = Math.min(PHONE_HOME_ROWS - footprint.height, Math.max(0, target.y))
+      if (appearanceUndo) appearanceUndo.remember()
+      moveHomeItem(key, target, '已移动 · 方向键微调，Page Up / Page Down 跨屏')
+    })
+
+    home.addEventListener('pointerdown', function(event) {
+      if (event.button !== undefined && event.button !== 0) return
+      if (event.target.closest('.phone-home-pager')) return
+      var item = event.target.closest('[data-phone-home-key]')
+      if (!item) return
+      var key = item.dataset.phoneHomeKey
+      var definitions = currentHomeDefinitions()
+      var definition = definitions.find(function(entry) { return entry.key === key })
+      if (!definition) return
+      event.preventDefault()
+      if (appearanceUndo) appearanceUndo.remember()
+      var startX = event.clientX
+      var startY = event.clientY
+      var activePage = Number(home.dataset.phoneHomeActive) || 0
+      var edgeLatch = ''
+      var dragging = false
+      var ghost = null
+      var marker = null
+      var offsetX = 0
+      var offsetY = 0
+      var lastTarget = null
+      var itemRect = item.getBoundingClientRect()
+      offsetX = startX - itemRect.left
+      offsetY = startY - itemRect.top
+      if (typeof item.setPointerCapture === 'function' && event.pointerId !== undefined) {
+        try { item.setPointerCapture(event.pointerId) } catch (_) {}
+      }
+
+      function updateTarget(clientX, clientY) {
+        var viewport = home.querySelector('.phone-home-viewport')
+        var viewportRect = viewport.getBoundingClientRect()
+        var pageCount = Math.max(1, Number(home.dataset.phoneHomePages) || 1)
+        var atLeftEdge = clientX <= viewportRect.left + 28
+        var atRightEdge = clientX >= viewportRect.right - 28
+        if (!atLeftEdge && !atRightEdge) edgeLatch = ''
+        if (atLeftEdge && edgeLatch !== 'left' && activePage > 0) {
+          activePage -= 1
+          edgeLatch = 'left'
+          showEditableHomePage(home, activePage)
+        } else if (atRightEdge && edgeLatch !== 'right' && activePage < Math.min(PHONE_HOME_MAX_PAGES - 1, pageCount)) {
+          activePage += 1
+          edgeLatch = 'right'
+          showEditableHomePage(home, activePage)
+        }
+        var page = home.querySelector('[data-phone-home-page-index="' + activePage + '"]')
+        if (!page) return
+        var pageRect = page.getBoundingClientRect()
+        var footprint = phoneHomeFootprint(definition)
+        var renderedCellWidth = pageRect.width / PHONE_HOME_COLUMNS
+        var renderedCellHeight = pageRect.height / PHONE_HOME_ROWS
+        var x = Math.round((clientX - pageRect.left - offsetX) / renderedCellWidth)
+        var y = Math.round((clientY - pageRect.top - offsetY) / renderedCellHeight)
+        x = Math.min(PHONE_HOME_COLUMNS - footprint.width, Math.max(0, x))
+        y = Math.min(PHONE_HOME_ROWS - footprint.height, Math.max(0, y))
+        lastTarget = { page:activePage, x:x, y:y }
+        if (marker) marker.remove()
+        marker = document.createElement('span')
+        marker.className = 'phone-home-drop-marker'
+        marker.style.cssText = phoneHomeItemStyle(lastTarget) + 'width:' + (footprint.width * PHONE_HOME_CELL_WIDTH) + 'px;height:' + (footprint.height * PHONE_HOME_CELL_HEIGHT) + 'px'
+        page.appendChild(marker)
+      }
+
+      function onMove(moveEvent) {
+        if (!dragging && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 5) return
+        if (!dragging) {
+          dragging = true
+          item.classList.add('is-dragging')
+          ghost = item.cloneNode(true)
+          ghost.className = 'phone-home-drag-ghost'
+          ghost.removeAttribute('tabindex')
+          ghost.style.width = itemRect.width + 'px'
+          ghost.style.height = itemRect.height + 'px'
+          document.body.appendChild(ghost)
+        }
+        ghost.style.left = (moveEvent.clientX - offsetX) + 'px'
+        ghost.style.top = (moveEvent.clientY - offsetY) + 'px'
+        updateTarget(moveEvent.clientX, moveEvent.clientY)
+      }
+
+      function finish(upEvent) {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', finish)
+        window.removeEventListener('pointercancel', cancel)
+        if (ghost) ghost.remove()
+        if (marker) marker.remove()
+        item.classList.remove('is-dragging')
+        if (!dragging || !lastTarget) return
+        phoneHomeViewState.suppressClick = true
+        globalThis.setTimeout(function() { phoneHomeViewState.suppressClick = false }, 0)
+        moveHomeItem(key, lastTarget, '已放到第 ' + (lastTarget.page + 1) + ' 屏 · 位置会随保存保留')
+      }
+
+      function cancel() {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', finish)
+        window.removeEventListener('pointercancel', cancel)
+        if (ghost) ghost.remove()
+        if (marker) marker.remove()
+        item.classList.remove('is-dragging')
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', finish)
+      window.addEventListener('pointercancel', cancel)
+    })
   }
 
   renderFontList()
@@ -8995,6 +9489,189 @@ function openReaderCustomizePanel(triggerElement) {
   var timeColor = ov.querySelector('#cuTimeColor')
   if (timeColor) timeColor.oninput = function() {
     updateDraft(function() { ct.timeColor = timeColor.value })
+  }
+
+  var widgetViewState = { storeOpen:false, storeFilter:'all' }
+  var widgetWorkspace = ov.querySelector('#cuWidgetWorkspace')
+  function renderWidgetWorkspace() {
+    if (widgetWorkspace) widgetWorkspace.innerHTML = phoneDesktopWidgetWorkspaceMarkup(ct.desktopWidgets, widgetViewState)
+  }
+  function syncWidgetControls() {
+    renderWidgetWorkspace()
+  }
+  function importCustomDecorationFile(file) {
+    if (!file) return
+    readReaderCustomDecorationFile(file).then(function(result) {
+      if (ct.desktopWidgets.customDecorations.length >= PHONE_CUSTOM_DECORATION_MAX_ITEMS) {
+        setLiveMessage('最多添加 ' + PHONE_CUSTOM_DECORATION_MAX_ITEMS + ' 个自定义装饰', true)
+        return
+      }
+      var customId = createReaderCustomDecorationId(ct.desktopWidgets)
+      var customSize = phoneCustomDecorationSizeForDimensions(result.width, result.height)
+      updateDraft(function() {
+        ct.desktopWidgets.customDecorations.push({
+          id:customId,
+          name:readerCustomDecorationName(file),
+          image:result.dataUrl,
+          size:customSize,
+        })
+        ct.desktopWidgets.enabled = true
+        ct.homeLayout = normalizePhoneHomeLayout(ct.homeLayout, phoneHomeDefinitions(ct.desktopWidgets))
+        var addedHomeItem = ct.homeLayout.items.find(function(entry) { return entry.key === 'custom:' + customId })
+        if (addedHomeItem) phoneHomeViewState.activePage = addedHomeItem.page
+      })
+      renderWidgetWorkspace()
+      var sizeLabel = phoneCustomDecorationSizeDefinition(customSize).label
+      setLiveMessage('已按图片比例匹配为 ' + sizeLabel + ' · 左侧可继续拖动', false)
+    }).catch(function(error) {
+      setLiveMessage((error && error.message) || '图片读取失败，请换一张再试。', true)
+    })
+  }
+  if (widgetWorkspace) {
+    widgetWorkspace.oninput = function(event) {
+      var input = event.target.closest('[data-cu-widget-field-product][data-cu-widget-field]')
+      if (!input) return
+      var productId = input.dataset.cuWidgetFieldProduct
+      var field = input.dataset.cuWidgetField
+      updateDraft(function() {
+        if (!ct.desktopWidgets.fields || typeof ct.desktopWidgets.fields !== 'object') ct.desktopWidgets.fields = {}
+        if (!ct.desktopWidgets.fields[productId]) ct.desktopWidgets.fields[productId] = {}
+        ct.desktopWidgets.fields[productId][field] = input.value
+      })
+      setLiveMessage('组件内容已更新 · 只保存在本机', false)
+    }
+    widgetWorkspace.onchange = function(event) {
+      var customFileInput = event.target.closest('[data-cu-custom-widget-file]')
+      if (!customFileInput) return
+      importCustomDecorationFile(customFileInput.files && customFileInput.files[0])
+    }
+    widgetWorkspace.onclick = function(event) {
+      var storeToggle = event.target.closest('[data-cu-widget-store-toggle]')
+      if (storeToggle) {
+        widgetViewState.storeOpen = !widgetViewState.storeOpen
+        renderWidgetWorkspace()
+        setLiveMessage(widgetViewState.storeOpen ? '组件商店已打开 · 选择喜欢的样式添加' : '已返回我的桌面', false)
+        return
+      }
+
+      var filterButton = event.target.closest('[data-cu-widget-filter]')
+      if (filterButton) {
+        widgetViewState.storeFilter = filterButton.dataset.cuWidgetFilter
+        renderWidgetWorkspace()
+        return
+      }
+
+      var customUploadButton = event.target.closest('[data-cu-custom-widget-upload]')
+      if (customUploadButton && !customUploadButton.disabled) {
+        var customInput = widgetWorkspace.querySelector('[data-cu-custom-widget-file]')
+        if (!customInput) return
+        customInput.value = ''
+        customInput.click()
+        return
+      }
+
+      var customSizeButton = event.target.closest('[data-cu-custom-widget-size][data-cu-custom-widget-size-value]')
+      if (customSizeButton) {
+        var customSizeId = customSizeButton.dataset.cuCustomWidgetSize
+        var nextCustomSize = customSizeButton.dataset.cuCustomWidgetSizeValue
+        if (!PHONE_CUSTOM_DECORATION_SIZES.some(function(size) { return size.id === nextCustomSize })) return
+        updateDraft(function() {
+          var decoration = ct.desktopWidgets.customDecorations.find(function(item) { return item.id === customSizeId })
+          if (!decoration) return
+          decoration.size = nextCustomSize
+          ct.homeLayout = normalizePhoneHomeLayout(ct.homeLayout, phoneHomeDefinitions(ct.desktopWidgets))
+        })
+        renderWidgetWorkspace()
+        setLiveMessage('占格已改为 ' + phoneCustomDecorationSizeDefinition(nextCustomSize).label + ' · 位置已自动避让', false)
+        return
+      }
+
+      var customRemoveButton = event.target.closest('[data-cu-custom-widget-remove]')
+      if (customRemoveButton) {
+        var customRemoveId = customRemoveButton.dataset.cuCustomWidgetRemove
+        updateDraft(function() {
+          ct.desktopWidgets.customDecorations = ct.desktopWidgets.customDecorations.filter(function(item) { return item.id !== customRemoveId })
+          ct.homeLayout = normalizePhoneHomeLayout(ct.homeLayout, phoneHomeDefinitions(ct.desktopWidgets))
+        })
+        renderWidgetWorkspace()
+        setLiveMessage('自定义装饰及其本机图片已删除', false)
+        return
+      }
+
+      var addButton = event.target.closest('[data-cu-widget-add]')
+      if (addButton && !addButton.disabled) {
+        var addProductId = addButton.dataset.cuWidgetAdd
+        updateDraft(function() {
+          var item = ct.desktopWidgets.items.find(function(entry) { return entry.productId === addProductId })
+          if (!item) return
+          item.enabled = true
+          ct.desktopWidgets.enabled = true
+          var items = ct.desktopWidgets.items.filter(function(entry) { return entry.productId !== addProductId })
+          var lastInstalled = -1
+          items.forEach(function(entry, index) { if (entry.enabled) lastInstalled = index })
+          items.splice(lastInstalled + 1, 0, item)
+          ct.desktopWidgets.items = items
+          ct.homeLayout = normalizePhoneHomeLayout(ct.homeLayout, phoneHomeDefinitions(ct.desktopWidgets))
+          var addedHomeItem = ct.homeLayout.items.find(function(entry) { return entry.key === 'widget:' + addProductId })
+          if (addedHomeItem) phoneHomeViewState.activePage = addedHomeItem.page
+        })
+        renderWidgetWorkspace()
+        var addedDefinition = phoneDesktopWidgetDefinition(addProductId)
+        setLiveMessage('已添加“' + addedDefinition.label + '” · 左侧正在显示真实效果', false)
+        return
+      }
+
+      var removeButton = event.target.closest('[data-cu-widget-remove]')
+      if (removeButton) {
+        var removeProductId = removeButton.dataset.cuWidgetRemove
+        updateDraft(function() {
+          var item = ct.desktopWidgets.items.find(function(entry) { return entry.productId === removeProductId })
+          if (item) item.enabled = false
+        })
+        renderWidgetWorkspace()
+        setLiveMessage('组件已从桌面移除', false)
+        return
+      }
+
+      var clearPhotoButton = event.target.closest('[data-cu-widget-photo-clear]')
+      if (clearPhotoButton) {
+        var clearProductId = clearPhotoButton.dataset.cuWidgetPhotoClear
+        var clearPhotoIndex = Number(clearPhotoButton.dataset.cuWidgetPhotoIndex)
+        updateDraft(function() {
+          var item = ct.desktopWidgets.items.find(function(entry) { return entry.productId === clearProductId })
+          if (item && clearPhotoIndex >= 0 && clearPhotoIndex < item.photos.length) item.photos[clearPhotoIndex] = null
+        })
+        renderWidgetWorkspace()
+        setLiveMessage('照片已从这个组件中清除', false)
+        return
+      }
+
+      var uploadPhotoButton = event.target.closest('[data-cu-widget-photo-upload]')
+      if (uploadPhotoButton) {
+        var uploadProductId = uploadPhotoButton.dataset.cuWidgetPhotoUpload
+        var uploadPhotoIndex = Number(uploadPhotoButton.dataset.cuWidgetPhotoIndex)
+        var photoInput = document.createElement('input')
+        photoInput.type = 'file'
+        photoInput.accept = 'image/png,image/jpeg,image/webp'
+        photoInput.onchange = function() {
+          var file = photoInput.files && photoInput.files[0]
+          if (!file) return
+          readReaderCallBackgroundFile(file).then(function(dataUrl) {
+            updateDraft(function() {
+              var item = ct.desktopWidgets.items.find(function(entry) { return entry.productId === uploadProductId })
+              if (item && uploadPhotoIndex >= 0 && uploadPhotoIndex < item.photos.length) item.photos[uploadPhotoIndex] = dataUrl
+            })
+            renderWidgetWorkspace()
+            setLiveMessage('照片已添加 · 左侧组件同步更新', false)
+          }).catch(function(error) {
+            setLiveMessage((error && error.message) || '图片读取失败，请换一张再试。', true)
+          })
+        }
+        photoInput.click()
+        return
+      }
+
+    }
   }
 
   function bindAppearanceRange(id, key, unit) {
@@ -9176,6 +9853,7 @@ function openReaderCustomizePanel(triggerElement) {
     ct = normalizePhoneCustom(Object.assign({}, defaults, {
       readerId: ct.readerId,
       readerAvatar: ct.readerAvatar,
+      readerSignature: ct.readerSignature,
       topBgImage: ct.topBgImage,
       appBgs: ct.appBgs,
       appSettings: ct.appSettings,
@@ -9201,6 +9879,7 @@ function openReaderCustomizePanel(triggerElement) {
     ov.querySelector('#cuHome').checked = ct.showHomeIndicator
     ov.querySelector('#cuShadow').checked = ct.showIconShadow
     ov.querySelector('#cuCustomCss').value = ''
+    syncWidgetControls()
     renderFontList()
     syncPresetButtons()
     setCssDraft('')
@@ -9228,6 +9907,7 @@ function openReaderCustomizePanel(triggerElement) {
     ov.querySelector('#cuHome').checked = ct.showHomeIndicator
     ov.querySelector('#cuShadow').checked = ct.showIconShadow
     ov.querySelector('#cuCustomCss').value = ct.customCss || ''
+    syncWidgetControls()
     renderFontList()
     syncPresetButtons()
     setCssDraft(ct.customCss || '')
@@ -9235,14 +9915,16 @@ function openReaderCustomizePanel(triggerElement) {
 
   enhanceReaderAppearanceRanges(ov)
   bindReaderAppearanceSectionStates(ov)
-  bindReaderAppearanceUndo(ov, {
+  appearanceUndo = bindReaderAppearanceUndo(ov, {
     capture:function() { return JSON.parse(JSON.stringify(ct)) },
     restore:applyPhoneAppearanceSnapshot
   })
   previewHost.addEventListener('click', function(event) {
-    var sectionId = event.target.closest('.phone-profile') ? 'cuPhoneWallpaper'
+    if (phoneHomeViewState.suppressClick) return
+    var sectionId = event.target.closest('.phone-story-widget') ? 'cuPhoneWidgets'
+      : (event.target.closest('.phone-profile') ? 'cuPhoneWallpaper'
       : (event.target.closest('.phone-icon-body, .phone-icon-label') ? 'cuPhoneDimensions'
-        : (event.target.closest('.dynamic-island, .phone-home-indicator') ? 'cuPhoneSystem' : 'cuPhoneWallpaper'))
+        : (event.target.closest('.dynamic-island, .phone-home-indicator') ? 'cuPhoneSystem' : 'cuPhoneWallpaper')))
     focusReaderAppearanceSection(ov, sectionId, null, event.detail === 0)
   })
 }
@@ -9257,7 +9939,8 @@ function openReaderProfilePanel(triggerElement) {
   ))
   var persistedProfileAppearanceSignature = JSON.stringify(persistedProfileAppearance)
   var identitySettings = cuRow('昵称',
-    '<input class="rd-input" id="rpName" value="' + escapeHtmlAttribute(ct.readerId || '') + '" placeholder="默认使用作品昵称">')
+    '<input class="rd-input" id="rpName" value="' + escapeHtmlAttribute(ct.readerId || '') + '" placeholder="默认使用作品昵称">') +
+    cuRow('签名', '<input class="rd-input" id="rpSignature" maxlength="120" value="' + escapeHtmlAttribute(ct.readerSignature || '') + '" placeholder="留空则不显示">')
   var avatarSettings = cuRow('头像',
     '<div class="rd-input-row"><input class="rd-input" id="rpAvatarUrl" value="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" placeholder="输入头像 URL"><button type="button" class="rs-action-btn subtle" id="rpUploadAv">上传</button></div>') +
     '<div class="rd-preview-img" id="rpAvatarPreview"' + (ct.readerAvatar ? '' : ' hidden') + '><img id="rpAvatarPreviewImage" src="' + escapeHtmlAttribute(ct.readerAvatar || '') + '" alt="" style="border-radius:50%"><button type="button" class="rs-action-btn subtle" id="rpClearAv">清除</button></div>'
@@ -9275,9 +9958,11 @@ function openReaderProfilePanel(triggerElement) {
 
   var ov = openCuModal('个人信息', body, function(modal) {
     var nameInput = modal.querySelector('#rpName')
+    var signatureInput = modal.querySelector('#rpSignature')
     var avatarInput = modal.querySelector('#rpAvatarUrl')
     var coverInput = modal.querySelector('#rpTopBgUrl')
     ct.readerId = nameInput && nameInput.value.trim() ? nameInput.value.trim() : ct.readerId
+    ct.readerSignature = signatureInput ? signatureInput.value.trim() : ''
     ct.readerAvatar = avatarInput && avatarInput.value.trim() ? avatarInput.value.trim() : null
     ct.topBgImage = coverInput && coverInput.value.trim() ? coverInput.value.trim() : null
     savePhoneCustom(ct)
@@ -9298,9 +9983,11 @@ function openReaderProfilePanel(triggerElement) {
   function currentProfileDraft() {
     var draft = readerOwnDataRecord(ct)
     var nameInput = ov.querySelector('#rpName')
+    var signatureInput = ov.querySelector('#rpSignature')
     var avatarInput = ov.querySelector('#rpAvatarUrl')
     var coverInput = ov.querySelector('#rpTopBgUrl')
     draft.readerId = nameInput && nameInput.value.trim() ? nameInput.value.trim() : ct.readerId
+    draft.readerSignature = signatureInput ? signatureInput.value.trim() : ct.readerSignature
     draft.readerAvatar = avatarInput && avatarInput.value.trim() ? avatarInput.value.trim() : null
     draft.topBgImage = coverInput && coverInput.value.trim() ? coverInput.value.trim() : null
     return draft
@@ -9309,13 +9996,18 @@ function openReaderProfilePanel(triggerElement) {
   function renderProfilePreview() {
     var host = ov.querySelector('#profileAppearancePreview')
     if (!host) return
-    host.innerHTML = renderPhonePreview(currentProfileDraft(), {
+    var draft = currentProfileDraft()
+    var profileLayout = normalizePhoneHomeLayout(draft.homeLayout, phoneHomeDefinitions(draft.desktopWidgets))
+    var profilePage = profileLayout.items.find(function(item) { return item.key === 'profile:identity' })?.page || 0
+    host.innerHTML = renderPhonePreview(draft, {
       scopeClass:'reader-profile-preview-scope',
-      applyGlobalCss:false
+      applyGlobalCss:false,
+      activePage:profilePage,
     })
+    bindReaderPhoneHomePager(host)
   }
 
-  ;['#rpName', '#rpAvatarUrl', '#rpTopBgUrl'].forEach(function(selector) {
+  ;['#rpName', '#rpSignature', '#rpAvatarUrl', '#rpTopBgUrl'].forEach(function(selector) {
     var input = ov.querySelector(selector)
     if (input) input.addEventListener('input', renderProfilePreview)
   })
@@ -9362,6 +10054,8 @@ function openReaderProfilePanel(triggerElement) {
     restore:function(snapshot) {
       var name = ov.querySelector('#rpName')
       if (name) name.value = snapshot.readerId || ''
+      var signature = ov.querySelector('#rpSignature')
+      if (signature) signature.value = snapshot.readerSignature || ''
       setProfileImageDraft('#rpAvatarUrl', '#rpAvatarPreview', '#rpAvatarPreviewImage', snapshot.readerAvatar)
       setProfileImageDraft('#rpTopBgUrl', '#rpTopBgPreview', '#rpTopBgPreviewImage', snapshot.topBgImage)
     }
@@ -10264,6 +10958,45 @@ function enhanceReaderAppearanceRanges(root) {
       }
     })
   })
+}
+
+function readReaderCustomDecorationFile(file) {
+  return readReaderCallBackgroundFile(file).then(function(dataUrl) {
+    return new Promise(function(resolve, reject) {
+      var image = new Image()
+      image.onload = function() {
+        var width = Number(image.naturalWidth || image.width)
+        var height = Number(image.naturalHeight || image.height)
+        if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+          reject(new Error('无法识别图片尺寸'))
+          return
+        }
+        resolve({ dataUrl:dataUrl, width:width, height:height })
+      }
+      image.onerror = function() { reject(new Error('图片无法解码')) }
+      image.src = dataUrl
+    })
+  })
+}
+
+var readerCustomDecorationIdSequence = 0
+
+function createReaderCustomDecorationId(config) {
+  var existing = new Set((config.customDecorations || []).map(function(item) { return item.id }))
+  for (var attempt = 0; attempt < 12; attempt += 1) {
+    readerCustomDecorationIdSequence += 1
+    var randomId = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID().replace(/[^a-z0-9]/gi, '').toLowerCase()
+      : Date.now().toString(36) + readerCustomDecorationIdSequence.toString(36) + Math.random().toString(36).slice(2, 10)
+    var id = 'custom-' + randomId.slice(0, 48)
+    if (!existing.has(id)) return id
+  }
+  return 'custom-' + Date.now().toString(36) + readerCustomDecorationIdSequence.toString(36)
+}
+
+function readerCustomDecorationName(file) {
+  var name = String(file && file.name || '').replace(/\.[^.]+$/, '').trim().slice(0, 40)
+  return name || '自定义装饰'
 }
 
 function formatReaderAppearanceBytes(bytes) {
@@ -12573,6 +13306,7 @@ function renderCustomPage() {
   h += '<div style="text-align:center;font-size:.72rem;color:var(--c-text2);padding:8px 0">点击手机图标即可设置对应模块的外观</div>'
   h += '</div>'
   panel.innerHTML = h
+  bindReaderPhoneHomePager(panel)
 }
 
 // ---- Global click handler for beautification app icons (document-level delegation) ----

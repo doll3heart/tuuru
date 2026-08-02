@@ -275,6 +275,7 @@ test("reader appearance package imports only visuals and preserves personal read
     readerAvatar:"data:image/png;base64,UFJJVkFURV9BVkFUQVI=",
     topBgImage:"data:image/png;base64,b2xkLWNvdmVy",
     wallpaper:"#eeeeee",
+    desktopWidgets:{ enabled:false, note:"PRIVATE_LOCAL_NOTE" },
   }))
   const packageText = JSON.stringify({
     format:"tuuru-reader-appearance",
@@ -290,6 +291,11 @@ test("reader appearance package imports only visuals and preserves personal read
         appBgs:{},
         appSettings:{},
         customIcons:{},
+        desktopWidgets:{
+          enabled:true,
+          accent:"#aabbcc",
+          items:[{ kind:"letter", enabled:true, skin:"ticket", size:"wide" }],
+        },
       },
     },
   })
@@ -355,6 +361,8 @@ test("reader appearance package imports only visuals and preserves personal read
   assert.equal(phone.topBgImage, "data:image/png;base64,bmV3LWNvdmVy")
   assert.equal(phone.readerId, "PRIVATE_PHONE_ID")
   assert.equal(phone.readerAvatar, "data:image/png;base64,UFJJVkFURV9BVkFUQVI=")
+  assert.equal(phone.desktopWidgets.enabled, true)
+  assert.equal(phone.desktopWidgets.note, "PRIVATE_LOCAL_NOTE")
   assert.equal(localStorage.getItem("moirain_profile"), JSON.stringify({
     readerId:"PRIVATE_PROFILE_ID",
     readerAvatar:"PRIVATE_PROFILE_AVATAR",

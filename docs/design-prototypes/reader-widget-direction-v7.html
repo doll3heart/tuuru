@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tuuru 小组件扩展校稿 · V7</title>
+  <style>
+    :root{
+      --ink:#493b40;
+      --muted:#806d74;
+      --rose:#ba7188;
+      --rose-deep:#884c5e;
+      --rose-soft:#f5e1e7;
+      --blue:#d7e6f1;
+      --blue-deep:#7892a7;
+      --line:#dfd4d8;
+      --surface:#fffafa;
+      --page:#efedef;
+      --shadow:#8a717a26;
+      --focus:#783d51;
+    }
+    *{box-sizing:border-box}
+    html{color-scheme:light}
+    body{margin:0;min-width:320px;background:var(--page);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif}
+    button{font:inherit}
+    img{display:block;max-width:100%}
+    .page{width:min(1320px,calc(100% - 32px));margin:28px auto;padding:30px 34px 42px;background:#fff}
+    .header{display:flex;align-items:flex-end;justify-content:space-between;gap:28px;padding-bottom:20px;border-bottom:1px solid var(--line)}
+    .intro{display:flex;align-items:flex-start;gap:15px}
+    .edition{display:grid;width:45px;height:45px;flex:0 0 auto;place-items:center;border-radius:50%;background:var(--rose-deep);color:#fff;font:700 12px/1 Georgia,serif;letter-spacing:.04em}
+    h1{margin:0;font-size:22px;line-height:1.3;letter-spacing:-.01em}
+    .header p{max-width:67ch;margin:7px 0 0;color:var(--muted);font-size:13px;line-height:1.65}
+    .filters{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
+    .filter{min-height:38px;padding:0 14px;border:0;border-radius:999px;background:#f4eff1;color:#715c64;cursor:pointer;transition:background-color 180ms ease-out,color 180ms ease-out}
+    .filter[aria-pressed="true"]{background:var(--rose-deep);color:#fff}
+    .filter:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+    .board-meta{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 4px 0;color:var(--muted);font-size:12px}
+    .board-meta strong{color:var(--ink)}
+    .gallery{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:52px 32px;align-items:center;padding:42px 12px 24px}
+    figure{min-width:0;margin:0}
+    figure[hidden]{display:none}
+    .span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}
+    .offset-2{grid-column:3/span 8}
+    .stage{position:relative;display:grid;min-height:220px;place-items:center}
+    .stage.compact{min-height:190px}
+    figcaption{display:flex;align-items:baseline;justify-content:center;gap:6px;margin-top:12px;color:var(--muted);font-size:11px;line-height:1.6;text-align:center}
+    figcaption b{color:var(--ink);font-size:12px}
+    figcaption .kind{color:var(--rose-deep)}
+    .widget{position:relative;margin:auto}
+    .asset{position:absolute;pointer-events:none;user-select:none}
+    .photo-slot{position:relative;background:var(--slot-bg,#eee8eb);box-shadow:inset 0 0 0 1px #bcaeb43d}
+    .photo-slot::after{content:"用户照片";position:absolute;left:50%;top:50%;padding:4px 7px;border-radius:999px;background:#fffafae8;color:var(--component-ink,#806c75);font-size:9px;line-height:1;white-space:nowrap;transform:translate(-50%,-50%)}
+
+    /* 功能型：字段只服务于组件自己的主题。 */
+    .reading-strip{--component-ink:hsl(214 90% 28%);--component-muted:hsl(214 90% 38%);--component-accent:hsl(214 90% 46%);width:min(650px,100%);aspect-ratio:1000/322}
+    .reading-strip>.shell{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .reading-copy{position:absolute;left:25%;top:29%;display:grid;width:49%;height:43%;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;column-gap:14px;align-content:center;color:var(--component-ink)}
+    .reading-copy small{grid-column:1;color:var(--component-muted);font-size:11px}
+    .reading-copy strong{grid-column:1;margin-top:2px;color:var(--component-ink);font-size:20px;line-height:1.2}
+    .reading-copy span{grid-column:1;margin-top:2px;color:var(--component-muted);font-size:11px}
+    .reading-copy b{grid-column:2;grid-row:1/4;align-self:center;color:var(--component-ink);font-size:12px;text-align:center}
+    .reading-copy b::after{content:"";display:block;width:30px;height:3px;margin:6px auto 0;border-radius:2px;background:var(--component-accent)}
+
+    .player-shell{--component-ink:hsl(343 30% 29%);--component-muted:hsl(343 30% 39%);--component-accent:hsl(343 30% 47%);width:min(610px,100%);height:226px;margin-top:22px;border-radius:18px 18px 12px 12px;background:#fffafa;box-shadow:0 6px 0 var(--shadow),inset 0 0 0 2px #d8cdd1}
+    .player-shell::before,.player-shell::after{content:"";position:absolute;z-index:-1;top:-28px;width:108px;height:88px;border:2px solid #d8cdd1;border-bottom:0;border-radius:56% 56% 0 0;background:#fffafa}
+    .player-shell::before{left:40px;transform:rotate(-5deg)}
+    .player-shell::after{right:40px;transform:rotate(5deg)}
+    .player-inner{display:grid;height:100%;grid-template-columns:144px 1fr;gap:27px;padding:25px 29px}
+    .album{--slot-bg:#efe3e7;position:relative;overflow:hidden;border-radius:11px}
+    .track{display:flex;min-width:0;flex-direction:column;justify-content:center}
+    .track small{color:var(--component-muted);font-size:11px}.track h2{margin:4px 0 3px;color:var(--component-ink);font-size:19px;line-height:1.2}.track p{margin:0;color:var(--component-muted);font-size:11px}
+    .progress{height:4px;margin:22px 0 14px;background:#eadfe3}.progress i{display:block;width:42%;height:100%;background:var(--component-accent)}
+    .controls{display:flex;align-items:center;justify-content:space-between;color:var(--component-ink);font-size:15px}.controls .play{display:grid;width:38px;height:38px;place-items:center;border-radius:50%;background:var(--component-accent);color:#fff;font-size:12px}
+
+    .date-card{--component-ink:hsl(206 42% 30%);--component-muted:hsl(206 42% 39%);--component-accent:hsl(206 42% 47%);width:min(480px,100%);height:236px;overflow:hidden;border-radius:12px;background:#e4edf4;box-shadow:inset 0 0 0 2px #d4c9ce}
+    .date-art{--slot-bg:#f5e4e9;position:absolute;inset:12px 12px 12px 42%;overflow:hidden;border-radius:8px}
+    .date-copy{position:absolute;left:27px;top:31px;width:36%;color:var(--component-ink)}.date-copy small{color:var(--component-muted);font:600 11px Georgia,serif;letter-spacing:.08em}.date-copy strong{display:block;margin-top:7px;color:var(--component-ink);font:64px/1 Georgia,serif}.date-copy span{display:block;margin-top:8px;color:var(--component-muted);font-size:11px}.date-copy i{display:block;width:48px;height:2px;margin-top:20px;background:var(--component-accent)}
+
+    .voice-note{--component-ink:hsl(345 69% 28%);--component-muted:hsl(345 69% 38%);--component-accent:hsl(345 69% 46%);width:270px;height:220px}
+    .voice-note>.round{position:absolute;inset:0;margin:auto;width:218px;height:218px;object-fit:contain}
+    .voice-center{position:absolute;inset:58px 47px 40px;display:flex;align-items:center;flex-direction:column;justify-content:center;color:var(--component-ink);text-align:center}
+    .voice-center small{color:var(--component-muted);font-size:10px}.voice-center strong{margin-top:3px;color:var(--component-ink);font:24px/1.1 Georgia,serif}.wave{display:flex;height:25px;align-items:center;gap:4px;margin-top:11px}.wave i{display:block;width:3px;border-radius:3px;background:var(--component-accent)}.wave i:nth-child(1),.wave i:nth-child(7){height:8px}.wave i:nth-child(2),.wave i:nth-child(6){height:14px}.wave i:nth-child(3),.wave i:nth-child(5){height:21px}.wave i:nth-child(4){height:11px}
+
+    .countdown{--component-ink:hsl(0 76% 26%);--component-muted:hsl(0 76% 34%);--component-accent:hsl(0 76% 42%);width:250px;height:220px}
+    .countdown>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .countdown-copy{position:absolute;inset:51px 48px 39px;display:flex;align-items:center;flex-direction:column;justify-content:center;color:var(--component-ink);text-align:center}
+    .countdown-copy strong{color:var(--component-ink);font:42px/1 Georgia,serif}.countdown-copy span{display:block;margin-top:5px;color:var(--component-ink);font-size:12px;font-weight:700}.countdown-copy small{display:block;margin-top:3px;color:var(--component-muted);font-size:9px}
+
+    .schedule-card{--component-ink:hsl(332 45% 28%);--component-muted:hsl(332 45% 38%);--component-accent:hsl(332 45% 47%);width:min(520px,100%);height:220px}
+    .schedule-card>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .schedule-copy{position:absolute;inset:55px 88px 47px 122px;display:flex;align-items:center;justify-content:space-between;gap:18px;color:var(--component-ink)}
+    .schedule-date{color:var(--component-ink);font:700 42px/1 Georgia,serif;text-align:center}.schedule-date small{display:block;margin-top:6px;color:var(--component-muted);font:600 9px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:.08em}
+    .schedule-main{min-width:0}.schedule-main strong{display:block;color:var(--component-ink);font-size:17px}.schedule-main span{display:block;margin-top:5px;color:var(--component-muted);font-size:11px}.schedule-main i{display:block;width:42px;height:2px;margin-top:13px;background:var(--component-accent)}
+
+    .clock-medallion{--component-ink:hsl(213 90% 27%);--component-muted:hsl(213 90% 37%);--component-accent:hsl(213 90% 46%);width:255px;height:230px}
+    .clock-medallion>.round{position:absolute;inset:0;margin:auto;width:220px;height:220px;object-fit:contain}
+    .clock-copy{position:absolute;inset:68px 42px 45px;color:var(--component-ink);text-align:center}.clock-copy strong{display:block;color:var(--component-ink);font:38px/1 Georgia,serif}.clock-copy span{display:block;margin-top:7px;color:var(--component-muted);font-size:10px}.clock-copy i{display:block;width:24px;height:2px;margin:13px auto 0;background:var(--component-accent)}
+
+    .quote-ribbon{--component-ink:hsl(200 47% 25%);--component-muted:hsl(200 47% 35%);width:min(490px,100%);height:215px}
+    .quote-ribbon>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .quote-copy{position:absolute;inset:69px 80px 45px;display:flex;align-items:center;justify-content:center;flex-direction:column;color:var(--component-ink);text-align:center}
+    .quote-copy q{max-width:25ch;color:var(--component-ink);font:italic 14px/1.5 Georgia,"Noto Serif SC",serif}.quote-copy span{margin-top:6px;color:var(--component-muted);font-size:9px}
+
+    .journey-orbit{--component-ink:hsl(254 52% 25%);--component-muted:hsl(254 52% 36%);--component-accent:hsl(254 52% 48%);width:280px;height:230px}
+    .journey-orbit>.round{position:absolute;inset:0;margin:auto;width:220px;height:220px;object-fit:contain}
+    .journey-ring{position:absolute;left:50%;top:50%;display:grid;width:130px;height:130px;place-items:center;border-radius:50%;background:conic-gradient(var(--component-accent) 0 68%,hsl(254 52% 89%) 68%);transform:translate(-50%,-50%)}
+    .journey-ring::after{content:"";position:absolute;inset:8px;border-radius:50%;background:#fff9fa}
+    .journey-copy{position:relative;z-index:1;color:var(--component-ink);text-align:center}.journey-copy strong{display:block;color:var(--component-ink);font:28px/1 Georgia,serif}.journey-copy span{display:block;margin-top:5px;color:var(--component-muted);font-size:9px}
+
+    /* 照片型：画面本身是内容，不补一个“打开”箭头。 */
+    .double-frame{--component-ink:hsl(340 18% 30%);display:grid;width:min(480px,100%);height:238px;grid-template-columns:1fr 1fr;gap:14px;padding:17px;border-radius:12px;background:#f8f5f6;box-shadow:inset 0 0 0 2px #d8cdd1}
+    .portrait{--slot-bg:#e7eff4;position:relative;overflow:hidden;border-radius:8px}.portrait:nth-child(2){--slot-bg:#f4e3e8}
+
+    .polaroid-stack{--component-ink:hsl(340 18% 30%);width:330px;height:270px}
+    .polaroid-card{position:absolute;width:136px;height:178px;padding:10px 10px 34px;background:#fffafa;box-shadow:inset 0 0 0 1px #d9ced2,0 5px 0 #7b646d1f}
+    .polaroid-card.p2{background:#fbfdfe}
+    .polaroid-card .photo-slot{width:100%;height:100%}
+    .polaroid-card::after{content:"";position:absolute;left:50%;top:-7px;width:48px;height:17px;background:#e9d9debd;transform:translateX(-50%) rotate(-2deg)}
+    .polaroid-card.p1{left:38px;top:50px;transform:rotate(-8deg)}.polaroid-card.p2{right:38px;top:34px;transform:rotate(7deg)}
+
+    .hanging-photos{--component-ink:hsl(31 32% 28%);width:min(520px,100%);height:230px}
+    .hanging-photos>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .hang-photo{--slot-bg:#f2e4e8;position:absolute;top:54px;width:76px;height:93px;overflow:hidden;box-shadow:0 2px 4px #735a6430}.hang-photo:nth-of-type(2){--slot-bg:#e5edf2}.hang-photo.a{left:25%;transform:rotate(-3deg)}.hang-photo.b{left:43%;transform:rotate(2deg)}.hang-photo.c{right:23%;transform:rotate(-2deg)}
+
+    .heart-locket{--component-ink:hsl(335 71% 29%);width:285px;height:245px}
+    .heart-locket>.frame{position:absolute;z-index:1;inset:0;width:100%;height:100%;object-fit:contain}
+    .heart-locket .heart-photo{--slot-bg:#f6e0e6;position:absolute;z-index:2;left:50%;top:49%;width:128px;height:112px;overflow:hidden;clip-path:path("M64 108C47 91 10 66 10 34C10 7 46 -1 64 24C82 -1 118 7 118 34C118 66 81 91 64 108Z");transform:translate(-50%,-50%)}
+
+    .ribbon-cameo{--component-ink:hsl(24 38% 28%);width:300px;height:250px}
+    .ribbon-cameo>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .ribbon-cameo .cameo-photo{--slot-bg:#e8f0f5;position:absolute;left:50%;top:49%;width:132px;height:150px;overflow:hidden;border-radius:50%;transform:translate(-50%,-50%)}
+
+    .story-plate{--component-ink:hsl(356 83% 28%);width:260px;height:250px}
+    .story-plate>.round{position:absolute;z-index:1;inset:0;margin:auto;width:228px;height:228px;object-fit:contain}.story-plate .plate-photo{--slot-bg:#f4e3e8;position:absolute;z-index:2;left:50%;top:50%;width:132px;height:132px;overflow:hidden;border-radius:50%;transform:translate(-50%,-50%)}
+
+    .photo-booth{--component-ink:hsl(343 30% 30%);display:flex;width:184px;height:300px;align-items:center;flex-direction:column;gap:7px;padding:12px 12px 18px;background:#fff;box-shadow:0 5px 0 #8b727b20,inset 0 0 0 1px #ded4d8;transform:rotate(-2deg)}
+    .photo-booth .shot{--slot-bg:#f1e4e8;width:100%;min-height:0;flex:1;overflow:hidden}.photo-booth .shot:nth-child(2){--slot-bg:#e4eef4}.photo-booth::after{content:"OUR LITTLE DAY";margin-top:2px;color:var(--component-ink);font:600 8px/1 Georgia,serif;letter-spacing:.12em}
+
+    .taped-postcard{--component-ink:hsl(38 12% 27%);width:min(390px,100%);height:260px}
+    .taped-postcard>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .taped-postcard .postcard-photo{--slot-bg:#e8f0f5;position:absolute;left:50%;top:51%;width:205px;height:150px;overflow:hidden;transform:translate(-50%,-50%) rotate(-3deg)}
+
+    .wing-photo{--component-ink:hsl(26 34% 25%);width:285px;height:220px}
+    .wing-photo>.label{position:absolute;z-index:1;inset:0;width:100%;height:100%;object-fit:contain}
+    .wing-photo .photo{--slot-bg:#f2e8ec;position:absolute;z-index:2;left:50%;top:48%;width:116px;height:72px;overflow:hidden;border-radius:8px;transform:translate(-50%,-50%)}
+
+    /* 纯装饰：没有状态、日期、打开提示或点击语义。 */
+    .sticker-rabbit{width:285px;height:220px}
+    .sticker-rabbit .blob{position:absolute;inset:18px 24px 20px;border:3px solid #dfbac8;border-radius:48% 52% 45% 55%/55% 42% 58% 45%;background:#faedf1;transform:rotate(-3deg)}
+    .sticker-rabbit img{position:absolute;left:50%;top:48%;width:158px;transform:translate(-50%,-50%)}
+    .sticker-rabbit::before,.sticker-rabbit::after{content:"✦";position:absolute;color:#b97c91;font-size:19px}.sticker-rabbit::before{left:24px;top:26px}.sticker-rabbit::after{right:25px;bottom:29px;font-size:13px}
+
+    .dessert-plate{width:260px;height:250px}
+    .dessert-plate>.round{position:absolute;inset:0;margin:auto;width:230px;height:230px;object-fit:contain}.dessert-plate>.center-art{position:absolute;left:50%;top:51%;width:148px;transform:translate(-50%,-50%)}
+
+    .strawberry-charm{width:310px;height:235px}
+    .strawberry-charm>.berries{position:absolute;left:50%;top:50%;width:222px;transform:translate(-50%,-50%)}
+
+    .tasting-spoons{width:min(420px,100%);height:220px}
+    .tasting-spoons::before{content:"";position:absolute;left:50%;top:51%;width:245px;height:124px;border-radius:50%;background:#f9eef2;box-shadow:inset 0 0 0 1px #e7d8de;transform:translate(-50%,-50%) rotate(-4deg)}
+    .tasting-spoons>.spoon{position:absolute;left:50%;top:50%;width:186px;transform-origin:58% 54%}
+    .tasting-spoons>.blue{transform:translate(-64%,-54%) rotate(-18deg)}.tasting-spoons>.pink{transform:translate(-50%,-50%) rotate(1deg)}.tasting-spoons>.vanilla{transform:translate(-36%,-46%) rotate(20deg)}
+
+    .ticket-pile{width:min(500px,100%);height:240px}
+    .ticket-pile img{position:absolute;left:50%;top:50%;height:auto;transform:translate(-50%,-50%)}
+    .ticket-pile .rose-ticket{width:78%;transform:translate(-58%,-60%) rotate(-5deg)}.ticket-pile .blue-ticket{width:73%;transform:translate(-42%,-38%) rotate(6deg)}
+
+    .balloon-charm{width:250px;height:250px}
+    .balloon-charm>.round{position:absolute;inset:0;margin:auto;width:220px;height:220px;object-fit:contain}.balloon-charm>.center-art{position:absolute;left:50%;top:50%;width:148px;transform:translate(-50%,-50%)}
+
+    .basket-shelf{width:min(430px,100%);height:220px}
+    .basket-shelf::after{content:"";position:absolute;right:35px;bottom:30px;left:35px;height:10px;border-radius:50%;background:#7b5d6724;filter:blur(4px)}
+    .basket-shelf>.center-art{position:absolute;z-index:1;left:50%;bottom:32px;width:190px;transform:translateX(-50%)}
+    .basket-shelf .spark{position:absolute;color:#be8095;font-family:Georgia,serif}.basket-shelf .s1{left:20%;top:35%;font-size:19px}.basket-shelf .s2{right:20%;top:27%;font-size:12px}.basket-shelf .s3{right:24%;bottom:30%;font-size:16px}
+
+    .heart-doily{width:285px;height:245px}
+    .heart-doily>.frame{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+
+    .legend{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-top:22px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;line-height:1.65}.legend strong{color:var(--ink)}
+    @media(max-width:980px){
+      .page{width:min(760px,calc(100% - 20px));padding:24px 20px 34px}.header{align-items:flex-start;flex-direction:column}.filters{justify-content:flex-start}.gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:46px 22px;padding-inline:0}.gallery figure{grid-column:span 1}.gallery .span-7,.gallery .span-8,.gallery .offset-2{grid-column:span 2}
+    }
+    @media(max-width:620px){
+      .page{margin:10px auto;padding:22px 14px 30px}.intro{gap:11px}.edition{width:40px;height:40px}.header p{font-size:12px}.board-meta{align-items:flex-start;flex-direction:column;gap:4px}.gallery{grid-template-columns:1fr;gap:42px;padding-top:34px}.gallery figure,.gallery .span-7,.gallery .span-8,.gallery .offset-2{grid-column:1}.stage{min-height:195px}.stage.compact{min-height:175px}figcaption{align-items:center;flex-wrap:wrap}
+      .player-shell{height:195px}.player-inner{grid-template-columns:106px 1fr;gap:16px;padding:20px 16px}.track h2{font-size:15px}.progress{margin:14px 0 11px}.controls{font-size:12px}.controls .play{width:32px;height:32px}.date-card,.double-frame{height:205px}.reading-copy strong{font-size:15px}.reading-copy small,.reading-copy span{font-size:8px}.reading-copy b{font-size:10px}.schedule-copy{inset:48px 68px 43px 95px;gap:12px}.schedule-date{font-size:32px}.quote-copy{inset-inline:55px}.quote-copy q{font-size:13px}.legend{flex-direction:column}.ticket-pile{height:205px}
+    }
+    @media(prefers-reduced-motion:reduce){.filter{transition:none}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div class="intro">
+        <span class="edition" aria-hidden="true">V7</span>
+        <div>
+          <h1>小组件扩展校稿</h1>
+          <p>沿用 V6 逻辑继续扩展：功能型只保留对应字段；所有照片位只设计承底、裁切与排列，具体照片由用户选择；纯装饰型可以只是一个好看的桌面物件。</p>
+        </div>
+      </div>
+      <nav class="filters" aria-label="组件类型">
+        <button class="filter" type="button" data-filter="all" aria-pressed="true">全部</button>
+        <button class="filter" type="button" data-filter="function" aria-pressed="false">功能</button>
+        <button class="filter" type="button" data-filter="photo" aria-pressed="false">照片</button>
+        <button class="filter" type="button" data-filter="decor" aria-pressed="false">纯装饰</button>
+      </nav>
+    </header>
+
+    <div class="board-meta"><span aria-live="polite"><strong id="visibleCount">26</strong> 件当前可见</span><span>固定角色保持同一兔兔画风，其余使用甜品、草莓、票根与蕾丝；组件文字跟随各自主装饰色</span></div>
+
+    <section class="gallery" id="gallery" aria-label="小组件方向">
+      <figure class="span-7" data-kind="function">
+        <div class="stage"><div class="widget reading-strip"><img class="shell" src="assets/widget-direction-v7/frame-dessert-strip.png" alt=""><div class="reading-copy"><small>继续阅读</small><strong>雾港来信</strong><span>第三章 · 候车厅</span><b>68%</b></div></div></div>
+        <figcaption><span class="kind">功能</span><b>续读横幅</b><span>字段避开甜品与蝴蝶结，仍保留完整留白</span></figcaption>
+      </figure>
+
+      <figure class="span-5" data-kind="decor">
+        <div class="stage compact"><div class="widget sticker-rabbit"><span class="blob"></span><img src="assets/widget-direction-v7/rabbit-parasol.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>伞下摆件</b><span>可以只摆着，不承担跳转</span></figcaption>
+      </figure>
+
+      <figure class="span-7" data-kind="function">
+        <div class="stage"><div class="widget player-shell"><div class="player-inner"><div class="album photo-slot" aria-label="用户自选封面照片"></div><div class="track"><small>正在播放</small><h2>Bunny Memory</h2><p>夜班电台 · 03:14</p><div class="progress"><i></i></div><div class="controls"><span>↶</span><span>◀</span><span class="play">Ⅱ</span><span>▶</span><span>♡</span></div></div></div></div></div>
+        <figcaption><span class="kind">功能</span><b>氛围播放器</b><span>封面由用户选择，底板只承托曲目与控制</span></figcaption>
+      </figure>
+
+      <figure class="span-5" data-kind="function">
+        <div class="stage"><div class="widget date-card"><div class="date-copy"><small>AUGUST</small><strong>01</strong><span>星期六 · 20:07</span><i></i></div><div class="date-art photo-slot" aria-label="用户自选日期画片"></div></div></div>
+        <figcaption><span class="kind">功能</span><b>日期画片</b><span>右侧只规定照片比例，内容由用户选择</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="function">
+        <div class="stage compact"><div class="widget voice-note"><img class="round" src="assets/widget-direction-v7/round-pink-bow.png" alt=""><div class="voice-center"><small>林晚的留言</small><strong>00:17</strong><span class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div></div></div>
+        <figcaption><span class="kind">功能</span><b>留声圆章</b><span>时长与波形就是全部信息</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="function">
+        <div class="stage compact"><div class="widget countdown"><img class="frame" src="assets/widget-direction-v7/frame-cherry-note.png" alt=""><div class="countdown-copy"><strong>03</strong><div><span>天后见面</span><small>八月四日 · 傍晚</small></div></div></div></div>
+        <figcaption><span class="kind">功能</span><b>倒数标签</b><span>樱桃边框承托一个明确事件</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="function">
+        <div class="stage compact"><div class="widget clock-medallion"><img class="round" src="assets/widget-direction-v7/frame-dessert-round.png" alt=""><div class="clock-copy"><strong>20:07</strong><span>晚间阅读时间</span><i></i></div></div></div>
+        <figcaption><span class="kind">功能</span><b>甜品时钟</b><span>装饰不挤占时间读数</span></figcaption>
+      </figure>
+
+      <figure class="span-7" data-kind="function">
+        <div class="stage"><div class="widget schedule-card"><img class="frame" src="assets/widget-direction-v7/frame-ribbon-landscape.png" alt=""><div class="schedule-copy"><div class="schedule-date">04<small>AUG · SUN</small></div><div class="schedule-main"><strong>旧站台见</strong><span>18:30 · 北门候车厅</span><i></i></div></div></div></div>
+        <figcaption><span class="kind">功能</span><b>日程丝带</b><span>日期、时间、地点都属于约定本身</span></figcaption>
+      </figure>
+
+      <figure class="span-5" data-kind="function">
+        <div class="stage"><div class="widget quote-ribbon"><img class="frame" src="assets/widget-direction-v7/frame-ribbon-blue.png" alt=""><div class="quote-copy"><q>月台灯灭之前，我会等你。</q><span>今日摘句 · 雾港来信</span></div></div></div>
+        <figcaption><span class="kind">功能</span><b>今日摘句</b><span>内容即组件，不伪装为入口</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="function">
+        <div class="stage compact"><div class="widget journey-orbit"><img class="round" src="assets/widget-direction-v7/round-twilight.png" alt=""><div class="journey-ring"><div class="journey-copy"><strong>68%</strong><span>第三章</span></div></div></div></div>
+        <figcaption><span class="kind">功能</span><b>阅读轨道</b><span>进度值只服务当前作品</span></figcaption>
+      </figure>
+
+      <figure class="span-8" data-kind="photo">
+        <div class="stage"><div class="widget double-frame"><div class="portrait photo-slot" aria-label="用户照片一"></div><div class="portrait photo-slot" aria-label="用户照片二"></div></div></div>
+        <figcaption><span class="kind">照片</span><b>双幅画框底板</b><span>只规定两张照片的比例与间距</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="photo">
+        <div class="stage"><div class="widget polaroid-stack"><span class="polaroid-card p1"><span class="photo-slot" aria-label="用户照片一"></span></span><span class="polaroid-card p2"><span class="photo-slot" aria-label="用户照片二"></span></span></div></div>
+        <figcaption><span class="kind">照片</span><b>散落拍立得底板</b><span>相纸与照片槽共用一套坐标，不再交叉穿插</span></figcaption>
+      </figure>
+
+      <figure class="span-7" data-kind="photo">
+        <div class="stage"><div class="widget hanging-photos"><span class="hang-photo photo-slot a" aria-label="用户照片一"></span><span class="hang-photo photo-slot b" aria-label="用户照片二"></span><span class="hang-photo photo-slot c" aria-label="用户照片三"></span><img class="frame" src="assets/widget-direction-v7/polaroids-hanging.png" alt=""></div></div>
+        <figcaption><span class="kind">照片</span><b>晾晒相片底板</b><span>三张照片由用户分别添加</span></figcaption>
+      </figure>
+
+      <figure class="span-5" data-kind="photo">
+        <div class="stage compact"><div class="widget heart-locket"><span class="heart-photo photo-slot" aria-label="用户自选心形照片"></span><img class="frame" src="assets/widget-direction-v7/frame-heart-pink.png" alt=""></div></div>
+        <figcaption><span class="kind">照片</span><b>心形相匣底板</b><span>只提供心形裁切与蕾丝承托</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="photo">
+        <div class="stage compact"><div class="widget ribbon-cameo"><span class="cameo-photo photo-slot" aria-label="用户自选椭圆照片"></span><img class="frame" src="assets/widget-direction-v7/frame-ribbon-cameo.png" alt=""></div></div>
+        <figcaption><span class="kind">照片</span><b>丝带肖像底板</b><span>照片由用户选择，底板负责椭圆裁切</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="photo">
+        <div class="stage compact"><div class="widget story-plate"><span class="plate-photo photo-slot" aria-label="用户自选圆形照片"></span><img class="round" src="assets/widget-direction-v7/round-rose.png" alt=""></div></div>
+        <figcaption><span class="kind">照片</span><b>圆盘画片底板</b><span>适合用户添加头像或剧情插画</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="photo">
+        <div class="stage"><div class="widget photo-booth"><span class="shot photo-slot" aria-label="用户照片一"></span><span class="shot photo-slot" aria-label="用户照片二"></span><span class="shot photo-slot" aria-label="用户照片三"></span></div></div>
+        <figcaption><span class="kind">照片</span><b>大头贴竖条底板</b><span>三个照片槽都由用户分别选择</span></figcaption>
+      </figure>
+
+      <figure class="span-7" data-kind="photo">
+        <div class="stage"><div class="widget taped-postcard"><span class="postcard-photo photo-slot" aria-label="用户自选明信片照片"></span><img class="frame" src="assets/widget-direction-v7/polaroids-taped.png" alt=""></div></div>
+        <figcaption><span class="kind">照片</span><b>胶带明信片底板</b><span>保留纸张留白，只承接用户照片</span></figcaption>
+      </figure>
+
+      <figure class="span-5" data-kind="photo">
+        <div class="stage compact"><div class="widget wing-photo"><span class="photo photo-slot" aria-label="用户自选小窗照片"></span><img class="label" src="assets/widget-direction-v7/label-wing-note.png" alt=""></div></div>
+        <figcaption><span class="kind">照片</span><b>翅膀小窗底板</b><span>轻量照片槽，不预置任何内容</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="decor">
+        <div class="stage compact"><div class="widget dessert-plate"><img class="round" src="assets/widget-direction-v7/frame-dessert-round.png" alt=""><img class="center-art" src="assets/widget-direction-v7/rabbit-cake.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>甜品圆盘</b><span>保留一件同画风角色摆件</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="decor">
+        <div class="stage compact"><div class="widget strawberry-charm"><img class="berries" src="assets/widget-direction-v7/ornament-strawberries.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>草莓吊饰</b><span>纯物件素材直接成立，不再塞角色</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="decor">
+        <div class="stage compact"><div class="widget balloon-charm"><img class="round" src="assets/widget-direction-v7/frame-dessert-heart.png" alt=""><img class="center-art" src="assets/widget-direction-v7/rabbit-balloons.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>气球心章</b><span>角色线条与整体边框保持一致</span></figcaption>
+      </figure>
+
+      <figure class="span-7" data-kind="decor">
+        <div class="stage"><div class="widget tasting-spoons"><img class="spoon blue" src="assets/widget-direction-v7/spoon-blue.png" alt=""><img class="spoon pink" src="assets/widget-direction-v7/spoon-pink.png" alt=""><img class="spoon vanilla" src="assets/widget-direction-v7/spoon-vanilla.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>三色试吃勺</b><span>不同口味素材组成纯摆设小托盘</span></figcaption>
+      </figure>
+
+      <figure class="span-5" data-kind="decor">
+        <div class="stage"><div class="widget ticket-pile"><img class="rose-ticket" src="assets/widget-direction-v7/ticket-rose.png" alt=""><img class="blue-ticket" src="assets/widget-direction-v7/ticket-ferry-pair.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>收藏票根</b><span>旧类型保留，但改成陈列物而非快捷入口</span></figcaption>
+      </figure>
+
+      <figure class="span-4" data-kind="decor">
+        <div class="stage compact"><div class="widget heart-doily"><img class="frame" src="assets/widget-direction-v7/frame-heart-lace.png" alt=""></div></div>
+        <figcaption><span class="kind">装饰</span><b>蕾丝心章</b><span>边框素材本身就是组件，不必填满中心</span></figcaption>
+      </figure>
+
+      <figure class="span-8" data-kind="decor">
+        <div class="stage compact"><div class="widget basket-shelf"><img class="center-art" src="assets/widget-direction-v7/rabbit-basket.png" alt=""><span class="spark s1">✦</span><span class="spark s2">·</span><span class="spark s3">✧</span></div></div>
+        <figcaption><span class="kind">装饰</span><b>花篮置物</b><span>无外框角色小物，也不强行补字段</span></figcaption>
+      </figure>
+    </section>
+
+    <footer class="legend"><span><strong>功能型：</strong>阅读、音乐、时间、日程等字段必须与组件主题一致。</span><span><strong>照片型：</strong>只定义底板、裁切和排列，照片全部由用户添加；纯装饰仍可只是好看的桌面物件。</span></footer>
+  </main>
+  <script>
+    const filters=[...document.querySelectorAll('.filter')];
+    const widgets=[...document.querySelectorAll('.gallery figure')];
+    const visibleCount=document.querySelector('#visibleCount');
+    filters.forEach(button=>button.addEventListener('click',()=>{
+      const kind=button.dataset.filter;
+      filters.forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+      widgets.forEach(widget=>widget.hidden=kind!=='all'&&widget.dataset.kind!==kind);
+      visibleCount.textContent=String(widgets.filter(widget=>!widget.hidden).length);
+    }));
+  </script>
+</body>
+</html>

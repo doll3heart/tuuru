@@ -25,6 +25,7 @@ test("appearance package carries visual settings and excludes reader identity an
       topBgImage: "data:image/png;base64,cHJvZmlsZS1jb3Zlcg==",
       readerId: "PRIVATE_READER_ID",
       readerAvatar: "data:image/png;base64,UFJJVkFURV9BVkFUQVI=",
+      readerSignature: "PRIVATE_SIGNATURE",
       bio: "PRIVATE_BIO",
       readingProgress: { workId: "PRIVATE_WORK" },
       customFonts: [{ name: "Phone Font", data: "data:font/woff;base64,cGhvbmUtZm9udA==" }],
@@ -38,6 +39,34 @@ test("appearance package carries visual settings and excludes reader identity an
           customCss: ".memo-card { box-shadow: none; }",
           readerId: "PRIVATE_NESTED_ID",
         },
+      },
+      desktopWidgets: {
+        enabled: true,
+        accent: "#aa8899",
+        surface: "#fffafa",
+        text: "#221f20",
+        note: "PRIVATE_WIDGET_NOTE",
+        fields: {
+          "v7-countdown-cherry":{ title:"PRIVATE_COUNTDOWN", targetDate:"2099-01-01T12:00" },
+        },
+        decorationImage: "data:image/png;base64,ZGVjb3JhdGlvbg==",
+        customDecorations: [
+          { id:"custom-sticker01", name:"我的贴纸", image:"data:image/png;base64,Y3VzdG9tLWRlY29y", size:"small", private:"DROP_ME" },
+        ],
+        items: [
+          { productId: "v7-photo-double", enabled: true, photos: ["https://img.test/PRIVATE_WIDGET_PHOTO.png", null], private: "DROP_ME" },
+          { productId: "unknown", enabled: true, photos: ["https://img.test/drop.png"] },
+        ],
+      },
+      homeLayout: {
+        pageCount: 2,
+        private: "PRIVATE_HOME_LAYOUT",
+        items: [
+          { key:"app:messages", page:1, x:0, y:0, private:"DROP_ME" },
+          { key:"widget:v7-photo-double", page:1, x:0, y:3 },
+          { key:"custom:custom-sticker01", page:0, x:6, y:10 },
+          { key:"app:unknown", page:8, x:0, y:0 },
+        ],
       },
     },
     profile: { readerId: "PRIVATE_PROFILE", readerAvatar: "PRIVATE_AVATAR", bio: "PRIVATE_BIO" },
@@ -56,9 +85,33 @@ test("appearance package carries visual settings and excludes reader identity an
   assert.equal(parsed.appearance.phone.topBgImage, "data:image/png;base64,cHJvZmlsZS1jb3Zlcg==")
   assert.equal(parsed.appearance.phone.appSettings.memo.cardBg, "#ffffff")
   assert.equal(parsed.appearance.phone.customIcons.memo, "data:image/png;base64,bWVtby1pY29u")
+  assert.equal(parsed.appearance.phone.desktopWidgets.enabled, true)
+  assert.equal(parsed.appearance.phone.desktopWidgets.decorationImage, "data:image/png;base64,ZGVjb3JhdGlvbg==")
+  assert.deepEqual(parsed.appearance.phone.desktopWidgets.items[0], {
+    productId: "v7-photo-double", kind: "photo", enabled: true, size: "wide",
+  })
+  assert.deepEqual(parsed.appearance.phone.desktopWidgets.customDecorations, [
+    { id:"custom-sticker01", name:"我的贴纸", image:"data:image/png;base64,Y3VzdG9tLWRlY29y", size:"small" },
+  ])
+  assert.equal(JSON.stringify(parsed.appearance.phone.desktopWidgets).includes("PRIVATE_WIDGET_NOTE"), false)
+  assert.equal(JSON.stringify(parsed.appearance.phone.desktopWidgets).includes("PRIVATE_WIDGET_PHOTO"), false)
+  assert.equal(JSON.stringify(parsed.appearance.phone.desktopWidgets).includes("PRIVATE_COUNTDOWN"), false)
+  assert.equal(JSON.stringify(parsed.appearance.phone.desktopWidgets).includes("2099-01-01"), false)
+  assert.equal(parsed.appearance.phone.homeLayout.pageCount, 2)
+  assert.deepEqual(parsed.appearance.phone.homeLayout.items.find(item => item.key === "app:messages"), {
+    key:"app:messages", page:1, x:0, y:0,
+  })
+  assert.deepEqual(parsed.appearance.phone.homeLayout.items.find(item => item.key === "widget:v7-photo-double"), {
+    key:"widget:v7-photo-double", page:1, x:0, y:3,
+  })
+  assert.deepEqual(parsed.appearance.phone.homeLayout.items.find(item => item.key === "custom:custom-sticker01"), {
+    key:"custom:custom-sticker01", page:0, x:6, y:10,
+  })
+  assert.equal(JSON.stringify(parsed.appearance.phone.homeLayout).includes("PRIVATE_HOME_LAYOUT"), false)
   for (const secret of [
     "PRIVATE_READER_ID",
     "PRIVATE_AVATAR",
+    "PRIVATE_SIGNATURE",
     "PRIVATE_BIO",
     "PRIVATE_WORK",
     "PRIVATE_PASSWORD",
@@ -83,6 +136,7 @@ test("inspection strips unknown fields and returns detached appearance records",
   assert.equal(Object.hasOwn(inspected.article, "unknownArticle"), false)
   assert.equal(Object.hasOwn(inspected.phone, "unknownPhone"), false)
   assert.deepEqual(inspected.phone.appSettings.gallery, { columns: 4 })
+  assert.equal(Object.hasOwn(inspected.phone, "desktopWidgets"), false)
   inspected.phone.frameColor = "#000000"
   assert.equal(source.appearance.phone.frameColor, "#334455")
 })

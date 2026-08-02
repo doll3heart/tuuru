@@ -123,6 +123,7 @@ test("target picking happens in the outline and restores unsaved choice drafts",
 
   const outline = document.querySelector(".world-tree.target-pick-mode")
   assert.ok(outline)
+  assert.equal(outline.querySelector(".wt-chapter-drag-handle"), null)
   assert.ok(outline.querySelector('.target-picker-search[aria-label="搜索目标节点"]'))
   assert.equal(outline.querySelector('[data-a="target-select"][data-n="node-a"]').disabled, false)
 

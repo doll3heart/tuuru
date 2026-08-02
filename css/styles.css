@@ -1159,7 +1159,15 @@ textarea.ch-selected-text{box-sizing:border-box;min-height:4.4em;resize:vertical
 .world-tree .wt-node-target-select:disabled{opacity:.42;cursor:not-allowed}
 .world-tree .wt-node-target-select:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
 .world-tree .wt-start-badge{flex-shrink:0;padding:1px 4px;border:1px solid var(--c-primary-hover);color:var(--c-primary-hover);font-size:.58rem;font-weight:600}
-.world-tree .wt-chapter{margin-bottom:2px}
+.world-tree .wt-chapter{position:relative;margin-bottom:2px}
+.world-tree .wt-chapter-drag-handle{appearance:none;-webkit-appearance:none;touch-action:none;align-self:stretch;width:22px;flex:0 0 22px;display:grid;place-items:center;border:0;background:transparent;color:var(--c-text2);font-size:.78rem;line-height:1;cursor:grab;opacity:.38;transition:opacity .12s,color .12s}
+.world-tree .wt-chapter-title:hover .wt-chapter-drag-handle,.world-tree .wt-chapter-drag-handle:focus-visible{opacity:1;color:var(--c-primary-hover)}
+.world-tree .wt-chapter-drag-handle:focus-visible{outline:2px solid var(--c-primary-hover);outline-offset:-2px}
+.world-tree .wt-chapter-drag-handle:active{cursor:grabbing}
+.world-tree .wt-chapter.dragging{opacity:.5;background:color-mix(in srgb,var(--c-primary) 12%,var(--c-surface))}
+.world-tree .wt-chapter.drop-before::before,.world-tree .wt-chapter.drop-after::after{content:"";position:absolute;z-index:6;left:4px;right:4px;height:2px;background:var(--c-primary-hover);box-shadow:0 0 0 2px color-mix(in srgb,var(--c-primary) 35%,transparent);pointer-events:none}
+.world-tree .wt-chapter.drop-before::before{top:-1px}
+.world-tree .wt-chapter.drop-after::after{bottom:-1px}
 .world-tree .wt-node{display:flex;align-items:center;gap:0;padding:0;font-size:.8rem;color:var(--c-text2);transition:.08s;border-left:2px solid transparent;position:relative}
 .world-tree .wt-node:hover{background:color-mix(in srgb,var(--c-primary) 16%,var(--c-surface));color:var(--c-text)}
 .world-tree .wt-node.active{background:color-mix(in srgb,var(--c-primary) 28%,var(--c-surface));color:var(--c-text);border-left-color:var(--c-primary-hover);font-weight:600}
@@ -1221,6 +1229,11 @@ textarea.ch-selected-text{box-sizing:border-box;min-height:4.4em;resize:vertical
 
 @media(pointer:coarse){
   .world-tree .wt-node-drag-handle{min-width:44px;min-height:44px;flex-basis:44px}
+  .world-tree .wt-chapter-drag-handle{width:44px;min-width:44px;min-height:44px;flex-basis:44px;opacity:1}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .world-tree .wt-chapter,.world-tree .wt-chapter-drag-handle{transition:none!important}
 }
 
 /* WT resize handle */

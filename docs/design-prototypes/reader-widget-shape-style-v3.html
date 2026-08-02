@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tuuru 剧情组件构型稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f2eff0;
+      --ink: #3f3237;
+      --muted: #7d6d73;
+      --tone: #b26f84;
+      --tone-deep: #845163;
+      --soft: #f0dbe2;
+      --pale: #fbf1f4;
+      --surface: rgba(255,251,252,.9);
+      --stroke: rgba(111,71,84,.34);
+      --font: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { min-width: 320px; margin: 0; background: var(--page); color: var(--ink); font-family: var(--font); }
+    button { color: inherit; font: inherit; }
+    .page { width: min(1420px,100%); margin: 0 auto; padding: 38px clamp(16px,4vw,58px) 68px; }
+    .page-head { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding-bottom:20px; border-bottom:1px solid #d8d0d3; }
+    .page-head h1 { margin:0; font-size:clamp(25px,3vw,40px); letter-spacing:-.03em; }
+    .page-head p { max-width:60ch; margin:8px 0 0; color:#71656a; font-size:14px; line-height:1.7; }
+    .toolbar { display:flex; align-items:center; gap:8px; }
+    .palette-button,.asset-button { min-height:40px; border:1px solid #a59097; background:#fff; cursor:pointer; }
+    .palette-button { width:40px; border-radius:50%; background:var(--swatch); box-shadow:inset 0 0 0 5px #fff; }
+    .palette-button[aria-pressed="true"] { outline:2px solid #73525e; outline-offset:2px; }
+    .asset-button { padding:0 14px; border-radius:999px; }
+    .asset-button:hover { background:#ebe4e6; }
+    .page[data-assets="off"] .asset { display:none; }
+
+    .intro-note { margin:18px 0 24px; color:#74686c; font-size:12px; line-height:1.65; }
+    .specimens { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); column-gap:28px; row-gap:4px; }
+    .specimen { min-width:0; padding:22px 0 26px; border-bottom:1px solid #d9d2d4; }
+    .specimen-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; }
+    .specimen-head strong { font-size:14px; }
+    .specimen-head span { color:#8a7c81; font-size:10px; }
+    .stage { position:relative; min-height:190px; display:grid; place-items:center; overflow:hidden; padding:12px; }
+    .micro { color:var(--muted); font-size:9px; line-height:1.4; }
+    .title { font-size:15px; font-weight:760; line-height:1.35; }
+    .asset { position:absolute; z-index:5; object-fit:contain; pointer-events:none; }
+
+    /* 续页：纪念日横幅，不使用常规卡片外壳 */
+    .resume { position:relative; width:min(340px,100%); min-height:106px; display:grid; grid-template-columns:minmax(0,1fr) 92px; align-items:center; }
+    .resume-main { position:relative; z-index:2; min-height:90px; padding:17px 23px; border:1px solid var(--stroke); border-radius:18px 4px 4px 18px; background:color-mix(in srgb,var(--surface) 82%,transparent); box-shadow:inset 0 1px rgba(255,255,255,.9); }
+    .resume-main::before { content:""; position:absolute; left:12px; right:12px; bottom:10px; height:4px; border-radius:99px; background:var(--soft); }
+    .resume-main::after { content:""; position:absolute; left:12px; bottom:10px; width:58%; height:4px; border-radius:99px; background:var(--tone); }
+    .resume-day { position:relative; z-index:3; display:grid; width:94px; height:94px; place-items:center; margin-left:-7px; border:1px solid var(--stroke); border-radius:50%; background:var(--pale); box-shadow:inset 0 0 0 6px rgba(255,255,255,.58),2px 3px 0 color-mix(in srgb,var(--tone) 13%,transparent); text-align:center; }
+    .resume-day b { display:block; color:var(--tone-deep); font:750 30px/1 Georgia,serif; }
+    .resume-day small { font-size:8px; }
+    .resume .asset { right:60px; top:-8px; width:70px; }
+
+    /* 角色近况：头像与两枚对话胶囊 */
+    .status { position:relative; width:min(326px,100%); min-height:138px; }
+    .status-avatar { position:absolute; z-index:3; left:3px; top:34px; display:grid; width:68px; height:68px; place-items:center; border:5px solid var(--pale); border-radius:50%; background:var(--soft); color:var(--tone-deep); font-size:20px; font-weight:800; box-shadow:0 0 0 1px var(--stroke); }
+    .status-pill { position:absolute; left:55px; right:3px; min-height:56px; padding:10px 15px 10px 26px; border:1px solid var(--stroke); border-radius:10px 999px 999px 10px; background:var(--surface); }
+    .status-pill.one { top:15px; }
+    .status-pill.two { top:80px; left:78px; right:23px; background:var(--soft); }
+    .status-pill .title { font-size:12px; }
+    .status-pill .micro { margin-top:3px; }
+
+    /* 相片：错落相纸，无共同底板 */
+    .polaroids { position:relative; width:300px; height:160px; }
+    .polaroid { position:absolute; width:112px; height:138px; padding:7px 7px 23px; border:1px solid var(--stroke); border-radius:4px; background:#fff; box-shadow:2px 3px 0 color-mix(in srgb,var(--tone) 14%,transparent); }
+    .polaroid:nth-child(1) { left:16px; top:13px; transform:rotate(-7deg); }
+    .polaroid:nth-child(2) { left:96px; top:2px; z-index:2; transform:rotate(2deg); }
+    .polaroid:nth-child(3) { right:15px; top:18px; transform:rotate(8deg); }
+    .photo-art { width:100%; height:100%; background:linear-gradient(160deg,transparent 49%,color-mix(in srgb,var(--tone) 38%,var(--soft)) 50%),radial-gradient(circle at 67% 25%,color-mix(in srgb,var(--tone) 36%,white) 0 10px,transparent 11px),var(--pale); }
+    .polaroids .asset { right:-6px; bottom:-10px; width:76px; }
+
+    /* 语音：唱片主体，控制条单独悬浮 */
+    .voice { position:relative; width:270px; height:156px; }
+    .record { position:absolute; left:7px; top:4px; width:142px; height:142px; border:12px double color-mix(in srgb,var(--tone) 76%,white); border-radius:50%; background:var(--tone-deep); box-shadow:inset 0 0 0 25px color-mix(in srgb,var(--tone) 58%,var(--soft)),3px 4px 0 color-mix(in srgb,var(--tone-deep) 14%,transparent); }
+    .record::after { content:""; position:absolute; inset:43px; border-radius:50%; background:var(--pale); }
+    .voice-control { position:absolute; z-index:2; right:0; top:48px; width:154px; min-height:70px; padding:12px 17px 11px 43px; border:1px solid var(--stroke); border-radius:999px 10px 10px 999px; background:rgba(255,255,255,.88); }
+    .voice-wave { display:flex; height:16px; align-items:center; gap:2px; margin-top:6px; }
+    .voice-wave i { width:2px; height:6px; border-radius:2px; background:var(--tone); }
+    .voice-wave i:nth-child(2),.voice-wave i:nth-child(5),.voice-wave i:nth-child(8) { height:15px; }
+    .voice-wave i:nth-child(3),.voice-wave i:nth-child(6) { height:11px; }
+
+    /* 日程：翻页日历 */
+    .schedule { position:relative; width:244px; min-height:154px; padding:38px 20px 17px; border:1px solid var(--stroke); border-radius:7px 7px 18px 18px; background:var(--surface); box-shadow:3px 4px 0 color-mix(in srgb,var(--tone) 13%,transparent); }
+    .schedule::before { content:""; position:absolute; left:0; right:0; top:0; height:32px; border-radius:7px 7px 0 0; background:var(--tone); }
+    .rings { position:absolute; z-index:2; left:24px; right:24px; top:-7px; display:flex; justify-content:space-between; }
+    .rings i { width:8px; height:21px; border:2px solid var(--tone-deep); border-radius:99px; background:var(--pale); }
+    .schedule-body { display:grid; grid-template-columns:62px 1fr; align-items:center; gap:15px; }
+    .schedule-date { color:var(--tone-deep); font:750 42px/1 Georgia,serif; text-align:center; }
+    .schedule-copy { padding-left:15px; border-left:1px dashed var(--stroke); }
+    .schedule-copy .title { margin-top:5px; font-size:14px; }
+
+    /* 未拆：悬浮封印，不画信封矩形 */
+    .sealed { position:relative; width:230px; height:155px; display:grid; place-items:center; }
+    .sealed-orbit { position:absolute; inset:20px 8px; border:1px dashed var(--stroke); border-radius:50%; transform:rotate(-8deg); }
+    .sealed-orbit::before,.sealed-orbit::after { content:""; position:absolute; width:12px; height:12px; border:1px solid var(--tone); border-radius:50%; background:var(--pale); }
+    .sealed-orbit::before { left:14px; top:10px; }.sealed-orbit::after { right:9px; bottom:12px; }
+    .sealed-core { position:relative; z-index:2; display:grid; width:104px; height:104px; place-items:center; border:1px solid var(--stroke); border-radius:50% 50% 44% 56%; background:var(--soft); box-shadow:inset 0 0 0 7px rgba(255,255,255,.47); text-align:center; transform:rotate(4deg); }
+    .sealed-core > div { transform:rotate(-4deg); }
+
+    /* 线索：散落便签与连接线 */
+    .clueboard { position:relative; width:310px; height:160px; }
+    .thread { position:absolute; height:1px; background:var(--tone); transform-origin:left center; opacity:.55; }
+    .thread.a { left:70px; top:63px; width:120px; transform:rotate(-13deg); }
+    .thread.b { left:112px; top:101px; width:112px; transform:rotate(18deg); }
+    .clue { position:absolute; z-index:2; display:grid; min-height:58px; place-items:center; padding:9px 12px; border:1px solid var(--stroke); border-radius:8px; background:var(--surface); box-shadow:2px 2px 0 color-mix(in srgb,var(--tone) 12%,transparent); font-size:10px; text-align:center; }
+    .clue.a { left:5px; top:28px; width:96px; transform:rotate(-4deg); }
+    .clue.b { left:112px; top:8px; width:86px; background:var(--soft); transform:rotate(3deg); }
+    .clue.c { right:0; bottom:13px; width:104px; transform:rotate(-2deg); }
+    .pin { position:absolute; z-index:3; width:8px; height:8px; border-radius:50%; background:var(--tone-deep); box-shadow:0 0 0 4px var(--pale); }
+    .pin.a { left:75px; top:57px; }.pin.b { left:153px; top:42px; }.pin.c { right:70px; bottom:65px; }
+
+    /* 便签：云形轮廓 */
+    .note { position:relative; width:260px; min-height:142px; display:grid; place-items:center; padding:26px 35px 20px; background:var(--soft); clip-path:polygon(12% 10%,23% 4%,34% 10%,47% 3%,60% 9%,75% 5%,88% 13%,96% 28%,93% 47%,98% 64%,89% 85%,71% 92%,55% 88%,38% 96%,22% 87%,8% 91%,3% 71%,7% 51%,2% 31%); text-align:center; }
+    .note::after { content:""; position:absolute; inset:12px 16px; border:1px dashed color-mix(in srgb,var(--tone) 54%,transparent); clip-path:inherit; }
+    .note-clip { position:absolute; z-index:2; top:-3px; left:52%; width:18px; height:43px; border:3px solid var(--tone-deep); border-radius:99px; transform:rotate(8deg); }
+
+    /* 联系人：头像串，无底板 */
+    .contacts { position:relative; width:310px; height:145px; }
+    .person { position:absolute; top:33px; display:grid; justify-items:center; gap:7px; }
+    .person:nth-child(1) { left:18px; transform:rotate(-5deg); }.person:nth-child(2) { left:108px; top:10px; z-index:2; }.person:nth-child(3) { right:18px; transform:rotate(5deg); }
+    .person-avatar { display:grid; width:78px; height:78px; place-items:center; border:6px solid var(--pale); border-radius:50%; background:var(--soft); color:var(--tone-deep); font-size:20px; font-weight:800; box-shadow:0 0 0 1px var(--stroke),2px 3px 0 color-mix(in srgb,var(--tone) 13%,transparent); }
+    .person b { padding:4px 10px; border-radius:999px; background:var(--surface); font-size:9px; font-weight:700; }
+
+    /* 阅读痕迹：完整环形进度 */
+    .journey { position:relative; display:grid; width:166px; height:166px; place-items:center; border-radius:50%; background:conic-gradient(var(--tone) 0 72%,var(--soft) 72% 100%); }
+    .journey::before { content:""; position:absolute; inset:12px; border-radius:50%; background:var(--pale); box-shadow:inset 0 0 0 1px var(--stroke); }
+    .journey-copy { position:relative; z-index:2; text-align:center; }
+    .journey-copy b { display:block; color:var(--tone-deep); font:750 36px/1 Georgia,serif; }
+    .journey-copy span { color:var(--muted); font-size:9px; }
+    .journey-dot { position:absolute; z-index:3; right:18px; bottom:31px; width:14px; height:14px; border:4px solid var(--pale); border-radius:50%; background:var(--tone-deep); }
+
+    /* 来信：角色头像与宽对话气泡 */
+    .letter { position:relative; width:min(330px,100%); min-height:140px; display:flex; align-items:flex-start; gap:11px; }
+    .letter-avatar { position:relative; z-index:3; display:grid; width:56px; height:56px; flex:0 0 56px; place-items:center; border:4px solid var(--pale); border-radius:50%; background:var(--soft); color:var(--tone-deep); font-weight:800; box-shadow:0 0 0 1px var(--stroke); }
+    .letter-bubble { position:relative; min-height:114px; flex:1; padding:18px 19px; border:1px solid var(--stroke); border-radius:8px 22px 22px 22px; background:var(--surface); box-shadow:3px 3px 0 color-mix(in srgb,var(--tone) 12%,transparent); }
+    .letter-bubble::before { content:""; position:absolute; left:-9px; top:10px; width:17px; height:17px; border-bottom:1px solid var(--stroke); background:var(--surface); clip-path:polygon(0 0,100% 0,100% 100%); transform:rotate(45deg); }
+    .letter-bubble .title { margin:7px 0 5px; }
+    .letter .asset { right:-7px; bottom:-12px; width:72px; opacity:.72; }
+
+    /* 收藏：桌面 Dock 式托盘 */
+    .collection { position:relative; width:min(330px,100%); min-height:126px; display:flex; align-items:center; justify-content:center; gap:12px; padding:16px 18px 25px; border:1px solid var(--stroke); border-radius:28px 28px 13px 13px; background:color-mix(in srgb,var(--surface) 83%,transparent); box-shadow:inset 0 1px rgba(255,255,255,.9),0 4px 0 color-mix(in srgb,var(--tone) 12%,transparent); }
+    .keepsake { position:relative; display:grid; width:58px; height:58px; place-items:center; border:1px solid var(--stroke); border-radius:17px; background:var(--pale); color:var(--tone-deep); font-size:9px; font-weight:750; box-shadow:inset 0 0 0 4px rgba(255,255,255,.52); }
+    .keepsake:nth-child(2) { transform:translateY(-8px); background:var(--soft); }
+    .collection::after { content:"收藏陈列"; position:absolute; bottom:7px; color:var(--muted); font-size:8px; }
+
+    @media (max-width:1040px) { .specimens { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:680px) {
+      .page { padding:24px 14px 48px; }
+      .page-head { align-items:stretch; flex-direction:column; }
+      .toolbar { flex-wrap:wrap; }
+      .specimens { grid-template-columns:1fr; }
+      .stage { min-height:175px; }
+    }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; } }
+  </style>
+</head>
+<body>
+  <main class="page" id="page" data-assets="on">
+    <header class="page-head">
+      <div><h1>不再是长方形换皮</h1><p>十二种组件保留原功能，但按内容长出不同轮廓。色系是一键换色，构型本身不依赖贴纸。</p></div>
+      <div class="toolbar" aria-label="视觉稿选项">
+        <button class="palette-button" style="--swatch:#b26f84" data-palette="rose" aria-label="糖霜粉" aria-pressed="true"></button>
+        <button class="palette-button" style="--swatch:#5b9481" data-palette="mint" aria-label="薄荷绿" aria-pressed="false"></button>
+        <button class="palette-button" style="--swatch:#6586a6" data-palette="blue" aria-label="雾蓝色" aria-pressed="false"></button>
+        <button class="palette-button" style="--swatch:#8b747d" data-palette="mono" aria-label="白桃灰" aria-pressed="false"></button>
+        <button class="asset-button" id="assetButton" type="button" aria-pressed="true">隐藏素材</button>
+      </div>
+    </header>
+    <p class="intro-note">这次只看组件本身。下方展示的是同一套视觉语言下的十二种构型，不代表小手机里的最终排列。</p>
+
+    <section class="specimens">
+      <article class="specimen"><header class="specimen-head"><strong>阅读续页</strong><span>横幅＋日期圆章</span></header><div class="stage"><div class="resume"><div class="resume-main"><div class="micro">上次读到</div><div class="title">暮色中的回声</div><div class="micro">旧站台的雨</div></div><div class="resume-day"><div><small>今天</small><b>27</b><small>周六</small></div></div><img class="asset" src="assets/widget-style-v2/rose-bouquet.png" alt=""></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>角色近况</strong><span>头像＋双胶囊</span></header><div class="stage"><div class="status"><div class="status-avatar">林</div><div class="status-pill one"><div class="title">到旧站台了吗？</div><div class="micro">刚刚</div></div><div class="status-pill two"><div class="title">我在北侧等你。</div></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>拍立得</strong><span>错落相纸</span></header><div class="stage"><div class="polaroids"><div class="polaroid"><div class="photo-art"></div></div><div class="polaroid"><div class="photo-art"></div></div><div class="polaroid"><div class="photo-art"></div></div><img class="asset" src="assets/widget-style-v2/rose-rabbits.png" alt=""></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>留声机</strong><span>唱片＋悬浮控制条</span></header><div class="stage"><div class="voice"><span class="record"></span><div class="voice-control"><div class="micro">林晚的留言</div><div class="title">00:17</div><div class="voice-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>剧情日程</strong><span>翻页日历</span></header><div class="stage"><div class="schedule"><div class="rings"><i></i><i></i><i></i><i></i></div><div class="schedule-body"><div class="schedule-date">27</div><div class="schedule-copy"><div class="micro">今晚 21:30</div><div class="title">旧站台见面</div><div class="micro">北侧候车厅</div></div></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>未拆内容</strong><span>封印轨道</span></header><div class="stage"><div class="sealed"><span class="sealed-orbit"></span><div class="sealed-core"><div><div class="title">待开启</div><div class="micro">继续阅读后拆封</div></div></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>线索板</strong><span>散落便签＋连线</span></header><div class="stage"><div class="clueboard"><i class="thread a"></i><i class="thread b"></i><span class="pin a"></span><span class="pin b"></span><span class="pin c"></span><div class="clue a">旧站台<br>21:30</div><div class="clue b">北门钥匙</div><div class="clue c">未读备忘<br>03</div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>便签</strong><span>云形纸片</span></header><div class="stage"><div class="note"><span class="note-clip"></span><div><div class="title">别忘了北门钥匙</div><div class="micro">只保存在本机</div></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>角色快捷入口</strong><span>头像串</span></header><div class="stage"><div class="contacts"><div class="person"><div class="person-avatar">奈</div><b>奈奈</b></div><div class="person"><div class="person-avatar">林</div><b>林晚 · 2</b></div><div class="person"><div class="person-avatar">顾</div><b>顾言</b></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>阅读痕迹</strong><span>环形进度</span></header><div class="stage"><div class="journey"><span class="journey-dot"></span><div class="journey-copy"><b>72%</b><span>旧站台的雨</span></div></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>今日来信</strong><span>头像＋来信气泡</span></header><div class="stage"><div class="letter"><div class="letter-avatar">林</div><div class="letter-bubble"><div class="micro">林晚 · 刚刚</div><div class="title">今晚见。</div><div class="micro">东西放在旧站台储物柜里了。</div></div><img class="asset" src="assets/widget-style-v2/mono-stars.png" alt=""></div></div></article>
+      <article class="specimen"><header class="specimen-head"><strong>收藏陈列</strong><span>桌面托盘</span></header><div class="stage"><div class="collection"><span class="keepsake">车票</span><span class="keepsake">照片</span><span class="keepsake">钥匙</span><span class="keepsake">录音</span></div></div></article>
+    </section>
+  </main>
+  <script>
+    const palettes = {
+      rose:{tone:'#b26f84',deep:'#845163',soft:'#f0dbe2',pale:'#fbf1f4',ink:'#3f3237',muted:'#7d6d73',stroke:'rgba(111,71,84,.34)'},
+      mint:{tone:'#5b9481',deep:'#3f7161',soft:'#d8eee6',pale:'#f1faf6',ink:'#304c43',muted:'#698078',stroke:'rgba(58,108,91,.32)'},
+      blue:{tone:'#6586a6',deep:'#496883',soft:'#dce9f4',pale:'#f1f6fb',ink:'#344857',muted:'#6b7e8d',stroke:'rgba(67,96,121,.3)'},
+      mono:{tone:'#8b747d',deep:'#5f4a52',soft:'#e7e0e3',pale:'#f8f5f6',ink:'#3d3538',muted:'#776d71',stroke:'rgba(64,51,56,.28)'}
+    };
+    const page=document.querySelector('#page');
+    document.querySelectorAll('.palette-button').forEach(button=>button.addEventListener('click',()=>{
+      const colors=palettes[button.dataset.palette];
+      page.style.setProperty('--tone',colors.tone);page.style.setProperty('--tone-deep',colors.deep);page.style.setProperty('--soft',colors.soft);page.style.setProperty('--pale',colors.pale);page.style.setProperty('--ink',colors.ink);page.style.setProperty('--muted',colors.muted);page.style.setProperty('--stroke',colors.stroke);
+      document.querySelectorAll('.palette-button').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+    }));
+    const assetButton=document.querySelector('#assetButton');
+    assetButton.addEventListener('click',()=>{const next=page.dataset.assets==='on'?'off':'on';page.dataset.assets=next;assetButton.setAttribute('aria-pressed',String(next==='on'));assetButton.textContent=next==='on'?'隐藏素材':'显示素材';});
+  </script>
+</body>
+</html>

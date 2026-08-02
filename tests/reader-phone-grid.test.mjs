@@ -8,6 +8,11 @@ import {
   phoneGridContainerStyle,
   phoneGridItemStyle,
 } from "../reader/phone-grid.js"
+import {
+  PHONE_HOME_CELL_HEIGHT,
+  PHONE_HOME_COLUMNS,
+  PHONE_HOME_ROWS,
+} from "../reader/phone-home-layout.js"
 
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
 const css = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
@@ -125,17 +130,50 @@ test("grid styles use container-relative lengths without CSS multiplication", ()
   assert.doesNotMatch(item, /var\([^)]*\)\s*\*/)
 })
 
-test("both reader phone renderers are wired to the shared grid helper", () => {
-  assert.match(readerSource, /from ['"]\.\/phone-grid\.js['"]/)
-  assert.equal((readerSource.match(/phoneGridContainerStyle\(\)/g) || []).length, 2)
-  assert.equal((readerSource.match(/phoneGridItemStyle\(/g) || []).length, 2)
-  assert.match(readerSource, /phoneGridItemStyle\(app\.desktopX \|\| 0, app\.desktopY \|\| 0\)/)
-  assert.match(readerSource, /phoneGridItemStyle\(i % 4, Math\.floor\(i \/ 4\)\)/)
+test("both reader phone renderers are wired to the shared multi-screen home layout", () => {
+  assert.ok(/from ['"]\.\/phone-home-layout\.js['"]/.test(readerSource))
+  assert.equal((readerSource.match(/renderReaderPhoneHome\(/g) || []).length, 3)
+  assert.match(readerSource, /normalizePhoneHomeLayout\(candidate, definitions\)/)
+  assert.match(readerSource, /Number\(app\.desktopX\) \* 2/)
+  assert.match(readerSource, /Number\(app\.desktopY\) \* 2/)
+  assert.match(readerSource, /phoneHomeItemStyle\(item\)/)
   assert.doesNotMatch(readerSource, /var CELL_W = 80, CELL_H = 95, OFFSET_X = 20, OFFSET_Y = 36/)
 
-  const icons = ruleBodiesFor(cssWithoutComments, ".phone-app-icon")
-  assert.match(icons, /left\s*:\s*calc\(var\(--phone-grid-origin-x[^;]*var\(--phone-grid-x/)
-  assert.match(icons, /top\s*:\s*var\(--phone-grid-y/)
+  const items = ruleBodiesFor(cssWithoutComments, ".phone-home-item")
+  assert.match(items, /left\s*:\s*var\(--phone-home-left\)/)
+  assert.match(items, /top\s*:\s*var\(--phone-home-top\)/)
+})
+
+test("custom decoration uploads are wired to grid-size controls and contained artwork", () => {
+  assert.match(readerSource, /data-cu-custom-widget-upload/)
+  assert.match(readerSource, /data-cu-custom-widget-size/)
+  assert.match(readerSource, /data-cu-custom-widget-remove/)
+  assert.match(readerSource, /phoneCustomDecorationSizeForDimensions/)
+  assert.match(readerSource, /renderPhoneCustomDecoration/)
+
+  const customDecoration = ruleBodiesFor(cssWithoutComments, ".phone-custom-decoration img")
+  assert.match(customDecoration, /object-fit\s*:\s*contain/)
+  assert.match(customDecoration, /width\s*:\s*100%/)
+  assert.match(customDecoration, /height\s*:\s*100%/)
+
+  const uploadAction = ruleBodiesFor(cssWithoutComments, ".phone-custom-widget-upload-action")
+  assert.match(uploadAction, /font\s*:\s*600\s+\.5rem\/1\s+var\(--font\)/)
+
+  const undoAction = ruleBodiesFor(cssWithoutComments, ".appearance-workbench-undo")
+  assert.match(undoAction, /min-height\s*:\s*30px/)
+  assert.match(undoAction, /font\s*:\s*600\s+\.6rem\/1\s+var\(--font\)/)
+})
+
+test("multi-screen home uses the full lower screen and centers its fixed grid", () => {
+  const viewport = ruleBodiesFor(cssWithoutComments, ".phone-home-viewport")
+  const page = ruleBodiesFor(cssWithoutComments, ".phone-home-page")
+
+  assert.equal(PHONE_HOME_COLUMNS, 8)
+  assert.equal(PHONE_HOME_ROWS, 13)
+  assert.match(viewport, /width\s*:\s*min\(320px,\s*100%\)/)
+  assert.doesNotMatch(viewport, /calc\(100%\s*-\s*40px\)/)
+  assert.match(viewport, /margin\s*:\s*0\s+auto/)
+  assert.match(page, new RegExp(`height\\s*:\\s*${PHONE_HOME_ROWS * PHONE_HOME_CELL_HEIGHT}px`))
 })
 
 test("bounded mobile article overlays fill the viewport while preserving legacy grid positions", () => {

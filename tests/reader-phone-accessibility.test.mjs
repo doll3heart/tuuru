@@ -29,20 +29,20 @@ function ruleBodiesFor(cssText, selector) {
 test("reader phone desktops render native named App controls", () => {
   const desktop = functionBody("buildPhoneHTML", "// ====== PHONE READER")
   const preview = functionBody("renderPhonePreview", "function showReaderToast")
+  const appRenderer = functionBody("readerPhoneHomeAppMarkup", "function renderReaderPhoneHome")
 
-  for (const renderer of [desktop, preview]) {
-    assert.match(renderer, /<button type="button" class="phone-app-icon/)
-    assert.match(renderer, /aria-label="['"]?\s*\+\s*escapeHtmlAttribute\(appName\)/)
-    assert.match(renderer, /<span class="phone-icon-body/)
-    assert.match(renderer, /<\/button>/)
-    assert.match(renderer, /readerCustomIconUrl\([^\n]*customIcons/)
-    assert.match(renderer, /src="['"]?\s*\+\s*escapeHtmlAttribute\(customIcon\)/)
-    assert.doesNotMatch(renderer, /<div class="phone-app-icon/)
-    assert.doesNotMatch(renderer, /outline:none!important/)
-  }
+  assert.match(desktop, /renderReaderPhoneHome\(/)
+  assert.match(preview, /renderReaderPhoneHome\(/)
+  assert.match(appRenderer, /<button type="button" class="phone-app-icon/)
+  assert.match(appRenderer, /aria-label="['"]?\s*\+\s*escapeHtmlAttribute\(appName\)/)
+  assert.match(appRenderer, /<span class="phone-icon-body/)
+  assert.match(appRenderer, /<\/button>/)
+  assert.match(appRenderer, /readerCustomIconUrl\([^\n]*customIcons/)
+  assert.match(appRenderer, /src="['"]?\s*\+\s*escapeHtmlAttribute\(customIcon\)/)
+  assert.doesNotMatch(appRenderer, /<div class="phone-app-icon/)
+  assert.doesNotMatch(appRenderer, /outline:none!important/)
 
-  assert.match(desktop, /<img[^>]+alt=""/)
-  assert.match(preview, /<img[^>]+alt=""/)
+  assert.match(appRenderer, /<img[^>]+alt=""/)
   assert.match(readerSource, /function isSafeReaderCallBackgroundDataUrl/)
   assert.match(readerSource, /isSafeImageUrl\(value\)/)
 })

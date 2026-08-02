@@ -1,6 +1,8 @@
 import { isSafeImageUrl } from "../js/sanitize.js"
 import { normalizeReaderAppearance } from "./article-appearance.js"
 import { READER_CUSTOM_CSS_MAX_LENGTH } from "./custom-style.js"
+import { normalizePhoneDesktopWidgets } from "./phone-desktop-widgets.js"
+import { normalizePhoneHomeLayout, phoneHomeDefinitions } from "./phone-home-layout.js"
 
 export const READER_APPEARANCE_PACKAGE_FORMAT = "tuuru-reader-appearance"
 export const READER_APPEARANCE_PACKAGE_VERSION = 1
@@ -144,6 +146,35 @@ function pickPhoneAppearance(candidate) {
   picked.appBgs = pickImageRecord(appBgs)
   picked.appSettings = pickAppSettings(appSettings)
   picked.customIcons = pickImageRecord(customIcons)
+  const desktopWidgetSource = ownDataValue(candidate, "desktopWidgets")
+  let normalizedDesktopWidgets = null
+  if (isRecord(desktopWidgetSource)) {
+    const desktopWidgets = normalizePhoneDesktopWidgets(desktopWidgetSource)
+    normalizedDesktopWidgets = desktopWidgets
+    picked.desktopWidgets = {
+      enabled:desktopWidgets.enabled,
+      accent:desktopWidgets.accent,
+      surface:desktopWidgets.surface,
+      text:desktopWidgets.text,
+      decorationImage:desktopWidgets.decorationImage,
+      customDecorations:desktopWidgets.customDecorations.map(item => ({
+        id:item.id,
+        name:item.name,
+        image:item.image,
+        size:item.size,
+      })),
+      items:desktopWidgets.items.map(item => ({
+        productId:item.productId,
+        kind:item.kind,
+        enabled:item.enabled,
+        size:item.size,
+      })),
+    }
+  }
+  const homeLayout = ownDataValue(candidate, "homeLayout")
+  if (isRecord(homeLayout)) {
+    picked.homeLayout = normalizePhoneHomeLayout(homeLayout, phoneHomeDefinitions(normalizedDesktopWidgets))
+  }
   return picked
 }
 

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tuuru 组件方向校稿</title>
+  <style>
+    :root {
+      --ink:#493b40;
+      --muted:#826d75;
+      --rose:#bf718b;
+      --rose-deep:#8f4d60;
+      --rose-soft:#f5dfe6;
+      --blue:#cbdcea;
+      --line:#dfd2d6;
+      --surface:#fffafa;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;min-width:320px;background:#efedef;color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif}
+    button{font:inherit}
+    .page{width:min(1280px,calc(100% - 32px));margin:28px auto;padding:30px 34px 42px;background:#fff}
+    .header{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding-bottom:20px;border-bottom:1px solid var(--line)}
+    h1{margin:0;font-size:22px;line-height:1.3}
+    .header p{max-width:62ch;margin:7px 0 0;color:var(--muted);font-size:13px;line-height:1.65}
+    .filters{display:flex;flex-wrap:wrap;gap:6px}
+    .filter{min-height:38px;padding:0 14px;border:0;border-radius:999px;background:#f4eff1;color:#715c64;cursor:pointer}
+    .filter[aria-pressed="true"]{background:var(--rose-deep);color:#fff}
+    .filter:focus-visible{outline:2px solid var(--rose-deep);outline-offset:2px}
+    .gallery{display:grid;grid-template-columns:repeat(12,1fr);gap:48px 32px;align-items:center;padding:46px 16px 18px}
+    figure{margin:0;min-width:0}
+    figure[hidden]{display:none}
+    figcaption{margin-top:12px;color:var(--muted);font-size:12px;text-align:center}
+    figcaption b{color:var(--ink)}
+    .reading{grid-column:span 7}
+    .sticker{grid-column:span 5}
+    .player{grid-column:span 7}
+    .date{grid-column:span 5}
+    .double{grid-column:4/span 6}
+    .widget{position:relative;margin:0 auto}
+
+    /* 功能型：字段只出现于与主题一致的位置。 */
+    .reading-widget{width:min(650px,100%);aspect-ratio:1000/322}
+    .reading-widget>img{display:block;width:100%;height:auto}
+    .reading-copy{position:absolute;left:25%;top:29%;width:49%;height:43%;display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto auto;column-gap:14px;align-content:center}
+    .reading-copy small{grid-column:1;color:#9b6d7d;font-size:11px}
+    .reading-copy strong{grid-column:1;margin-top:2px;font-size:20px;line-height:1.2}
+    .reading-copy span{grid-column:1;margin-top:2px;color:#765f67;font-size:11px}
+    .reading-copy b{grid-column:2;grid-row:1/4;align-self:center;color:#ae5d7a;font-size:12px}
+    .reading-copy b::after{content:"";display:block;width:30px;height:3px;margin:6px auto 0;border-radius:2px;background:#d4819f}
+
+    .player-shell{width:min(620px,100%);height:238px;margin-top:26px;border:2px solid #d5c9cd;border-radius:18px 18px 12px 12px;background:#fffafa;box-shadow:0 5px 0 rgba(103,78,87,.14)}
+    .player-shell::before,.player-shell::after{content:"";position:absolute;z-index:-1;top:-29px;width:112px;height:92px;border:2px solid #d5c9cd;border-bottom:0;border-radius:56% 56% 0 0;background:#fffafa}
+    .player-shell::before{left:40px;transform:rotate(-5deg)}
+    .player-shell::after{right:40px;transform:rotate(5deg)}
+    .player-inner{display:grid;grid-template-columns:145px 1fr;height:100%;padding:26px 30px;gap:28px}
+    .album{position:relative;overflow:hidden;border-radius:12px;background:#e9dfe3}
+    .album img{width:100%;height:100%;object-fit:contain}
+    .track{display:flex;min-width:0;flex-direction:column;justify-content:center}
+    .track small{color:#9a7b87;font-size:11px}
+    .track h2{margin:4px 0 3px;font-size:19px;line-height:1.2}
+    .track p{margin:0;color:#7b646d;font-size:11px}
+    .progress{height:4px;margin:24px 0 15px;background:#e9dfe2}
+    .progress i{display:block;width:42%;height:100%;background:#af667f}
+    .controls{display:flex;align-items:center;justify-content:space-between;color:#765b64;font-size:16px}
+    .controls .play{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:50%;background:#b8758b;color:#fff;font-size:14px}
+
+    .date-widget{width:min(500px,100%);height:250px;overflow:hidden;border:2px solid #d7c9ce;border-radius:12px;background:#e7edf3}
+    .date-photo{position:absolute;inset:12px 12px 12px 42%;overflow:hidden;border-radius:8px;background:#f8e7eb}
+    .date-photo img{width:100%;height:100%;object-fit:contain}
+    .date-copy{position:absolute;left:28px;top:33px;width:38%}
+    .date-copy .month{color:#8c6e78;font:600 12px Georgia,serif;letter-spacing:.08em}
+    .date-copy strong{display:block;margin-top:7px;font:64px/1 Georgia,serif;color:#71545e}
+    .date-copy span{display:block;margin-top:8px;color:#836b73;font-size:12px}
+    .date-copy i{display:block;width:52px;height:2px;margin-top:22px;background:#b47589}
+
+    /* 照片型：内容本身就是组件，不伪装成快捷入口。 */
+    .double-widget{display:grid;width:min(500px,100%);height:250px;grid-template-columns:1fr 1fr;gap:14px;padding:18px;border:2px solid #d6cbd0;border-radius:12px;background:#f8f5f6}
+    .portrait{position:relative;overflow:hidden;border-radius:8px;background:#e6eef3}
+    .portrait:nth-child(2){background:#f4e2e8}
+    .portrait img{width:100%;height:100%;object-fit:contain}
+    .portrait span{position:absolute;right:8px;bottom:8px;left:8px;padding:5px 8px;border-radius:4px;background:rgba(255,250,250,.88);color:#705761;font-size:10px;text-align:center}
+
+    .polaroid-widget{width:310px;aspect-ratio:2944/2140}
+    .polaroid-widget>.frame{position:absolute;z-index:2;inset:0;width:100%;height:100%;object-fit:contain}
+    .polaroid-photo{position:absolute;z-index:1;overflow:hidden;background:#f4e2e8}
+    .polaroid-photo img{width:100%;height:100%;object-fit:contain}
+    .polaroid-photo.back{left:43%;top:8%;width:43%;height:58%;transform:rotate(15deg)}
+    .polaroid-photo.front{left:19%;top:26%;width:42%;height:55%}
+
+    /* 纯装饰：没有状态、日期或跳转含义。 */
+    .vinyl-widget{width:255px;height:255px;border-radius:50%;background:radial-gradient(circle,#faf5f7 0 15%,#7f6670 15.5% 18%,#362d31 18.5% 56%,#59464e 57% 58%,#362d31 59% 68%,#59464e 69% 70%,#362d31 71%);box-shadow:0 6px 0 rgba(77,58,65,.14)}
+    .vinyl-widget::after{content:"";position:absolute;right:-8px;top:15px;width:70px;height:8px;border-radius:8px;background:#bd9da8;transform:rotate(26deg);transform-origin:right center}
+    .vinyl-center{position:absolute;inset:50% auto auto 50%;width:84px;height:84px;overflow:hidden;border:5px solid #fff6f8;border-radius:50%;background:#f0dce3;transform:translate(-50%,-50%)}
+    .vinyl-center img{width:100%;height:100%;object-fit:contain}
+
+    .sticker-widget{width:300px;height:230px}
+    .sticker-blob{position:absolute;inset:18px 24px 20px;border:3px solid #e0bdca;border-radius:48% 52% 45% 55%/55% 42% 58% 45%;background:#faedf1;transform:rotate(-3deg)}
+    .sticker-widget img{position:absolute;left:50%;top:47%;width:160px;transform:translate(-50%,-50%)}
+    .sticker-widget::before,.sticker-widget::after{content:"✦";position:absolute;color:#b97c91;font-size:22px}
+    .sticker-widget::before{left:24px;top:26px}
+    .sticker-widget::after{right:24px;bottom:28px;font-size:15px}
+
+    .ornament-widget{width:min(520px,100%);height:260px}
+    .ornament-widget>.ribbon{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+    .ornament-widget>.rabbit{position:absolute;left:50%;top:47%;width:145px;transform:translate(-50%,-50%)}
+    .ornament-widget .spark{position:absolute;color:#be8095;font-family:Georgia,serif}
+    .ornament-widget .s1{left:18%;top:42%;font-size:20px}.ornament-widget .s2{right:18%;top:47%;font-size:13px}.ornament-widget .s3{right:26%;bottom:25%;font-size:18px}
+
+    .legend{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-top:26px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:12px;line-height:1.65}
+    .legend strong{color:var(--ink)}
+    @media(max-width:900px){
+      .page{width:min(720px,calc(100% - 20px));padding:24px 18px 34px}
+      .header{align-items:flex-start;flex-direction:column}
+      .gallery{grid-template-columns:1fr;gap:42px;padding-inline:0}
+      .gallery figure{grid-column:1}
+    }
+    @media(max-width:560px){
+      .page{margin:10px auto}
+      .player-shell{height:205px}.player-inner{grid-template-columns:112px 1fr;padding:22px 18px;gap:18px}.track h2{font-size:16px}.progress{margin:16px 0 12px}
+      .date-widget,.double-widget{height:210px}
+      .reading-copy strong{font-size:16px}.reading-copy small,.reading-copy span{font-size:9px}
+      .legend{flex-direction:column}
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div>
+        <h1>组件方向校稿</h1>
+        <p>组件不等于快捷方式。功能型只保留与视觉主题一致的字段；照片型允许只展示内容；纯装饰型不承担任何跳转与状态。</p>
+      </div>
+      <nav class="filters" aria-label="组件类型">
+        <button class="filter" type="button" data-filter="all" aria-pressed="true">全部</button>
+        <button class="filter" type="button" data-filter="function" aria-pressed="false">功能</button>
+        <button class="filter" type="button" data-filter="photo" aria-pressed="false">照片</button>
+        <button class="filter" type="button" data-filter="decor" aria-pressed="false">纯装饰</button>
+      </nav>
+    </header>
+
+    <section class="gallery">
+      <figure class="reading" data-kind="function">
+        <div class="widget reading-widget">
+          <img src="assets/widget-material-v6/reading-strip.png" alt="">
+          <div class="reading-copy"><small>继续阅读</small><strong>雾港来信</strong><span>第三章 · 候车厅</span><b>68%</b></div>
+        </div>
+        <figcaption><b>继续阅读</b> · 字段避开蝴蝶结与边框，上下留白保持均衡</figcaption>
+      </figure>
+
+      <figure class="sticker" data-kind="decor">
+        <div class="widget sticker-widget"><span class="sticker-blob"></span><img src="assets/widget-material-v6/rabbit-parasol.png" alt=""></div>
+        <figcaption><b>兔兔摆件</b> · 纯装饰，可单独摆放</figcaption>
+      </figure>
+
+      <figure class="player" data-kind="function">
+        <div class="widget player-shell">
+          <div class="player-inner">
+            <div class="album"><img src="assets/widget-material-v6/rabbit-blanket.png" alt=""></div>
+            <div class="track"><small>正在播放</small><h2>Bunny Memory</h2><p>夜班电台 · 03:14</p><div class="progress"><i></i></div><div class="controls"><span>↶</span><span>◀</span><span class="play">Ⅱ</span><span>▶</span><span>♡</span></div></div>
+          </div>
+        </div>
+        <figcaption><b>氛围播放器</b> · 只出现歌曲、进度与控制</figcaption>
+      </figure>
+
+      <figure class="date" data-kind="function">
+        <div class="widget date-widget"><div class="date-copy"><span class="month">AUGUST</span><strong>01</strong><span>星期六 · 20:07</span><i></i></div><div class="date-photo"><img src="assets/widget-material-v6/rabbit-drink.png" alt=""></div></div>
+        <figcaption><b>日期画片</b> · 日期字段对应日历主题，其余空间留给画面</figcaption>
+      </figure>
+
+      <figure class="double" data-kind="photo">
+        <div class="widget double-widget"><div class="portrait"><img src="assets/widget-material-v6/rabbit-drink.png" alt=""><span>夏日汽水</span></div><div class="portrait"><img src="assets/widget-material-v6/rabbit-blanket.png" alt=""><span>晚安房间</span></div></div>
+        <figcaption><b>双人画框</b> · 两张作品照片并列展示</figcaption>
+      </figure>
+
+    </section>
+
+    <footer class="legend"><span><strong>功能型：</strong>阅读、音乐、日期，字段必须与组件主题一致。</span><span><strong>照片与装饰型：</strong>允许完全没有字段，也不默认可以点击。</span></footer>
+  </main>
+  <script>
+    const filters=[...document.querySelectorAll('.filter')];
+    const widgets=[...document.querySelectorAll('.gallery figure')];
+    filters.forEach(button=>button.addEventListener('click',()=>{
+      const kind=button.dataset.filter;
+      filters.forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+      widgets.forEach(widget=>widget.hidden=kind!=='all'&&widget.dataset.kind!==kind);
+    }));
+  </script>
+</body>
+</html>

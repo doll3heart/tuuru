@@ -21,8 +21,10 @@ test("editor and reader share the compact identity widget structure", () => {
   for (const source of [editor, reader]) {
     assert.match(source, /phone-widget-kicker/)
     assert.match(source, /phone-widget-copy/)
-    assert.match(source, /phone-widget-status/)
   }
+  assert.match(editor, /phone-widget-status/)
+  assert.match(reader, /phone-profile-signature/)
+  assert.match(reader, /definition\.kind === 'profile'/)
   for (const css of [editorCss, readerCss]) {
     assert.match(css, /\.phone-profile\s*\{[^}]*height\s*:\s*112px/is)
     assert.match(css, /\.phone-widget-kicker\s*\{/)
@@ -36,6 +38,7 @@ test("opening the author preview never overwrites a reader-customized App color"
 
 test("reader desktop and appearance preview share one neutral icon surface", () => {
   assert.match(reader, /READER_DEFAULT_APP_ICON_SURFACE\s*=\s*["']#f0f0f0["']/i)
-  assert.equal((reader.match(/READER_DEFAULT_APP_ICON_SURFACE/g) || []).length, 3)
+  assert.equal((reader.match(/READER_DEFAULT_APP_ICON_SURFACE/g) || []).length, 2)
+  assert.equal((reader.match(/renderReaderPhoneHome\(/g) || []).length, 3)
   assert.doesNotMatch(reader, /background:\s*['"]?\s*\+\s*sanitizeCssColor\(app\.color\)/)
 })

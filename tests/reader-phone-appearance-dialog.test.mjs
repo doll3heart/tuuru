@@ -63,7 +63,7 @@ test("phone appearance workbench previews drafts live and saves only on confirma
   assert.ok(dialog.querySelector('[data-appearance-page="controls"]'))
   assert.deepEqual(
     [...dialog.querySelectorAll(".phone-appearance-controls > .cu-settings-section")].map(section => section.id),
-    ["cuPhoneWallpaper", "cuPhoneDimensions", "cuPhoneSystem", "cuPhoneCss", "cuPhoneTransfer"],
+    ["cuPhoneWallpaper", "cuPhoneWidgets", "cuPhoneDimensions", "cuPhoneSystem", "cuPhoneCss", "cuPhoneTransfer"],
   )
   assert.deepEqual(
     [...dialog.querySelectorAll(".phone-appearance-controls > .cu-settings-section")]
@@ -79,8 +79,75 @@ test("phone appearance workbench previews drafts live and saves only on confirma
     "cuFontSize",
     "cuIconRadius",
     "cuMaterialOpacity",
+    "cuWidgetWorkspace",
     "cuCustomCss",
   ]) assert.ok(document.getElementById(id), id)
+
+  const customUpload = dialog.querySelector("[data-cu-custom-widget-upload]")
+  assert.ok(customUpload)
+  assert.equal(customUpload.textContent.trim(), "上传")
+  assert.ok(customUpload.closest(".phone-widget-workspace-actions"))
+  assert.equal(customUpload.closest(".phone-widget-workspace-actions").querySelector("[data-cu-widget-store-toggle]"), null)
+  assert.equal(dialog.querySelector(".phone-custom-widget-uploader"), null)
+  assert.match(document.getElementById("phoneCustomWidgetUploadHint").textContent, /PNG、JPEG、WebP/)
+  assert.match(document.getElementById("phoneCustomWidgetUploadHint").textContent, /2 × 2、4 × 3、8 × 3/)
+  assert.equal(dialog.querySelector(".phone-widget-empty [data-cu-widget-store-toggle]").textContent.trim(), "逛组件商店")
+
+  assert.equal(document.querySelectorAll("#phoneAppearancePreview .phone-story-widget").length, 0)
+  assert.ok(document.querySelector("#phoneAppearancePreview .phone-home.is-editable"))
+  assert.equal(document.querySelectorAll("#phoneAppearancePreview [data-phone-home-key^='app:']").length, 7)
+  assert.equal(document.querySelectorAll("#phoneAppearancePreview [data-phone-home-key='profile:identity']").length, 1)
+  const homeUndo = dialog.querySelector(".appearance-workbench-undo")
+  document.querySelector("#phoneAppearancePreview [data-phone-home-key='profile:identity']")
+    .dispatchEvent(new KeyboardEvent("keydown", { key:"PageDown", bubbles:true }))
+  assert.equal(document.querySelector("#phoneAppearancePreview [data-phone-home-key='profile:identity']").dataset.phoneHomeItemPage, "1")
+  homeUndo.click()
+  assert.equal(document.querySelector("#phoneAppearancePreview [data-phone-home-key='profile:identity']").dataset.phoneHomeItemPage, "0")
+  const messagesHomeItem = document.querySelector("#phoneAppearancePreview [data-phone-home-key='app:messages']")
+  messagesHomeItem.dispatchEvent(new KeyboardEvent("keydown", { key:"ArrowRight", bubbles:true }))
+  assert.match(document.querySelector("#phoneAppearancePreview [data-phone-home-key='app:messages']").style.cssText, /--phone-home-left:\s*40px/)
+  assert.doesNotMatch(document.querySelector("#phoneAppearancePreview [data-phone-home-key='app:forum']").style.cssText, /--phone-home-left:\s*80px/)
+  assert.equal(homeUndo.disabled, false)
+  homeUndo.click()
+  assert.match(document.querySelector("#phoneAppearancePreview [data-phone-home-key='app:messages']").style.cssText, /--phone-home-left:\s*0px/)
+  document.querySelector("#phoneAppearancePreview [data-phone-home-key='app:messages']")
+    .dispatchEvent(new KeyboardEvent("keydown", { key:"ArrowRight", bubbles:true }))
+  const storeToggle = dialog.querySelector("[data-cu-widget-store-toggle]")
+  assert.equal(storeToggle.textContent.trim(), "逛组件商店")
+  storeToggle.click()
+  assert.equal(dialog.querySelectorAll("[data-cu-widget-store-card]").length, 26)
+  assert.equal(dialog.querySelectorAll("[data-cu-widget-filter]").length, 4)
+  dialog.querySelector('[data-cu-widget-filter="function"]').click()
+  assert.equal(dialog.querySelectorAll("[data-cu-widget-store-card]").length, 9)
+  dialog.querySelector('[data-cu-widget-filter="all"]').click()
+
+  const addResume = dialog.querySelector('[data-cu-widget-add="v7-resume-dessert"]')
+  assert.equal(addResume.textContent.trim(), "添加")
+  addResume.click()
+  assert.equal(document.querySelectorAll("#phoneAppearancePreview .phone-story-widget").length, 1)
+  const resumeHomeItem = document.querySelector("#phoneAppearancePreview [data-phone-home-key='widget:v7-resume-dessert']")
+  resumeHomeItem.dispatchEvent(new KeyboardEvent("keydown", { key:"PageDown", bubbles:true }))
+  assert.equal(document.querySelector("#phoneAppearancePreview .phone-home").dataset.phoneHomePages, "2")
+  assert.equal(document.querySelector("#phoneAppearancePreview [data-phone-home-key='widget:v7-resume-dessert']").dataset.phoneHomeItemPage, "1")
+  assert.ok(dialog.querySelector('[data-cu-widget-installed="v7-resume-dessert"]'))
+  assert.equal(dialog.querySelector("[data-cu-widget-style-toggle]"), null)
+
+  dialog.querySelector("[data-cu-widget-store-toggle]").click()
+  dialog.querySelector("[data-cu-widget-store-toggle]").click()
+  dialog.querySelector('[data-cu-widget-add="v7-photo-double"]').click()
+  assert.equal(dialog.querySelectorAll('[data-cu-widget-photo-product="v7-photo-double"]').length, 2)
+  dialog.querySelector('[data-cu-widget-add="v7-decor-spoons"]').click()
+  const decorPreview = document.querySelector('#phoneAppearancePreview [data-widget-product="v7-decor-spoons"]')
+  assert.equal(decorPreview.tagName, "DIV")
+  dialog.querySelector('[data-cu-widget-add="v7-countdown-cherry"]').click()
+  const countdownTitle = dialog.querySelector('[data-cu-widget-field-product="v7-countdown-cherry"][data-cu-widget-field="title"]')
+  const countdownTarget = dialog.querySelector('[data-cu-widget-field-product="v7-countdown-cherry"][data-cu-widget-field="targetDate"]')
+  countdownTitle.value = "去看海"
+  dispatchInput(countdownTitle)
+  countdownTarget.value = "2026-08-05T18:30"
+  dispatchInput(countdownTarget)
+
+  assert.equal(document.querySelector('#phoneAppearancePreview [data-widget-product="v7-resume-dessert"]').dataset.widgetCategory, "function")
 
   const radius = document.getElementById("cuRadius")
   radius.value = "32"
@@ -123,6 +190,15 @@ test("phone appearance workbench previews drafts live and saves only on confirma
   assert.equal(stored.materialOpacity, 82)
   assert.equal(stored.showIconShadow, false)
   assert.equal(stored.customCss, ".phone-profile { box-shadow: none; }")
+  assert.equal(stored.desktopWidgets.enabled, true)
+  assert.equal(stored.desktopWidgets.items.find(item => item.productId === "v7-resume-dessert").enabled, true)
+  assert.equal(stored.desktopWidgets.items.find(item => item.productId === "v7-photo-double").enabled, true)
+  assert.equal(stored.homeLayout.pageCount, 2)
+  assert.deepEqual(stored.homeLayout.items.find(item => item.key === "app:messages"), { key:"app:messages", page:0, x:1, y:3 })
+  assert.deepEqual(stored.desktopWidgets.fields["v7-countdown-cherry"], {
+    title:"去看海", targetDate:"2026-08-05T18:30",
+  })
+  assert.equal(stored.homeLayout.items.find(item => item.key === "widget:v7-resume-dessert").page, 1)
   assert.match(document.getElementById("reader-phone-user-css").textContent, /\.reader-phone-css-scope \.phone-profile/)
   assert.equal(document.querySelector(".cu-modal-overlay"), null)
   assert.equal(document.activeElement.getAttribute("data-reader-phone-control"), trigger.getAttribute("data-reader-phone-control"))
@@ -152,6 +228,93 @@ test("phone appearance invalid CSS stays unapplied and cancel preserves exact st
   assert.equal(document.getElementById("reader-phone-preview-user-css"), null)
   assert.equal(localStorage.getItem("moirain_phoneCustom"), raw)
   assert.equal(document.activeElement, trigger)
+})
+
+test("saved custom decorations can change occupied cells and be deleted", async t => {
+  installDom(t)
+  const image = "data:image/png;base64,YQ=="
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({
+    desktopWidgets:{
+      enabled:true,
+      customDecorations:[{ id:"custom-sticker01", name:"我的贴纸", image, size:"small" }],
+    },
+    homeLayout:{
+      pageCount:1,
+      items:[{ key:"custom:custom-sticker01", page:0, x:6, y:10 }],
+    },
+  }))
+  await import(`../reader/reader.js?phone-custom-decoration=${Date.now()}-${Math.random()}`)
+
+  openPhoneAppearance()
+  const dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
+  let homeItem = document.querySelector("#phoneAppearancePreview [data-phone-home-key='custom:custom-sticker01']")
+  assert.ok(homeItem)
+  assert.equal(homeItem.dataset.phoneHomeSize, "small")
+  assert.match(homeItem.style.cssText, /--phone-home-width:\s*80px/)
+  assert.match(homeItem.style.cssText, /--phone-home-height:\s*84px/)
+  assert.ok(homeItem.querySelector('[data-custom-decoration="custom-sticker01"] img'))
+
+  const wideButton = dialog.querySelector('[data-cu-custom-widget-size="custom-sticker01"][data-cu-custom-widget-size-value="wide"]')
+  assert.equal(wideButton.getAttribute("aria-pressed"), "false")
+  wideButton.click()
+  homeItem = document.querySelector("#phoneAppearancePreview [data-phone-home-key='custom:custom-sticker01']")
+  assert.equal(homeItem.dataset.phoneHomeSize, "wide")
+  assert.match(homeItem.style.cssText, /--phone-home-width:\s*320px/)
+  assert.match(homeItem.style.cssText, /--phone-home-height:\s*126px/)
+  assert.equal(dialog.querySelector('[data-cu-custom-widget-size-value="wide"]').getAttribute("aria-pressed"), "true")
+
+  dialog.querySelector('[data-cu-custom-widget-remove="custom-sticker01"]').click()
+  assert.equal(document.querySelector("#phoneAppearancePreview [data-phone-home-key='custom:custom-sticker01']"), null)
+  assert.equal(dialog.querySelector('[data-cu-custom-widget-installed="custom-sticker01"]'), null)
+})
+
+test("uploading a wide raster automatically adds an 8 by 3 decoration and survives reopening", async t => {
+  const dom = installDom(t)
+  globalThis.Image = class TestImage {
+    constructor() {
+      this.naturalWidth = 1600
+      this.naturalHeight = 600
+      this.width = 1600
+      this.height = 600
+    }
+    set src(value) {
+      this.currentSrc = value
+      queueMicrotask(() => this.onload && this.onload())
+    }
+  }
+  await import(`../reader/reader.js?phone-custom-upload=${Date.now()}-${Math.random()}`)
+
+  openPhoneAppearance()
+  let dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
+  const fileInput = dialog.querySelector("[data-cu-custom-widget-file]")
+  const pngSignature = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
+  const file = new dom.window.File([pngSignature], "wide-sticker.png", { type:"image/png" })
+  Object.defineProperty(fileInput, "files", { configurable:true, value:[file] })
+  fileInput.dispatchEvent(new Event("change", { bubbles:true }))
+  await new Promise(resolve => setTimeout(resolve, 40))
+
+  const customCard = dialog.querySelector("[data-cu-custom-widget-installed]")
+  assert.ok(customCard)
+  assert.match(customCard.textContent, /wide-sticker/)
+  assert.match(customCard.textContent, /8 × 3 格/)
+  const customId = customCard.dataset.cuCustomWidgetInstalled
+  let homeItem = document.querySelector(`#phoneAppearancePreview [data-phone-home-key="custom:${customId}"]`)
+  assert.ok(homeItem)
+  assert.equal(homeItem.dataset.phoneHomeSize, "wide")
+  assert.match(homeItem.style.cssText, /--phone-home-width:\s*320px/)
+
+  document.getElementById("cuSave").click()
+  const stored = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
+  assert.deepEqual(stored.desktopWidgets.customDecorations.map(item => ({ name:item.name, size:item.size })), [
+    { name:"wide-sticker", size:"wide" },
+  ])
+
+  openPhoneAppearance()
+  dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
+  homeItem = document.querySelector(`#phoneAppearancePreview [data-phone-home-key="custom:${customId}"]`)
+  assert.ok(homeItem)
+  assert.equal(homeItem.dataset.phoneHomeSize, "wide")
+  assert.ok(dialog.querySelector(`[data-cu-custom-widget-installed="${customId}"]`))
 })
 
 test("phone appearance restores valid adjustments after an accidental close", async t => {
@@ -226,6 +389,17 @@ test("saved phone appearance reaches the standalone reader phone", async t => {
     iconBorderRadius: 17,
     materialOpacity: 78,
     showIconShadow: false,
+    desktopWidgets: {
+      enabled: true,
+      items: [{ kind: "resume", enabled: true, skin: "acrylic", size: "wide" }],
+    },
+    homeLayout: {
+      pageCount:2,
+      items:[
+        { key:"widget:v7-resume-dessert", page:0, x:0, y:0 },
+        { key:"app:memo", page:1, x:0, y:0 },
+      ],
+    },
     customCss: ".phone-profile { box-shadow: none; }",
   }))
 
@@ -241,6 +415,16 @@ test("saved phone appearance reaches the standalone reader phone", async t => {
   assert.equal(frame.style.getPropertyValue("--phone-icon-radius"), "17px")
   assert.equal(frame.style.getPropertyValue("--phone-material-opacity"), "78%")
   assert.equal(frame.querySelector(".phone-icon-body").classList.contains("icon-shadow"), false)
+  assert.equal(frame.querySelector(".phone-home").dataset.phoneHomePages, "2")
+  assert.ok(frame.querySelector("[data-phone-home-key='profile:identity'] .phone-profile"))
+  assert.equal(frame.querySelector("[data-phone-home-key='app:memo']").dataset.phoneHomeItemPage, "1")
+  frame.querySelector('[data-phone-home-page="1"]').click()
+  assert.equal(frame.querySelector(".phone-home").dataset.phoneHomeActive, "1")
+  assert.equal(frame.querySelector(".phone-home-track").style.transform, "translateX(-100%)")
+  const functionalWidget = frame.querySelector('.phone-story-widget[data-widget-kind="resume"][data-widget-app="messages"]')
+  assert.ok(functionalWidget)
+  functionalWidget.click()
+  assert.ok(document.querySelector(".rd-phone-app-messages"))
   assert.match(document.getElementById("reader-phone-user-css").textContent, /\.reader-phone-css-scope \.phone-profile/)
 })
 
@@ -248,8 +432,10 @@ test("saved reader profile images can be replaced and cleared after reopening", 
   const dom = installDom(t)
   localStorage.setItem("moirain_phoneCustom", JSON.stringify({
     readerId:"旧昵称",
+    readerSignature:"旧签名",
     readerAvatar:"data:image/png;base64,b2xkLWF2YXRhcg==",
     topBgImage:"data:image/png;base64,b2xkLWNvdmVy",
+    homeLayout:{ pageCount:2, items:[{ key:"profile:identity", page:1, x:0, y:0 }] },
   }))
   globalThis.FileReader = class {
     readAsDataURL(file) {
@@ -282,6 +468,11 @@ test("saved reader profile images can be replaced and cleared after reopening", 
     [...profileDialog.querySelectorAll(".profile-appearance-controls > .cu-settings-section")].map(section => section.id),
     ["cuProfileIdentity", "cuProfileAvatar", "cuProfileCover"],
   )
+  assert.equal(document.getElementById("rpSignature").value, "旧签名")
+  assert.equal(document.querySelector("#profileAppearancePreview .phone-home").dataset.phoneHomeActive, "1")
+  document.getElementById("rpSignature").value = "慢慢读，慢慢喜欢。"
+  document.getElementById("rpSignature").dispatchEvent(new Event("input", { bubbles:true }))
+  assert.match(document.querySelector("#profileAppearancePreview .phone-profile-signature").textContent, /慢慢读/)
   assert.deepEqual(
     [...profileDialog.querySelectorAll(".profile-appearance-controls > .cu-settings-section")]
       .filter(section => section.open)
@@ -295,6 +486,7 @@ test("saved reader profile images can be replaced and cleared after reopening", 
 
   let stored = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
   assert.equal(stored.readerAvatar, "data:image/png;base64,bmV3LWF2YXRhcg==")
+  assert.equal(stored.readerSignature, "慢慢读，慢慢喜欢。")
 
   document.querySelector('[data-reader-phone-control="profile"]').click()
   document.getElementById("rpClearAv").click()

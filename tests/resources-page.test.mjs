@@ -84,6 +84,8 @@ test("the tutorial lists features by meaning, location, use, and effect", () => 
   assert.doesNotMatch(source, /data-tutorial-search-clear/)
   assert.match(source, /剧情选项/)
   assert.match(source, /阅读节奏控制/)
+  assert.match(source, /读者剧情桌面组件/)
+  assert.match(source, /同一种内容可以自由换外观/)
   assert.match(source, /论坛小号/)
   assert.match(source, /作者占位符预设/)
   assert.match(source, /创建作品集/)

@@ -9,6 +9,8 @@ import { createEditorOutlineMenuController } from "../editor-outline-menu.js"
 import { createEditorPhoneModuleDragController } from "../editor-phone-module-drag.js"
 import { createEditorNodeDragController } from "../editor-node-drag.js"
 import { reorderArticleNode } from "../article-node-reorder.js"
+import { createEditorChapterDragController } from "../editor-chapter-drag.js"
+import { reorderArticleChapter } from "../article-chapter-reorder.js"
 import { describeArticleTarget, reconcileArticleChoices } from "../article-choice-model.js"
 import { articleNodeIsConditional, buildArticleChoiceCatalog, normalizeArticleDisplayCondition } from "../article-condition-model.js"
 import { openPhoneAppModal } from "./phone.js"
@@ -47,6 +49,8 @@ var _pendingMobileFocus = null
 var _outlineActionMenu = createEditorOutlineMenuController(document)
 var _phoneModuleDragController = null
 var _nodeDragController = null
+var _chapterDragController = null
+var _pendingChapterDragFocus = null
 var _articleTargetPick = null
 var _articleTargetInspect = null
 var _movingInteractionGroup = null
@@ -291,6 +295,7 @@ export function renderEditor(wid) {
   _editorPersistence.flush()
   _phoneModuleDragController?.reset("refresh")
   _nodeDragController?.reset("refresh")
+  _chapterDragController?.reset("refresh")
   _outlineActionMenu.reset()
   var workChanged = _workId !== wid
   if (workChanged) {
@@ -299,6 +304,7 @@ export function renderEditor(wid) {
     _articleTargetPick = null
     _articleTargetInspect = null
     _nodeId = null
+    _pendingChapterDragFocus = null
   }
   _workId = wid
   var w = migrateInteractiveSceneWork(wid) || getWork(wid)
@@ -1040,6 +1046,7 @@ function buildWorldTree(w) {
       var chapterCollapsed = !targetPick && viewState.collapsedChapterIds.includes(chid)
       h += '<div class="wt-chapter" data-node-drop-chapter data-chapter-id="' + esc(chid) + '">'
       h += '<div class="wt-chapter-title" data-outline-action-host>'
+      if (!targetPick) h += '<button type="button" class="wt-chapter-drag-handle" aria-label="拖动章节：' + esc(chs.name || '未命名章节') + '" title="拖动排序；按 Alt 加上下方向键移动"><span aria-hidden="true">⠿</span></button>'
       h += '<button type="button" class="wt-chapter-toggle" data-a="ts" data-w="' + w.id + '" data-sid="' + chid + '" aria-expanded="' + (chapterCollapsed ? 'false' : 'true') + '" aria-controls="' + chapterContentId + '">'
       h += '<span class="arrow' + (chapterCollapsed ? '' : ' open') + '" id="arr_' + chid + '" aria-hidden="true">\u25b6</span><span class="chapter-name">' + esc(chs.name) + '</span><span class="chapter-count">' + cNodes.length + ' 节</span></button>'
       h += '<button type="button" class="wt-action-disclosure" data-a="outline-actions" aria-expanded="false" aria-controls="' + chapterActionPanelId + '" aria-label="' + esc(chapterActionLabel) + '"><span aria-hidden="true">\u22ef</span></button>'
@@ -2780,6 +2787,14 @@ function refreshEditor(wid) {
   if (a) {
     a.innerHTML = renderHeader() + '<div id="editorMain">' + renderEditor(wid) + '</div>'
     restorePendingMobilePaneFocus(a.querySelector(".editor-body-area"))
+    if (_pendingChapterDragFocus) {
+      var chapterFocusId = _pendingChapterDragFocus
+      _pendingChapterDragFocus = null
+      var chapterHandle = Array.from(a.querySelectorAll('.wt-chapter-drag-handle')).find(function(handle) {
+        return handle.closest('.wt-chapter')?.dataset.chapterId === chapterFocusId
+      })
+      chapterHandle?.focus()
+    }
   }
 }
 
@@ -3253,6 +3268,19 @@ _nodeDragController = createEditorNodeDragController({
     var result = reorderArticleNode(work.nodes || [], payload)
     if (!result.ok || !result.changed) return
     updateWork(_workId, {nodes: result.nodes})
+    refreshEditor(_workId)
+  }
+})
+
+_chapterDragController = createEditorChapterDragController({
+  root: document,
+  onCommit: function(payload) {
+    var work = getWork(_workId)
+    if (!work) return
+    var result = reorderArticleChapter(work.chapters || [], payload)
+    if (!result.ok || !result.changed) return
+    _pendingChapterDragFocus = payload.inputMode === "keyboard" ? payload.draggedId : null
+    updateWork(_workId, {chapters: result.chapters})
     refreshEditor(_workId)
   }
 })

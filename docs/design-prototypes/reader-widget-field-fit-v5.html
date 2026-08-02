@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tuuru 组件字段适配校稿</title>
+  <style>
+    :root {
+      --ink: #4b3b41;
+      --muted: #806a72;
+      --rose: #c96e8d;
+      --line: #e4dadd;
+      --surface: #fbfafb;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+      background: #f1eef0;
+    }
+
+    button { font: inherit; }
+
+    .page {
+      width: min(1240px, calc(100% - 32px));
+      margin: 28px auto;
+      padding: 28px 34px 34px;
+      background: #fff;
+    }
+
+    .head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 { margin: 0; font-size: 22px; line-height: 1.3; }
+    .head p { max-width: 60ch; margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
+
+    .debug-toggle {
+      flex: 0 0 auto;
+      min-height: 38px;
+      padding: 0 14px;
+      border: 1px solid #c9b8be;
+      border-radius: 7px;
+      color: #654f57;
+      background: #fff;
+      cursor: pointer;
+    }
+    .debug-toggle[aria-pressed="true"] { color: #fff; border-color: #9f586f; background: #9f586f; }
+
+    .board {
+      display: grid;
+      grid-template-columns: 1.18fr .82fr .9fr;
+      grid-template-areas:
+        "reading reading message"
+        "photo status anniversary"
+        "photo excerpt excerpt";
+      gap: 34px 44px;
+      align-items: center;
+      padding: 34px 20px 18px;
+    }
+
+    figure { margin: 0; min-width: 0; }
+    figcaption { margin-top: 10px; color: var(--muted); font-size: 12px; text-align: center; }
+    figcaption b { color: var(--ink); font-weight: 650; }
+
+    .reading { grid-area: reading; justify-self: stretch; }
+    .message { grid-area: message; }
+    .photo { grid-area: photo; justify-self: center; }
+    .status { grid-area: status; justify-self: center; }
+    .anniversary { grid-area: anniversary; justify-self: center; }
+    .excerpt { grid-area: excerpt; justify-self: center; }
+
+    .component {
+      position: relative;
+      margin: 0 auto;
+      isolation: isolate;
+    }
+    .component > .skin { display: block; width: 100%; height: auto; }
+    .field { position: absolute; z-index: 2; }
+    .safe {
+      position: absolute;
+      z-index: 4;
+      display: none;
+      border: 1px dashed #c44d73;
+      background: rgba(255,241,246,.2);
+      pointer-events: none;
+    }
+    .show-safe .safe { display: block; }
+
+    .reading-component { width: min(620px, 100%); aspect-ratio: 1000 / 322; }
+    .reading-component .field {
+      left: 25%;
+      top: 27%;
+      width: 48%;
+      height: 43%;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      grid-template-rows: auto 1fr auto;
+      column-gap: 14px;
+      align-items: center;
+    }
+    .reading-component .safe { left: 24%; top: 25%; width: 50%; height: 47%; }
+    .reading-kicker { grid-column: 1; color: #9a6b7c; font-size: 11px; }
+    .reading-title { grid-column: 1; align-self: end; font-size: 19px; font-weight: 700; white-space: nowrap; }
+    .reading-meta { grid-column: 1; align-self: start; margin-top: 2px; color: #7e666f; font-size: 11px; white-space: nowrap; }
+    .reading-progress { grid-column: 2; grid-row: 1 / 4; width: 46px; text-align: center; color: #af5f7c; font-size: 12px; font-weight: 700; }
+    .reading-progress::after { content: ""; display: block; width: 30px; height: 3px; margin: 6px auto 0; border-radius: 2px; background: #d887a4; }
+
+    .message-component { width: min(390px, 100%); aspect-ratio: 332 / 80; }
+    .message-component .field {
+      inset: 18% 9% 18% 9%;
+      display: grid;
+      grid-template-columns: 42px minmax(0,1fr) auto;
+      align-items: center;
+      gap: 9px;
+    }
+    .message-component .safe { inset: 16% 8%; }
+    .message-avatar {
+      width: 38px;
+      height: 38px;
+      padding: 3px;
+      border-radius: 50%;
+      background: #fff7f8;
+      object-fit: contain;
+    }
+    .message-text { min-width: 0; }
+    .message-text b { display: block; font-size: 12px; line-height: 1.2; }
+    .message-text span { display: block; margin-top: 3px; overflow: hidden; color: #765f68; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .message-time { color: #9a7b86; font-size: 9px; }
+
+    .photo-component { width: 270px; aspect-ratio: 2940 / 3280; }
+    .photo-component .photo-fill {
+      position: absolute;
+      z-index: -1;
+      left: 16.5%;
+      top: 16.5%;
+      width: 67%;
+      height: 61%;
+      overflow: hidden;
+      background: linear-gradient(145deg, #f9dce6 0%, #f5f0f2 48%, #dbe9f3 100%);
+    }
+    .photo-component .photo-fill img { position: absolute; left: 20%; top: 7%; width: 62%; height: 82%; object-fit: contain; }
+    .photo-component .field {
+      left: 22%;
+      right: 22%;
+      bottom: 11.5%;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .photo-component .safe { left: 16.5%; top: 16.5%; width: 67%; height: 72%; }
+    .photo-title { font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .photo-date { color: #806b73; font-size: 9px; white-space: nowrap; }
+
+    .status-component { width: 220px; aspect-ratio: 1; }
+    .status-component .field {
+      left: 22%;
+      top: 20%;
+      width: 56%;
+      height: 59%;
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+    }
+    .status-component .safe { left: 20%; top: 18%; width: 60%; height: 63%; border-radius: 50%; }
+    .status-avatar { width: 72px; height: 64px; object-fit: contain; }
+    .status-name { margin-top: 2px; font-size: 13px; font-weight: 700; }
+    .status-line { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: #7c626c; font-size: 10px; }
+    .status-line::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #70aa83; }
+
+    .anniversary-component { width: 260px; aspect-ratio: 2142 / 1718; }
+    .anniversary-component .field {
+      left: 24%;
+      top: 28%;
+      width: 52%;
+      height: 42%;
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+    }
+    .anniversary-component .safe { left: 23%; top: 27%; width: 54%; height: 44%; }
+    .anniversary-label { color: #8e6675; font-size: 11px; }
+    .anniversary-days { margin-top: 2px; font-family: Georgia, serif; font-size: 30px; line-height: 1; }
+    .anniversary-unit { margin-top: 3px; color: #846a73; font-size: 9px; }
+
+    .excerpt-component { width: 300px; aspect-ratio: 1000 / 916; }
+    .excerpt-component .field {
+      left: 20%;
+      top: 20%;
+      width: 60%;
+      height: 34%;
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+    }
+    .excerpt-component .safe { left: 19%; top: 18%; width: 62%; height: 39%; }
+    .quote { max-width: 13em; font-family: "Songti SC", "Noto Serif SC", serif; font-size: 15px; font-weight: 650; line-height: 1.55; }
+    .quote-source { margin-top: 7px; color: #806971; font-size: 9px; }
+
+    .rule {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 14px;
+      padding-top: 17px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .rule strong { color: var(--ink); }
+
+    @media (max-width: 900px) {
+      .page { width: min(720px, calc(100% - 20px)); padding: 22px 18px 28px; }
+      .board {
+        grid-template-columns: 1fr 1fr;
+        grid-template-areas:
+          "reading reading"
+          "message message"
+          "photo status"
+          "photo anniversary"
+          "excerpt excerpt";
+        gap: 28px 22px;
+        padding-inline: 0;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .head { align-items: flex-start; flex-direction: column; }
+      .board {
+        display: flex;
+        align-items: center;
+        flex-direction: column;
+      }
+      .reading,.message { width: 100%; }
+      .rule { align-items: flex-start; flex-direction: column; }
+      figcaption { margin-top: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="head">
+      <div>
+        <h1>字段适配校稿</h1>
+        <p>只检查一件事：标题、正文、状态和进度是否落在素材原本留出的空白区里。这里不组手机、不做商店，也不靠额外白底遮住原素材。</p>
+      </div>
+      <button class="debug-toggle" type="button" aria-pressed="false">显示安全区</button>
+    </header>
+
+    <section class="board">
+      <figure class="reading">
+        <div class="component reading-component">
+          <img class="skin" src="assets/widget-material-v5/reading-strip.png" alt="">
+          <div class="field">
+            <span class="reading-kicker">继续阅读</span>
+            <strong class="reading-title">雾港来信</strong>
+            <span class="reading-meta">第三章 · 候车厅</span>
+            <span class="reading-progress">68%</span>
+          </div>
+          <span class="safe"></span>
+        </div>
+        <figcaption><b>继续阅读</b> · 四个字段共用素材中央留白</figcaption>
+      </figure>
+
+      <figure class="message">
+        <div class="component message-component">
+          <img class="skin" src="assets/widget-material-v5/message-strip.png" alt="">
+          <div class="field">
+            <img class="message-avatar" src="assets/widget-material-v5/rabbit.png" alt="">
+            <span class="message-text"><b>林晚</b><span>今天也会按时回来吗？</span></span>
+            <time class="message-time">刚刚</time>
+          </div>
+          <span class="safe"></span>
+        </div>
+        <figcaption><b>新消息</b> · 头像、联系人、摘要与时间完整入框</figcaption>
+      </figure>
+
+      <figure class="photo">
+        <div class="component photo-component">
+          <div class="photo-fill"><img src="assets/widget-material-v5/rabbit.png" alt=""></div>
+          <img class="skin" src="assets/widget-material-v5/polaroid.png" alt="">
+          <div class="field"><strong class="photo-title">夜巡照片</strong><time class="photo-date">07.31</time></div>
+          <span class="safe"></span>
+        </div>
+        <figcaption><b>作品相册</b> · 图片进相纸窗口，说明落在底片栏</figcaption>
+      </figure>
+
+      <figure class="status">
+        <div class="component status-component">
+          <img class="skin" src="assets/widget-material-v5/status-circle.png" alt="">
+          <div class="field">
+            <img class="status-avatar" src="assets/widget-material-v5/rabbit.png" alt="">
+            <strong class="status-name">林晚</strong>
+            <span class="status-line">正在旧站值班</span>
+          </div>
+          <span class="safe"></span>
+        </div>
+        <figcaption><b>角色近况</b> · 头像与两级文字固定在圆心</figcaption>
+      </figure>
+
+      <figure class="anniversary">
+        <div class="component anniversary-component">
+          <img class="skin" src="assets/widget-material-v5/anniversary-heart.png" alt="">
+          <div class="field">
+            <span class="anniversary-label">陪伴天数</span>
+            <strong class="anniversary-days">520</strong>
+            <span class="anniversary-unit">DAYS TOGETHER</span>
+          </div>
+          <span class="safe"></span>
+        </div>
+        <figcaption><b>纪念日</b> · 数值保持在心形视觉中心</figcaption>
+      </figure>
+
+      <figure class="excerpt">
+        <div class="component excerpt-component">
+          <img class="skin" src="assets/widget-material-v5/excerpt-heart.png" alt="">
+          <div class="field">
+            <blockquote class="quote">“雨停以后，记得回头看我。”</blockquote>
+            <span class="quote-source">《雾港来信》· 第三章</span>
+          </div>
+          <span class="safe"></span>
+        </div>
+        <figcaption><b>场景摘录</b> · 两行正文与来源均避开蝴蝶结和甜点装饰</figcaption>
+      </figure>
+    </section>
+
+    <footer class="rule">
+      <span><strong>不再使用：</strong>印有固定英文的票根承载动态日期；小尺寸方框横向拉伸；统一矩形底板包住所有组件。</span>
+      <span>素材原比例 · 独立安全区 · 超长字段省略</span>
+    </footer>
+  </main>
+
+  <script>
+    const button = document.querySelector('.debug-toggle');
+    button.addEventListener('click', () => {
+      const active = document.body.classList.toggle('show-safe');
+      button.setAttribute('aria-pressed', String(active));
+      button.textContent = active ? '隐藏安全区' : '显示安全区';
+    });
+  </script>
+</body>
+</html>
