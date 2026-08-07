@@ -118,6 +118,7 @@ test("the tutorial fully explains paragraph nodes, ordinary responses, and hidde
     "每组单独记录选择",
     "才会继续看到它后面的正文、下一组互动或后续场景",
     "普通互动全部完成后，末尾剧情分支才会出现",
+    "普通互动标题、选项文本、选择后内容和末尾剧情分支文字都支持当前作品的占位符",
     "普通互动和末尾剧情分支可以同时存在",
     "移动到其他节点",
     "复制到其他节点",
@@ -138,6 +139,8 @@ test("the tutorial fully explains paragraph nodes, ordinary responses, and hidde
   assert.match(source, /故事总纲、章节规划、伏笔回收、世界规则、地点与组织、人物档案、人物关系和灵感碎片/)
   assert.match(source, /顶部搜索框可搜索分类和内容/)
   assert.match(source, /作者正文颜色[\s\S]*不随作品导出/)
+  assert.match(source, /导出中心[\s\S]*不保存作品文件，也不会上传作品内容/)
+  assert.match(source, /发送 \.tuuru[\s\S]*下载 \.tuuru[\s\S]*生成加密 PNG/)
 })
 
 test("tutorial entries use visible click-by-click controls without internal shorthand", () => {
