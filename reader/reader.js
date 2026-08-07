@@ -47,7 +47,10 @@ import {
   selectedArticleInteractionChoice,
   selectedArticleInteractionChoiceIds,
 } from '../js/article-interaction-memory.js'
-import { ARTICLE_INTERACTION_MARKER_CLASS } from '../js/article-interaction-group-model.js'
+import {
+  ARTICLE_INTERACTION_MARKER_CLASS,
+  articleInteractionMarkerIds,
+} from '../js/article-interaction-group-model.js'
 import { articleDisplayConditionMatches } from '../js/article-condition-model.js'
 import { resolveAutomaticArticleStartNodeId } from '../js/article-start-node.js'
 import {
@@ -432,6 +435,13 @@ function readerPhoneText(value) {
   return substitutePlaceholders(String(value || ''), _work && _work.placeholders || [], {
     valuesMap: _work && _work.readerPhValues || {},
     usePlaceholderMode: false,
+  })
+}
+
+function readerArticleText(value) {
+  return substitutePlaceholders(String(value || ''), _work && _work.placeholders || [], {
+    valuesMap:_work && _work.readerPhValues || {},
+    usePlaceholderMode:false,
   })
 }
 
@@ -1315,14 +1325,18 @@ function resetArticleReaderSession() {
 }
 
 function articleRuntimeOptions(memory, interactionSelections) {
+  var activeInteractionSelections = interactionSelections === undefined
+    ? _articleInteractionSelections
+    : interactionSelections
   var selectedIds = new Set([
     ...selectedArticleChoiceIds(memory === undefined ? _articleChoiceMemory : memory),
-    ...selectedArticleInteractionChoiceIds(
-      interactionSelections === undefined ? _articleInteractionSelections : interactionSelections,
-    ),
+    ...selectedArticleInteractionChoiceIds(activeInteractionSelections),
   ])
   return {
     selectedChoiceIds:selectedIds,
+    isNodeInteractionComplete:function(node) {
+      return articleNodeInteractionComplete(node, activeInteractionSelections)
+    },
     isNodeVisible:function(node) {
       return node?.kind !== 'conditional'
         || articleDisplayConditionMatches(node.displayCondition, selectedIds)
@@ -4975,6 +4989,7 @@ function readerInteractionResponseHTML(choice) {
   var selectedResponse = hasAuthoredSelectedText
     ? (choice.selectedText == null ? '' : String(choice.selectedText))
     : (choice.text || '选项')
+  selectedResponse = readerArticleText(selectedResponse)
   if (selectedResponse === '') return ''
   var h = '<div class="article-interaction-response article-content">'
   selectedResponse.replace(/\r\n?/g, '\n').split('\n').forEach(function(line) {
@@ -4984,13 +4999,47 @@ function readerInteractionResponseHTML(choice) {
   return h
 }
 
+function placedArticleInteractionGroups(node) {
+  var groups = new Map()
+  ;(Array.isArray(node?.interactionGroups) ? node.interactionGroups : []).forEach(function(group) {
+    if (typeof group?.id !== 'string' || !group.id || !Array.isArray(group.choices) || !group.choices.length) return
+    if (group.legacyAdvanceOnSelect === true) return
+    if (!groups.has(group.id)) groups.set(group.id, group)
+  })
+  var seen = new Set()
+  return articleInteractionMarkerIds(node?.content || '').reduce(function(placed, groupId) {
+    var group = groups.get(groupId)
+    if (!group || seen.has(groupId)) return placed
+    seen.add(groupId)
+    placed.push(group)
+    return placed
+  }, [])
+}
+
+function selectedReaderInteractionChoice(group, interactionSelections) {
+  var selectedChoiceId = selectedArticleInteractionChoice(interactionSelections, group?.id)
+  if (!selectedChoiceId) return null
+  return (group.choices || []).find(function(choice) {
+    return String(choice?.id || '') === selectedChoiceId
+  }) || null
+}
+
+function articleNodeInteractionComplete(node, interactionSelections) {
+  var activeSelections = interactionSelections === undefined
+    ? _articleInteractionSelections
+    : interactionSelections
+  return placedArticleInteractionGroups(node).every(function(group) {
+    return Boolean(selectedReaderInteractionChoice(group, activeSelections))
+  })
+}
+
 function readerInteractionGroupHTML(group, sourceNodeId, sourcePathIndex) {
   var selectedChoiceId = selectedArticleInteractionChoice(_articleInteractionSelections, group.id)
   var h = '<div class="article-interaction-group article-choices is-interaction" data-interaction-group="' + escapeHtmlAttribute(group.id) + '">'
-  if (group.label) h += '<div class="article-interaction-label">' + esc(group.label) + '</div>'
+  if (group.label) h += '<div class="article-interaction-label">' + esc(readerArticleText(group.label)) + '</div>'
   ;(group.choices || []).forEach(function(choice, choiceIndex) {
     var selected = selectedChoiceId === String(choice.id || '')
-    h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + sourcePathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(sourceNodeId) + '" data-interaction-group-id="' + escapeHtmlAttribute(group.id) + '" data-choice-id="' + escapeHtmlAttribute(choice.id || '') + '" data-choice-mode="interaction" aria-pressed="' + (selected ? 'true' : 'false') + '"><span class="label">' + (choiceIndex + 1) + '.</span><span>' + esc(choice.text || '选项') + '</span></button>'
+    h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + sourcePathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(sourceNodeId) + '" data-interaction-group-id="' + escapeHtmlAttribute(group.id) + '" data-choice-id="' + escapeHtmlAttribute(choice.id || '') + '" data-choice-mode="interaction" aria-pressed="' + (selected ? 'true' : 'false') + '"><span class="label">' + (choiceIndex + 1) + '.</span><span>' + esc(readerArticleText(choice.text || '选项')) + '</span></button>'
   })
   if (selectedChoiceId) {
     var selectedChoice = (group.choices || []).find(function(choice) {
@@ -5002,25 +5051,53 @@ function readerInteractionGroupHTML(group, sourceNodeId, sourcePathIndex) {
   return h
 }
 
+function removeArticleContentAfter(node, root) {
+  var cursor = node
+  while (cursor && cursor !== root) {
+    var sibling = cursor.nextSibling
+    while (sibling) {
+      var nextSibling = sibling.nextSibling
+      sibling.remove()
+      sibling = nextSibling
+    }
+    cursor = cursor.parentNode
+  }
+}
+
 function replaceArticleInteractionAnchors(content, node, sourcePathIndex) {
-  if (typeof content !== 'string' || !content.includes(ARTICLE_INTERACTION_MARKER_CLASS)) return content
+  if (typeof content !== 'string' || !content.includes(ARTICLE_INTERACTION_MARKER_CLASS)) {
+    return {html:content, complete:true}
+  }
   var template = document.createElement('template')
   template.innerHTML = content
   var groups = new Map((node?.interactionGroups || []).map(function(group) { return [group.id, group] }))
   var seen = new Set()
-  template.content.querySelectorAll('.' + ARTICLE_INTERACTION_MARKER_CLASS).forEach(function(marker) {
+  var markers = Array.from(template.content.querySelectorAll('.' + ARTICLE_INTERACTION_MARKER_CLASS))
+  var complete = true
+  for (var markerIndex = 0; markerIndex < markers.length; markerIndex++) {
+    var marker = markers[markerIndex]
+    if (!template.content.contains(marker)) continue
     var groupId = marker.getAttribute('data-article-interaction-group') || ''
     var group = groups.get(groupId)
-    if (!group || seen.has(groupId)) {
+    if (!group || !Array.isArray(group.choices) || !group.choices.length || seen.has(groupId)) {
       marker.remove()
-      return
+      continue
     }
     seen.add(groupId)
     var holder = document.createElement('template')
     holder.innerHTML = readerInteractionGroupHTML(group, node.id, sourcePathIndex)
-    marker.replaceWith(holder.content.firstElementChild)
-  })
-  return template.innerHTML
+    var renderedGroup = holder.content.firstElementChild
+    marker.replaceWith(renderedGroup)
+    if (
+      group.legacyAdvanceOnSelect !== true
+      && !selectedReaderInteractionChoice(group, _articleInteractionSelections)
+    ) {
+      complete = false
+      removeArticleContentAfter(renderedGroup, template.content)
+      break
+    }
+  }
+  return {html:template.innerHTML, complete:complete}
 }
 
 function renderArticleReader() {
@@ -5151,20 +5228,21 @@ function renderArticleReader() {
       var def = PH_APP_DEFS[pt.type] || PH_APP_DEFS.messages
       return buildReaderPhoneModuleTrigger({pmid:pt.pmid, type:pt.type, label:def.label, trustedIconHtml:def.icon, hasUnread:!visitedPm[pt.pmid]})
     })
-    cleanContent = replaceArticleInteractionAnchors(cleanContent, entryNode, entry.pathIndex)
+    var interactionRender = replaceArticleInteractionAnchors(cleanContent, entryNode, entry.pathIndex)
+    cleanContent = interactionRender.html
 
     var isActive = entryIndex === chapterEntries.length - 1
     h += '<section class="article-node' + (isActive ? ' is-active' : ' is-resolved') + '" data-article-path-index="' + entry.pathIndex + '">'
     h += '<div class="article-content"' + (isActive ? ' data-active="true"' : '') + '>' + cleanContent + '</div>'
     var choices = (entryNode.choices || []).filter(function(choice) { return choice.mode !== 'interaction' })
-    if (choices.length > 0) {
+    if (choices.length > 0 && interactionRender.complete) {
       h += '<div class="article-choices is-branch" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '">'
       choices.forEach(function(c, ci) {
         var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
         var selected = _articleChoiceMemory[entryNode.id] === String(c.id)
         var disabled = targetState.ok ? '' : ' disabled aria-disabled="true" title="这个去向已被删除，请联系作者"'
         var warning = targetState.ok ? '' : '<span class="article-choice-error">去向已失效</span>'
-        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '" data-choice-id="' + escapeHtmlAttribute(c.id || '') + '" data-choice-mode="branch" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(c.text || '选项') + '</span>' + warning + '</button>'
+        h += '<button class="article-choice-btn' + (selected ? ' is-selected' : '') + '" data-source-path-index="' + entry.pathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '" data-choice-id="' + escapeHtmlAttribute(c.id || '') + '" data-choice-mode="branch" data-target="' + escapeHtmlAttribute(c.targetId || '') + '" aria-pressed="' + (selected ? 'true' : 'false') + '"' + disabled + '><span class="label">' + (ci + 1) + '.</span><span>' + esc(readerArticleText(c.text || '选项')) + '</span>' + warning + '</button>'
       })
       h += '</div>'
     }
@@ -5175,6 +5253,7 @@ function renderArticleReader() {
   }
   var frontierChoices = chapterEntries[chapterEntries.length - 1].node.choices || []
   var frontierBranchChoices = frontierChoices.filter(function(choice) { return choice.mode !== 'interaction' })
+  var frontierInteractionPending = !articleNodeInteractionComplete(chapterEntries[chapterEntries.length - 1].node)
   var interactionCanContinue = false
   if (frontierChoices.length > 0 && frontierBranchChoices.length === 0) {
     var frontierPathIndex = chapterEntries[chapterEntries.length - 1].pathIndex
@@ -5182,7 +5261,7 @@ function renderArticleReader() {
     interactionCanContinue = continuation.ok && continuation.path.length > _articlePath.length
   }
   var nextChapter = nextArticleChapterPath(nodes, chapters, _articlePath, articleRuntimeOptions())
-  if (!sceneEntryPending && frontierBranchChoices.length === 0 && !interactionCanContinue) {
+  if (!sceneEntryPending && !frontierInteractionPending && frontierBranchChoices.length === 0 && !interactionCanContinue) {
     if (nextChapter.ok) {
       h += '<div style="text-align:center;padding:24px"><button type="button" class="drop-btn" data-reader-next aria-label="阅读下一章">NEXT</button></div>'
     } else {
@@ -5201,6 +5280,7 @@ function renderArticleReader() {
     )
   }
   var reachedArticleEnding = !sceneEntryPending
+    && !frontierInteractionPending
     && frontierBranchChoices.length === 0
     && !interactionCanContinue
     && !nextChapter.ok

@@ -9,8 +9,10 @@ import {
 } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
+import { recordExport } from "../export-history.js"
 import { compressEditorImage } from "../image-compression.js"
 import { encryptWorkPackage } from "../work-package.js"
+import { dataUrlToBlob } from "../work-export.js"
 
 export const COLLECTION_LONG_PRESS_MS = 550
 export const COLLECTION_LONG_PRESS_MOVE_PX = 10
@@ -254,7 +256,9 @@ async function downloadCollectionJson(id) {
   const json = exportWorkCollectionAsJSON(id)
   if (!collection || !json) throw new TypeError("作品集不存在")
   const encrypted = await encryptWorkPackage(json)
-  downloadBlob(new Blob([encrypted], { type: "application/vnd.tuuru.work" }), `${safeFilename(collection.title)}.tuuru`)
+  const blob = new Blob([encrypted], { type: "application/vnd.tuuru.work" })
+  downloadBlob(blob, `${safeFilename(collection.title)}.tuuru`)
+  recordExport({ entityType:"collection", entityId:id, title:collection.title || "作品集", format:"tuuru", bytes:blob.size, revision:Number(collection.updatedAt || collection.createdAt || 1) }, "downloaded")
   showToast("加密作品集已导出", "success")
 }
 
@@ -263,13 +267,24 @@ async function downloadCollectionPng(id) {
   const json = exportWorkCollectionAsJSON(id)
   if (!collection || !json) throw new TypeError("作品集不存在")
   const encrypted = await encryptWorkPackage(json)
-  encodeSteganoPNG(encrypted, collection.coverImage || "", dataUrl => {
-    const anchor = document.createElement("a")
-    anchor.href = dataUrl
-    anchor.download = `${safeFilename(collection.title)}.png`
-    anchor.click()
-    showToast("作品集 PNG 已导出", "success")
-  }, error => alert(`PNG 导出失败：${error instanceof Error ? error.message : "请改用 JSON"}`))
+  const dataUrl = await new Promise((resolve, reject) => {
+    encodeSteganoPNG(encrypted, collection.coverImage || "", resolve, reject)
+  })
+  const blob = dataUrlToBlob(dataUrl)
+  downloadBlob(blob, `${safeFilename(collection.title)}.png`)
+  recordExport({ entityType:"collection", entityId:id, title:collection.title || "作品集", format:"png", bytes:blob.size, revision:Number(collection.updatedAt || collection.createdAt || 1) }, "downloaded")
+  showToast("作品集 PNG 已导出", "success")
+}
+
+window.exportCollectionRecord = async function(id, format) {
+  try {
+    if (format === "png") await downloadCollectionPng(id)
+    else await downloadCollectionJson(id)
+    return "downloaded"
+  } catch (error) {
+    showToast(`导出失败：${error instanceof Error ? error.message : "未知错误"}`, "error")
+    return "error"
+  }
 }
 
 export function bindCollectionShelf({ refresh } = {}) {

@@ -36,8 +36,13 @@ test("an oversized PNG export restores its button and reports the limit", async 
   const OriginalTextEncoder = globalThis.TextEncoder
   const createElement = document.createElement.bind(document)
   let canvasCreations = 0
+  let encodeCalls = 0
   globalThis.TextEncoder = class {
-    encode() { return { length: MAX_STEGANO_PAYLOAD_BYTES + 1 } }
+    encode(value) {
+      encodeCalls += 1
+      if (encodeCalls > 1) return { length: MAX_STEGANO_PAYLOAD_BYTES + 1 }
+      return new OriginalTextEncoder().encode(value)
+    }
   }
   document.createElement = function(tagName, options) {
     if (String(tagName).toLowerCase() === "canvas") {

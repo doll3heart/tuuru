@@ -687,6 +687,143 @@ function applyDeletePhoneModuleCard(work, payload) {
   }
 }
 
+function standalonePhoneCardHtml(cardHtml, moduleId, type) {
+  const references = cardReferences(cardHtml, moduleId)
+  if (references.length !== 1) {
+    throw invalid("invalid-phone-card-html", {
+      entity:"phone-card-reference",
+      id:moduleId,
+    })
+  }
+  const range = cardElementRange(cardHtml, references[0], moduleId)
+  if (cardHtml.slice(0, range.start).trim() || cardHtml.slice(range.end).trim()) {
+    throw invalid("invalid-phone-card-html", {
+      entity:"phone-card-reference",
+      id:moduleId,
+    })
+  }
+  return normalizeCardType(cardHtml, references[0], type)
+}
+
+function applyTransferPhoneModule(work, payload) {
+  const nodes = candidateCollection(work, "nodes", "node")
+  const source = uniqueRecord(nodes, payload.sourceNodeId, "node")
+  const target = uniqueRecord(nodes, payload.targetNodeId, "node")
+  if (typeof source.content !== "string" || typeof target.content !== "string") {
+    throw invalid("invalid-node-content", {entity:"node"})
+  }
+  if (target.kind === "conditional" || target.kind === "interactive-scene") {
+    throw invalid("phone-module-target-unsupported", {
+      entity:"node",
+      id:payload.targetNodeId,
+    })
+  }
+  if (payload.mode === "move" && source === target) {
+    throw invalid("phone-module-target-same", {
+      entity:"node",
+      id:payload.targetNodeId,
+    })
+  }
+
+  const modules = moduleCollection(work)
+  const module = uniqueRecord(modules, payload.moduleId, "phone-module")
+  if (module.nodeId !== payload.sourceNodeId) {
+    throw invalid("phone-module-node-mismatch", {
+      entity:"phone-module",
+      id:payload.moduleId,
+    })
+  }
+  const sourceReferences = cardReferences(source.content, payload.moduleId)
+  if (sourceReferences.length === 0) {
+    throw invalid("phone-card-reference-not-found", {
+      entity:"phone-card-reference",
+      id:payload.moduleId,
+    })
+  }
+  if (sourceReferences.length > 1) {
+    throw invalid("phone-card-reference-ambiguous", {
+      entity:"phone-card-reference",
+      id:payload.moduleId,
+    })
+  }
+
+  if (payload.mode === "copy" && modules.some(candidate => candidate.id === payload.destinationModuleId)) {
+    throw invalid("phone-module-id-collision", {
+      entity:"phone-module",
+      id:payload.destinationModuleId,
+    })
+  }
+  if (cardReferences(target.content, payload.destinationModuleId).length > 0) {
+    throw invalid("phone-card-target-conflict", {
+      entity:"phone-card-reference",
+      id:payload.destinationModuleId,
+    })
+  }
+
+  const destinationCard = standalonePhoneCardHtml(
+    payload.cardHtml,
+    payload.destinationModuleId,
+    module.type,
+  )
+  const sourceContent = payload.mode === "move"
+    ? removeCardReferences(source.content, sourceReferences, payload.moduleId)
+    : source.content
+  const targetContent = `${target.content}${destinationCard}`
+  const nextModule = payload.mode === "copy"
+    ? {
+      ...cloneJson(module, "invalid-phone-module"),
+      id:payload.destinationModuleId,
+      nodeId:payload.targetNodeId,
+    }
+    : {...module, nodeId:payload.targetNodeId}
+
+  return {
+    ...work,
+    nodes:nodes.map(candidate => {
+      if (candidate === source && candidate === target) {
+        return {...candidate, content:`${sourceContent}${destinationCard}`}
+      }
+      if (candidate === source) return {...candidate, content:sourceContent}
+      if (candidate === target) return {...candidate, content:targetContent}
+      return candidate
+    }),
+    phoneModules:payload.mode === "copy"
+      ? [...modules, nextModule]
+      : modules.map(candidate => candidate === module ? nextModule : candidate),
+  }
+}
+
+export function transferArticlePhoneModule(work, input) {
+  const prepared = prepareMutationInput(
+    input,
+    "invalid-phone-module-transfer",
+    "phone-module",
+  )
+  if (prepared.mode !== "move" && prepared.mode !== "copy") {
+    throw invalid("invalid-phone-module-transfer-mode", {entity:"phone-module"})
+  }
+  const moduleId = phoneModuleIdentifier(prepared.moduleId)
+  const sourceNodeId = explicitIdentifier(prepared.sourceNodeId, "node")
+  const targetNodeId = explicitIdentifier(prepared.targetNodeId, "node")
+  const destinationModuleId = prepared.mode === "copy"
+    ? phoneModuleIdentifier(prepared.copiedModuleId)
+    : moduleId
+  if (typeof prepared.cardHtml !== "string" || !prepared.cardHtml) {
+    throw invalid("invalid-phone-card-html", {
+      entity:"phone-card-reference",
+      id:destinationModuleId,
+    })
+  }
+  return applyTransferPhoneModule(work, {
+    mode:prepared.mode,
+    moduleId,
+    sourceNodeId,
+    targetNodeId,
+    destinationModuleId,
+    cardHtml:prepared.cardHtml,
+  })
+}
+
 const FORBIDDEN_PATCH_FIELDS = Object.freeze({
   work: new Set([
     "id", "type", "schemaVersion", "createdAt", "updatedAt",

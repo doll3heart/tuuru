@@ -245,6 +245,7 @@ import { renderEditor } from "./pages/editor.js"
 import { buildReaderPreviewUrl, openReaderPreview } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 import { bindResourcesPage, renderResourcesPage } from "./pages/resources.js"
+import { bindExportCenter, renderExportCenter } from "./pages/exports.js"
 
 // ==================== Init ====================
 export function startCorruptLocalDatabaseReset({
@@ -540,6 +541,11 @@ export function init(){
   router("/resources/tutorial", () => {
     app.innerHTML = renderHeader() + renderResourcesPage({ initialTab:"tutorial" })
     bindResourcesPage()
+  })
+
+  router("/exports", () => {
+    app.innerHTML = renderHeader() + '<main class="app-main narrow">' + renderExportCenter() + '</main>'
+    bindExportCenter()
   })
   
   router("/edit/:id", (container, p) => {

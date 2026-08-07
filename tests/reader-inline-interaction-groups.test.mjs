@@ -113,26 +113,98 @@ async function startWork(work, key) {
   document.getElementById("rdStartBtn").click()
 }
 
-test("two inline ordinary groups select independently before the tail branch", async t => {
+test("inline ordinary groups progressively reveal prose before the tail branch", async t => {
   installDom(t)
   await startWork(workFixture(), "inline-groups-independent")
 
-  const groups = document.querySelectorAll(".article-interaction-group")
-  assert.equal(groups.length, 2)
-  assert.match(groups[0].previousElementSibling.textContent, /第一段/)
-  assert.match(groups[1].previousElementSibling.textContent, /第二段/)
-  assert.equal(document.querySelectorAll(".article-choices.is-branch").length, 1)
+  assert.equal(document.querySelectorAll(".article-interaction-group").length, 1)
+  assert.match(document.body.textContent, /第一段/)
+  assert.doesNotMatch(document.body.textContent, /第二段|第三段/)
+  assert.equal(document.querySelectorAll(".article-choices.is-branch").length, 0)
 
   document.querySelector('[data-interaction-group-id="group-a"][data-choice-id="ordinary-a"]').click()
   assert.equal(document.querySelectorAll(".article-interaction-response p").length, 2)
-  assert.match(document.body.textContent, /第三段/)
+  assert.equal(document.querySelectorAll(".article-interaction-group").length, 2)
+  assert.match(document.body.textContent, /第二段/)
+  assert.doesNotMatch(document.body.textContent, /第三段/)
+  assert.equal(document.querySelectorAll(".article-choices.is-branch").length, 0)
   assert.doesNotMatch(document.body.textContent, /目标正文/)
 
   document.querySelector('[data-interaction-group-id="group-b"][data-choice-id="ordinary-b"]').click()
   assert.equal(document.querySelectorAll(".article-interaction-response").length, 2)
+  assert.match(document.body.textContent, /第三段/)
+  assert.equal(document.querySelectorAll(".article-choices.is-branch").length, 1)
   assert.equal(document.querySelector('[data-interaction-group-id="group-a"][data-choice-id="ordinary-a"]').getAttribute("aria-pressed"), "true")
   assert.equal(document.querySelector('[data-interaction-group-id="group-b"][data-choice-id="ordinary-b"]').getAttribute("aria-pressed"), "true")
   assert.doesNotMatch(document.body.textContent, /目标正文/)
+})
+
+test("an ordinary interaction gates the following scene until it is selected", async t => {
+  installDom(t)
+  const work = workFixture()
+  work.id = "reader-inline-following-scene-gate"
+  work.nodes[0].content = [
+    "<p>互动前</p>",
+    '<div class="article-interaction-anchor" data-article-interaction-group="group-a" contenteditable="false"></div>',
+    "<p>互动后</p>",
+  ].join("")
+  work.nodes[0].interactionGroups = [work.nodes[0].interactionGroups[0]]
+  work.nodes[0].choices = []
+  work.nodes.splice(1, 0, {
+    id:"following-scene",
+    title:"第二个场景",
+    chapterId:"chapter-a",
+    content:"<p>第二个场景正文</p>",
+    interactionGroups:[],
+    choices:[{id:"scene-branch", text:"继续", targetId:"target"}],
+  })
+  await startWork(work, "inline-following-scene-gate")
+
+  assert.match(document.body.textContent, /互动前/)
+  assert.doesNotMatch(document.body.textContent, /互动后|第二个场景正文/)
+  assert.equal(document.querySelector("[data-reader-next]"), null)
+
+  document.querySelector('[data-interaction-group-id="group-a"][data-choice-id="ordinary-a"]').click()
+
+  assert.match(document.body.textContent, /互动后/)
+  assert.match(document.body.textContent, /第二个场景正文/)
+})
+
+test("ordinary interaction copy substitutes reader placeholders", async t => {
+  installDom(t)
+  const work = workFixture()
+  work.id = "reader-inline-placeholder-copy"
+  work.placeholders = [{
+    id:"reader-name",
+    key:"NAME",
+    label:"读者姓名",
+    values:["默认名"],
+  }]
+  work.readerPhValues = {"reader-name":["阿雾"]}
+  work.nodes[0].content = [
+    "<p>NAME走近了。</p>",
+    '<div class="article-interaction-anchor" data-article-interaction-group="group-a" contenteditable="false"></div>',
+  ].join("")
+  work.nodes[0].interactionGroups = [{
+    id:"group-a",
+    label:"NAME的反应",
+    choices:[
+      {id:"ordinary-a", text:"向NAME点头", selectedText:"NAME也向你点了点头。"},
+      {id:"ordinary-a2", text:"避开NAME", selectedText:"你避开了NAME。"},
+    ],
+  }]
+  work.nodes[0].choices = [{id:"branch-a", text:"跟随NAME", targetId:"target"}]
+  await startWork(work, "inline-placeholder-copy")
+
+  assert.match(document.querySelector(".article-interaction-label").textContent, /阿雾的反应/)
+  assert.match(document.querySelector('[data-choice-id="ordinary-a"]').textContent, /向阿雾点头/)
+  assert.doesNotMatch(document.querySelector(".article-reader").textContent, /NAME/)
+
+  document.querySelector('[data-choice-id="ordinary-a"]').click()
+
+  assert.match(document.querySelector(".article-interaction-response").textContent, /阿雾也向你点了点头/)
+  assert.match(document.querySelector('[data-choice-id="branch-a"]').textContent, /跟随阿雾/)
+  assert.doesNotMatch(document.querySelector(".article-reader").textContent, /NAME/)
 })
 
 test("ordinary selections from separate groups jointly unlock a hidden prelude", async t => {

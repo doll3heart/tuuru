@@ -6,7 +6,8 @@ import { orderedWorks } from "../work-order.js"
 import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
-import { encryptWorkPackage } from "../work-package.js"
+import { recordExport } from "../export-history.js"
+import { createWorkArtifact, deliverArtifact } from "../work-export.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
 import { serializeLocalDatabaseBackup } from "../storage.js"
 import { inspectLocalProfile, mergeLocalProfile, serializeLocalProfile } from "../local-profile-transport.js"
@@ -61,9 +62,13 @@ export function renderHome(){
         <span class="library-heading-hint">长按作品，可创建作品集</span>
       </div>
       <div class="library-heading-actions">
-        <button class="btn btn-sm btn-outline" onclick="backupLibrary(this)" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
-        <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
-        <button class="btn btn-sm btn-outline" onclick="openLocalProfileTransfer()" aria-label="导出或导入作者端和读者端本地数据" title="把作者创作库、写作设置和读者端本地信息打包迁移到其他浏览器"><span class="library-action-label library-action-label-long">整机搬家</span><span class="library-action-label library-action-label-short" aria-hidden="true">搬家</span></button>
+        <div class="library-quick-actions">
+          <a class="btn btn-sm btn-outline" href="#/exports">导出中心</a>
+          <button class="btn btn-sm btn-outline" onclick="backupLibrary(this)" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
+          <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
+          <button class="btn btn-sm btn-outline" onclick="openLocalProfileTransfer()" aria-label="导出或导入作者端和读者端本地数据" title="把作者创作库、写作设置和读者端本地信息打包迁移到其他浏览器"><span class="library-action-label library-action-label-long">整机搬家</span><span class="library-action-label library-action-label-short" aria-hidden="true">搬家</span></button>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline library-manage-button" onclick="openLibraryManage()">管理</button>
       </div>
     </div>
     
@@ -116,7 +121,6 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
         <div class="work-card-actions-left">
           <button class="btn btn-sm btn-primary" onclick="event.stopPropagation();navigate('/${w.type===WORK_TYPE.PHONE?'phone':'edit'}/${w.id}')">编辑</button>
           <button class="btn btn-sm btn-outline" onclick="event.stopPropagation();navigate('/read/${w.id}')"${w.type===WORK_TYPE.PHONE?' style="display:none"':''}>阅读</button>
-          <button class="btn btn-sm btn-danger" id="deleteWork-${w.id}" onclick="event.stopPropagation();delWork('${w.id}')">删除</button>
         </div>
         <div class="work-card-more-wrap">
           <button class="btn btn-sm btn-ghost work-card-more-btn" onclick="event.stopPropagation();toggleWorkMenu(event,'${w.id}')">更多</button>
@@ -128,8 +132,8 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
             ${w.phoneData ? `<button class="btn btn-sm btn-ghost" data-work-time-shift="${w.id}" onclick="event.stopPropagation();openWorkTimeShift('${w.id}');closeWorkMenu('${w.id}')">批量顺延时间</button>` : ""}
             ${homeBulkUndoStore.peek(w.id) ? `<button class="btn btn-sm btn-ghost work-bulk-undo" id="workBulkUndo-${w.id}" data-work-bulk-undo="${w.id}" onclick="event.stopPropagation();undoLastBulkWork('${w.id}');closeWorkMenu('${w.id}')">撤销上次批量操作</button>` : ""}
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
-            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expWork('${w.id}',this)">导出加密作品</button>
-            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation();expPNG('${w.id}');closeWorkMenu('${w.id}')">导出加密 PNG</button>
+            <button class="btn btn-sm btn-ghost" data-work-export="${w.id}" onclick="event.stopPropagation();openWorkExport('${w.id}')">发送与导出</button>
+            <button class="btn btn-sm btn-ghost btn-danger-text work-card-delete-action" id="deleteWork-${w.id}" onclick="event.stopPropagation();delWork('${w.id}');closeWorkMenu('${w.id}')">删除作品</button>
           </div>
         </div>
       </div>
@@ -670,6 +674,37 @@ window.backupLibrary = function(trigger){
   })
 }
 
+window.openLibraryManage = function() {
+  var body = '<div class="library-manage-sheet">'
+    + '<section><span class="library-manage-label">作品与导出</span>'
+    + '<a class="library-manage-row" href="#/exports"><strong>导出中心</strong><span>发送、下载与查看本机导出记录</span></a></section>'
+    + '<section><span class="library-manage-label">本地数据</span>'
+    + '<button type="button" class="library-manage-row" data-library-backup><strong>备份全部</strong><span>下载当前作者创作库</span></button>'
+    + '<button type="button" class="library-manage-row" data-library-restore><strong>检查 / 恢复</strong><span>检查备份并按确认恢复</span></button>'
+    + '<button type="button" class="library-manage-row" data-library-transfer><strong>整机搬家</strong><span>迁移作者端与读者端本地数据</span></button></section>'
+    + '<p class="library-manage-note">以上操作都只读取当前设备的数据，不会上传作品。</p>'
+    + '</div>'
+  var overlay = modal('管理创作库', body, '')
+  overlay.classList.add('library-manage-overlay')
+  overlay.querySelector('.modal')?.classList.add('library-manage-dialog')
+  overlay.querySelector("a[href='#/exports']")?.addEventListener('click', function() {
+    overlay.closeModal?.('navigate')
+  })
+  overlay.querySelector('[data-library-backup]').onclick = function() {
+    overlay.closeModal?.('backup')
+    window.backupLibrary()
+  }
+  overlay.querySelector('[data-library-restore]').onclick = function() {
+    overlay.closeModal?.('restore')
+    window.restoreLibraryBackup()
+  }
+  overlay.querySelector('[data-library-transfer]').onclick = function() {
+    overlay.closeModal?.('transfer')
+    window.openLocalProfileTransfer()
+  }
+  return overlay
+}
+
 let libraryRestoreController
 window.restoreLibraryBackup = function() {
   if (!libraryRestoreController) {
@@ -804,13 +839,92 @@ window.delWork = function(id){
   return homeWriteController.remove({workId:id,confirmed:true})
 }
 
+function rememberExport(artifact, delivery) {
+  if (delivery !== "shared" && delivery !== "downloaded") return null
+  try { return recordExport(artifact, delivery) }
+  catch { return null }
+}
+
+async function copyExportInstructions(work) {
+  var text = '《' + (work?.title || '未命名作品') + '》是一份 Tuuru 互动作品。\n'
+    + '保存附件后，打开 https://tuuru.chat/reader/ 选择作品文件即可阅读。\n'
+    + '作品只在你的设备上读取，不会上传。'
+  if (globalThis.navigator?.clipboard?.writeText) {
+    await globalThis.navigator.clipboard.writeText(text)
+    return true
+  }
+  var area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', '')
+  area.style.position = 'fixed'
+  area.style.opacity = '0'
+  document.body.appendChild(area)
+  area.select()
+  var copied = document.execCommand?.('copy') === true
+  area.remove()
+  if (!copied) throw new Error('当前浏览器不支持复制，请手动复制读者端地址')
+  return true
+}
+
+window.openWorkExport = function(id) {
+  var work = getWorks().find(function(candidate) { return candidate.id === id })
+  if (!work) {
+    showToast('作品不存在或已经删除', 'error')
+    return null
+  }
+  window.closeWorkMenu?.(id)
+  var body = '<div class="work-export-sheet">'
+    + '<div class="work-export-summary"><strong>' + escHtml(work.title || '未命名作品') + '</strong>'
+    + '<span>所有文件都在当前设备生成，Tuuru 不会上传作品。</span></div>'
+    + '<div class="work-export-actions">'
+    + '<button type="button" class="btn btn-primary" data-work-share>发送作品文件</button>'
+    + '<button type="button" class="btn btn-outline" data-work-download>下载 .tuuru</button>'
+    + '<button type="button" class="btn btn-outline" data-work-png>生成加密 PNG</button>'
+    + '<button type="button" class="btn btn-ghost" data-work-copy>复制打开说明</button>'
+    + '</div>'
+    + '<a class="work-export-history-link" href="#/exports">查看导出记录</a>'
+    + '</div>'
+  var overlay = modal('发送与导出', body, '')
+  overlay.classList.add('work-export-overlay')
+  overlay.querySelector('.modal')?.classList.add('work-export-dialog')
+  var shareButton = overlay.querySelector('[data-work-share]')
+  var downloadButton = overlay.querySelector('[data-work-download]')
+  var pngButton = overlay.querySelector('[data-work-png]')
+  var copyButton = overlay.querySelector('[data-work-copy]')
+  shareButton.onclick = async function() {
+    var result = await window.shareWork(id, shareButton)
+    if (result === 'shared' || result === 'downloaded') overlay.closeModal?.('completed')
+  }
+  downloadButton.onclick = async function() {
+    var result = await window.expWork(id, downloadButton)
+    if (result === 'downloaded') overlay.closeModal?.('completed')
+  }
+  pngButton.onclick = function() {
+    overlay.closeModal?.('png')
+    window.expPNG(id)
+  }
+  copyButton.onclick = function() {
+    return runButtonAction(copyButton, async function() {
+      try {
+        await copyExportInstructions(work)
+        showToast('打开说明已复制', 'success')
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : '复制失败', 'error')
+      }
+    }, {pendingText:'正在复制…'})
+  }
+  overlay.querySelector('.work-export-history-link')?.addEventListener('click', function() {
+    overlay.closeModal?.('navigate')
+  })
+  return overlay
+}
+
 window.expPNG = function(id){
   try {
     var json = exportWorkAsJSON(id)
     if (!json) { alert('导出失败'); return }
     var w = getWorks().find(function(x) { return x.id === id })
     // Offer to use a cover image
-    var title = w ? w.title : '作品'
     var ov = document.createElement('div')
     ov.className = 'modal-overlay'
     ov.style.cssText = 'z-index:2000'
@@ -845,14 +959,9 @@ window.expPNG = function(id){
       return runButtonAction(exportButton, async function() {
         showToast('正在编码加密 PNG…', 'info', {key:'png-export-' + id, duration:0})
         try {
-          var encrypted = await encryptWorkPackage(json)
-          var dataUrl = await new Promise(function(resolve, reject) {
-            encodeSteganoPNG(encrypted, coverUrl, resolve, reject)
-          })
-          var a = document.createElement('a')
-          a.href = dataUrl
-          a.download = title + '.png'
-          a.click()
+          var artifact = await createWorkArtifact(id, {format:'png', coverUrl:coverUrl})
+          downloadBlob(artifact.blob, artifact.filename)
+          rememberExport(artifact, 'downloaded')
           showToast('PNG 已导出', 'success', {key:'png-export-' + id})
           ov.remove()
         } catch(e) {
@@ -870,16 +979,36 @@ window.expWork = function(id, trigger){
     var feedbackKey = 'work-export-' + id
     showToast('正在加密作品…', 'info', {key:feedbackKey, duration:0})
     try {
-      var json = exportWorkAsJSON(id)
-      if (!json) throw new Error('作品数据无法读取')
-      var w = getWorks().find(function(x) { return x.id === id })
-      var encrypted = await encryptWorkPackage(json)
-      var blob = new Blob([encrypted], { type: 'application/vnd.tuuru.work' })
-      downloadBlob(blob, (w ? w.title : '作品') + '.tuuru')
+      var artifact = await createWorkArtifact(id, {format:'tuuru'})
+      downloadBlob(artifact.blob, artifact.filename)
+      rememberExport(artifact, 'downloaded')
       showToast('加密作品已导出', 'success', {key:feedbackKey})
       window.closeWorkMenu?.(id)
+      return 'downloaded'
     } catch(e) {
       showToast('导出失败：' + (e instanceof Error ? e.message : '未知错误'), 'error', {key:feedbackKey})
+      return 'error'
+    }
+  })
+}
+
+window.shareWork = function(id, trigger) {
+  return runVisibleAction(trigger, '正在准备…', async function() {
+    var feedbackKey = 'work-share-' + id
+    showToast('正在准备作品文件…', 'info', {key:feedbackKey, duration:0})
+    try {
+      var artifact = await createWorkArtifact(id, {format:'tuuru'})
+      var delivery = await deliverArtifact(artifact)
+      if (delivery === 'cancelled') {
+        showToast('已取消发送', 'info', {key:feedbackKey})
+        return delivery
+      }
+      rememberExport(artifact, delivery)
+      showToast(delivery === 'shared' ? '作品已交给系统分享' : '当前环境不支持文件分享，已改为下载', 'success', {key:feedbackKey})
+      return delivery
+    } catch (error) {
+      showToast('发送失败：' + (error instanceof Error ? error.message : '未知错误'), 'error', {key:feedbackKey})
+      return 'error'
     }
   })
 }

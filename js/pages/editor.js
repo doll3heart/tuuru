@@ -40,6 +40,7 @@ import {
 } from "../article-interaction-group-model.js"
 import { findWorkReferences } from "../work-references.js"
 import { openDeletionImpactDialog } from "../deletion-impact-ui.js"
+import { transferArticlePhoneModule } from "../article-save-adapter.js"
 
 // State
 var _workId = null
@@ -1015,7 +1016,14 @@ function buildWorldTree(w) {
   }
   h += '<section class="editor-side-view editor-outline-view" id="articleOutlinePane"' + (sidePane === "outline" ? '' : ' hidden') + '>'
   if (targetPick) {
-    h += '<div class="target-picker-head"><div><strong>选择目标节点</strong><small>给当前选项指定去向</small></div>'
+    var transferPick = targetPick.purpose === 'phone-module-transfer'
+    var targetPickerTitle = transferPick
+      ? (targetPick.mode === 'copy' ? '复制手机模块' : '移动手机模块')
+      : '选择目标节点'
+    var targetPickerHint = transferPick
+      ? '选择正文节点；模块会放在正文末尾'
+      : '给当前选项指定去向'
+    h += '<div class="target-picker-head"><div><strong>' + targetPickerTitle + '</strong><small>' + targetPickerHint + '</small></div>'
     h += '<button type="button" data-a="target-cancel" data-w="' + w.id + '" aria-label="取消选择目标">取消</button></div>'
     h += '<div class="target-picker-search-wrap"><input type="search" class="target-picker-search" aria-label="搜索目标节点" placeholder="搜索章节或节点"></div>'
   } else {
@@ -1185,13 +1193,24 @@ function nodeHTML(w, n, actionIndex, targetPick, renderIndex) {
   var actionLabel = '节点操作：' + (n.title || '未命名节点')
   var targetPath = targetDescription.ok ? targetDescription.pathLabel : (n.title || '未命名节点')
   var conditional = articleNodeIsConditional(n)
+  var interactive = n?.kind === 'interactive-scene'
   var conditionSummary = conditional ? describeDisplayCondition(w, n, renderIndex) : ""
   var h = '<div class="wt-node' + ac + '" data-outline-action-host data-node-id="' + esc(n.id) + '" data-chapter-id="' + esc(curCid) + '">'
   if (targetPick) {
-    h += '<button type="button" class="wt-node-target-select" data-a="target-select" data-w="' + w.id + '" data-n="' + esc(n.id) + '" data-target-path="' + esc(targetPath.toLowerCase()) + '"' + (conditional ? ' disabled aria-disabled="true" title="隐藏节点不能作为起点或选项去向"' : '') + '>'
+    var transferTarget = targetPick.purpose === 'phone-module-transfer'
+    var currentMoveTarget = transferTarget && targetPick.mode === 'move' && targetPick.sourceNodeId === n.id
+    var unsupportedTransferTarget = transferTarget && (conditional || interactive)
+    var targetDisabled = transferTarget ? (currentMoveTarget || unsupportedTransferTarget) : conditional
+    var targetDisabledReason = currentMoveTarget
+      ? '模块已经在这个节点'
+      : (unsupportedTransferTarget
+        ? '手机模块只能放在普通正文节点'
+        : '隐藏节点不能作为起点或选项去向')
+    h += '<button type="button" class="wt-node-target-select" data-a="target-select" data-w="' + w.id + '" data-n="' + esc(n.id) + '" data-target-path="' + esc(targetPath.toLowerCase()) + '"' + (targetDisabled ? ' disabled aria-disabled="true" title="' + targetDisabledReason + '"' : '') + '>'
     h += '<span class="dot" aria-hidden="true"></span><span class="node-label">' + esc(targetPath) + '</span>'
-    if (isInteractiveSceneNode(n)) h += '<span class="wt-node-kind-badge">互动</span>'
+    if (interactive) h += '<span class="wt-node-kind-badge">互动</span>'
     if (conditional) h += '<span class="wt-node-kind-badge is-conditional">隐藏</span>'
+    if (transferTarget && targetPick.sourceNodeId === n.id) h += '<span class="wt-node-kind-badge">当前</span>'
     if (w.startNode === n.id) h += '<span class="wt-start-badge">起点</span>'
     h += '</button></div>'
     return h
@@ -1399,6 +1418,11 @@ function handleClick(e) {
     var targetPickState = _articleTargetPick
     var selectedTargetNode = getNode(w, n)
     if (!targetPickState || targetPickState.workId !== w || !selectedTargetNode || articleNodeIsConditional(selectedTargetNode)) return
+    if (targetPickState.purpose === 'phone-module-transfer') {
+      if (selectedTargetNode.kind === 'interactive-scene') return
+      completePhoneModuleTransfer(targetPickState, n)
+      return
+    }
     _articleTargetPick = null
     if (targetPickState.purpose === "choice" && targetPickState.drafts?.[targetPickState.draftIndex]) {
       targetPickState.drafts[targetPickState.draftIndex].targetId = n
@@ -3085,12 +3109,111 @@ function renameArticleNode(wid, nid, title) {
 
 function buildPhoneModuleCardHTML(pm) {
   var def = PHONE_APP_DEFS[pm.type] || PHONE_APP_DEFS.messages
-  var h = '<div class="pm-inline-card" contenteditable="false" data-pm-id="' + pm.id + '" data-pm-type="' + pm.type + '" draggable="false">'
+  var h = '<div class="pm-inline-card" contenteditable="false" data-pm-id="' + escAttr(pm.id) + '" data-pm-type="' + escAttr(pm.type) + '" draggable="false">'
   h += '<span class="pm-card-icon">' + (def.icon || '?') + '</span>'
   h += '<span class="pm-card-label">' + esc(def.label || '模块') + '</span>'
-  h += '<button class="pm-card-hamburger" data-a="pm-hamburger" data-pm-id="' + pm.id + '" type="button" aria-label="编辑或删除手机模块" title="编辑/删除">\u2261</button>'
+  h += '<button class="pm-card-hamburger" data-a="pm-hamburger" data-pm-id="' + escAttr(pm.id) + '" type="button" aria-label="管理手机模块" title="管理模块">\u2261</button>'
   h += '</div>'
   return h
+}
+
+function beginPhoneModuleTransfer(wid, nid, pmid, mode) {
+  var work = getWork(wid)
+  var module = getPhoneModule(wid, pmid)
+  var sourceNode = getNode(wid, nid)
+  if (!work || !module || !sourceNode || module.nodeId !== nid) {
+    showToast('这个手机模块的位置已经变化，请刷新后重试', 'error')
+    return
+  }
+  _articleTargetPick = {
+    purpose:'phone-module-transfer',
+    mode:mode === 'copy' ? 'copy' : 'move',
+    workId:wid,
+    sourceNodeId:nid,
+    moduleId:pmid,
+  }
+  prepareMobilePaneRefresh('outline', true)
+  refreshEditor(wid)
+}
+
+function phoneModuleTransferCollections(work) {
+  return {
+    nodes:structuredClone(work?.nodes || []),
+    phoneModules:structuredClone(work?.phoneModules || []),
+  }
+}
+
+function phoneModuleTransferCollectionsMatch(work, snapshot) {
+  try {
+    return JSON.stringify(work?.nodes || []) === JSON.stringify(snapshot.nodes)
+      && JSON.stringify(work?.phoneModules || []) === JSON.stringify(snapshot.phoneModules)
+  } catch (_) {
+    return false
+  }
+}
+
+function completePhoneModuleTransfer(transferState, targetNodeId) {
+  var work = getWork(transferState.workId)
+  var module = getPhoneModule(transferState.workId, transferState.moduleId)
+  var targetNode = getNode(transferState.workId, targetNodeId)
+  if (!work || !module || !targetNode) {
+    showToast('目标节点或手机模块已经不存在', 'error')
+    return false
+  }
+  var before = phoneModuleTransferCollections(work)
+  var copiedModuleId = transferState.mode === 'copy' ? uid() : undefined
+  var destinationModule = transferState.mode === 'copy'
+    ? Object.assign({}, module, {id:copiedModuleId, nodeId:targetNodeId})
+    : Object.assign({}, module, {nodeId:targetNodeId})
+  var result
+  try {
+    var transferInput = {
+      mode:transferState.mode,
+      moduleId:transferState.moduleId,
+      sourceNodeId:transferState.sourceNodeId,
+      targetNodeId:targetNodeId,
+      cardHtml:buildPhoneModuleCardHTML(destinationModule),
+    }
+    if (copiedModuleId) transferInput.copiedModuleId = copiedModuleId
+    result = transferArticlePhoneModule(work, transferInput)
+    var saved = updateWork(transferState.workId, {
+      nodes:result.nodes,
+      phoneModules:result.phoneModules,
+    })
+    if (!saved) throw new Error('work-save-failed')
+  } catch (error) {
+    console.error('Failed to transfer phone module', error)
+    showToast('手机模块搬移失败，原内容没有改变', 'error')
+    return false
+  }
+
+  var after = phoneModuleTransferCollections(result)
+  var sourceNodeId = transferState.sourceNodeId
+  var workId = transferState.workId
+  var targetTitle = targetNode.title || '未命名节点'
+  var actionCopy = transferState.mode === 'copy' ? '已复制到' : '已移动到'
+  _articleTargetPick = null
+  _nodeId = targetNodeId
+  prepareMobilePaneRefresh('editor', true)
+  refreshEditor(workId)
+  showToast(actionCopy + '「' + targetTitle + '」正文末尾', 'success', {
+    actionLabel:'撤销',
+    duration:6000,
+    onAction:function() {
+      var current = getWork(workId)
+      if (!current || !phoneModuleTransferCollectionsMatch(current, after)) {
+        setTimeout(function() {
+          showToast('已有新的编辑，无法安全撤销这次操作', 'error')
+        }, 0)
+        return
+      }
+      updateWork(workId, before)
+      _nodeId = sourceNodeId
+      prepareMobilePaneRefresh('editor', true)
+      refreshEditor(workId)
+    },
+  })
+  return true
 }
 
 function insertPhoneModuleCard(wid, nid, type) {
@@ -3206,15 +3329,23 @@ function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
 
   var menu = document.createElement('div')
   menu.className = 'pm-context-menu'
-  menu.innerHTML = '<button class="pm-menu-item" data-pm-act="edit">编辑</button><button class="pm-menu-item pm-menu-danger" data-pm-act="delete">删除</button>'
-  menu.style.position = 'absolute'
-  menu.style.zIndex = '9999'
+  menu.innerHTML = '<button class="pm-menu-item" data-pm-act="edit">编辑</button><button class="pm-menu-item" data-pm-act="move">移动到其他节点</button><button class="pm-menu-item" data-pm-act="copy">复制到其他节点</button><button class="pm-menu-item pm-menu-danger" data-pm-act="delete">删除</button>'
+  menu.style.position = 'fixed'
 
   // Position near the hamburger button
   var rect = btnEl.getBoundingClientRect()
-  menu.style.left = rect.left + 'px'
-  menu.style.top = (rect.bottom + 4) + 'px'
   document.body.appendChild(menu)
+  var edge = 8
+  var menuLeft = Math.min(
+    Math.max(edge, rect.right - menu.offsetWidth),
+    Math.max(edge, window.innerWidth - menu.offsetWidth - edge),
+  )
+  var menuTop = rect.bottom + 4
+  if (menuTop + menu.offsetHeight > window.innerHeight - edge) {
+    menuTop = Math.max(edge, rect.top - menu.offsetHeight - 4)
+  }
+  menu.style.left = Math.round(menuLeft) + 'px'
+  menu.style.top = Math.round(menuTop) + 'px'
 
   menu.addEventListener('click', function(ev) {
     var act = ev.target.dataset.pmAct
@@ -3233,6 +3364,9 @@ function showPhoneModuleMenu(wid, nid, pmid, btnEl) {
           }
         })
       }
+    } else if (act === 'move' || act === 'copy') {
+      menu.remove()
+      beginPhoneModuleTransfer(wid, nid, pmid, act)
     } else if (act === 'delete') {
       menu.remove()
       showConfirm('删除手机模块', '确定删除此手机模块？', function() {

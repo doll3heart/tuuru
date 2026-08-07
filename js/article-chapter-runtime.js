@@ -63,10 +63,20 @@ function isVisibleArticleNode(node, options) {
   }
 }
 
-function isArticleFlowBarrier(node) {
+function isNodeInteractionComplete(node, options) {
+  if (typeof options?.isNodeInteractionComplete !== "function") return true
+  try {
+    return options.isNodeInteractionComplete(node) === true
+  } catch (error) {
+    return false
+  }
+}
+
+function isArticleFlowBarrier(node, options) {
   if (isConditionalArticleNode(node)) return false
   return (Array.isArray(node?.choices) && node.choices.length > 0)
     || node?.kind === "interactive-scene"
+    || !isNodeInteractionComplete(node, options)
 }
 
 function incomingBranchChoiceIds(nodes) {
@@ -147,7 +157,7 @@ function appendFollowingChapterNodes(nodes, path, current, options) {
     if (!isVisibleArticleNode(next, options)) continue
     if (!isSelectedBranchTarget(next, incomingChoices, options)) continue
     appendTransitionNodes(path, [next])
-    if (isArticleFlowBarrier(next)) break
+    if (isArticleFlowBarrier(next, options)) break
   }
   return path
 }
@@ -188,7 +198,7 @@ function firstVisibleChapterNode(nodes, wantedChapterId, options) {
 export function expandArticleChapterPath(nodes, path, options) {
   var nextPath = pathCopy(path)
   var current = lastValidPathNode(nodes, nextPath)
-  if (current && !isArticleFlowBarrier(current)) {
+  if (current && !isArticleFlowBarrier(current, options)) {
     appendFollowingChapterNodes(nodes, nextPath, current, options)
   }
   return nextPath

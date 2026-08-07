@@ -146,6 +146,32 @@ test("ordinary interactions continue into following chapter segments", () => {
   assert.deepEqual(result.path, ["reaction", "paragraph", "gate"])
 })
 
+test("an unresolved inline interaction gates following chapter segments", () => {
+  const ordered = [
+    { id: "reaction", chapterId: "chapter-1", interactionGroups: [{ id: "group-a" }] },
+    { id: "paragraph", chapterId: "chapter-1", choices: [] },
+  ]
+  const unresolved = {
+    isNodeInteractionComplete(node) {
+      return node.id !== "reaction"
+    },
+  }
+  const resolved = {
+    isNodeInteractionComplete() {
+      return true
+    },
+  }
+
+  assert.deepEqual(
+    expandArticleChapterPath(ordered, ["reaction"], unresolved),
+    ["reaction"],
+  )
+  assert.deepEqual(
+    expandArticleChapterPath(ordered, ["reaction"], resolved),
+    ["reaction", "paragraph"],
+  )
+})
+
 test("back from a chapter removes that chapter and restores the prior chapter path", () => {
   const result = previousArticleChapterPath(nodes, ["a", "b", "d", "e"])
 
