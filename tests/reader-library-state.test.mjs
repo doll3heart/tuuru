@@ -210,6 +210,28 @@ test("placeholder and progress updates are immutable and survive storage round t
   assert.equal(readerBookStatus(cleared.books[0]), "unread")
 })
 
+test("inline placeholder definitions stay hidden from identity prefill until the story saves them", () => {
+  const inlineWork = work({
+    placeholders:[
+      { id:"name", key:"姓名", label:"姓名", fillMode:"landing" },
+      { id:"cat", key:"猫名", label:"小猫名字", fillMode:"inline" },
+    ],
+  })
+  let library = rememberReaderWork(emptyReaderLibrary(), inlineWork, 100)
+  assert.equal(readerBook(library, "work-a").placeholderDefinitions[1].fillMode, "inline")
+
+  library = saveReaderIdentity(library, {
+    id:"identity-a",
+    name:"常用身份",
+    values:{ 姓名:"阿雾", 猫名:"小咪" },
+  }, 110)
+  library = applyReaderIdentity(library, "work-a", "identity-a", 120)
+
+  assert.deepEqual(readerBook(library, "work-a").placeholderValues, {
+    name:["阿雾"],
+  })
+})
+
 test("phone reading positions are bounded and legacy progress remains compatible", () => {
   let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
   library = saveReaderProgress(library, "work-a", {

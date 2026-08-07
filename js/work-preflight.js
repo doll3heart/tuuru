@@ -2,6 +2,8 @@ import { resolvePhoneReadingFlowStep } from "./phone-reading-flow.js"
 import { safeMessageCardUrl } from "./message-card-links.js"
 import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 import { articleInteractionMarkerIds } from "./article-interaction-group-model.js"
+import { articlePlaceholderMarkerIds } from "./article-placeholder-marker.js"
+import { ARTICLE_RANDOM_GAME_KIND, normalizeArticleRandomGame } from "./article-random-game.js"
 
 function items(value) {
   return Array.isArray(value) ? value : []
@@ -85,7 +87,14 @@ function inspectArticle(work, issues) {
   )
   const interactionGroupIdCounts = new Map()
   const articleChoiceIdCounts = new Map()
+  const inlinePlaceholders = new Map(items(work?.placeholders)
+    .filter(placeholder => placeholder?.fillMode === "inline")
+    .map(placeholder => [String(placeholder?.id || ""), placeholder]))
+  const placeholderMarkerCounts = new Map()
   for (const node of nodes) {
+    for (const placeholderId of articlePlaceholderMarkerIds(String(node?.content || ""))) {
+      placeholderMarkerCounts.set(placeholderId, (placeholderMarkerCounts.get(placeholderId) || 0) + 1)
+    }
     for (const choice of items(node?.choices)) {
       const id = String(choice?.id || "")
       if (id) articleChoiceIdCounts.set(id, (articleChoiceIdCounts.get(id) || 0) + 1)
@@ -99,6 +108,30 @@ function inspectArticle(work, issues) {
         const id = String(choice?.id || "")
         if (id) articleChoiceIdCounts.set(id, (articleChoiceIdCounts.get(id) || 0) + 1)
       }
+    }
+  }
+
+  for (const [placeholderId, placeholder] of inlinePlaceholders) {
+    const label = plainText(placeholder?.label) || plainText(placeholder?.key) || "未命名占位符"
+    const markerCount = placeholderMarkerCounts.get(placeholderId) || 0
+    if (markerCount === 0) {
+      addIssue(
+        issues,
+        "article-placeholder-marker-missing",
+        "error",
+        `文中占位符“${label}”还没有放进正文`,
+        `占位符 · ${label}`,
+        "把光标放到正文目标位置，在占位符管理中选择“插入正文光标处”。",
+      )
+    } else if (markerCount > 1) {
+      addIssue(
+        issues,
+        "article-placeholder-marker-duplicate",
+        "error",
+        `文中占位符“${label}”出现了多次填写位置`,
+        `占位符 · ${label}`,
+        "只保留一个填写位置；读者保存后，其余标记文字会自动替换。",
+      )
     }
   }
 
@@ -142,6 +175,7 @@ function inspectArticle(work, issues) {
     const choices = items(node?.choices)
     const interactionGroups = items(node?.interactionGroups)
     const interactionMarkerIds = articleInteractionMarkerIds(String(node?.content || ""))
+    const placeholderMarkerIds = articlePlaceholderMarkerIds(String(node?.content || ""))
     if (!plainText(node?.content) && !choices.length && !interactionGroups.length) {
       addIssue(
         issues,
@@ -168,8 +202,10 @@ function inspectArticle(work, issues) {
     }
 
     for (const [groupIndex, group] of interactionGroups.entries()) {
+      const randomGame = group?.kind === ARTICLE_RANDOM_GAME_KIND
+      const interactionKind = randomGame ? "小游戏" : "普通互动"
       const groupId = String(group?.id || "")
-      const groupLabel = plainText(group?.label) || `第 ${groupIndex + 1} 组普通互动`
+      const groupLabel = plainText(group?.label) || (randomGame ? `第 ${groupIndex + 1} 个小游戏` : `第 ${groupIndex + 1} 组普通互动`)
       const groupLocation = `${location} · ${groupLabel}`
       const markerCount = interactionMarkerIds.filter(id => id === groupId).length
       if (!groupId || interactionGroupIdCounts.get(groupId) !== 1) {
@@ -177,7 +213,7 @@ function inspectArticle(work, issues) {
           issues,
           "article-interaction-group-id-invalid",
           "error",
-          "普通互动的稳定标识重复或缺失",
+          `${interactionKind}的稳定标识重复或缺失`,
           groupLocation,
           "删除异常互动组后重新插入，系统会生成新的稳定标识。",
         )
@@ -187,7 +223,7 @@ function inspectArticle(work, issues) {
           issues,
           "article-interaction-group-marker-missing",
           "error",
-          "普通互动还没有放进正文",
+          `${interactionKind}还没有放进正文`,
           groupLocation,
           "回到正文编辑器，在提示卡片中选择“放到光标处”。",
         )
@@ -196,13 +232,13 @@ function inspectArticle(work, issues) {
           issues,
           "article-interaction-group-marker-duplicate",
           "error",
-          "同一组普通互动在正文中出现了多次",
+          `同一个${interactionKind}在正文中出现了多次`,
           groupLocation,
           "只保留一个位置；需要重复提问时请新建另一组普通互动。",
         )
       }
       const groupChoices = items(group?.choices)
-      if (groupChoices.length < 2) {
+      if (!randomGame && groupChoices.length < 2) {
         addIssue(
           issues,
           "article-interaction-group-too-small",
@@ -212,6 +248,32 @@ function inspectArticle(work, issues) {
           "补足两个可供读者选择的选项。",
         )
       }
+      if (randomGame) {
+        const gameResult = normalizeArticleRandomGame(group)
+        if (!gameResult.ok) {
+          addIssue(
+            issues,
+            `article-random-game-${gameResult.reason}`,
+            "error",
+            "小游戏规则或结果设置不完整",
+            groupLocation,
+            "打开小游戏面板，检查随机范围、结果区间和后续剧情节点。",
+          )
+        }
+        for (const choice of groupChoices) {
+          const targetId = String(choice?.targetId || "")
+          const targetMatches = nodes.filter(candidate => String(candidate?.id || "") === targetId)
+          if (targetMatches.length === 1 && targetMatches[0]?.kind !== "conditional") continue
+          addIssue(
+            issues,
+            "article-random-game-target-invalid",
+            "error",
+            "小游戏结果没有可用的后续剧情",
+            groupLocation,
+            "为每个结果重新选择一个普通正文或互动页节点。",
+          )
+        }
+      }
       for (const [choiceIndex, choice] of groupChoices.entries()) {
         const choiceLocation = `${groupLocation} · 第 ${choiceIndex + 1} 个选项`
         if (!plainText(choice?.text)) {
@@ -219,7 +281,7 @@ function inspectArticle(work, issues) {
             issues,
             "article-interaction-choice-text-empty",
             "warning",
-            "普通互动的选项文字为空",
+            `${interactionKind}的结果或选项文字为空`,
             choiceLocation,
             "填写读者在按钮上看到的选项文字。",
           )
@@ -247,6 +309,18 @@ function inspectArticle(work, issues) {
         "正文中留有失效的普通互动位置",
         location,
         "删除这张失效位置卡片，或重新插入对应的普通互动。",
+      )
+    }
+
+    for (const placeholderId of new Set(placeholderMarkerIds)) {
+      if (inlinePlaceholders.has(placeholderId)) continue
+      addIssue(
+        issues,
+        "article-placeholder-marker-orphaned",
+        "error",
+        "正文中留有失效的文中占位符位置",
+        location,
+        "移除这张失效位置卡片，或把对应占位符改回“文中填写”。",
       )
     }
 

@@ -46,6 +46,7 @@ function normalizedDefinition(value) {
     label:text(ownData(value, "label"), text(ownData(value, "key"), id)),
     prompt:text(ownData(value, "prompt")),
     default:text(ownData(value, "default")),
+    ...(ownData(value, "fillMode") === "inline" ? { fillMode:"inline" } : {}),
   }
 }
 
@@ -114,6 +115,8 @@ function normalizedInteractionSelections(value) {
     const choiceId = ownData(selection, "choiceId")
     if (!exactId(nodeId) || !exactId(choiceId)) continue
     result[groupId] = { nodeId, choiceId }
+    const gameResult = normalizeArticleGameResult(ownData(selection, "gameResult"))
+    if (gameResult) result[groupId].gameResult = gameResult
   }
   return result
 }
@@ -602,6 +605,7 @@ export function applyReaderIdentity(library, workId, identityId, now = Date.now(
     return updateActiveBookSlot(book, slot => {
       const values = { ...slot.placeholderValues }
       for (const definition of book.placeholderDefinitions) {
+        if (definition.fillMode === "inline") continue
         const key = definition.key || definition.label || definition.id
         if (Object.hasOwn(identity.values, key)) values[definition.id] = [identity.values[key]]
       }
@@ -1097,3 +1101,4 @@ export function restoreArticleReadingState(work, progress) {
     savedAt:current.savedAt,
   }
 }
+import { normalizeArticleGameResult } from "../js/article-random-game.js"

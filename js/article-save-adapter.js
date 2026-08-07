@@ -162,6 +162,16 @@ function applyDeleteNode(work, payload) {
     .map(node => ({
       ...node,
       choices: choiceCollection(node).filter(choice => choice.targetId !== payload.nodeId),
+      interactionGroups:Array.isArray(node.interactionGroups)
+        ? node.interactionGroups.map(group => group?.kind === "random-game"
+          ? {
+            ...group,
+            choices:Array.isArray(group.choices)
+              ? group.choices.map(choice => choice?.targetId === payload.nodeId ? {...choice, targetId:""} : choice)
+              : [],
+          }
+          : group)
+        : [],
     }))
   return { ...work, nodes: nextNodes, startNode: repairedStartNode(work, nextNodes) }
 }

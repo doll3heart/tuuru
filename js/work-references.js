@@ -53,6 +53,18 @@ function findNodeReferences(work, id, collector) {
         { sourceNodeId:String(node?.id || "") },
       )
     }
+    for (const [groupIndex, group] of items(node?.interactionGroups).entries()) {
+      if (group?.kind !== "random-game") continue
+      for (const [choiceIndex, choice] of items(group?.choices).entries()) {
+        if (!sameId(choice?.targetId, id)) continue
+        collector.add(
+          `nodes.${nodeIndex}.interactionGroups.${groupIndex}.choices.${choiceIndex}.targetId`,
+          "小游戏结果",
+          `${nodeLocation(work, node)} · ${text(group?.label, "小游戏")} · ${text(choice?.text, `结果 ${choiceIndex + 1}`)}`,
+          { sourceNodeId:String(node?.id || "") },
+        )
+      }
+    }
   }
   for (const [sceneIndex, scene] of items(work?.interactiveScenes).entries()) {
     if (!sameId(scene?.nextNodeId, id)) continue

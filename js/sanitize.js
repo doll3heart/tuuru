@@ -7,6 +7,7 @@ const ALLOWED_TAGS = [
 const ALLOWED_ATTRIBUTES = [
   "class", "style", "src", "alt", "title", "align", "type", "contenteditable",
   "data-pm-id", "data-pm-type", "data-is-id", "data-article-interaction-group",
+  "data-article-placeholder",
 ]
 const ALIGNMENTS = new Set(["left", "center", "right", "justify"])
 const PHONE_MODULE_TYPES = new Set([
@@ -25,6 +26,7 @@ const ARTICLE_CLASSES = new Map([
   ["interactive-scene-card-edit", "BUTTON"],
   ["interactive-scene-card-delete", "BUTTON"],
   ["article-interaction-anchor", "DIV"],
+  ["article-placeholder-anchor", "SPAN"],
 ])
 const MEMO_CLASSES = new Map([
   ["check-line", "DIV"],
@@ -137,8 +139,25 @@ function cleanElementPolicy(element, profile) {
     }
   } else {
     element.removeAttribute("data-article-interaction-group")
-    element.removeAttribute("contenteditable")
   }
+
+  if (element.classList.contains("article-placeholder-anchor")) {
+    const id = element.getAttribute("data-article-placeholder") || ""
+    const validId = /^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(id)
+    if (!validId || element.getAttribute("contenteditable") !== "false") {
+      element.classList.remove("article-placeholder-anchor")
+      if (!element.classList.length) element.removeAttribute("class")
+      element.removeAttribute("data-article-placeholder")
+      element.removeAttribute("contenteditable")
+    }
+  } else {
+    element.removeAttribute("data-article-placeholder")
+  }
+
+  if (
+    !element.classList.contains("article-interaction-anchor")
+    && !element.classList.contains("article-placeholder-anchor")
+  ) element.removeAttribute("contenteditable")
 }
 
 export function sanitizeRichHtml(html, options = {}) {

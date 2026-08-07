@@ -11,6 +11,24 @@ import {
   moveArticleInteractionGroup,
 } from "../js/article-interaction-group-model.js"
 
+test("normalization preserves validated random-game rules and outcome targets", () => {
+  const result = normalizeArticleInteractionGroups([{
+    id:"game-a",
+    kind:"random-game",
+    label:"命运骰",
+    game:{type:"dice", sides:6, buttonLabel:"掷骰子"},
+    choices:[
+      {id:"low", text:"低点数", selectedText:"失败", targetId:"node-low", rangeMin:1, rangeMax:3},
+      {id:"high", text:"高点数", selectedText:"成功", targetId:"node-high", rangeMin:4, rangeMax:6},
+    ],
+  }])
+
+  assert.equal(result.ok, true)
+  assert.equal(result.groups[0].kind, "random-game")
+  assert.equal(result.groups[0].choices[1].targetId, "node-high")
+  assert.equal(result.groups[0].choices[1].rangeMin, 4)
+})
+
 test("marker HTML is atomic and marker parsing keeps exact body order", () => {
   const first = articleInteractionMarkerHTML("group-a")
   const second = articleInteractionMarkerHTML("group-b")

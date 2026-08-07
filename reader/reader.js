@@ -46,11 +46,17 @@ import {
   recordArticleInteractionSelection,
   selectedArticleInteractionChoice,
   selectedArticleInteractionChoiceIds,
+  selectedArticleInteractionResult,
 } from '../js/article-interaction-memory.js'
 import {
   ARTICLE_INTERACTION_MARKER_CLASS,
   articleInteractionMarkerIds,
 } from '../js/article-interaction-group-model.js'
+import {
+  ARTICLE_PLACEHOLDER_MARKER_CLASS,
+  articlePlaceholderMarkerIds,
+} from '../js/article-placeholder-marker.js'
+import { ARTICLE_RANDOM_GAME_KIND, playArticleRandomGame } from '../js/article-random-game.js'
 import { articleDisplayConditionMatches } from '../js/article-condition-model.js'
 import { resolveAutomaticArticleStartNodeId } from '../js/article-start-node.js'
 import {
@@ -977,11 +983,34 @@ function substitutedReaderSearchWork(sourceWork, sourceValuesMap) {
       ? substitutePlaceholders(value, placeholders, {valuesMap:valuesMap, usePlaceholderMode:false})
       : value
   }
+  function unlockedContent(value) {
+    if (typeof value !== 'string' || !value.includes(ARTICLE_PLACEHOLDER_MARKER_CLASS)) return value
+    var template = document.createElement('template')
+    template.innerHTML = value
+    var definitions = new Map(placeholders.map(function(placeholder) {
+      return [String(placeholder?.id || ''), placeholder]
+    }))
+    var markers = Array.from(template.content.querySelectorAll('.' + ARTICLE_PLACEHOLDER_MARKER_CLASS))
+    for (var markerIndex = 0; markerIndex < markers.length; markerIndex++) {
+      var marker = markers[markerIndex]
+      if (!template.content.contains(marker)) continue
+      var placeholderId = marker.getAttribute('data-article-placeholder') || ''
+      var placeholder = definitions.get(placeholderId)
+      var resolved = Boolean(String(valuesMap?.[placeholderId]?.[0] || '').trim())
+      if (placeholder?.fillMode === 'inline' && !resolved) {
+        removeArticleContentAfter(marker, template.content)
+        marker.remove()
+        break
+      }
+      marker.remove()
+    }
+    return template.innerHTML
+  }
   return Object.assign({}, sourceWork, {
     nodes:(sourceWork && Array.isArray(sourceWork.nodes) ? sourceWork.nodes : []).map(function(node) {
       return Object.assign({}, node, {
         title:replaceText(node.title),
-        content:replaceText(node.content),
+        content:replaceText(unlockedContent(node.content)),
         choices:(Array.isArray(node.choices) ? node.choices : []).map(function(choice) {
           return Object.assign({}, choice, {
             text:replaceText(choice.text),
@@ -2112,6 +2141,10 @@ function openReaderBookManager(workId, invoker) {
   var libraryState = getReaderLibraryState()
   var identities = libraryState.identities || []
   var activeSlot = readerActiveSlot(book)
+  definitions = definitions.filter(function(definition) {
+    return definition.fillMode !== 'inline'
+      || Boolean(String(activeSlot?.placeholderValues?.[definition.id]?.[0] || '').trim())
+  })
   var activeSlotIndex = (book.slots || []).findIndex(function(slot) { return slot.id === activeSlot?.id })
   var activeIdentity = identities.find(function(identity) { return identity.id === activeSlot?.identityId }) || null
   var journeyDirectory = readerJourneyDirectory(work, activeSlot)
@@ -3491,7 +3524,10 @@ async function ensureInteractiveCameraPreflight(statusElement, button) {
 }
 
 function showLandingPage(work, callback) {
-  var phs = work.placeholders || []
+  var allPlaceholders = work.placeholders || []
+  var phs = work.type === 'article'
+    ? allPlaceholders.filter(function(placeholder) { return placeholder?.fillMode !== 'inline' })
+    : allPlaceholders
   var hasPassword = !!(work.password && work.password.trim())
   var rememberedValues = cloneReaderPlaceholderValues(
     savedReaderBook(work.id)?.placeholderValues || work.readerPhValues || {},
@@ -3586,7 +3622,7 @@ function showLandingPage(work, callback) {
       }
     }
     // Collect placeholders
-    var values = {}
+    var values = cloneReaderPlaceholderValues(rememberedValues)
     var inputs = overlay.querySelectorAll('.rd-landing-input[data-ph-id]')
     var forbiddenFound = false
     inputs.forEach(function(inp) {
@@ -3635,7 +3671,9 @@ function collectionPlaceholders(collection) {
   var placeholders = []
   ;(collection.workIds || []).forEach(function(workId) {
     var work = readerCollectionWork(workId)
-    ;(work && Array.isArray(work.placeholders) ? work.placeholders : []).forEach(function(placeholder) {
+    ;(work && Array.isArray(work.placeholders) ? work.placeholders : []).filter(function(placeholder) {
+      return placeholder?.fillMode !== 'inline'
+    }).forEach(function(placeholder) {
       var key = String(placeholder.key || placeholder.label || placeholder.id || '').trim()
       if (!key || seen[key]) return
       seen[key] = true
@@ -3725,7 +3763,9 @@ function openReaderCollectionWork(workId) {
     work.readerPhValues = Object.create(null)
     ;(work.placeholders || []).forEach(function(placeholder) {
       var key = String(placeholder.key || placeholder.label || placeholder.id || '').trim()
-      work.readerPhValues[placeholder.id] = valuesByKey[key] || ['']
+      work.readerPhValues[placeholder.id] = placeholder.fillMode === 'inline'
+        ? ['']
+        : (valuesByKey[key] || [''])
     })
     loadWork(work, { collectionId: collection.id, skipLanding: true })
   } else loadWork(work, { collectionId: collection.id })
@@ -5028,12 +5068,24 @@ function articleNodeInteractionComplete(node, interactionSelections) {
   var activeSelections = interactionSelections === undefined
     ? _articleInteractionSelections
     : interactionSelections
-  return placedArticleInteractionGroups(node).every(function(group) {
+  var ordinaryComplete = placedArticleInteractionGroups(node).every(function(group) {
     return Boolean(selectedReaderInteractionChoice(group, activeSelections))
+  })
+  if (!ordinaryComplete) return false
+  var inlineIds = new Set(articlePlaceholderMarkerIds(node?.content || ''))
+  return Array.from(inlineIds).every(function(placeholderId) {
+    var placeholder = (_work?.placeholders || []).find(function(candidate) {
+      return candidate?.id === placeholderId && candidate.fillMode === 'inline'
+    })
+    if (!placeholder) return true
+    return Boolean(String(_work?.readerPhValues?.[placeholderId]?.[0] || '').trim())
   })
 }
 
 function readerInteractionGroupHTML(group, sourceNodeId, sourcePathIndex) {
+  if (group?.kind === ARTICLE_RANDOM_GAME_KIND) {
+    return readerRandomGameHTML(group, sourceNodeId, sourcePathIndex)
+  }
   var selectedChoiceId = selectedArticleInteractionChoice(_articleInteractionSelections, group.id)
   var h = '<div class="article-interaction-group article-choices is-interaction" data-interaction-group="' + escapeHtmlAttribute(group.id) + '">'
   if (group.label) h += '<div class="article-interaction-label">' + esc(readerArticleText(group.label)) + '</div>'
@@ -5046,6 +5098,35 @@ function readerInteractionGroupHTML(group, sourceNodeId, sourcePathIndex) {
       return String(choice?.id || '') === selectedChoiceId
     })
     h += readerInteractionResponseHTML(selectedChoice)
+  }
+  h += '</div>'
+  return h
+}
+
+function readerRandomGameRuleCopy(group) {
+  if (group?.game?.type === 'versus') return '双方各掷一枚 D' + group.game.sides + '，比较点数大小'
+  if (group?.game?.type === 'number') return '从 ' + group.game.min + ' 至 ' + group.game.max + ' 中抽取一个整数'
+  return '掷一枚 D' + group?.game?.sides + '，按点数决定后续剧情'
+}
+
+function readerRandomGameResultCopy(group, result) {
+  if (result?.type === 'versus') {
+    return '你掷出 ' + result.player + '，' + (group?.game?.opponentLabel || '对手') + '掷出 ' + result.opponent
+  }
+  return '本次点数：' + result?.value
+}
+
+function readerRandomGameHTML(group, sourceNodeId, sourcePathIndex) {
+  var selectedChoice = selectedReaderInteractionChoice(group, _articleInteractionSelections)
+  var result = selectedArticleInteractionResult(_articleInteractionSelections, group.id)
+  var h = '<div class="article-random-game article-interaction-group" data-interaction-group="' + escapeHtmlAttribute(group.id) + '">'
+  h += '<div class="article-random-game-head"><span class="article-random-game-die" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><div><strong>' + esc(readerArticleText(group.label || '小游戏')) + '</strong><small>' + esc(readerRandomGameRuleCopy(group)) + '</small></div></div>'
+  if (selectedChoice && result) {
+    h += '<div class="article-random-game-result" role="status"><span>' + esc(readerRandomGameResultCopy(group, result)) + '</span><strong>' + esc(readerArticleText(selectedChoice.text || '判定完成')) + '</strong></div>'
+    h += readerInteractionResponseHTML(selectedChoice)
+  } else {
+    h += '<button type="button" class="article-random-game-roll" data-random-game-roll data-source-path-index="' + sourcePathIndex + '" data-choice-node-id="' + escapeHtmlAttribute(sourceNodeId) + '" data-interaction-group-id="' + escapeHtmlAttribute(group.id) + '">' + esc(readerArticleText(group?.game?.buttonLabel || '开始判定')) + '</button>'
+    h += '<small class="article-random-game-note">结果生成后会保存到当前阅读档案</small>'
   }
   h += '</div>'
   return h
@@ -5098,6 +5179,86 @@ function replaceArticleInteractionAnchors(content, node, sourcePathIndex) {
     }
   }
   return {html:template.innerHTML, complete:complete}
+}
+
+function readerInlinePlaceholderHTML(placeholder) {
+  var fieldId = 'rdInlinePlaceholder_' + String(placeholder.id || '').replace(/[^a-z0-9_-]/gi, '_')
+  var h = '<span class="rd-inline-placeholder" data-inline-placeholder-id="' + escapeHtmlAttribute(placeholder.id || '') + '">'
+  h += '<label for="' + escapeHtmlAttribute(fieldId) + '">' + esc(placeholder.prompt || placeholder.label || '请填写') + '</label>'
+  h += '<span class="rd-inline-placeholder-controls">'
+  h += '<input id="' + escapeHtmlAttribute(fieldId) + '" type="text" autocomplete="off" placeholder="' + escapeHtmlAttribute(placeholder.label || placeholder.key || '填写内容') + '">'
+  h += '<button type="button">保存</button>'
+  h += '</span><span class="rd-placeholder-error" role="alert" hidden></span></span>'
+  return h
+}
+
+function replaceArticlePlaceholderAnchors(content) {
+  if (typeof content !== 'string' || !content.includes(ARTICLE_PLACEHOLDER_MARKER_CLASS)) {
+    return {html:content, complete:true}
+  }
+  var template = document.createElement('template')
+  template.innerHTML = content
+  var definitions = new Map((_work?.placeholders || []).map(function(placeholder) {
+    return [String(placeholder?.id || ''), placeholder]
+  }))
+  var markers = Array.from(template.content.querySelectorAll('.' + ARTICLE_PLACEHOLDER_MARKER_CLASS))
+  var complete = true
+  for (var markerIndex = 0; markerIndex < markers.length; markerIndex++) {
+    var marker = markers[markerIndex]
+    if (!template.content.contains(marker)) continue
+    var placeholderId = marker.getAttribute('data-article-placeholder') || ''
+    var placeholder = definitions.get(placeholderId)
+    if (!placeholder || placeholder.fillMode !== 'inline') {
+      marker.remove()
+      continue
+    }
+    var value = String(_work?.readerPhValues?.[placeholderId]?.[0] || '').trim()
+    var holder = document.createElement('template')
+    if (value) {
+      holder.innerHTML = '<span class="rd-inline-placeholder-value">' + esc(value) + '</span>'
+      marker.replaceWith(holder.content.firstElementChild)
+      continue
+    }
+    holder.innerHTML = readerInlinePlaceholderHTML(placeholder)
+    var renderedField = holder.content.firstElementChild
+    marker.replaceWith(renderedField)
+    complete = false
+    removeArticleContentAfter(renderedField, template.content)
+    break
+  }
+  return {html:template.innerHTML, complete:complete}
+}
+
+function saveReaderInlinePlaceholderField(field) {
+  var placeholderId = field?.dataset?.inlinePlaceholderId || ''
+  var placeholder = (_work?.placeholders || []).find(function(candidate) {
+    return candidate?.id === placeholderId && candidate.fillMode === 'inline'
+  })
+  var input = field?.querySelector('input')
+  var error = field?.querySelector('.rd-placeholder-error')
+  if (!placeholder || !input) return false
+  var value = String(input.value || '').trim()
+  var forbidden = placeholderForbiddenWord(placeholder, value, _work?.globalForbidden)
+  var message = !value
+    ? '请填写后再继续。'
+    : forbidden
+      ? '内容包含作者设置的违禁词，请修改后继续。'
+      : ''
+  if (error) {
+    error.hidden = !message
+    error.textContent = message
+  }
+  if (message) {
+    input.focus()
+    return false
+  }
+  _readerPendingReadingPosition = currentReaderReadingPosition()
+  var values = cloneReaderPlaceholderValues(_work.readerPhValues || {})
+  values[placeholderId] = [value]
+  _work.readerPhValues = values
+  saveReaderWorkPlaceholders(_work, values)
+  renderArticleReader()
+  return true
 }
 
 function renderArticleReader() {
@@ -5229,13 +5390,14 @@ function renderArticleReader() {
       return buildReaderPhoneModuleTrigger({pmid:pt.pmid, type:pt.type, label:def.label, trustedIconHtml:def.icon, hasUnread:!visitedPm[pt.pmid]})
     })
     var interactionRender = replaceArticleInteractionAnchors(cleanContent, entryNode, entry.pathIndex)
-    cleanContent = interactionRender.html
+    var placeholderRender = replaceArticlePlaceholderAnchors(interactionRender.html)
+    cleanContent = placeholderRender.html
 
     var isActive = entryIndex === chapterEntries.length - 1
     h += '<section class="article-node' + (isActive ? ' is-active' : ' is-resolved') + '" data-article-path-index="' + entry.pathIndex + '">'
     h += '<div class="article-content"' + (isActive ? ' data-active="true"' : '') + '>' + cleanContent + '</div>'
     var choices = (entryNode.choices || []).filter(function(choice) { return choice.mode !== 'interaction' })
-    if (choices.length > 0 && interactionRender.complete) {
+    if (choices.length > 0 && interactionRender.complete && placeholderRender.complete) {
       h += '<div class="article-choices is-branch" data-choice-node-id="' + escapeHtmlAttribute(entryNode.id) + '">'
       choices.forEach(function(c, ci) {
         var targetState = resolveArticleChoiceTarget(nodes, c.targetId)
@@ -5324,6 +5486,7 @@ function renderArticleReader() {
   // Keep the optional typing effect delayed so layout and settings are already stable.
   setTimeout(function() {
     if (ac && !savedPassage && shouldUseMotion(rs.typingEffect)) {
+      if (ac.querySelector('[data-inline-placeholder-id],[data-interaction-group]')) return
       var fullHTML = ac.innerHTML
       ac.innerHTML = ''
       var i = 0
@@ -5354,6 +5517,66 @@ function renderArticleReader() {
   document.querySelectorAll('.rd-interactive-scene-trigger').forEach(function(trigger) {
     trigger.onclick = function() {
       openReaderInteractiveScene(trigger.dataset.interactiveScene, {triggerElement:trigger})
+    }
+  })
+
+  document.querySelectorAll('[data-inline-placeholder-id]').forEach(function(field) {
+    var button = field.querySelector('button')
+    var input = field.querySelector('input')
+    if (button) button.onclick = function() { saveReaderInlinePlaceholderField(field) }
+    if (input) input.onkeydown = function(event) {
+      if (event.key !== 'Enter') return
+      event.preventDefault()
+      saveReaderInlinePlaceholderField(field)
+    }
+  })
+
+  document.querySelectorAll('[data-random-game-roll]').forEach(function(button) {
+    button.onclick = function() {
+      if (!beginArticleChoiceCommit(button)) return
+      var nodeId = button.dataset.choiceNodeId || ''
+      var groupId = button.dataset.interactionGroupId || ''
+      var sourcePathIndex = Number(button.dataset.sourcePathIndex)
+      var group = readerArticleInteractionGroup(nodeId, groupId)
+      if (!group || group.kind !== ARTICLE_RANDOM_GAME_KIND) return
+      var played
+      try { played = playArticleRandomGame(group) } catch (_) { played = null }
+      if (!played || !canRecordArticleInteraction(nodeId, groupId, played.choice.id)) return
+      var selection = selectionPrefixState(sourcePathIndex, nodeId)
+      if (!selection) return
+      var nextSelections = recordArticleInteractionSelection(
+        selection.state.interactionSelections,
+        groupId,
+        nodeId,
+        played.choice.id,
+        played.roll,
+      )
+      var targetState = resolveArticleChoiceTarget(nodes, played.choice.targetId)
+      if (!targetState.ok) return
+      var transition = appendArticleChoice(
+        nodes,
+        selection.path,
+        sourcePathIndex,
+        targetState.targetId,
+        articleRuntimeOptions(selection.state.memory, nextSelections),
+      )
+      if (!transition.ok) return
+      captureArticleCheckpoint(
+        nodeId,
+        String(group.label || '小游戏判定').trim(),
+        selection.path,
+        selection.state.memory,
+        selection.state.interactionSelections,
+      )
+      selection.state.interactionSelections = nextSelections
+      applyArticleRouteState(transition.path, selection.state)
+      _nodeId = _articlePath[_articlePath.length - 1]
+      _visitedNodes = _articlePath.slice(0, -1)
+      renderArticleReader()
+      var renderedGame = Array.from(document.querySelectorAll('[data-interaction-group]')).find(function(element) {
+        return element.dataset.interactionGroup === groupId
+      })
+      renderedGame?.scrollIntoView?.({block:'nearest'})
     }
   })
 

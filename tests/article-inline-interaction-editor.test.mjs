@@ -99,6 +99,40 @@ test("ordinary interaction and tail branch controls are separate author actions"
   assert.equal(panel.querySelectorAll(".ch-item").length, 2)
 })
 
+test("the SVG game shortcut opens a progressive random-game builder and inserts at the caret", () => {
+  render()
+  placeCaretAtEnd()
+  const shortcut = document.querySelector('[data-a="game"]')
+  assert.ok(shortcut)
+  assert.equal(shortcut.getAttribute("title"), "小游戏")
+  assert.match(shortcut.getAttribute("aria-label"), /小游戏/)
+  assert.ok(shortcut.querySelector("svg"))
+  const toolbarItems = Array.from(shortcut.closest(".editor-iconbar").children)
+  const interactivePage = shortcut.closest(".editor-iconbar").querySelector('[data-a="is"]')
+  const messageShortcut = shortcut.closest(".editor-iconbar").querySelector('[data-a="pa-msg"]')
+  assert.equal(toolbarItems.indexOf(shortcut), toolbarItems.indexOf(interactivePage) + 1)
+  assert.ok(toolbarItems[toolbarItems.indexOf(shortcut) + 1].classList.contains("divider"))
+  assert.equal(toolbarItems.indexOf(messageShortcut), toolbarItems.indexOf(shortcut) + 2)
+  shortcut.click()
+
+  const panel = document.querySelector(".random-game-panel")
+  assert.ok(panel)
+  assert.equal(panel.querySelector('[data-game-type="dice"]').getAttribute("aria-pressed"), "true")
+  assert.equal(panel.querySelectorAll(".random-game-outcome-row").length, 2)
+  panel.querySelector("[data-game-label]").value = "命运骰"
+  panel.querySelectorAll("[data-game-target]")[0].value = "node-a"
+  panel.querySelectorAll("[data-game-target]")[1].value = "node-b"
+  panel.querySelector('[data-game-action="save"]').click()
+
+  const saved = getWork(work.id).nodes[0]
+  assert.equal(saved.interactionGroups.length, 1)
+  assert.equal(saved.interactionGroups[0].kind, "random-game")
+  assert.equal(saved.interactionGroups[0].game.type, "dice")
+  assert.deepEqual(saved.interactionGroups[0].choices.map(choice => choice.targetId), ["node-a", "node-b"])
+  assert.match(saved.content, /data-article-interaction-group=/)
+  assert.ok(document.querySelector(".article-interaction-editor-card.is-random-game"))
+})
+
 test("an ordinary group inserts at the caret and saves independently from branches", () => {
   render()
   placeCaretAtEnd()
@@ -135,4 +169,54 @@ test("multiple groups keep independent ids and missing markers remain recoverabl
   const recovery = document.querySelector("[data-unplaced-interaction-group='group-b']")
   assert.ok(recovery)
   assert.match(recovery.textContent, /追问/)
+})
+
+test("authors can choose in-article filling and insert an atomic placeholder at the caret", () => {
+  const snapshot = structuredClone(work)
+  snapshot.placeholders = [{
+    id:"cat-name",
+    key:"123",
+    label:"小猫的名字",
+    prompt:"你想叫它什么？",
+    fillMode:"landing",
+    mode:"each",
+    forbidden:[],
+    values:[],
+    default:"",
+  }]
+  render(snapshot)
+  placeCaretAtEnd()
+  document.querySelector('[data-a="ph"]').click()
+
+  const panel = document.querySelector(".ph-panel")
+  const fillMode = panel.querySelector("#ph_fill_cat-name")
+  assert.ok(fillMode)
+  fillMode.value = "inline"
+  panel.querySelector('[data-ph-id="cat-name"] [data-ph-a="insert-inline"]').click()
+
+  const saved = getWork(work.id)
+  assert.equal(saved.placeholders[0].fillMode, "inline")
+  assert.match(saved.nodes[0].content, /class="article-placeholder-anchor"/)
+  assert.match(saved.nodes[0].content, /data-article-placeholder="cat-name"/)
+  assert.ok(document.querySelector(".article-placeholder-editor-card"))
+})
+
+test("switching an inline placeholder back to landing removes its body marker", () => {
+  const snapshot = structuredClone(work)
+  snapshot.placeholders = [{
+    id:"cat-name", key:"123", label:"小猫的名字", prompt:"叫什么？",
+    fillMode:"inline", mode:"each", forbidden:[], values:[], default:"",
+  }]
+  snapshot.nodes[0].content += '<span class="article-placeholder-anchor" data-article-placeholder="cat-name" contenteditable="false"></span>'
+  render(snapshot)
+  document.querySelector('[data-a="ph"]').click()
+
+  const panel = document.querySelector(".ph-panel")
+  panel.querySelector("#ph_fill_cat-name").value = "landing"
+  panel.querySelector('[data-ph-id="cat-name"] [data-ph-a="save"]').click()
+
+  const saved = getWork(work.id)
+  assert.equal(saved.placeholders[0].fillMode, "landing")
+  assert.doesNotMatch(saved.nodes[0].content, /article-placeholder-anchor/)
+  assert.equal(document.querySelector(".article-placeholder-editor-card"), null)
 })

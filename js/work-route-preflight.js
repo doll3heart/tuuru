@@ -18,6 +18,15 @@ function routeChoice(choice) {
   return choice?.mode !== "interaction"
 }
 
+function routeChoicesForNode(node) {
+  const choices = records(node?.choices).filter(routeChoice)
+  for (const group of records(node?.interactionGroups)) {
+    if (group?.kind !== "random-game") continue
+    choices.push(...records(group?.choices))
+  }
+  return choices
+}
+
 function emptyReport(supported) {
   return {
     supported,
@@ -184,7 +193,7 @@ export function inspectArticleRoutes(work) {
   const routeNodeById = new Map(routeNodes.map(node => [idOf(node), node]))
   const routeNodeIndex = new Map(routeNodes.map((node, index) => [idOf(node), index]))
   const routeChoices = routeNodes.flatMap(node => (
-    records(node?.choices).filter(routeChoice).map(choice => ({ source:idOf(node), choice }))
+    routeChoicesForNode(node).map(choice => ({ source:idOf(node), choice }))
   ))
   const incomingBranchTargets = new Set(
     routeChoices
@@ -233,7 +242,7 @@ export function inspectArticleRoutes(work) {
       continue
     }
 
-    const choices = records(node?.choices).filter(routeChoice)
+    const choices = routeChoicesForNode(node)
     if (choices.length) {
       for (const choice of choices) {
         const targetId = typeof choice?.targetId === "string" ? choice.targetId : ""

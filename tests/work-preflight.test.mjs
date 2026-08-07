@@ -29,6 +29,37 @@ test("a complete article passes without findings", () => {
   assert.deepEqual(report.issues, [])
 })
 
+test("article inspection accepts a complete random game and rejects a dangling outcome target", () => {
+  const work = {
+    id:"article-game",
+    type:"article",
+    title:"小游戏文章",
+    startNode:"start",
+    placeholders:[], phoneModules:[],
+    nodes:[
+      {
+        id:"start", title:"开始",
+        content:'<p>正文</p><div class="article-interaction-anchor" data-article-interaction-group="game-a" contenteditable="false"></div>',
+        choices:[],
+        interactionGroups:[{
+          id:"game-a", kind:"random-game", label:"命运骰",
+          game:{type:"dice", sides:6, buttonLabel:"掷骰子"},
+          choices:[
+            {id:"low", text:"低点数", selectedText:"低", targetId:"low-node", rangeMin:1, rangeMax:3},
+            {id:"high", text:"高点数", selectedText:"高", targetId:"high-node", rangeMin:4, rangeMax:6},
+          ],
+        }],
+      },
+      {id:"low-node", title:"低", content:"<p>低</p>", choices:[], interactionGroups:[]},
+      {id:"high-node", title:"高", content:"<p>高</p>", choices:[], interactionGroups:[]},
+    ],
+  }
+  assert.deepEqual(inspectWorkBeforePublish(work).counts, {error:0, warning:0})
+  work.nodes[0].interactionGroups[0].choices[1].targetId = "missing"
+  const report = inspectWorkBeforePublish(work)
+  assert.ok(report.issues.some(issue => issue.code === "article-random-game-target-invalid"))
+})
+
 test("article inspection derives its start and reports blank nodes and broken branches", () => {
   const report = inspectWorkBeforePublish({
     id:"article-broken",
@@ -284,4 +315,46 @@ test("article inspection reports unplaced, duplicated, undersized, and orphaned 
     ],
   )
   assert.deepEqual(report.counts, { error:3, warning:1 })
+})
+
+test("article inspection requires exactly one marker for each in-article placeholder", () => {
+  const base = {
+    schemaVersion:4,
+    id:"article-inline-placeholders",
+    type:"article",
+    title:"正文占位符",
+    chapters:[{ id:"chapter", name:"第一章" }],
+    nodes:[{
+      id:"start",
+      chapterId:"chapter",
+      title:"开始",
+      content:'<p>给它起名</p><span class="article-placeholder-anchor" data-article-placeholder="cat-name" contenteditable="false"></span><p>CAT 回头看你。</p>',
+      interactionGroups:[],
+      choices:[],
+    }],
+    placeholders:[{
+      id:"cat-name", key:"CAT", label:"小猫名字", prompt:"它叫什么？", fillMode:"inline",
+    }],
+    phoneModules:[],
+  }
+
+  assert.deepEqual(inspectWorkBeforePublish(base).counts, {error:0, warning:0})
+
+  const missing = structuredClone(base)
+  missing.nodes[0].content = "<p>没有填写位置</p>"
+  assert.ok(inspectWorkBeforePublish(missing).issues.some(issue => (
+    issue.code === "article-placeholder-marker-missing"
+  )))
+
+  const duplicate = structuredClone(base)
+  duplicate.nodes[0].content += '<span class="article-placeholder-anchor" data-article-placeholder="cat-name" contenteditable="false"></span>'
+  assert.ok(inspectWorkBeforePublish(duplicate).issues.some(issue => (
+    issue.code === "article-placeholder-marker-duplicate"
+  )))
+
+  const orphaned = structuredClone(base)
+  orphaned.placeholders[0].fillMode = "landing"
+  assert.ok(inspectWorkBeforePublish(orphaned).issues.some(issue => (
+    issue.code === "article-placeholder-marker-orphaned"
+  )))
 })

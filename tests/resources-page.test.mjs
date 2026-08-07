@@ -88,6 +88,12 @@ test("the tutorial lists features by meaning, location, use, and effect", () => 
   assert.match(source, /同一种内容可以自由换外观/)
   assert.match(source, /论坛小号/)
   assert.match(source, /作者占位符预设/)
+  assert.match(source, /SVG 骰子图标【小游戏】/)
+  assert.match(source, /【互动页】右边/)
+  assert.match(source, /手机模块分割线左边/)
+  assert.match(source, /手机端点【插入】，再点【小游戏】/)
+  assert.match(source, /掷骰判定、随机数或对抗骰/)
+  assert.match(source, /点数、结果和剧情路线会保存在当前阅读档案中/)
   assert.match(source, /创建作品集/)
   assert.match(source, /整机搬家/)
   assert.match(source, /作品排序与置顶/)
@@ -120,6 +126,11 @@ test("the tutorial fully explains paragraph nodes, ordinary responses, and hidde
     "普通互动全部完成后，末尾剧情分支才会出现",
     "普通互动标题、选项文本、选择后内容和末尾剧情分支文字都支持当前作品的占位符",
     "普通互动和末尾剧情分支可以同时存在",
+    "选择【阅读前集中填写】时",
+    "选择【文中填写】时",
+    "插入正文光标处",
+    "读者保存当前答案后才会看到后面的正文和节点",
+    "答案同时保存在当前阅读档案中",
     "移动到其他节点",
     "复制到其他节点",
     "模块会完整保留",

@@ -44,6 +44,26 @@ test("article sanitizer preserves only exact ordinary interaction anchors", () =
   dom.window.close()
 })
 
+test("article sanitizer preserves only exact in-article placeholder anchors", () => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>")
+  const safe = sanitizeRichHtml(
+    '<span class="article-placeholder-anchor" data-article-placeholder="placeholder-a" contenteditable="false"></span>',
+    { windowObject: dom.window },
+  )
+  const invalid = sanitizeRichHtml(
+    '<span class="article-placeholder-anchor" data-article-placeholder=" bad " contenteditable="true"></span>',
+    { windowObject: dom.window },
+  )
+
+  assert.match(safe, /class="article-placeholder-anchor"/)
+  assert.match(safe, /data-article-placeholder="placeholder-a"/)
+  assert.match(safe, /contenteditable="false"/)
+  assert.doesNotMatch(invalid, /article-placeholder-anchor/)
+  assert.doesNotMatch(invalid, /data-article-placeholder/)
+  assert.doesNotMatch(invalid, /contenteditable/)
+  dom.window.close()
+})
+
 test("import sanitizer removes unsafe scene media but keeps HTTPS and GIF data images", () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>")
   const result = sanitizeImportedWork({

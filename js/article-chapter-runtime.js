@@ -79,6 +79,19 @@ function isArticleFlowBarrier(node, options) {
     || !isNodeInteractionComplete(node, options)
 }
 
+function authoredBranchChoices(node) {
+  var choices = (Array.isArray(node?.choices) ? node.choices : []).filter(function(choice) {
+    return isNodeRecord(choice) && choice.mode !== "interaction"
+  })
+  ;(Array.isArray(node?.interactionGroups) ? node.interactionGroups : []).forEach(function(group) {
+    if (!isNodeRecord(group) || group.kind !== "random-game") return
+    ;(Array.isArray(group.choices) ? group.choices : []).forEach(function(choice) {
+      if (isNodeRecord(choice)) choices.push(choice)
+    })
+  })
+  return choices
+}
+
 function incomingBranchChoiceIds(nodes) {
   var nodeById = new Map()
   var duplicateNodeIds = new Set()
@@ -92,8 +105,7 @@ function incomingBranchChoiceIds(nodes) {
     if (!id) return
     if (nodeById.has(id)) duplicateNodeIds.add(id)
     else nodeById.set(id, node)
-    ;(Array.isArray(node.choices) ? node.choices : []).forEach(function(choice) {
-      if (!isNodeRecord(choice) || choice.mode === "interaction") return
+    authoredBranchChoices(node).forEach(function(choice) {
       var choiceId = String(choice.id || "")
       if (choiceId) choiceIdCounts.set(choiceId, (choiceIdCounts.get(choiceId) || 0) + 1)
     })
@@ -101,8 +113,7 @@ function incomingBranchChoiceIds(nodes) {
 
   orderedNodes.forEach(function(source) {
     if (!isNodeRecord(source) || duplicateNodeIds.has(nodeId(source))) return
-    ;(Array.isArray(source.choices) ? source.choices : []).forEach(function(choice) {
-      if (!isNodeRecord(choice) || choice.mode === "interaction") return
+    authoredBranchChoices(source).forEach(function(choice) {
       var choiceId = String(choice.id || "")
       var targetId = String(choice.targetId || "")
       var target = duplicateNodeIds.has(targetId) ? null : nodeById.get(targetId)

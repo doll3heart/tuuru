@@ -1,3 +1,5 @@
+import { ARTICLE_RANDOM_GAME_KIND, normalizeArticleRandomGame } from "./article-random-game.js"
+
 export const ARTICLE_INTERACTION_MARKER_CLASS = "article-interaction-anchor"
 export const ARTICLE_INTERACTION_MARKER_ATTRIBUTE = "data-article-interaction-group"
 
@@ -21,7 +23,7 @@ function own(value, key) {
   return Object.prototype.hasOwnProperty.call(value ?? {}, key)
 }
 
-function choiceRecord(choice) {
+function choiceRecord(choice, randomGame = false) {
   if (!choice || typeof choice !== "object" || Array.isArray(choice)) return null
   if (!exactId(choice.id)) return null
   const next = {
@@ -33,7 +35,12 @@ function choiceRecord(choice) {
       : (typeof choice.text === "string" ? choice.text : ""),
   }
   delete next.mode
-  delete next.targetId
+  if (!randomGame) {
+    delete next.targetId
+    delete next.rangeMin
+    delete next.rangeMax
+    delete next.result
+  }
   return next
 }
 
@@ -97,15 +104,22 @@ export function normalizeArticleInteractionGroups(groups) {
     groupIds.add(group.id)
 
     const choices = []
+    const randomGame = rawGroup.kind === ARTICLE_RANDOM_GAME_KIND
     for (const rawChoice of asArray(rawGroup.choices)) {
-      const choice = choiceRecord(rawChoice)
+      const choice = choiceRecord(rawChoice, randomGame)
       if (!choice) return {ok:false, reason:"invalid-choice"}
       if (choiceIds.has(choice.id)) return {ok:false, reason:"duplicate-choice-id"}
       choiceIds.add(choice.id)
       choices.push(choice)
     }
     group.choices = choices
-    normalized.push(group)
+    if (randomGame) {
+      const gameResult = normalizeArticleRandomGame(group)
+      if (!gameResult.ok) return gameResult
+      normalized.push(gameResult.group)
+    } else {
+      normalized.push(group)
+    }
   }
   return {ok:true, groups:normalized}
 }

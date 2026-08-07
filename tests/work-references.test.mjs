@@ -15,6 +15,10 @@ function fixture() {
         chapterId:"chapter-1",
         title:"起点",
         choices:[{id:"choice-1", text:"去下一幕", targetId:"node-b"}],
+        interactionGroups:[{
+          id:"game-a", kind:"random-game", label:"命运骰",
+          choices:[{id:"game-win", text:"成功", targetId:"node-b"}],
+        }],
       },
       {
         id:"node-b",
@@ -75,7 +79,7 @@ test("finds every authored route that points at an article node", () => {
   const references = findWorkReferences(fixture(), {kind:"node", id:"node-b"})
   assert.deepEqual(
     references.map(reference => reference.category).sort(),
-    ["互动图片后续", "剧情分支", "插入内容"].sort(),
+    ["互动图片后续", "剧情分支", "小游戏结果", "插入内容"].sort(),
   )
   assert.ok(references.some(reference => reference.sourceNodeId === "node-a"))
   assert.ok(references.every(reference => reference.id && reference.location))

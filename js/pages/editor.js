@@ -38,6 +38,17 @@ import {
   articleInteractionMarkerIds,
   reconcileArticleInteractionGroup,
 } from "../article-interaction-group-model.js"
+import {
+  ARTICLE_PLACEHOLDER_MARKER_CLASS,
+  articlePlaceholderMarkerHTML,
+  articlePlaceholderMarkerIds,
+  removeArticlePlaceholderMarkers,
+} from "../article-placeholder-marker.js"
+import {
+  ARTICLE_RANDOM_GAME_KIND,
+  normalizeArticleRandomGame,
+  playArticleRandomGame,
+} from "../article-random-game.js"
 import { findWorkReferences } from "../work-references.js"
 import { openDeletionImpactDialog } from "../deletion-impact-ui.js"
 import { transferArticlePhoneModule } from "../article-save-adapter.js"
@@ -59,6 +70,7 @@ var _splitPaneController = null
 var _editorPersistenceState = {state:"saved", pendingCount:0, error:null}
 var _editorPersistence = createEditorPersistenceBuffer({onStateChange:updateEditorPersistenceState})
 var FORMAT_COMMANDS = { bold:'bold', italic:'italic', underline:'underline', left:'justifyLeft', center:'justifyCenter', right:'justifyRight' }
+var RANDOM_GAME_ICON = '<svg class="editor-game-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7.5 3.5h9a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-9a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4Z"/><circle cx="8" cy="8" r="1.15"/><circle cx="16" cy="8" r="1.15"/><circle cx="12" cy="12" r="1.15"/><circle cx="8" cy="16" r="1.15"/><circle cx="16" cy="16" r="1.15"/></svg>'
 var AUTHOR_NOTE_GROUPS = [
   {
     id:"story",
@@ -381,6 +393,7 @@ function buildMobileCommandbar(wid, nid) {
   }
   h += '<button type="button" data-a="im"><span aria-hidden="true">＋</span><span>图片</span></button>'
   if (!conditional) h += '<button type="button" data-a="is"><span aria-hidden="true">◎</span><span>互动页</span></button>'
+  if (!conditional) h += '<button type="button" data-a="game" data-w="' + wid + '"><span aria-hidden="true">' + RANDOM_GAME_ICON + '</span><span>小游戏</span></button>'
   h += '<button type="button" data-a="pa-msg" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.messages.icon + '</span><span>消息</span></button>'
   h += '<button type="button" data-a="pa-forum" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.forum.icon + '</span><span>论坛</span></button>'
   h += '<button type="button" data-a="pa-memo" data-w="' + wid + '"><span aria-hidden="true">' + PHONE_APP_DEFS.memo.icon + '</span><span>备忘</span></button>'
@@ -500,6 +513,7 @@ function buildIconbar(wid, nid) {
   h += '<div class="divider"></div>'
   h += '<button type="button" data-a="im" title="图片" aria-label="插入图片">+</button>'
   if (!conditional) h += '<button type="button" data-a="is" title="互动页" aria-label="在本章添加互动页">◎</button>'
+  if (!conditional) h += '<button type="button" class="editor-game-tool" data-a="game" data-w="' + wid + '" title="小游戏" aria-label="在正文中插入小游戏">' + RANDOM_GAME_ICON + '</button>'
   h += '<div class="divider"></div>'
   h += '<button type="button" data-a="pa-msg" data-w="' + wid + '" title="消息" aria-label="插入消息模块">' + PHONE_APP_DEFS.messages.icon + '</button>'
   h += '<button type="button" data-a="pa-forum" data-w="' + wid + '" title="论坛" aria-label="插入论坛模块">' + PHONE_APP_DEFS.forum.icon + '</button>'
@@ -708,15 +722,18 @@ function buildContent(n) {
   var groups = articleNodeIsConditional(n) ? [] : (n.interactionGroups || [])
   var markerIds = articleInteractionMarkerIds(n.content || '')
   var placedGroupIds = new Set(markerIds)
-  var editorContent = buildInteractionEditorContent(n.content || '', groups)
+  var editorContent = buildPlaceholderEditorContent(
+    buildInteractionEditorContent(n.content || '', groups),
+    getWork(_workId)?.placeholders || [],
+  )
   var h = '<div class="editor-content' + (hasChoices ? ' has-choices' : '') + '">'
   h += '<div class="content-editable" id="ce_' + n.id + '" contenteditable="true" data-a="ce" data-n="' + n.id + '" style="' + esc(style) + '">' + editorContent + '</div>'
   var unplacedGroups = groups.filter(function(group) { return !placedGroupIds.has(group.id) })
   if (unplacedGroups.length) {
-    h += '<section class="interaction-unplaced" aria-label="未放置的普通互动"><div><strong>未放置的普通互动</strong><small>内容仍已保存，可放回正文光标处。</small></div>'
+    h += '<section class="interaction-unplaced" aria-label="未放置的正文互动"><div><strong>未放置的正文互动</strong><small>内容仍已保存，可放回正文光标处。</small></div>'
     for (var gi = 0; gi < unplacedGroups.length; gi++) {
       var unplaced = unplacedGroups[gi]
-      h += '<div class="interaction-unplaced-row" data-unplaced-interaction-group="' + escAttr(unplaced.id) + '"><span>' + esc(unplaced.label || ('普通互动 ' + (gi + 1))) + '</span><button type="button" data-a="place-ig" data-gid="' + escAttr(unplaced.id) + '">放到光标处</button><button type="button" data-a="delete-ig" data-gid="' + escAttr(unplaced.id) + '" aria-label="删除这组普通互动">删除</button></div>'
+      h += '<div class="interaction-unplaced-row" data-unplaced-interaction-group="' + escAttr(unplaced.id) + '"><span>' + esc(unplaced.label || (unplaced.kind === ARTICLE_RANDOM_GAME_KIND ? '小游戏 ' + (gi + 1) : '普通互动 ' + (gi + 1))) + '</span><button type="button" data-a="place-ig" data-gid="' + escAttr(unplaced.id) + '">放到光标处</button><button type="button" data-a="delete-ig" data-gid="' + escAttr(unplaced.id) + '" aria-label="删除这项正文互动">删除</button></div>'
     }
     h += '</section>'
   }
@@ -744,10 +761,12 @@ function interactionGroupById(node, groupId) {
 
 function buildInteractionEditorCardHTML(group, index) {
   var count = (group?.choices || []).length
-  var label = group?.label || ('普通互动 ' + (index + 1))
-  var h = '<div class="' + ARTICLE_INTERACTION_MARKER_CLASS + ' article-interaction-editor-card" contenteditable="false" data-article-interaction-group="' + escAttr(group.id) + '" data-interaction-group-card>'
-  h += '<span class="interaction-card-mark" aria-hidden="true">◇</span>'
-  h += '<span class="interaction-card-copy"><strong>' + esc(label) + '</strong><small>' + count + ' 个选项 · 阅读时显示在这里</small></span>'
+  var randomGame = group?.kind === ARTICLE_RANDOM_GAME_KIND
+  var label = group?.label || (randomGame ? '小游戏 ' + (index + 1) : '普通互动 ' + (index + 1))
+  var typeLabel = group?.game?.type === 'versus' ? '对抗骰' : group?.game?.type === 'number' ? '随机数' : '掷骰判定'
+  var h = '<div class="' + ARTICLE_INTERACTION_MARKER_CLASS + ' article-interaction-editor-card' + (randomGame ? ' is-random-game' : '') + '" contenteditable="false" data-article-interaction-group="' + escAttr(group.id) + '" data-interaction-group-card>'
+  h += '<span class="interaction-card-mark" aria-hidden="true">' + (randomGame ? RANDOM_GAME_ICON : '◇') + '</span>'
+  h += '<span class="interaction-card-copy"><strong>' + esc(label) + '</strong><small>' + (randomGame ? typeLabel + ' · ' + count + ' 个结果' : count + ' 个选项 · 阅读时显示在这里') + '</small></span>'
   h += '<span class="interaction-card-actions">'
   h += '<button type="button" data-a="edit-ig" data-gid="' + escAttr(group.id) + '">编辑</button>'
   h += '<button type="button" data-a="move-ig" data-gid="' + escAttr(group.id) + '">移动</button>'
@@ -785,7 +804,100 @@ function serializeInteractionEditorContent(editable) {
     if (marker.content.firstElementChild) card.replaceWith(marker.content.firstElementChild)
     else card.remove()
   })
+  clone.querySelectorAll('.article-placeholder-editor-card').forEach(function(card) {
+    var marker = document.createElement('template')
+    marker.innerHTML = articlePlaceholderMarkerHTML(card.dataset.articlePlaceholder || '')
+    if (marker.content.firstElementChild) card.replaceWith(marker.content.firstElementChild)
+    else card.remove()
+  })
   return clone.innerHTML
+}
+
+function buildPlaceholderEditorCardHTML(placeholder) {
+  var label = placeholder?.label || placeholder?.key || '占位符'
+  var h = '<span class="' + ARTICLE_PLACEHOLDER_MARKER_CLASS + ' article-placeholder-editor-card" contenteditable="false" data-article-placeholder="' + escAttr(placeholder.id) + '">'
+  h += '<span class="article-placeholder-card-mark" aria-hidden="true">{}</span>'
+  h += '<span class="article-placeholder-card-copy"><strong>' + esc(label) + '</strong><small>读者在这里填写</small></span>'
+  h += '<button type="button" data-a="delete-ph-marker" data-pid="' + escAttr(placeholder.id) + '" aria-label="移除' + escAttr(label) + '的文中填写位置">移除</button>'
+  h += '</span>'
+  return h
+}
+
+function buildPlaceholderEditorContent(content, placeholders) {
+  var template = document.createElement('template')
+  template.innerHTML = String(content || '')
+  var definitions = new Map((placeholders || []).map(function(placeholder) {
+    return [String(placeholder?.id || ''), placeholder]
+  }))
+  var seen = new Set()
+  template.content.querySelectorAll('.' + ARTICLE_PLACEHOLDER_MARKER_CLASS).forEach(function(marker) {
+    var placeholderId = marker.getAttribute('data-article-placeholder') || ''
+    var placeholder = definitions.get(placeholderId)
+    if (!placeholder || placeholder.fillMode !== 'inline' || seen.has(placeholderId)) {
+      marker.remove()
+      return
+    }
+    seen.add(placeholderId)
+    var holder = document.createElement('template')
+    holder.innerHTML = buildPlaceholderEditorCardHTML(placeholder)
+    marker.replaceWith(holder.content.firstElementChild)
+  })
+  return template.innerHTML
+}
+
+function placeholderMarkerCount(work, placeholderId) {
+  return (work?.nodes || []).reduce(function(count, node) {
+    return count + articlePlaceholderMarkerIds(node?.content || '').filter(function(id) {
+      return id === placeholderId
+    }).length
+  }, 0)
+}
+
+function insertArticlePlaceholderAtSelection(wid, nid, placeholderId, savedRange) {
+  var work = getWork(wid)
+  var placeholder = (work?.placeholders || []).find(function(candidate) {
+    return String(candidate?.id || '') === String(placeholderId || '')
+  })
+  var editable = document.getElementById('ce_' + nid)
+  if (!work || !placeholder || placeholder.fillMode !== 'inline' || !editable) return false
+  if (placeholderMarkerCount(work, placeholder.id) > 0) {
+    showToast('这个占位符已经插入正文；请先移除原位置再重新插入', 'info')
+    return false
+  }
+  var selectedRange = null
+  if (savedRange && editable.contains(savedRange.commonAncestorContainer)) {
+    var selection = window.getSelection()
+    if (selection) selectedRange = {selection:selection, range:savedRange}
+  }
+  if (!selectedRange) selectedRange = rangeInsideEditable(editable)
+  if (!selectedRange) {
+    showToast('请先把光标放在正文中', 'error')
+    return false
+  }
+  var holder = document.createElement('template')
+  holder.innerHTML = buildPlaceholderEditorCardHTML(placeholder)
+  var card = holder.content.firstElementChild
+  selectedRange.range.deleteContents()
+  selectedRange.range.insertNode(card)
+  selectedRange.range.setStartAfter(card)
+  selectedRange.range.collapse(true)
+  selectedRange.selection.removeAllRanges()
+  selectedRange.selection.addRange(selectedRange.range)
+  updateNode(wid, nid, {content:serializeInteractionEditorContent(editable)})
+  refreshEditor(wid)
+  showToast('已把“' + (placeholder.label || placeholder.key || '占位符') + '”插入正文')
+  return true
+}
+
+function removeArticlePlaceholderAtEditor(wid, nid, placeholderId) {
+  var editable = document.getElementById('ce_' + nid)
+  if (!editable) return
+  editable.querySelectorAll('.article-placeholder-editor-card').forEach(function(card) {
+    if (card.dataset.articlePlaceholder === placeholderId) card.remove()
+  })
+  updateNode(wid, nid, {content:serializeInteractionEditorContent(editable)})
+  refreshEditor(wid)
+  showToast('已移除文中填写位置')
 }
 
 function rangeInsideEditable(editable) {
@@ -872,21 +984,289 @@ function placeArticleInteractionGroupAtSelection(wid, nid, groupId) {
   )
   updateNode(wid, nid, {content:serializeInteractionEditorContent(editable)})
   refreshEditor(wid)
-  showToast('普通互动已移动')
+  showToast((group.kind === ARTICLE_RANDOM_GAME_KIND ? '小游戏' : '普通互动') + '已移动')
 }
 
 function deleteArticleInteractionGroup(wid, nid, groupId) {
   var node = getNode(wid, nid)
   var group = interactionGroupById(node, groupId)
   if (!node || !group) return
-  showConfirm('删除普通互动', '确定删除“' + (group.label || '这组普通互动') + '”？选项记忆条件也会失效。', function() {
+  var kindLabel = group.kind === ARTICLE_RANDOM_GAME_KIND ? '小游戏' : '普通互动'
+  showConfirm('删除' + kindLabel, '确定删除“' + (group.label || '这组' + kindLabel) + '”？相关结果记忆与显示条件也会失效。', function() {
     updateNode(wid, nid, {
       content:removeInteractionMarkers(node.content, groupId),
       interactionGroups:(node.interactionGroups || []).filter(function(candidate) { return candidate.id !== groupId }),
     })
     refreshEditor(wid)
-    showToast('普通互动已删除')
+    showToast(kindLabel + '已删除')
   })
+}
+
+function randomGameDefaultChoices(type, minimum, maximum) {
+  if (type === 'versus') {
+    return [
+      {id:uid(), result:'win', text:'你赢了', selectedText:'这一次，你赢了。', targetId:''},
+      {id:uid(), result:'draw', text:'平局', selectedText:'这一次是平局。', targetId:''},
+      {id:uid(), result:'lose', text:'你输了', selectedText:'这一次，你输了。', targetId:''},
+    ]
+  }
+  var midpoint = Math.floor((minimum + maximum) / 2)
+  return [
+    {id:uid(), text:'较低结果', selectedText:'判定落在较低区间。', targetId:'', rangeMin:minimum, rangeMax:midpoint},
+    {id:uid(), text:'较高结果', selectedText:'判定落在较高区间。', targetId:'', rangeMin:midpoint + 1, rangeMax:maximum},
+  ]
+}
+
+function newRandomGameDraft(type) {
+  var currentType = type === 'number' || type === 'versus' ? type : 'dice'
+  var game = currentType === 'number'
+    ? {type:'number', min:1, max:100, buttonLabel:'抽取数字'}
+    : currentType === 'versus'
+      ? {type:'versus', sides:6, buttonLabel:'开始判定', opponentLabel:'对手'}
+      : {type:'dice', sides:6, buttonLabel:'掷骰子'}
+  var minimum = currentType === 'number' ? game.min : 1
+  var maximum = currentType === 'number' ? game.max : game.sides
+  return {
+    id:uid(),
+    kind:ARTICLE_RANDOM_GAME_KIND,
+    label:currentType === 'versus' ? '和角色比大小' : currentType === 'number' ? '随机数判定' : '骰子判定',
+    game:game,
+    choices:randomGameDefaultChoices(currentType, minimum, maximum),
+    legacyAdvanceOnSelect:false,
+  }
+}
+
+function randomGameTargetOptions(work, selectedId) {
+  var h = '<option value="">选择后续节点</option>'
+  ;(work?.nodes || []).forEach(function(node) {
+    if (articleNodeIsConditional(node)) return
+    h += '<option value="' + escAttr(node.id) + '"' + (node.id === selectedId ? ' selected' : '') + '>' + esc(node.title || '未命名节点') + '</option>'
+  })
+  return h
+}
+
+function randomGameOutcomeRowHTML(work, choice, type, index) {
+  var typeName = choice?.result === 'win' ? '胜利' : choice?.result === 'draw' ? '平局' : choice?.result === 'lose' ? '失败' : '结果 ' + (index + 1)
+  var h = '<article class="random-game-outcome-row" data-choice-id="' + escAttr(choice?.id || uid()) + '"' + (choice?.result ? ' data-game-result="' + escAttr(choice.result) + '"' : '') + '>'
+  h += '<div class="random-game-outcome-index"><span>' + esc(typeName) + '</span>'
+  if (type !== 'versus') h += '<button type="button" data-game-action="remove-outcome" aria-label="删除' + escAttr(typeName) + '">删除</button>'
+  h += '</div><div class="random-game-outcome-fields">'
+  if (type !== 'versus') {
+    h += '<label class="random-game-range-field"><span>结果区间</span><span class="random-game-range-inputs"><input type="number" data-game-range-min value="' + Number(choice?.rangeMin || 1) + '" aria-label="区间起点"><i aria-hidden="true">至</i><input type="number" data-game-range-max value="' + Number(choice?.rangeMax || 1) + '" aria-label="区间终点"></span></label>'
+  }
+  h += '<label><span>结果名称</span><input type="text" data-game-outcome-label value="' + escAttr(choice?.text || '') + '" placeholder="例如：大成功"></label>'
+  h += '<label class="is-wide"><span>揭晓文案</span><textarea rows="2" data-game-outcome-copy placeholder="判定后展示给读者">' + esc(choice?.selectedText || '') + '</textarea></label>'
+  h += '<label class="is-wide"><span>进入剧情</span><select data-game-target>' + randomGameTargetOptions(work, choice?.targetId || '') + '</select></label>'
+  h += '</div></article>'
+  return h
+}
+
+function randomGamePanelHTML(work, draft) {
+  var type = draft.game.type
+  var h = '<div class="random-game-panel" data-game-id="' + escAttr(draft.id) + '" data-game-type-value="' + escAttr(type) + '">'
+  h += '<header class="random-game-heading"><span class="random-game-heading-icon" aria-hidden="true">' + RANDOM_GAME_ICON + '</span><div><strong>让随机结果推动剧情</strong><small>结果只在读者主动判定后生成，并保存在当前阅读档案中。</small></div></header>'
+  h += '<div class="random-game-types" role="group" aria-label="小游戏类型">'
+  ;[['dice','掷骰判定','掷一枚骰子，按点数进入剧情'],['number','随机数','从指定范围抽取一个整数'],['versus','对抗骰','读者与角色分别掷骰比大小']].forEach(function(item) {
+    h += '<button type="button" data-game-type="' + item[0] + '" aria-pressed="' + (type === item[0] ? 'true' : 'false') + '"><strong>' + item[1] + '</strong><small>' + item[2] + '</small></button>'
+  })
+  h += '</div><section class="random-game-basics" aria-label="基本设置">'
+  h += '<label><span>互动名称</span><input type="text" data-game-label value="' + escAttr(draft.label || '') + '" placeholder="例如：命运骰"></label>'
+  h += '<label><span>按钮文字</span><input type="text" data-game-button-label value="' + escAttr(draft.game.buttonLabel || '') + '" placeholder="例如：掷骰子"></label>'
+  if (type === 'number') {
+    h += '<label><span>最小值</span><input type="number" data-game-min value="' + draft.game.min + '"></label><label><span>最大值</span><input type="number" data-game-max value="' + draft.game.max + '"></label>'
+  } else {
+    h += '<label><span>骰子面数</span><input type="number" min="2" max="100" data-game-sides value="' + draft.game.sides + '"></label>'
+    if (type === 'versus') h += '<label><span>对手名称</span><input type="text" data-game-opponent value="' + escAttr(draft.game.opponentLabel || '') + '" placeholder="例如：林秋"></label>'
+  }
+  h += '</section><div class="random-game-outcomes-head"><div><strong>结果与剧情</strong><small>' + (type === 'versus' ? '分别设置胜、平、负对应的后续节点。' : '区间必须连续覆盖全部可能结果，且不能重叠。') + '</small></div>'
+  if (type !== 'versus') h += '<button type="button" class="btn btn-sm btn-outline" data-game-action="add-outcome">添加结果</button>'
+  h += '</div><div class="random-game-outcomes">'
+  ;(draft.choices || []).forEach(function(choice, index) { h += randomGameOutcomeRowHTML(work, choice, type, index) })
+  h += '</div><div class="random-game-status" data-game-status role="status" aria-live="polite"></div>'
+  h += '<footer class="random-game-footer"><button type="button" class="btn btn-sm btn-outline" data-game-action="preview">试玩一次</button><span></span><button type="button" class="btn btn-sm btn-ghost" data-game-action="cancel">取消</button><button type="button" class="btn btn-sm btn-primary" data-game-action="save">' + (interactionGroupById(work?.nodes?.find(function(node) { return (node.interactionGroups || []).some(function(group) { return group.id === draft.id }) }), draft.id) ? '保存修改' : '插入正文') + '</button></footer></div>'
+  return h
+}
+
+function readRandomGamePanelDraft(panel) {
+  var type = panel.dataset.gameTypeValue
+  var game = {
+    type:type,
+    buttonLabel:panel.querySelector('[data-game-button-label]')?.value?.trim() || '',
+  }
+  if (type === 'number') {
+    game.min = Number(panel.querySelector('[data-game-min]')?.value)
+    game.max = Number(panel.querySelector('[data-game-max]')?.value)
+  } else {
+    game.sides = Number(panel.querySelector('[data-game-sides]')?.value)
+    if (type === 'versus') game.opponentLabel = panel.querySelector('[data-game-opponent]')?.value?.trim() || ''
+  }
+  var choices = Array.from(panel.querySelectorAll('.random-game-outcome-row')).map(function(row) {
+    var choice = {
+      id:row.dataset.choiceId || uid(),
+      text:row.querySelector('[data-game-outcome-label]')?.value?.trim() || '',
+      selectedText:row.querySelector('[data-game-outcome-copy]')?.value || '',
+      targetId:row.querySelector('[data-game-target]')?.value || '',
+    }
+    if (type === 'versus') choice.result = row.dataset.gameResult || ''
+    else {
+      choice.rangeMin = Number(row.querySelector('[data-game-range-min]')?.value)
+      choice.rangeMax = Number(row.querySelector('[data-game-range-max]')?.value)
+    }
+    return choice
+  })
+  return {
+    id:panel.dataset.gameId,
+    kind:ARTICLE_RANDOM_GAME_KIND,
+    label:panel.querySelector('[data-game-label]')?.value?.trim() || '',
+    game:game,
+    choices:choices,
+    legacyAdvanceOnSelect:false,
+  }
+}
+
+function randomGameErrorCopy(reason) {
+  var messages = {
+    'game-target-required':'请为每个结果选择后续剧情节点。',
+    'game-range-gap':'结果区间需要连续覆盖全部可能数字。',
+    'game-range-overlap':'结果区间不能互相重叠。',
+    'invalid-game-range':'随机数范围需要从小到大，且最多包含 10000 个整数。',
+    'invalid-game-sides':'骰子面数需要设置为 2 至 100。',
+    'game-versus-results-invalid':'对抗骰必须保留胜利、平局和失败三个结果。',
+  }
+  return messages[reason] || '请检查小游戏设置是否完整。'
+}
+
+function rebalanceRandomGameRanges(panel) {
+  if (!panel || panel.dataset.gameTypeValue === 'versus') return
+  var rows = Array.from(panel.querySelectorAll('.random-game-outcome-row'))
+  var minimum = panel.dataset.gameTypeValue === 'number' ? Number(panel.querySelector('[data-game-min]')?.value) : 1
+  var maximum = panel.dataset.gameTypeValue === 'number' ? Number(panel.querySelector('[data-game-max]')?.value) : Number(panel.querySelector('[data-game-sides]')?.value)
+  if (!Number.isInteger(minimum) || !Number.isInteger(maximum) || minimum > maximum || maximum - minimum + 1 < rows.length) return
+  var span = maximum - minimum + 1
+  var cursor = minimum
+  rows.forEach(function(row, index) {
+    var remainingRows = rows.length - index
+    var remainingValues = maximum - cursor + 1
+    var size = Math.ceil(remainingValues / remainingRows)
+    row.querySelector('[data-game-range-min]').value = String(cursor)
+    row.querySelector('[data-game-range-max]').value = String(cursor + size - 1)
+    cursor += size
+  })
+}
+
+function openRandomGamePanel(wid, nid, groupId) {
+  var work = getWork(wid)
+  var node = getNode(wid, nid)
+  var editable = document.getElementById('ce_' + nid)
+  if (!work || !node || !editable || articleNodeIsConditional(node) || isInteractiveSceneNode(node)) return
+  var existing = groupId ? interactionGroupById(node, groupId) : null
+  if (groupId && existing?.kind !== ARTICLE_RANDOM_GAME_KIND) return
+  var selectedRange = !existing ? rangeInsideEditable(editable)?.range?.cloneRange() : null
+  if (!existing && !selectedRange) {
+    showToast('请先把光标放在正文中', 'error')
+    return
+  }
+  var draft = existing ? structuredClone(existing) : newRandomGameDraft('dice')
+  var overlay = modal('小游戏', randomGamePanelHTML(work, draft), '')
+  overlay.querySelector('.modal')?.classList.add('random-game-dialog')
+
+  function replacePanel(nextDraft) {
+    var current = overlay.querySelector('.random-game-panel')
+    var holder = document.createElement('template')
+    holder.innerHTML = randomGamePanelHTML(work, nextDraft)
+    current.replaceWith(holder.content.firstElementChild)
+  }
+
+  overlay.onchange = function(event) {
+    if (!event.target.matches?.('[data-game-sides],[data-game-min],[data-game-max]')) return
+    rebalanceRandomGameRanges(overlay.querySelector('.random-game-panel'))
+  }
+
+  overlay.onclick = function(event) {
+    var typeButton = event.target.closest('[data-game-type]')
+    if (typeButton) {
+      var currentDraft = readRandomGamePanelDraft(overlay.querySelector('.random-game-panel'))
+      if (typeButton.dataset.gameType === currentDraft.game.type) return
+      var nextDraft = newRandomGameDraft(typeButton.dataset.gameType)
+      nextDraft.id = currentDraft.id
+      nextDraft.label = currentDraft.label || nextDraft.label
+      replacePanel(nextDraft)
+      return
+    }
+    var button = event.target.closest('[data-game-action]')
+    if (!button) return
+    var panel = overlay.querySelector('.random-game-panel')
+    var action = button.dataset.gameAction
+    if (action === 'cancel') return overlay.closeModal('cancel')
+    if (action === 'remove-outcome') {
+      if (panel.querySelectorAll('.random-game-outcome-row').length <= 2) {
+        panel.querySelector('[data-game-status]').textContent = '至少保留两个结果。'
+        return
+      }
+      button.closest('.random-game-outcome-row')?.remove()
+      rebalanceRandomGameRanges(panel)
+      return
+    }
+    if (action === 'add-outcome') {
+      var outcomes = panel.querySelector('.random-game-outcomes')
+      var type = panel.dataset.gameTypeValue
+      outcomes.insertAdjacentHTML('beforeend', randomGameOutcomeRowHTML(work, {
+        id:uid(), text:'新结果', selectedText:'', targetId:'', rangeMin:1, rangeMax:1,
+      }, type, outcomes.children.length))
+      rebalanceRandomGameRanges(panel)
+      outcomes.lastElementChild?.querySelector('[data-game-outcome-label]')?.focus()
+      return
+    }
+    var candidate = readRandomGamePanelDraft(panel)
+    var normalized = normalizeArticleRandomGame(candidate)
+    var status = panel.querySelector('[data-game-status]')
+    if (!normalized.ok) {
+      status.textContent = randomGameErrorCopy(normalized.reason)
+      status.dataset.state = 'error'
+      return
+    }
+    if (action === 'preview') {
+      var preview = playArticleRandomGame(normalized.group)
+      if (!preview) {
+        status.textContent = '当前浏览器暂时无法生成安全随机数。'
+        status.dataset.state = 'error'
+        return
+      }
+      status.textContent = preview.roll.type === 'versus'
+        ? '试玩结果：你掷出 ' + preview.roll.player + '，' + normalized.group.game.opponentLabel + '掷出 ' + preview.roll.opponent + '；' + preview.choice.text
+        : '试玩结果：' + preview.roll.value + '；' + preview.choice.text
+      status.dataset.state = 'success'
+      return
+    }
+    if (action !== 'save') return
+    var latestNode = getNode(wid, nid)
+    var latestEditable = document.getElementById('ce_' + nid)
+    if (!latestNode || !latestEditable) return
+    if (existing) {
+      updateNode(wid, nid, {
+        interactionGroups:(latestNode.interactionGroups || []).map(function(group) {
+          return group.id === normalized.group.id ? normalized.group : group
+        }),
+      })
+    } else {
+      var rangeSelection = window.getSelection()
+      if (!rangeSelection || !selectedRange || !latestEditable.contains(selectedRange.commonAncestorContainer)) {
+        status.textContent = '正文位置已经变化，请关闭面板后重新插入。'
+        status.dataset.state = 'error'
+        return
+      }
+      var selectionState = {selection:rangeSelection, range:selectedRange}
+      var groups = (latestNode.interactionGroups || []).concat([normalized.group])
+      insertInteractionCardAtRange(latestEditable, normalized.group, groups.length - 1, selectionState)
+      updateNode(wid, nid, {
+        content:serializeInteractionEditorContent(latestEditable),
+        interactionGroups:groups,
+      })
+    }
+    overlay.closeModal('save')
+    refreshEditor(wid)
+    showToast(existing ? '小游戏已保存' : '小游戏已插入正文')
+  }
 }
 
 function interactionChoiceRowHTML(choice, index) {
@@ -1245,7 +1625,7 @@ document.addEventListener("click", handleClick)
 document.addEventListener("change", handleChange)
 document.addEventListener("pointerdown", function(event) {
   var button = event.target.closest?.('[data-a]')
-  if (button && (FORMAT_COMMANDS[button.dataset.a] || button.dataset.a === "ig" || button.dataset.a === "place-ig")) event.preventDefault()
+  if (button && (FORMAT_COMMANDS[button.dataset.a] || button.dataset.a === "ph" || button.dataset.a === "ig" || button.dataset.a === "game" || button.dataset.a === "place-ig")) event.preventDefault()
 })
 document.addEventListener("selectionchange", syncEditorFormatButtons)
 document.addEventListener("keyup", function(event) { if (event.target.closest?.('.content-editable')) syncEditorFormatButtons() })
@@ -1287,7 +1667,10 @@ function handleClick(e) {
   }
   var interactionCard = e.target.closest?.(".article-interaction-editor-card")
   if (interactionCard && !e.target.closest("[data-a]")) {
-    openInteractionGroupPanel(_workId, interactionCard.closest(".content-editable")?.dataset.n || _nodeId, interactionCard.dataset.articleInteractionGroup)
+    var cardNodeId = interactionCard.closest(".content-editable")?.dataset.n || _nodeId
+    var cardGroup = interactionGroupById(getNode(_workId, cardNodeId), interactionCard.dataset.articleInteractionGroup)
+    if (cardGroup?.kind === ARTICLE_RANDOM_GAME_KIND) openRandomGamePanel(_workId, cardNodeId, cardGroup.id)
+    else openInteractionGroupPanel(_workId, cardNodeId, interactionCard.dataset.articleInteractionGroup)
     return
   }
   var phoneModuleCard = e.target.closest(".pm-inline-card")
@@ -1514,6 +1897,10 @@ function handleClick(e) {
     openPlaceholderPanel(w)
     return
   }
+  if (a === "delete-ph-marker") {
+    removeArticlePlaceholderAtEditor(w, n, b.dataset.pid || '')
+    return
+  }
   if (a === "ch") {
     if (articleNodeIsConditional(getNode(w, _nodeId))) {
       showToast("隐藏节点不能设置选项", "error")
@@ -1530,8 +1917,18 @@ function handleClick(e) {
     insertArticleInteractionGroup(w, _nodeId)
     return
   }
+  if (a === "game") {
+    if (articleNodeIsConditional(getNode(w, _nodeId))) {
+      showToast("隐藏节点不能设置小游戏", "error")
+      return
+    }
+    openRandomGamePanel(w, _nodeId)
+    return
+  }
   if (a === "edit-ig") {
-    openInteractionGroupPanel(w, n, b.dataset.gid)
+    var editingGroup = interactionGroupById(getNode(w, n), b.dataset.gid)
+    if (editingGroup?.kind === ARTICLE_RANDOM_GAME_KIND) openRandomGamePanel(w, n, b.dataset.gid)
+    else openInteractionGroupPanel(w, n, b.dataset.gid)
     return
   }
   if (a === "move-ig") {
@@ -1923,18 +2320,29 @@ var HELP_ICON_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"
 
 var PH_TUTORIAL = '' +
 '<div class="ph-tutorial"><b>占位符使用说明</b>' +
-'<p>占位符用于在导出 HTML 时替换正文中的特定文字，让每个读者获得个性化的阅读体验。</p>' +
+'<p>占位符用于在读者端替换正文中的特定文字，让每个读者获得个性化的阅读体验。</p>' +
 '<p><b>全文替换 (each)：</b>全文所有出现处统一替换为读者所填的同一个值。适合姓名、昵称等。</p>' +
 '<p><b>随机替换 (random)：</b>每次出现时从读者填写的值池中随机选一个。适合"喜欢的颜色"这类可能有多个答案的问题。</p>' +
 '<p><b>场景锁定 (scene)：</b>每个“场景标签”固定一个值。节点顶部选择同一个场景时会保持一致；它与作品结构里的章节不是同一项。</p>' +
 '<p><b>标记 (key)：</b>正文中要被替换的文字。作者自定义，如"某某"、"1"等，在正文中写入这些标记即可。</p>' +
 '<p><b>问题 (prompt)：</b>对读者提出的问题。如"你的名字？"</p>' +
+'<p><b>填写位置：</b>“阅读前填写”会在作品开场集中询问；“文中填写”需要把占位符插入正文，读者保存后才会继续看到后文。</p>' +
 '<p><b>违禁词：</b>设置后读者不可填写这些内容。</p>' +
 '<p>点击"添加 NAME 预设"一键创建姓名/昵称/网名三个占位符。</p></div>'
 
 function openPlaceholderPanel(wid) {
   var w = getWork(wid)
   if (!w) return
+  var placeholderInsertNodeId = _nodeId
+  var placeholderInsertRange = null
+  var placeholderEditable = document.getElementById('ce_' + placeholderInsertNodeId)
+  var placeholderSelection = typeof window.getSelection === 'function' ? window.getSelection() : null
+  if (placeholderEditable && placeholderSelection?.rangeCount) {
+    var activeRange = placeholderSelection.getRangeAt(0)
+    if (placeholderEditable.contains(activeRange.commonAncestorContainer)) {
+      placeholderInsertRange = activeRange.cloneRange()
+    }
+  }
   var phs = w.placeholders || []
   var globalForbidden = parseForbiddenWords(w.globalForbidden)
   var authorPresets = readAuthorPlaceholderPresets()
@@ -1966,7 +2374,7 @@ function openPlaceholderPanel(wid) {
   }
   for (var i = 0; i < phs.length; i++) {
     var ph = phs[i]
-    body += buildPhCard(ph, globalForbidden)
+    body += buildPhCard(ph, globalForbidden, placeholderMarkerCount(w, ph.id) > 0)
   }
   body += '</div>'
 
@@ -2004,6 +2412,7 @@ function openPlaceholderPanel(wid) {
           key: document.getElementById('ph_key_' + ph.id)?.value?.trim() || ph.key || '',
           prompt: document.getElementById('ph_prompt_' + ph.id)?.value?.trim() || ph.prompt || '',
           mode: document.getElementById('ph_mode_' + ph.id)?.value || ph.mode || 'each',
+          fillMode: document.getElementById('ph_fill_' + ph.id)?.value === 'inline' ? 'inline' : 'landing',
           forbidden: parseForbiddenWords(card.querySelector('[data-ph-forbidden]')?.value)
         })
       })
@@ -2068,6 +2477,7 @@ function openPlaceholderPanel(wid) {
             key:placeholder.key,
             prompt:placeholder.prompt,
             mode:placeholder.mode,
+            fillMode:placeholder.fillMode,
             forbidden:dedupeForbiddenWords(placeholder.forbidden),
           })
         })
@@ -2136,6 +2546,7 @@ function openPlaceholderPanel(wid) {
       if (act === 'delete' && pid) {
         showConfirm('删除占位符', '确定删除此占位符？', function() {
           deletePlaceholder(wid, pid)
+          removePlaceholderEditorCards(pid)
           refreshPhList(wid, ov)
         })
         return
@@ -2143,6 +2554,23 @@ function openPlaceholderPanel(wid) {
       if (act === 'save' && pid) {
         savePhCard(wid, pid)
         refreshPhList(wid, ov)
+        return
+      }
+      if (act === 'insert-inline' && pid) {
+        savePhCard(wid, pid)
+        var inlinePlaceholder = (getWork(wid)?.placeholders || []).find(function(placeholder) {
+          return String(placeholder?.id || '') === String(pid)
+        })
+        if (inlinePlaceholder?.fillMode !== 'inline') {
+          showToast('请先把填写位置改为“文中填写”', 'error')
+          return
+        }
+        if (insertArticlePlaceholderAtSelection(
+          wid,
+          placeholderInsertNodeId,
+          pid,
+          placeholderInsertRange,
+        )) ov.remove()
         return
       }
     })
@@ -2179,7 +2607,7 @@ function buildInheritedForbiddenSummary(words) {
   return h
 }
 
-function buildPhCard(ph, globalForbidden) {
+function buildPhCard(ph, globalForbidden, inserted) {
   var fw = parseForbiddenWords(ph.forbidden)
   var h = '<div class="ph-card" data-ph-id="' + ph.id + '">'
   h += '<div class="ph-card-head">'
@@ -2201,6 +2629,10 @@ function buildPhCard(ph, globalForbidden) {
     h += '<option value="' + m.value + '"' + (ph.mode === m.value ? ' selected' : '') + '>' + m.label + '</option>'
   }
   h += '</select>'
+  h += '<label>填写位置</label><select class="ph-select" id="ph_fill_' + ph.id + '">'
+  h += '<option value="landing"' + (ph.fillMode === 'inline' ? '' : ' selected') + '>阅读前集中填写</option>'
+  h += '<option value="inline"' + (ph.fillMode === 'inline' ? ' selected' : '') + '>文中填写</option>'
+  h += '</select>'
   h += '</div>'
   // Row 3: forbidden words
   h += '<div class="ph-row">'
@@ -2210,6 +2642,7 @@ function buildPhCard(ph, globalForbidden) {
   h += buildInheritedForbiddenSummary(globalForbidden)
   // Save button
   h += '<div class="ph-row ph-row-end">'
+  h += '<button class="btn btn-sm btn-outline" data-ph-a="insert-inline"' + (inserted ? ' disabled title="正文中已有填写位置"' : '') + '>' + (inserted ? '已插入正文' : '插入正文光标处') + '</button>'
   h += '<button class="btn btn-sm btn-primary" data-ph-a="save">保存</button>'
   h += '</div>'
   h += '</div>'
@@ -2222,15 +2655,32 @@ function savePhCard(wid, pid) {
   var keyEl = document.getElementById('ph_key_' + pid)
   var promptEl = document.getElementById('ph_prompt_' + pid)
   var modeEl = document.getElementById('ph_mode_' + pid)
+  var fillModeEl = document.getElementById('ph_fill_' + pid)
   var forbiddenEl = document.getElementById('ph_forbidden_' + pid)
+  var fillMode = fillModeEl?.value === 'inline' ? 'inline' : 'landing'
   updatePlaceholder(wid, pid, {
     label: (labelEl?.value || '').trim() || '占位符',
     key: (keyEl?.value || '').trim(),
     prompt: (promptEl?.value || '').trim(),
     mode: modeEl?.value || 'each',
+    fillMode: fillMode,
     forbidden: parseForbiddenWords(forbiddenEl?.value),
   })
+  if (fillMode === 'landing') {
+    var work = getWork(wid)
+    ;(work?.nodes || []).forEach(function(node) {
+      var content = removeArticlePlaceholderMarkers(node?.content || '', pid)
+      if (content !== String(node?.content || '')) updateNode(wid, node.id, {content:content})
+    })
+    removePlaceholderEditorCards(pid)
+  }
   showToast('已保存')
+}
+
+function removePlaceholderEditorCards(placeholderId) {
+  document.querySelectorAll('.article-placeholder-editor-card').forEach(function(card) {
+    if (card.dataset.articlePlaceholder === placeholderId) card.remove()
+  })
 }
 
 function refreshPhList(wid, overlay) {
@@ -2244,7 +2694,7 @@ function refreshPhList(wid, overlay) {
     h = '<div class="ph-empty">暂无占位符。点击上方按钮添加。</div>'
   }
   for (var i = 0; i < phs.length; i++) {
-    h += buildPhCard(phs[i], globalForbidden)
+    h += buildPhCard(phs[i], globalForbidden, placeholderMarkerCount(w, phs[i].id) > 0)
   }
   listEl.innerHTML = h
 }

@@ -8,6 +8,20 @@ import {
   selectedArticleInteractionChoice,
 } from "../js/article-interaction-memory.js"
 
+test("random-game selections retain bounded roll details", () => {
+  const memory = recordArticleInteractionSelection({}, "game-a", "node-a", "win", {
+    type:"versus",
+    player:6,
+    opponent:2,
+    sides:6,
+  })
+  assert.deepEqual(memory["game-a"], {
+    nodeId:"node-a",
+    choiceId:"win",
+    gameResult:{type:"versus", player:6, opponent:2, sides:6},
+  })
+})
+
 test("selections from two ordinary groups in one node coexist", () => {
   let memory = recordArticleInteractionSelection({}, "group-a", "node-a", "choice-a")
   memory = recordArticleInteractionSelection(memory, "group-b", "node-a", "choice-b")
