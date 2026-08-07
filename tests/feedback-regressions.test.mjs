@@ -62,7 +62,7 @@ test("Moments use message identity avatars in author and reader views", async ()
   ])
 
   assert.match(author, /var momentAvatar = contactAvatar\(c, 'messages'\)/)
-  assert.match(reader, /resolveContactIdentity\(pd, moment\.contactId, \{ surface: 'messages'/)
+  assert.match(reader, /resolveReaderContactIdentity\(pd, moment\.contactId, \{ surface: 'messages'/)
   assert.match(reader, /momentIdentity\.avatar/)
 })
 

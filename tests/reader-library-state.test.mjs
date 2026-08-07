@@ -237,6 +237,17 @@ test("phone reading positions are bounded and legacy progress remains compatible
   library = saveReaderProgress(library, "work-a", {
     kind:"phone",
     flowIndex:3,
+    friendRequestResponses:{
+      "request-a":"accepted",
+      "request-b":"declined",
+      "request-invalid":"later",
+    },
+    contactRemarks:{
+      "contact-a":"  阿澈  ",
+      "contact-b":"",
+      "contact-c":42,
+      "constructor":"不能写入",
+    },
     readingPosition:{
       kind:"phone",
       appType:"messages",
@@ -258,12 +269,21 @@ test("phone reading positions are bounded and legacy progress remains compatible
     anchorId:"message-8",
     anchorOffset:36,
   })
+  assert.deepEqual(readerBook(library, "work-a").progress.friendRequestResponses, {
+    "request-a":"accepted",
+    "request-b":"declined",
+  })
+  assert.deepEqual(readerBook(library, "work-a").progress.contactRemarks, {
+    "contact-a":"阿澈",
+  })
 
   const legacy = saveReaderProgress(library, "work-a", {
     kind:"phone",
     flowIndex:4,
   }, 120)
   assert.equal(readerBook(legacy, "work-a").progress.readingPosition, null)
+  assert.deepEqual(readerBook(legacy, "work-a").progress.friendRequestResponses, {})
+  assert.deepEqual(readerBook(legacy, "work-a").progress.contactRemarks, {})
 
   const invalid = saveReaderProgress(library, "work-a", {
     kind:"phone",

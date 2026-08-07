@@ -718,13 +718,13 @@ test("scene selection persists on change without a click double-write", async ()
   }
 })
 
-test("word count consistently measures visible text and keeps its label", async () => {
+test("word count consistently measures current and total visible article text", async () => {
   const cases = [
-    ["", "0 字"],
-    ["<strong>甲乙</strong>", "2 字"],
-    ["甲<br>乙", "2 字"],
-    ["甲 乙", "3 字"],
-    ["&amp;&nbsp;", "2 字"],
+    ["", "0"],
+    ["<strong>甲乙</strong>", "2"],
+    ["甲<br>乙", "2"],
+    ["甲 乙", "3"],
+    ["&amp;&nbsp;", "2"],
   ]
 
   for (const [index, [content, expected]] of cases.entries()) {
@@ -732,23 +732,32 @@ test("word count consistently measures visible text and keeps its label", async 
     work.nodes[0].content = content
     seed(work)
     const root = await render(work.id)
-    assert.equal(root.querySelector(".word-count").textContent, expected)
+    assert.equal(root.querySelector("[data-word-count-current]").textContent, expected)
+    assert.equal(root.querySelector("[data-word-count-total]").textContent, expected)
   }
 
-  const work = article("word-count-live", [{ id: "word-count-live-node" }])
+  const work = article("word-count-live", [
+    { id: "word-count-live-node" },
+    { id: "word-count-other-node" },
+  ])
   work.nodes[0].content = "<strong>甲乙</strong>"
+  work.nodes[1].content = "<p>丙丁戊</p>"
   seed(work)
   const root = await render(work.id)
   const editable = root.querySelector(".content-editable")
   const count = root.querySelector(".word-count")
 
-  assert.equal(count.textContent, "2 字")
+  assert.equal(count.querySelector("[data-word-count-current]").textContent, "2")
+  assert.equal(count.querySelector("[data-word-count-total]").textContent, "5")
+  assert.equal(count.getAttribute("aria-label"), "本节 2 字，全文 5 字")
 
   editable.innerHTML = "<em>甲</em><br>乙&amp;&nbsp;"
   editable.dispatchEvent(new dom.window.Event("input", { bubbles: true }))
   await new Promise(resolve => setTimeout(resolve, 220))
 
-  assert.equal(count.textContent, "4 字")
+  assert.equal(count.querySelector("[data-word-count-current]").textContent, "4")
+  assert.equal(count.querySelector("[data-word-count-total]").textContent, "7")
+  assert.equal(count.getAttribute("aria-label"), "本节 4 字，全文 7 字")
   const saved = JSON.parse(localStorage.getItem("tuuru_works"))
   assert.equal(saved.works[0].nodes[0].content, "<em>甲</em><br>乙&amp;&nbsp;")
   assert.doesNotMatch(editorSource, /ce\.innerText/)

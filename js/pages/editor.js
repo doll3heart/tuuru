@@ -149,8 +149,32 @@ function countEditorCharacters(value) {
   return (value?.textContent || "").length
 }
 
-function formatEditorCharacterCount(value) {
-  return countEditorCharacters(value) + " 字"
+function editorCharacterStats(work, nodeId, currentValue) {
+  var current = countEditorCharacters(currentValue)
+  var total = (work?.nodes || []).reduce(function(sum, node) {
+    return sum + (node?.id === nodeId ? current : countEditorCharacters(node?.content || ""))
+  }, 0)
+  return {current:current, total:total}
+}
+
+function editorWordCountHTML(work, node, currentValue) {
+  var stats = editorCharacterStats(work, node?.id, currentValue)
+  var label = "本节 " + stats.current + " 字，全文 " + stats.total + " 字"
+  return '<span class="word-count" id="wc_' + node.id + '" aria-label="' + label + '" title="' + label + '"><span class="word-count-label" aria-hidden="true">本节</span> <span data-word-count-current>' + stats.current.toLocaleString("zh-CN") + '</span><span class="word-count-separator" aria-hidden="true">·</span><span class="word-count-label" aria-hidden="true">全文</span> <span data-word-count-total>' + stats.total.toLocaleString("zh-CN") + '</span></span>'
+}
+
+function updateEditorWordCount(workId, nodeId, currentValue) {
+  var work = getWork(workId)
+  var count = document.getElementById("wc_" + nodeId)
+  if (!work || !count) return
+  var stats = editorCharacterStats(work, nodeId, currentValue)
+  var current = count.querySelector("[data-word-count-current]")
+  var total = count.querySelector("[data-word-count-total]")
+  if (current) current.textContent = stats.current.toLocaleString("zh-CN")
+  if (total) total.textContent = stats.total.toLocaleString("zh-CN")
+  var label = "本节 " + stats.current + " 字，全文 " + stats.total + " 字"
+  count.setAttribute("aria-label", label)
+  count.title = label
 }
 
 function showPrompt(title, placeholder, cb, onCancel) {
@@ -560,7 +584,7 @@ function buildHeader(w, n) {
   h += '<option value="__add_scene__">＋ 新建场景…</option>'
   h += '</select>'
   h += '</div>'
-  h += '<span class="word-count" id="wc_' + n.id + '">' + formatEditorCharacterCount(n.content || '') + '</span>'
+  h += editorWordCountHTML(w, n, n.content || '')
   h += '</div>'
   return h
 }
@@ -3760,8 +3784,7 @@ function openPhoneAppModalForCard(wid, nid, pmid, type, def, onClose) {
 function persistEditableContent(ce) {
   if (!ce || !_workId || !_nodeId) return
   updateNode(_workId, _nodeId, {content: ce.innerHTML})
-  var wc = document.getElementById("wc_" + _nodeId)
-  if (wc) wc.textContent = formatEditorCharacterCount(ce)
+  updateEditorWordCount(_workId, _nodeId, ce)
 }
 
 function runHistoryCommand(cmd) {
@@ -3978,8 +4001,7 @@ document.addEventListener("input", function(e) {
   _editorPersistence.schedule("node:" + contentWorkId + ":" + nid, function() {
     updateNode(contentWorkId, nid, {content:contentValue})
   })
-  var wc = document.getElementById("wc_" + nid)
-  if (wc) wc.textContent = formatEditorCharacterCount(ce)
+  updateEditorWordCount(contentWorkId, nid, ce)
 })
 
 globalThis.addEventListener?.("pagehide", function() {

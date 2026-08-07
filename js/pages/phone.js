@@ -14,6 +14,8 @@ import { showToast, renderHeader, modal } from "../app.js"
 import { buildPhoneReadingFlowSequence, expandPhoneReadingFlowSequence, reorderPhoneReadingFlowSequence } from "../phone-reading-flow.js"
 import { contactAvatar, contactDisplayName, listForumIdentities, resolveContactIdentity } from "../contact-identity.js"
 import { normalizeContactSortMode, orderedContacts, reorderContacts } from "../contact-order.js"
+import { createContactFriendRequest } from "../contact-friend-request.js"
+import { CHAT_REPLY_PACES, normalizeChatReplyPace } from "../chat-reply-pace.js"
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from "../message-card-links.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
@@ -627,6 +629,32 @@ export function openPhoneAppModal(wid, appType, options = {}) {
   return ov
 }
 
+function openContactFriendRequestOffer(phoneData, contact, onCreate) {
+  var contactName = contact && contact.name || '这位联系人'
+  var requestModal = modal(
+    '创建好友申请',
+    '<div data-contact-friend-request-dialog><p class="ct-friend-request-intro">让' + esc(contactName) + '向读者发送好友申请，并把它加入阅读流程。</p><label class="form-group"><span class="form-label">验证消息（可选）</span><textarea class="form-textarea" data-contact-friend-request-note placeholder="例如：我是林雾，昨晚见过。"></textarea></label><p class="ct-friend-request-note">读者需要选择同意或拒绝后，剧情才会继续。</p></div>',
+    '<button type="button" class="btn btn-primary btn-sm" data-contact-friend-request-create>创建申请</button><button type="button" class="btn btn-ghost btn-sm" data-contact-friend-request-skip>暂不创建</button>',
+  )
+  requestModal.querySelector('[data-contact-friend-request-create]').onclick = function() {
+    var result = createContactFriendRequest(phoneData, contact.id, {
+      verificationText:requestModal.querySelector('[data-contact-friend-request-note]').value,
+      createId:uid,
+    })
+    if (!result.created) {
+      showToast('好友申请创建失败')
+      return
+    }
+    if (typeof onCreate === 'function') onCreate(result)
+    requestModal.remove()
+  }
+  requestModal.querySelector('[data-contact-friend-request-skip]').onclick = function() {
+    requestModal.remove()
+  }
+  requestModal.querySelector('[data-contact-friend-request-note]').focus()
+  return requestModal
+}
+
 function renderContactsModal(frame, wid, pd) {
   var contacts = pd.contacts || []
   pd.contactSortMode = normalizeContactSortMode(pd.contactSortMode)
@@ -706,9 +734,16 @@ function renderContactsModal(frame, wid, pd) {
           okBtn.onclick = function() {
             var name = inputEl.value.trim()
             if (!name) return
-            contacts.push({ id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', note: '', faceUrl: '', msgId: '', forumId: '', pinned:false })
+            var contact = { id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', note: '', faceUrl: '', msgId: '', forumId: '', pinned:false }
+            contacts.push(contact)
             saveAndRefresh()
             ov.remove()
+            openContactFriendRequestOffer(pd, contact, function(result) {
+              pd.chats = result.phoneData.chats
+              pd.readingFlow = result.phoneData.readingFlow
+              persist()
+              showToast('好友申请已加入阅读流程')
+            })
           }
           inputEl.onkeydown = function(e) { if (e.key === 'Enter') okBtn.click() }
         }
@@ -2232,6 +2267,7 @@ function openContactsPanel(wid) {
   frame.dataset._ctContacts = JSON.stringify(contacts)
   frame.dataset._ctSortMode = sortMode
   frame.dataset._wid = wid
+  delete frame.dataset._ctPendingPhoneData
 
   var h = '<div class="cu-panel pf-panel cu-panel-embedded" id="ctPanel">'
   h += '<div class="cu-header"><span class="cu-title">联系人</span><button id="ctClose" class="cu-close-btn">&times;</button></div>'
@@ -2305,6 +2341,7 @@ function bindCtEvents(desktop, wid, contacts) {
     desktop.style.pointerEvents = 'none'
     desktop.innerHTML = desktop.dataset._origHTML || ''
     delete desktop.dataset._origHTML
+    delete desktop.dataset._ctPendingPhoneData
     void desktop.offsetHeight
     setTimeout(function() {
       desktop.style.pointerEvents = ''
@@ -2323,6 +2360,15 @@ function bindCtEvents(desktop, wid, contacts) {
       if (!w) return
       w.phoneData.contacts = contacts.slice()
       w.phoneData.contactSortMode = normalizeContactSortMode(desktop.dataset._ctSortMode)
+      if (desktop.dataset._ctPendingPhoneData) {
+        try {
+          var pendingPhoneData = JSON.parse(desktop.dataset._ctPendingPhoneData)
+          if (Array.isArray(pendingPhoneData.chats)) w.phoneData.chats = pendingPhoneData.chats
+          if (pendingPhoneData.readingFlow && typeof pendingPhoneData.readingFlow === 'object') {
+            w.phoneData.readingFlow = pendingPhoneData.readingFlow
+          }
+        } catch (_) {}
+      }
       updateWork(wid, { phoneData: w.phoneData })
       showToast('联系人已保存')
       restore()
@@ -2488,10 +2534,30 @@ function bindCtEvents(desktop, wid, contacts) {
         okBtn.onclick = function() {
           var name = inputEl.value.trim()
           if (!name) return
-          contacts.push({ id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', pinned:false, note: '', faceUrl:'', msgId:'', forumId: '' })
+          var contact = { id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', pinned:false, note: '', faceUrl:'', msgId:'', forumId: '' }
+          contacts.push(contact)
           setCtAt(contacts)
           reloadCt()
           ov.remove()
+          var currentWork = getWork(wid)
+          var friendRequestPhoneData = currentWork && currentWork.phoneData
+            ? JSON.parse(JSON.stringify(currentWork.phoneData))
+            : { contacts:[], chats:[], readingFlow:{ enabled:false, sequence:[] } }
+          if (desktop.dataset._ctPendingPhoneData) {
+            try {
+              var pending = JSON.parse(desktop.dataset._ctPendingPhoneData)
+              friendRequestPhoneData.chats = pending.chats
+              friendRequestPhoneData.readingFlow = pending.readingFlow
+            } catch (_) {}
+          }
+          friendRequestPhoneData.contacts = contacts.slice()
+          openContactFriendRequestOffer(friendRequestPhoneData, contact, function(result) {
+            desktop.dataset._ctPendingPhoneData = JSON.stringify({
+              chats:result.phoneData.chats,
+              readingFlow:result.phoneData.readingFlow,
+            })
+            showToast('好友申请已准备，保存联系人后生效')
+          })
         }
         inputEl.onkeydown = function(e) { if (e.key === 'Enter') okBtn.click() }
       }
@@ -6530,6 +6596,38 @@ function openChatEditor(frame, wid, chatId, pd) {
       ov.querySelector('#chatActionCancel').onclick = function() { ov.remove() }
     }
 
+    function showReplyPaceEditor(message) {
+      var choices = Array.isArray(message && message.choices) ? message.choices : []
+      if (!choices.length) return
+      var body = '<div class="chat-reply-pace-editor">'
+      body += '<p class="chat-reply-pace-intro">读者选择后，角色消息会按这里的节奏出现。每个选项可以单独设置。</p>'
+      choices.forEach(function(choice, index) {
+        var choiceLabel = String(choice && (choice.text || choice.replyText) || '').trim() || ('选项 ' + (index + 1))
+        body += '<div class="chat-reply-pace-row">'
+        body += '<label for="chatReplyPace' + index + '"><span>选择“' + esc(choiceLabel) + '”后</span><small>角色回复节奏</small></label>'
+        body += '<select id="chatReplyPace' + index + '" class="chat-reply-pace-select form-select" data-reply-pace-index="' + index + '">'
+        body += CHAT_REPLY_PACES.map(function(option) {
+          return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(choice.replyPace) ? ' selected' : '') + '>' + option.label + '</option>'
+        }).join('')
+        body += '</select></div>'
+      })
+      body += '<p class="chat-reply-pace-hint">除“直接出现”外，读者会先看到角色正在输入；有角色后续回复时生效。</p></div>'
+      var ov = modal('设置回复节奏', body,
+        '<button id="chatReplyPaceSave" class="btn btn-primary btn-sm">保存</button><button id="chatReplyPaceCancel" class="btn btn-ghost btn-sm">取消</button>')
+      ov.querySelector('#chatReplyPaceSave').onclick = function() {
+        ov.querySelectorAll('.chat-reply-pace-select').forEach(function(select) {
+          var index = Number(select.dataset.replyPaceIndex)
+          if (!Number.isInteger(index) || !choices[index]) return
+          choices[index].replyPace = normalizeChatReplyPace(select.value)
+        })
+        save()
+        ov.remove()
+        renderChat()
+      }
+      ov.querySelector('#chatReplyPaceCancel').onclick = function() { ov.remove() }
+      ov.querySelector('.chat-reply-pace-select')?.focus()
+    }
+
     // Context menu for messages (PC right-click / mobile long-press)
     var msgArea = frame.querySelector('#chatMsgArea')
     if (msgArea) {
@@ -6624,6 +6722,13 @@ function openChatEditor(frame, wid, chatId, pd) {
           ov.querySelector('#editMsgCancel').onclick = function() { ov.remove() }
         })
 
+        if (Array.isArray(msg.choices) && msg.choices.length > 0) {
+          var paceItem = addItem('设置回复节奏', function() {
+            showReplyPaceEditor(msg)
+          })
+          paceItem.dataset.chatAction = 'reply-pace'
+        }
+
         addItem('引用', function() {
           var qId = msg.id
           var qText = chatMessageQuoteSummary(msg)
@@ -6711,11 +6816,12 @@ function openChatEditor(frame, wid, chatId, pd) {
                 id: c.id || '',
                 text: c.text || '',
                 replyText: c.replyText || '',
+                replyPace: normalizeChatReplyPace(c.replyPace),
                 followUpLines: c.followUpMessages ? c.followUpMessages.map(function(fm) { return fm.text || fm.content || '' }).join('\n') : ''
               })
             })
           }
-          if (choiceGroups.length === 0) choiceGroups.push({ id: '', text: '', replyText: '', followUpLines: '' })
+          if (choiceGroups.length === 0) choiceGroups.push({ id: '', text: '', replyText: '', replyPace: 'normal', followUpLines: '' })
 
           function renderGroups() {
             var listEl = document.getElementById('chGroupsList')
@@ -6724,10 +6830,12 @@ function openChatEditor(frame, wid, chatId, pd) {
             var curTexts = listEl.querySelectorAll('.ch-grp-text')
             var curReplies = listEl.querySelectorAll('.ch-grp-reply')
             var curFollows = listEl.querySelectorAll('.ch-grp-follow')
+            var curPaces = listEl.querySelectorAll('.ch-grp-pace')
             for (var si = 0; si < curTexts.length && si < choiceGroups.length; si++) {
               choiceGroups[si].text = curTexts[si].value || ''
               choiceGroups[si].replyText = curReplies[si] ? curReplies[si].value : ''
               choiceGroups[si].followUpLines = curFollows[si] ? curFollows[si].value : ''
+              choiceGroups[si].replyPace = curPaces[si] ? normalizeChatReplyPace(curPaces[si].value) : 'instant'
             }
             var h = ''
             for (var gi = 0; gi < choiceGroups.length; gi++) {
@@ -6740,6 +6848,9 @@ function openChatEditor(frame, wid, chatId, pd) {
               h += '<input class="ch-grp-reply" value="' + esc(g.replyText) + '" placeholder="选中后读者的回复" style="width:100%;padding:4px 8px;font-size:.75rem;border:1px solid var(--c-border);margin-bottom:4px">'
               h += '<label style="font-size:.7rem;color:var(--c-text2)">角色后续回复（每行=一个气泡）</label>'
               h += '<textarea class="ch-grp-follow" placeholder="每行一条消息" style="width:100%;padding:4px 8px;font-size:.75rem;border:1px solid var(--c-border);min-height:50px">' + esc(g.followUpLines) + '</textarea>'
+              h += '<label style="display:block;margin-top:6px;font-size:.7rem;color:var(--c-text2)">角色回复节奏</label>'
+              h += '<select class="ch-grp-pace form-select" aria-label="选项组 ' + (gi + 1) + ' 的角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(g.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select>'
+              h += '<div class="form-hint">除“直接出现”外，读者会先看到角色正在输入。</div>'
               h += '<button class="ch-grp-del" data-ch-grp-idx="' + gi + '" style="position:absolute;top:4px;right:4px;border:none;background:transparent;color:var(--c-text2);cursor:pointer;font-size:.7rem">x</button>'
               h += '</div>'
             }
@@ -6764,7 +6875,7 @@ function openChatEditor(frame, wid, chatId, pd) {
           renderGroups()
 
           ov.querySelector('#chAddGroup').onclick = function() {
-            choiceGroups.push({ id: '', text: '', replyText: '', followUpLines: '' })
+            choiceGroups.push({ id: '', text: '', replyText: '', replyPace: 'normal', followUpLines: '' })
             renderGroups()
           }
 
@@ -6775,6 +6886,7 @@ function openChatEditor(frame, wid, chatId, pd) {
             var texts = listEl.querySelectorAll('.ch-grp-text')
             var replies = listEl.querySelectorAll('.ch-grp-reply')
             var follows = listEl.querySelectorAll('.ch-grp-follow')
+            var paces = listEl.querySelectorAll('.ch-grp-pace')
             var previousChoices = Array.isArray(msg.choices) ? msg.choices : []
             var nextChoices = []
             for (var i = 0; i < texts.length; i++) {
@@ -6800,6 +6912,7 @@ function openChatEditor(frame, wid, chatId, pd) {
                 id: previousChoice?.id || uid(),
                 text: grpText,
                 replyText: replyText,
+                replyPace: normalizeChatReplyPace(paces[i]?.value, 'normal'),
                 followUpMessages: fms
               })
               delete nextChoice.used

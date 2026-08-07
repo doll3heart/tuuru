@@ -103,7 +103,8 @@ test("reader shelf tools filter, sort, manage storage, and bookmark article scen
   assert.equal(localStorage.getItem("moirain_work_library-work-1"), null)
   assert.ok(JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.some(book => book.id === "library-work-1"))
   assert.match(document.querySelector(".rd-book-manager-status").textContent, /阅读记录和书签仍在/)
-  assert.match(document.querySelector(".rd-book.is-missing").textContent, /正文已清理 · 重新导入/)
+  assert.equal(document.querySelector('[data-reader-book-id="library-work-1"]'), null)
+  assert.match(document.querySelector('[data-reader-book-recover="library-work-1"]').textContent, /重新导入《作品 01》/)
 
   document.querySelector("[data-reader-book-remove]").click()
   assert.equal(document.querySelector(".rd-book-remove-confirm").hidden, false)

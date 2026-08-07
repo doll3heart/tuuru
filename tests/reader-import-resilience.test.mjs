@@ -818,7 +818,7 @@ test("cache recovery rejects a different work instead of importing it as a new b
 
   await import(`../reader/reader.js?reader-import-recovery-mismatch=${Date.now()}`)
   document.querySelector('.rd-tab[data-tab="library"]').click()
-  document.querySelector(".rd-book-cover").click()
+  document.querySelector('[data-reader-book-recover]').click()
 
   const dialog = document.querySelector(".rd-import-dialog")
   assert.ok(dialog)
@@ -852,7 +852,7 @@ test("cache recovery reconnects the exact work and resumes its saved article pos
 
   await import(`../reader/reader.js?reader-import-recovery-resume=${Date.now()}`)
   document.querySelector('.rd-tab[data-tab="library"]').click()
-  document.querySelector(".rd-book-cover").click()
+  document.querySelector('[data-reader-book-recover]').click()
   dropFile(dom, {name:"same-work.json", size:serializedWork.length})
 
   const review = document.querySelector(".rd-import-review")

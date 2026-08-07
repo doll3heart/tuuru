@@ -1,3 +1,5 @@
+import { chatReplyTypingDuration } from "./chat-reply-pace.js"
+
 function cloneValue(value) {
   if (Array.isArray(value)) return value.map(cloneValue)
   if (!value || typeof value !== "object") return value
@@ -58,8 +60,23 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
   const followUpMessages = Array.isArray(choice.followUpMessages)
     ? choice.followUpMessages
     : []
+  const typingDuration = chatReplyTypingDuration(choice.replyPace)
+  let insertedTypingEvent = false
 
   for (const followUpMessage of followUpMessages) {
+    const followUpSenderId = followUpMessage?.senderId || followUpMessage?.contactId || ""
+    if (!insertedTypingEvent && typingDuration > 0 && followUpSenderId && followUpSenderId !== "self") {
+      generatedMessages.push({
+        id: options.idFactory(),
+        type: "system-event",
+        eventKind: "typing",
+        senderId: "system",
+        actorContactId: followUpSenderId,
+        durationMs: typingDuration,
+        transientTyping: true,
+      })
+      insertedTypingEvent = true
+    }
     const generatedMessage = cloneValue(followUpMessage)
     generatedMessage.id = options.idFactory()
     generatedMessages.push(generatedMessage)

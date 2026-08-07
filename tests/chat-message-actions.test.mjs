@@ -72,6 +72,7 @@ test("quote summaries remain concise across rich message families", () => {
 test("required message actions expose a verb that matches the interaction", () => {
   assert.equal(CHAT_ACTIONABLE_MESSAGE_TYPES.includes("location"), true)
   assert.equal(messageRequiresAction({ type:"location", actionRequired:true }), true)
+  assert.equal(messageRequiresAction({ type:"contact-event", eventKind:"friend-request" }), true)
   assert.equal(messageRequiresAction({ type:"text", actionRequired:true }), false)
   assert.equal(messageActionLabel({ type:"location", actionRequired:true }, false), "需查看")
   assert.equal(messageActionLabel({ type:"redpacket", actionRequired:true }, true), "已领取")

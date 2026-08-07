@@ -64,7 +64,7 @@ function storyWork() {
             { id:"recall-1", type:"system-event", eventKind:"recall", actorContactId:"contact-1", originalText:"别回头。", allowReveal:true },
             { id:"failed-1", type:"system-event", eventKind:"send-failed", originalText:"我马上到。" },
             { id:"reaction-1", type:"system-event", eventKind:"reaction", actorContactId:"contact-2", reaction:"♡" },
-            { id:"friend-1", type:"contact-event", eventKind:"friend-request", actorContactId:"contact-2" },
+            { id:"friend-1", type:"contact-event", eventKind:"friend-request", actorContactId:"contact-2", originalText:"我们在旧城区见过。" },
             { id:"burn-1", type:"system-event", eventKind:"burn", actorContactId:"contact-1", originalText:"钥匙在花盆下面。", burnSeconds:1 },
             { id:"location-1", type:"location", senderId:"contact-1", locationName:"白石街", locationAddress:"旧城区 17 号" },
             { id:"contact-card-1", type:"contact-card", senderId:"contact-1", targetContactId:"contact-2", contactNote:"接应人" },
@@ -123,6 +123,7 @@ test("reader story events expose recall, retry, reaction, friend request, and bu
 
   document.querySelector('[data-story-event-id="friend-1"] [data-story-response="accepted"]').click()
   assert.match(document.querySelector('[data-story-event-id="friend-1"]').textContent, /已同意/)
+  assert.match(document.querySelector('[data-story-event-id="friend-1"]').textContent, /我们在旧城区见过/)
 
   const burn = document.querySelector('[data-story-event-id="burn-1"]')
   burn.querySelector('[data-story-reveal="burn"]').click()
@@ -130,6 +131,37 @@ test("reader story events expose recall, retry, reaction, friend request, and bu
   await new Promise(resolve => setTimeout(resolve, 1100))
   assert.match(burn.textContent, /内容已焚毁/)
   assert.doesNotMatch(burn.textContent, /钥匙在花盆下面/)
+})
+
+test("friend request notifications wait for a response and persist it with phone progress", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-friend-request-flow"
+  work.phoneData.readingFlow = {
+    enabled:true,
+    sequence:[{ type:"messages", itemId:"friend-1", chatId:"chat-1", roundId:"round-1", contactId:"contact-2", label:"周周 · 好友申请" }],
+  }
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?friend-request-flow=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+
+  const notification = document.querySelector('.phone-flow-notification[data-flow-notification-app="messages"]')
+  assert.ok(notification)
+  assert.match(notification.textContent, /好友申请/)
+  notification.click()
+  assert.ok(document.querySelector('[data-story-event-id="friend-1"] [data-story-response="accepted"]'))
+
+  await new Promise(resolve => setTimeout(resolve, 900))
+  let saved = JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.find(book => book.id === work.id)
+  assert.equal(saved.progress.flowIndex, 0)
+
+  document.querySelector('[data-story-event-id="friend-1"] [data-story-response="accepted"]').click()
+  await new Promise(resolve => setTimeout(resolve, 900))
+  saved = JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.find(book => book.id === work.id)
+  assert.equal(saved.progress.flowIndex, 1)
+  assert.equal(saved.progress.friendRequestResponses["friend-1"], "accepted")
 })
 
 test("failed and recalled messages settle into different reader history states", async t => {

@@ -133,6 +133,32 @@ test("does not create a reply message or consume its id when replyText is empty"
   assert.equal(result.run.replyMessageId, null)
 })
 
+test("a paced character reply inserts a temporary typing event before follow-ups", () => {
+  const round = fixtureRound()
+  round.messages[1].choices[0].replyPace = "quick"
+  let sequence = 0
+
+  const result = callApply(round, "owner", 0, {
+    idFactory: () => `paced-${++sequence}`,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(
+    result.round.messages.map(message => message.id),
+    ["before", "owner", "paced-1", "paced-2", "paced-3", "paced-4", "suffix"],
+  )
+  assert.deepEqual(result.round.messages[3], {
+    id: "paced-2",
+    type: "system-event",
+    eventKind: "typing",
+    senderId: "system",
+    actorContactId: "contact-1",
+    durationMs: 700,
+    transientTyping: true,
+  })
+  assert.deepEqual(result.run.generatedMessageIds, ["paced-1", "paced-2", "paced-3", "paced-4"])
+})
+
 test("rollback removes exactly the generated ids without mutating round or run", () => {
   const original = fixtureRound()
   original.messages[2].text = "My answer"

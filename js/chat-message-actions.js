@@ -137,6 +137,7 @@ export function chatMessageQuoteSummary(message) {
 }
 
 export function messageRequiresAction(message) {
+  if (message?.type === "contact-event" && message?.eventKind === "friend-request") return true
   return Boolean(
     message
     && message.actionRequired === true

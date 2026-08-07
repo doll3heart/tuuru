@@ -1088,18 +1088,71 @@ test("author choice buttons edit their owner instead of executing a reader branc
 
     const editor = document.querySelector("#chGroupsList")
     assert.ok(editor, "clicking an authored choice should open its local option editor")
+    const pace = editor.querySelector(".ch-grp-pace")
+    assert.ok(pace)
+    assert.equal(pace.value, "instant")
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
 
     editor.querySelectorAll(".ch-grp-text")[0].value = "改过的第一句"
+    pace.value = "delayed"
     document.querySelector("#chSave").click()
 
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
     assert.equal(saved.choices[0].id, "choice-stable-a")
     assert.equal(saved.choices[0].text, "改过的第一句")
     assert.equal(saved.choices[0].followUpMessages[0].id, "follow-stable-a")
+    assert.equal(saved.choices[0].replyPace, "delayed")
     assert.deepEqual(saved.choices[0].customMeta, { keep: true })
     assert.equal(saved.choices[0].used, undefined)
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("message context menus expose a dedicated per-choice reply pace editor", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"reply-pace-owner",
+    type:"text",
+    senderId:"contact-1",
+    text:"你准备怎么回答？",
+    choices:[
+      { id:"pace-a", text:"马上回答", replyText:"好", replyPace:"instant", followUpMessages:[] },
+      { id:"pace-b", text:"再想一下", replyText:"让我想想", replyPace:"delayed", followUpMessages:[] },
+    ],
+  })
+  const fixture = await openSingleChat("message-reply-pace-context-menu", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector('[data-message-id="reply-pace-owner"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:120,
+      clientY:180,
+    }))
+    const menuItems = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+    assert.equal(menuItems[1].textContent, "设置回复节奏")
+    const paceAction = menuItems
+      .find(button => button.textContent === "设置回复节奏")
+    assert.ok(paceAction)
+    paceAction.click()
+
+    const paceEditor = document.querySelector(".chat-reply-pace-editor")
+    assert.ok(paceEditor)
+    const selects = paceEditor.querySelectorAll(".chat-reply-pace-select")
+    assert.equal(selects.length, 2)
+    assert.equal(selects[0].value, "instant")
+    assert.equal(selects[1].value, "delayed")
+
+    selects[0].value = "quick"
+    document.getElementById("chatReplyPaceSave").click()
+
+    const savedChoices = draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices
+    assert.equal(savedChoices[0].id, "pace-a")
+    assert.equal(savedChoices[0].replyPace, "quick")
+    assert.equal(savedChoices[1].replyPace, "delayed")
   } finally {
     closeFixture(fixture)
   }

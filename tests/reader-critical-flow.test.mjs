@@ -192,6 +192,50 @@ test("reader desktop keeps authored App colors on the neutral default surface", 
   })
 })
 
+test("reader contact remarks stay local to the reading slot and carry into messages", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "reader-local-contact-remarks"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.chats[0].rounds[0].messages = work.phoneData.chats[0].rounds[0].messages.filter(message => message.type !== "call")
+  work.phoneData.apps.push({
+    id:"contacts-app",
+    type:"contacts",
+    name:"联系人",
+    icon:"C",
+    desktopX:2,
+    desktopY:0,
+    enabled:true,
+  })
+
+  await startWork(work, "reader-local-contact-remarks")
+
+  document.querySelector('[data-app-type="contacts"]').click()
+  const contactEntry = document.querySelector('.rd-contact-entry[data-contact-id="contact-1"]')
+  assert.match(contactEntry.textContent, /林澈.*设置备注/s)
+  contactEntry.click()
+
+  const input = document.getElementById("rdContactRemarkInput")
+  assert.ok(input)
+  assert.match(document.querySelector(".rd-contact-remark-form").textContent, /不会修改作者设定.*不会影响论坛身份/s)
+  input.value = "  阿澈  "
+  document.getElementById("cuModalSave").click()
+
+  const updatedEntry = document.querySelector('.rd-contact-entry[data-contact-id="contact-1"]')
+  assert.match(updatedEntry.textContent, /阿澈.*原名：林澈/s)
+
+  const library = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+  const rememberedBook = library.books.find(book => book.id === work.id)
+  assert.deepEqual(rememberedBook.progress.contactRemarks, { "contact-1":"阿澈" })
+
+  document.querySelector(".rd-back-btn").click()
+  document.querySelector('[data-app-type="messages"]').click()
+  const chatCard = document.querySelector('.rd-chat-card[data-chat-index="0"]')
+  assert.match(chatCard.textContent, /阿澈/)
+  chatCard.click()
+  assert.equal(document.querySelector(".chat-round-title strong").textContent, "阿澈")
+})
+
 test("article phone cards open their App directly and App back closes the overlay", async t => {
   installDom(t)
   await startWork(articleWork(), "article-module-direct")
@@ -218,6 +262,36 @@ test("article back returns to the previous chapter before it exits the reader", 
 
   assert.equal(document.querySelector(".article-title").textContent, "第一节")
   assert.ok(document.querySelector(".rd-home") === null)
+})
+
+test("branch prose reveals below the choice without forcing the reader back to the top", async t => {
+  installDom(t)
+  const work = articleWork()
+  work.id = "branch-reading-continuity"
+  work.chapters = [{ id: "chapter-one", name: "同一章" }]
+  work.nodes[1].chapterId = "chapter-one"
+
+  let scrollY = 640
+  Object.defineProperty(window, "scrollY", {
+    configurable:true,
+    get:() => scrollY,
+  })
+  window.scrollTo = options => { scrollY = Number(options?.top || 0) }
+  const scrollIntoViewCalls = []
+  HTMLElement.prototype.scrollIntoView = function(options) {
+    scrollIntoViewCalls.push({ element:this, options })
+  }
+
+  await startWork(work, "branch-reading-continuity")
+  document.querySelector('.article-choice-btn[data-target="second"]').click()
+
+  const incoming = document.querySelector('.article-node[data-article-path-index="1"]')
+  assert.ok(incoming)
+  assert.equal(incoming.classList.contains("is-choice-reveal"), true)
+  assert.equal(scrollY, 640)
+  assert.equal(scrollIntoViewCalls.length, 0)
+  assert.match(readerCss, /\.article-node\.is-choice-reveal/)
+  assert.match(readerCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.article-node\.is-choice-reveal/)
 })
 
 test("a chapter ending without choices uses NEXT to open the next non-empty chapter", async t => {
@@ -523,6 +597,36 @@ test("chat flow streams text and waits 0.8 seconds before revealing the next bub
   assert.equal(document.querySelector('[data-message-id="stream-2"]'), null)
   await waitFor(() => document.querySelector('[data-message-id="stream-2"]'), 1000)
   assert.ok(Date.now() - completedAt >= 700, "the inter-bubble pause should remain close to 0.8 seconds")
+})
+
+test("paced choice follow-ups show typing before the character reply without a reading flow", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "paced-choice-without-flow"
+  work.phoneData.readingFlow.enabled = false
+  work.phoneData.chats[0].rounds[0].messages = [{
+    id:"paced-owner",
+    type:"text",
+    senderId:"contact-1",
+    text:"你决定好了吗？",
+    choices:[{
+      id:"paced-choice",
+      text:"决定好了",
+      replyText:"好了",
+      replyPace:"quick",
+      followUpMessages:[{ id:"paced-follow", type:"text", senderId:"contact-1", text:"那就出发吧。" }],
+    }],
+  }]
+
+  await startWork(work, "paced-choice-without-flow")
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector(".rd-reply-option").click()
+
+  await waitFor(() => document.querySelector(".rd-chat-typing"), 4000)
+  assert.doesNotMatch(document.getElementById("chatMsgArea").textContent, /那就出发吧。/)
+  await waitFor(() => document.getElementById("chatMsgArea")?.textContent.includes("那就出发吧。"), 4000)
+  assert.equal(document.querySelector(".rd-chat-typing"), null)
 })
 
 test("reader placeholder presets have an explicit local save action", async t => {

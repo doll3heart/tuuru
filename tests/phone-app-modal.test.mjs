@@ -288,6 +288,49 @@ test("contact editor creates, searches, and persists forum aliases", async () =>
   dom.window.close()
 })
 
+test("adding a contact can create a reader-facing friend request in the reading flow", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", { url:"http://localhost/" })
+  Object.assign(globalThis, {
+    window:dom.window,
+    document:dom.window.document,
+    localStorage:dom.window.localStorage,
+    Element:dom.window.Element,
+    HTMLElement:dom.window.HTMLElement,
+    Node:dom.window.Node,
+    Event:dom.window.Event,
+    MouseEvent:dom.window.MouseEvent,
+    MutationObserver:dom.window.MutationObserver,
+  })
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const draft = createPhoneWorkDraft({ id:"contact-friend-request", type:"article", phoneData:{
+    contacts:[], chats:[], moments:[], forumPosts:[], forumNpcs:[], memos:[], photos:[], albums:[], browserHistory:[], shoppingItems:[], skin:{ readerId:"Reader" }, apps:[], readingFlow:{ enabled:false, sequence:[] },
+  } })
+
+  const overlay = openPhoneAppModal(draft.id, "contacts")
+  overlay.querySelector("#ctModalAddBtn").click()
+  document.querySelector("#ctNewNameInput").value = "林雾"
+  document.querySelector("#ctNewNameOk").click()
+
+  const requestDialog = document.querySelector("[data-contact-friend-request-dialog]")
+  assert.ok(requestDialog)
+  assert.match(requestDialog.textContent, /让林雾向读者发送好友申请/)
+  requestDialog.querySelector("[data-contact-friend-request-note]").value = "我是林雾，昨晚见过。"
+  requestDialog.closest(".modal-overlay").querySelector("[data-contact-friend-request-create]").click()
+
+  const saved = draft.snapshot().phoneData
+  const contact = saved.contacts.find(item => item.name === "林雾")
+  const request = saved.chats[0].rounds[0].messages[0]
+  assert.equal(request.actorContactId, contact.id)
+  assert.equal(request.eventKind, "friend-request")
+  assert.equal(request.originalText, "我是林雾，昨晚见过。")
+  assert.equal(saved.readingFlow.enabled, true)
+  assert.equal(saved.readingFlow.sequence[0].itemId, request.id)
+
+  draft.dispose()
+  dom.window.close()
+})
+
 test("contact editor persists pinning, A-Z mode, and custom keyboard order", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", { url:"http://localhost/" })
   Object.assign(globalThis, { window:dom.window, document:dom.window.document, localStorage:dom.window.localStorage, Element:dom.window.Element, HTMLElement:dom.window.HTMLElement, Node:dom.window.Node, Event:dom.window.Event, MouseEvent:dom.window.MouseEvent, MutationObserver:dom.window.MutationObserver })
