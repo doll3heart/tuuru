@@ -47,7 +47,7 @@ function renderExportRecord(record, entities) {
   const deliveryLabel = record.delivery === "shared" ? "已发送" : "已下载"
   const actionLabel = record.entityType === "collection"
     ? "重新下载"
-    : record.format === "png" ? "重新生成" : "发送 / 下载"
+    : record.format === "png" ? "重新生成" : "重新下载"
   return `<li class="export-record" data-export-filter="${recordFilter(record)}" data-export-record="${escapeHtml(record.id)}">
     <div class="export-record-main">
       <div class="export-record-title"><strong>${escapeHtml(record.title)}</strong><span class="export-format">${formatLabel}</span></div>
@@ -81,7 +81,7 @@ export function renderExportCenter({
     </div>
     ${history.length
       ? `<ul class="export-record-list">${records}</ul><p class="export-filter-empty" hidden>这个筛选下还没有记录。</p>`
-      : '<div class="export-center-empty"><strong>还没有导出记录</strong><p>从作品卡片的「更多 → 发送与导出」开始。记录只留在当前浏览器。</p></div>'}
+      : '<div class="export-center-empty"><strong>还没有导出记录</strong><p>从作品卡片的「更多 → 导出作品」开始。记录只留在当前浏览器。</p></div>'}
   </section>`
 }
 
@@ -121,7 +121,7 @@ export function bindExportCenter() {
       if (!record) return
       if (record.entityType === "collection") window.exportCollectionRecord?.(record.entityId, record.format)
       else if (record.format === "png") window.expPNG?.(record.entityId)
-      else window.shareWork?.(record.entityId, button)
+      else window.expWork?.(record.entityId, button)
     })
   })
   root.querySelectorAll("[data-export-open-work]").forEach(button => {

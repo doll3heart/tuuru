@@ -109,9 +109,11 @@ test("the author tutorial follows the current work and encrypted export controls
   assert.match(tutorialCopy, /导出加密 PNG/)
   assert.match(tutorialCopy, /支持 \.tuuru、\.json 和 \.png/)
   assert.match(tutorialCopy, /分享作品应该使用哪种文件[\s\S]*\.tuuru[\s\S]*PNG/)
+  assert.match(tutorialCopy, /【导出作品】[\s\S]*【下载 \.tuuru】[\s\S]*【生成加密 PNG】/)
   assert.doesNotMatch(tutorialCopy, /点卡片上的【删除】/)
   assert.doesNotMatch(tutorialCopy, /【导出 JSON】/)
   assert.doesNotMatch(tutorialCopy, /选择 JSON 或 PNG 文件/)
+  assert.doesNotMatch(tutorialCopy, /系统分享|发送 \.tuuru|重新发送/)
 })
 
 test("the author tutorial covers current writing, safety, and phone interaction tools", () => {
@@ -208,7 +210,7 @@ test("the tutorial fully explains paragraph nodes, ordinary responses, and hidde
   assert.match(source, /顶部搜索框可搜索分类和内容/)
   assert.match(source, /作者正文颜色[\s\S]*不随作品导出/)
   assert.match(source, /导出中心[\s\S]*不保存作品文件，也不会上传作品内容/)
-  assert.match(source, /发送 \.tuuru[\s\S]*下载 \.tuuru[\s\S]*生成加密 PNG/)
+  assert.match(source, /导出作品[\s\S]*下载 \.tuuru[\s\S]*生成加密 PNG/)
 })
 
 test("tutorial entries use visible click-by-click controls without internal shorthand", () => {

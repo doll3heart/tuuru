@@ -29,6 +29,7 @@ test("export center separates current, changed, and missing work records", () =>
   assert.match(document.body.textContent, /原作品已删除/)
   assert.equal(document.querySelectorAll("[data-export-regenerate]").length, 2)
   assert.equal(document.querySelector("[data-export-record='c'] [data-export-regenerate]"), null)
+  assert.equal(document.querySelector("[data-export-record='a'] [data-export-regenerate]").textContent.trim(), "重新下载")
 })
 
 test("export center keeps format filters and local-only explanation visible", () => {
@@ -42,4 +43,5 @@ test("empty export center relies on the global home navigation", () => {
   document.body.innerHTML = renderExportCenter({ history: [], works: [], collections: [] })
   assert.equal(document.querySelector(".export-center-empty a"), null)
   assert.doesNotMatch(document.querySelector(".export-center-empty").textContent, /返回作品库/)
+  assert.match(document.querySelector(".export-center-empty").textContent, /更多 → 导出作品/)
 })

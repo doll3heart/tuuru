@@ -404,9 +404,11 @@ ul,ol{list-style:none}
 .work-export-summary{display:grid;gap:5px;padding:14px;border:1px solid var(--c-border);background:var(--c-surface2)}
 .work-export-summary strong{font-size:.94rem;overflow-wrap:anywhere}
 .work-export-summary span,.library-manage-note{color:var(--c-text2);font-size:.76rem;line-height:1.55}
+.work-export-share-note{display:grid;gap:4px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--c-primary) 34%,var(--c-border));background:color-mix(in srgb,var(--c-primary) 7%,var(--c-surface));color:var(--c-text)}
+.work-export-share-note strong{font-size:.82rem}
+.work-export-share-note p{max-width:65ch;margin:0;font-size:.75rem;line-height:1.65;text-wrap:pretty}
 .work-export-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .work-export-actions .btn{min-height:44px;justify-content:center}
-.work-export-actions .btn-primary{grid-column:1/-1}
 .work-export-history-link{display:inline-flex;min-height:40px;align-items:center;justify-content:center;color:var(--c-primary-hover);font-size:.8rem;text-decoration:none}
 .work-export-history-link:hover{text-decoration:underline}
 .library-manage-sheet{display:grid;gap:18px}
@@ -1404,7 +1406,6 @@ textarea.ch-selected-text{box-sizing:border-box;min-height:4.4em;resize:vertical
   .work-export-overlay,.library-manage-overlay{align-items:flex-end;padding:16px 0 0}
   .work-export-dialog,.library-manage-dialog{width:100%;max-height:calc(var(--app-viewport-height,100vh) - 16px);border-right:0;border-bottom:0;border-left:0;border-radius:6px 6px 0 0;box-shadow:0 -4px 0 rgba(76,54,61,.18)}
   .work-export-actions{grid-template-columns:1fr}
-  .work-export-actions .btn-primary{grid-column:auto}
   .export-center{gap:14px;padding-right:5px;padding-left:5px}
   .export-center-heading{align-items:flex-start}.export-center-heading h1{font-size:1.15rem}
   .export-center-heading>button{min-height:44px;flex:0 0 auto}

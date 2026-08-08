@@ -7,7 +7,7 @@ import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
 import { recordExport } from "../export-history.js"
-import { createWorkArtifact, deliverArtifact } from "../work-export.js"
+import { createWorkArtifact } from "../work-export.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
 import { serializeLocalDatabaseBackup } from "../storage.js"
 import { inspectLocalProfile, mergeLocalProfile, serializeLocalProfile } from "../local-profile-transport.js"
@@ -132,7 +132,7 @@ ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" vie
             ${w.phoneData ? `<button class="btn btn-sm btn-ghost" data-work-time-shift="${w.id}" onclick="event.stopPropagation();openWorkTimeShift('${w.id}');closeWorkMenu('${w.id}')">批量顺延时间</button>` : ""}
             ${homeBulkUndoStore.peek(w.id) ? `<button class="btn btn-sm btn-ghost work-bulk-undo" id="workBulkUndo-${w.id}" data-work-bulk-undo="${w.id}" onclick="event.stopPropagation();undoLastBulkWork('${w.id}');closeWorkMenu('${w.id}')">撤销上次批量操作</button>` : ""}
             <button class="btn btn-sm btn-ghost" id="duplicateWork-${w.id}" onclick="event.stopPropagation();dupWork('${w.id}');closeWorkMenu('${w.id}')">复制作品</button>
-            <button class="btn btn-sm btn-ghost" data-work-export="${w.id}" onclick="event.stopPropagation();openWorkExport('${w.id}')">发送与导出</button>
+            <button class="btn btn-sm btn-ghost" data-work-export="${w.id}" onclick="event.stopPropagation();openWorkExport('${w.id}')">导出作品</button>
             <button class="btn btn-sm btn-ghost btn-danger-text work-card-delete-action" id="deleteWork-${w.id}" onclick="event.stopPropagation();delWork('${w.id}');closeWorkMenu('${w.id}')">删除作品</button>
           </div>
         </div>
@@ -677,7 +677,7 @@ window.backupLibrary = function(trigger){
 window.openLibraryManage = function() {
   var body = '<div class="library-manage-sheet">'
     + '<section><span class="library-manage-label">作品与导出</span>'
-    + '<a class="library-manage-row" href="#/exports"><strong>导出中心</strong><span>发送、下载与查看本机导出记录</span></a></section>'
+    + '<a class="library-manage-row" href="#/exports"><strong>导出中心</strong><span>下载作品并查看本机导出记录</span></a></section>'
     + '<section><span class="library-manage-label">本地数据</span>'
     + '<button type="button" class="library-manage-row" data-library-backup><strong>备份全部</strong><span>下载当前作者创作库</span></button>'
     + '<button type="button" class="library-manage-row" data-library-restore><strong>检查 / 恢复</strong><span>检查备份并按确认恢复</span></button>'
@@ -845,27 +845,6 @@ function rememberExport(artifact, delivery) {
   catch { return null }
 }
 
-async function copyExportInstructions(work) {
-  var text = '《' + (work?.title || '未命名作品') + '》是一份 Tuuru 互动作品。\n'
-    + '保存附件后，打开 https://tuuru.chat/reader/ 选择作品文件即可阅读。\n'
-    + '作品只在你的设备上读取，不会上传。'
-  if (globalThis.navigator?.clipboard?.writeText) {
-    await globalThis.navigator.clipboard.writeText(text)
-    return true
-  }
-  var area = document.createElement('textarea')
-  area.value = text
-  area.setAttribute('readonly', '')
-  area.style.position = 'fixed'
-  area.style.opacity = '0'
-  document.body.appendChild(area)
-  area.select()
-  var copied = document.execCommand?.('copy') === true
-  area.remove()
-  if (!copied) throw new Error('当前浏览器不支持复制，请手动复制读者端地址')
-  return true
-}
-
 window.openWorkExport = function(id) {
   var work = getWorks().find(function(candidate) { return candidate.id === id })
   if (!work) {
@@ -876,25 +855,21 @@ window.openWorkExport = function(id) {
   var body = '<div class="work-export-sheet">'
     + '<div class="work-export-summary"><strong>' + escHtml(work.title || '未命名作品') + '</strong>'
     + '<span>所有文件都在当前设备生成，Tuuru 不会上传作品。</span></div>'
+    + '<aside class="work-export-share-note" data-work-share-note aria-label="分享文件提醒">'
+    + '<strong>分享时请发送原文件</strong>'
+    + '<p>主流平台通常会压缩以“图片”方式上传的 PNG，从聊天或帖子中保存的图片可能无法正常导入。请把 .tuuru 或加密 PNG 作为“文件”发送，或上传网盘后分享下载链接。</p>'
+    + '</aside>'
     + '<div class="work-export-actions">'
-    + '<button type="button" class="btn btn-primary" data-work-share>发送作品文件</button>'
     + '<button type="button" class="btn btn-outline" data-work-download>下载 .tuuru</button>'
     + '<button type="button" class="btn btn-outline" data-work-png>生成加密 PNG</button>'
-    + '<button type="button" class="btn btn-ghost" data-work-copy>复制打开说明</button>'
     + '</div>'
     + '<a class="work-export-history-link" href="#/exports">查看导出记录</a>'
     + '</div>'
-  var overlay = modal('发送与导出', body, '')
+  var overlay = modal('导出作品', body, '')
   overlay.classList.add('work-export-overlay')
   overlay.querySelector('.modal')?.classList.add('work-export-dialog')
-  var shareButton = overlay.querySelector('[data-work-share]')
   var downloadButton = overlay.querySelector('[data-work-download]')
   var pngButton = overlay.querySelector('[data-work-png]')
-  var copyButton = overlay.querySelector('[data-work-copy]')
-  shareButton.onclick = async function() {
-    var result = await window.shareWork(id, shareButton)
-    if (result === 'shared' || result === 'downloaded') overlay.closeModal?.('completed')
-  }
   downloadButton.onclick = async function() {
     var result = await window.expWork(id, downloadButton)
     if (result === 'downloaded') overlay.closeModal?.('completed')
@@ -902,16 +877,6 @@ window.openWorkExport = function(id) {
   pngButton.onclick = function() {
     overlay.closeModal?.('png')
     window.expPNG(id)
-  }
-  copyButton.onclick = function() {
-    return runButtonAction(copyButton, async function() {
-      try {
-        await copyExportInstructions(work)
-        showToast('打开说明已复制', 'success')
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : '复制失败', 'error')
-      }
-    }, {pendingText:'正在复制…'})
   }
   overlay.querySelector('.work-export-history-link')?.addEventListener('click', function() {
     overlay.closeModal?.('navigate')
@@ -987,27 +952,6 @@ window.expWork = function(id, trigger){
       return 'downloaded'
     } catch(e) {
       showToast('导出失败：' + (e instanceof Error ? e.message : '未知错误'), 'error', {key:feedbackKey})
-      return 'error'
-    }
-  })
-}
-
-window.shareWork = function(id, trigger) {
-  return runVisibleAction(trigger, '正在准备…', async function() {
-    var feedbackKey = 'work-share-' + id
-    showToast('正在准备作品文件…', 'info', {key:feedbackKey, duration:0})
-    try {
-      var artifact = await createWorkArtifact(id, {format:'tuuru'})
-      var delivery = await deliverArtifact(artifact)
-      if (delivery === 'cancelled') {
-        showToast('已取消发送', 'info', {key:feedbackKey})
-        return delivery
-      }
-      rememberExport(artifact, delivery)
-      showToast(delivery === 'shared' ? '作品已交给系统分享' : '当前环境不支持文件分享，已改为下载', 'success', {key:feedbackKey})
-      return delivery
-    } catch (error) {
-      showToast('发送失败：' + (error instanceof Error ? error.message : '未知错误'), 'error', {key:feedbackKey})
       return 'error'
     }
   })
