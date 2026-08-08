@@ -2387,7 +2387,7 @@ function openPlaceholderPanel(wid) {
   body += '<button class="btn btn-sm btn-primary" data-ph-a="add">添加占位符</button>'
   body += '</div>'
   body += '<label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="ph-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label>'
-  body += '<section class="placeholder-global-forbidden"><div><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></div><textarea id="phGlobalForbidden" class="ph-input" placeholder="可用换行、逗号、顿号、分号或斜杠分隔">' + esc(globalForbidden.join('\n')) + '</textarea><button type="button" class="btn btn-sm btn-outline" data-ph-a="cleanup-forbidden">整理全部词库</button></section>'
+  body += '<details class="placeholder-global-forbidden" data-global-forbidden-editor><summary><span><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></span><span class="placeholder-forbidden-count" data-forbidden-count>' + globalForbidden.length + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><textarea id="phGlobalForbidden" class="ph-input" aria-label="全局违禁词" placeholder="可用换行、逗号、顿号、分号或斜杠分隔">' + esc(globalForbidden.join('\n')) + '</textarea><button type="button" class="btn btn-sm btn-outline" data-ph-a="cleanup-forbidden">整理全部词库</button></div></details>'
   body += '<div class="ph-author-presets"><select class="ph-select" id="phAuthorPreset"><option value="">我的预设</option>'
   body += '</select><button class="btn btn-sm btn-outline" data-ph-a="apply-author-preset">套用预设</button><details class="placeholder-preset-management"><summary>管理预设</summary><div><button class="btn btn-sm btn-ghost" data-ph-a="save-author-preset">保存当前为预设</button><button class="btn btn-sm btn-ghost" data-ph-a="delete-author-preset">删除预设</button><button class="btn btn-sm btn-ghost" data-ph-a="export-author-presets">导出预设</button><button class="btn btn-sm btn-ghost" data-ph-a="import-author-presets">导入预设</button></div></details><input type="file" id="phAuthorPresetFile" accept=".json,application/json" hidden></div>'
 
@@ -2445,18 +2445,33 @@ function openPlaceholderPanel(wid) {
     function applyPlaceholderSearch() {
       var query = String(panel.querySelector('[data-placeholder-search]')?.value || '').trim().toLocaleLowerCase()
       var visible = 0
+      var globalEditor = panel.querySelector('[data-global-forbidden-editor]')
+      var globalWords = String(panel.querySelector('#phGlobalForbidden')?.value || '').toLocaleLowerCase()
+      if (query && globalWords.includes(query) && globalEditor) globalEditor.open = true
       panel.querySelectorAll('[data-ph-id]').forEach(function(card) {
         var haystack = Array.from(card.querySelectorAll('input,textarea,select')).map(function(field) {
           return field.value || ''
         }).join(' ') + ' ' + (card.textContent || '')
         haystack = haystack.toLocaleLowerCase()
         card.hidden = Boolean(query) && !haystack.includes(query)
+        var forbiddenEditor = card.querySelector('[data-placeholder-forbidden-editor]')
+        var forbiddenWords = String(card.querySelector('[data-ph-forbidden]')?.value || '').toLocaleLowerCase()
+        if (query && forbiddenWords.includes(query) && forbiddenEditor) forbiddenEditor.open = true
+        card.querySelectorAll('[data-global-forbidden-summary]').forEach(function(summary) {
+          var inheritedWords = String(summary.querySelector('.placeholder-inherited-words')?.textContent || '').toLocaleLowerCase()
+          if (query && inheritedWords.includes(query)) summary.open = true
+        })
         if (!card.hidden) visible += 1
       })
       var status = panel.querySelector('[data-placeholder-search-status]')
       if (status) status.textContent = query ? visible + ' 个结果' : ''
     }
     panel.querySelector('[data-placeholder-search]').oninput = applyPlaceholderSearch
+    panel.addEventListener('input', function(ev) {
+      var field = ev.target?.matches?.('#phGlobalForbidden,[data-ph-forbidden]') ? ev.target : null
+      var count = field?.closest('details')?.querySelector('[data-forbidden-count]')
+      if (count) count.textContent = parseForbiddenWords(field.value).length + ' 个'
+    })
     panel.querySelector('#phGlobalForbidden').onchange = function() {
       globalForbidden = parseForbiddenWords(this.value)
       this.value = globalForbidden.join('\n')
@@ -2622,12 +2637,12 @@ function openPlaceholderPanel(wid) {
 
 function buildInheritedForbiddenSummary(words) {
   var inherited = parseForbiddenWords(words)
-  var h = '<div class="placeholder-inherited-forbidden" data-global-forbidden-summary aria-label="全局生效的违禁词"' + (inherited.length ? '' : ' hidden') + '>'
-  h += '<span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-words">'
+  var h = '<details class="placeholder-inherited-forbidden" data-global-forbidden-summary' + (inherited.length ? '' : ' hidden') + '>'
+  h += '<summary><span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-count">' + inherited.length + ' 个违禁词</span><svg class="placeholder-inherited-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-inherited-words">'
   inherited.forEach(function(word) {
     h += '<span class="placeholder-inherited-word">' + esc(word) + '</span>'
   })
-  h += '</span></div>'
+  h += '</div></details>'
   return h
 }
 
@@ -2659,10 +2674,9 @@ function buildPhCard(ph, globalForbidden, inserted) {
   h += '</select>'
   h += '</div>'
   // Row 3: forbidden words
-  h += '<div class="ph-row">'
-  h += '<label>违禁词</label>'
-  h += '<textarea class="ph-input ph-forbidden-input" id="ph_forbidden_' + ph.id + '" data-ph-forbidden placeholder="多个词可用逗号、顿号或换行分隔">' + esc(fw.join('\n')) + '</textarea>'
-  h += '</div>'
+  h += '<details class="placeholder-forbidden-editor" data-placeholder-forbidden-editor><summary><span>违禁词</span><span class="placeholder-forbidden-count" data-forbidden-count>' + fw.length + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body">'
+  h += '<textarea class="ph-input ph-forbidden-input" id="ph_forbidden_' + ph.id + '" data-ph-forbidden aria-label="违禁词" placeholder="多个词可用逗号、顿号或换行分隔">' + esc(fw.join('\n')) + '</textarea>'
+  h += '</div></details>'
   h += buildInheritedForbiddenSummary(globalForbidden)
   // Save button
   h += '<div class="ph-row ph-row-end">'

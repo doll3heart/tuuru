@@ -594,9 +594,34 @@ test("phone placeholder cards reveal inherited global forbidden words after clea
   try {
     const initialSummaries = frame.querySelectorAll(".placeholder-inherited-forbidden")
     assert.equal(initialSummaries.length, 2)
-    for (const summary of initialSummaries) assert.match(summary.textContent, /全局生效.*老公/)
+    const globalEditor = frame.querySelector(".placeholder-global-forbidden")
+    assert.equal(globalEditor.tagName, "DETAILS")
+    assert.equal(globalEditor.open, false)
+    assert.match(globalEditor.querySelector("summary").textContent, /全局违禁词.*1 个/)
+    const forbiddenEditors = frame.querySelectorAll("[data-placeholder-forbidden-editor]")
+    assert.equal(forbiddenEditors.length, 2)
+    for (const editor of forbiddenEditors) assert.equal(editor.open, false)
+    for (const summary of initialSummaries) {
+      assert.equal(summary.tagName, "DETAILS")
+      assert.equal(summary.open, false)
+      assert.match(summary.querySelector("summary").textContent, /全局生效.*1 个违禁词/)
+      assert.match(summary.textContent, /老公/)
+    }
+
+    const search = frame.querySelector('[data-placeholder-search]')
+    search.value = "坏蛋"
+    search.dispatchEvent(new Event("input", { bubbles:true }))
+    assert.equal(forbiddenEditors[0].open, false)
+    assert.equal(forbiddenEditors[1].open, true)
+
+    search.value = "老公"
+    search.dispatchEvent(new Event("input", { bubbles:true }))
+    assert.equal(globalEditor.open, true)
+    for (const summary of initialSummaries) assert.equal(summary.open, true)
 
     frame.querySelector("#phoneGlobalForbidden").value = "老公，老婆/老公"
+    frame.querySelector("#phoneGlobalForbidden").dispatchEvent(new Event("input", { bubbles:true }))
+    assert.match(globalEditor.querySelector("summary").textContent, /2 个/)
     frame.querySelector("#phoneForbiddenCleanup").click()
     const cleanedSummaries = frame.querySelectorAll(".placeholder-inherited-forbidden")
     assert.equal(cleanedSummaries.length, 2)

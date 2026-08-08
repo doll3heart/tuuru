@@ -47,17 +47,34 @@ test("article and phone placeholder panels expose one compact cleanup workflow",
     assert.match(source, /管理预设/)
     assert.match(source, /parseForbiddenWords/)
     assert.match(source, /dedupeForbiddenWords/)
+    assert.match(source, /<details class="placeholder-global-forbidden"/)
+    assert.match(source, /data-placeholder-forbidden-editor/)
   }
   assert.match(styles, /\.placeholder-tool-search/)
   assert.match(styles, /\.placeholder-global-forbidden/)
   assert.match(styles, /\.placeholder-preset-management/)
 })
 
-test("every placeholder card shows the global forbidden words it inherits", () => {
+test("global and per-placeholder forbidden editors start collapsed", () => {
+  for (const source of [article, phone]) {
+    assert.match(source, /<details class="placeholder-global-forbidden"/)
+    assert.match(source, /<details class="[^"]*placeholder-forbidden-editor[^"]*"[^>]*data-placeholder-forbidden-editor/)
+    assert.doesNotMatch(source, /<section class="placeholder-global-forbidden"/)
+  }
+  assert.match(styles, /\.placeholder-forbidden-editor>summary/)
+  assert.match(styles, /\.placeholder-forbidden-body/)
+})
+
+test("every placeholder card collapses the global forbidden words it inherits", () => {
   for (const source of [article, phone]) {
     assert.match(source, /placeholder-inherited-forbidden/)
     assert.match(source, /全局生效/)
+    assert.match(source, /<details class="placeholder-inherited-forbidden"/)
+    assert.match(source, /个违禁词/)
+    assert.match(source, /inheritedWords\.includes\(query\)/)
   }
   assert.match(styles, /\.placeholder-inherited-forbidden/)
+  assert.match(styles, /\.placeholder-inherited-forbidden>summary/)
+  assert.match(styles, /\.placeholder-inherited-forbidden\[open\]/)
   assert.match(styles, /\.placeholder-inherited-word/)
 })

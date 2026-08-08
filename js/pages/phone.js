@@ -100,12 +100,12 @@ function escAttr(s) {
 
 function inheritedForbiddenSummaryHtml(words) {
   var inherited = parseForbiddenWords(words)
-  var h = '<div class="placeholder-inherited-forbidden" data-global-forbidden-summary aria-label="全局生效的违禁词"' + (inherited.length ? '' : ' hidden') + '>'
-  h += '<span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-words">'
+  var h = '<details class="placeholder-inherited-forbidden" data-global-forbidden-summary' + (inherited.length ? '' : ' hidden') + '>'
+  h += '<summary><span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-count">' + inherited.length + ' 个违禁词</span><svg class="placeholder-inherited-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-inherited-words">'
   inherited.forEach(function(word) {
     h += '<span class="placeholder-inherited-word">' + esc(word) + '</span>'
   })
-  h += '</span></div>'
+  h += '</div></details>'
   return h
 }
 
@@ -7278,7 +7278,7 @@ function openSettingsEditor(wid) {
     h += '<div class="cu-body">'
     h += '<section class="phone-display-settings"><div class="st-row"><div><div class="st-label">内容时间戳</div><div class="st-desc">隐藏各 App 的内容时间，但保留原始数据和状态栏时钟；编辑器中的时间输入仍可修改。</div></div>'
     h += '<label class="tgl-switch"><input type="checkbox" id="hideAllTimestamps"' + (hideAllTimestamps ? ' checked' : '') + ' aria-label="隐藏全机所有内容时间戳"><span class="tgl-slider"></span></label></div></section>'
-    h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">正文写入“标记”，读者填写“问题”后会替换对应内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="form-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label><section class="placeholder-global-forbidden"><div><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></div><textarea id="phoneGlobalForbidden" class="form-textarea" placeholder="可用换行、逗号、顿号、分号或斜杠分隔">' + esc(globalForbidden.join('\n')) + '</textarea><button type="button" class="btn btn-sm btn-outline" id="phoneForbiddenCleanup">整理全部词库</button></section><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
+    h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">正文写入“标记”，读者填写“问题”后会替换对应内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="form-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label><details class="placeholder-global-forbidden" data-global-forbidden-editor><summary><span><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></span><span class="placeholder-forbidden-count" data-forbidden-count>' + globalForbidden.length + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><textarea id="phoneGlobalForbidden" class="form-textarea" aria-label="全局违禁词" placeholder="可用换行、逗号、顿号、分号或斜杠分隔">' + esc(globalForbidden.join('\n')) + '</textarea><button type="button" class="btn btn-sm btn-outline" id="phoneForbiddenCleanup">整理全部词库</button></div></details><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
     authorPresets.forEach(function(preset) { h += '<option value="' + escapeHtmlAttribute(preset.id) + '">' + esc(preset.name) + '</option>' })
     h += '</select><button type="button" class="btn btn-sm btn-outline" id="phoneAuthorPresetApply">套用预设</button><details class="placeholder-preset-management"><summary>管理预设</summary><div><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetSave">保存当前为预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetDelete">删除预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetExport">导出预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetImport">导入预设</button></div></details><input type="file" id="phoneAuthorPresetFile" accept=".json,application/json" hidden></div><div id="phonePlaceholderList">'
     placeholders.forEach(function(ph, index) {
@@ -7289,7 +7289,8 @@ function openSettingsEditor(wid) {
       h += '<label><span>模式</span><select class="form-select" data-ph-mode>'
       PH_MODES.forEach(function(mode) { h += '<option value="' + escapeHtmlAttribute(mode.value) + '"' + (currentMode === mode.value ? ' selected' : '') + '>' + esc(mode.label) + '</option>' })
       if (!PH_MODES.some(function(mode) { return mode.value === currentMode })) h += '<option value="' + escapeHtmlAttribute(currentMode) + '" selected>保留原模式</option>'
-      h += '</select></label><label class="phone-placeholder-forbidden"><span>单项违禁词</span><textarea class="form-textarea" data-ph-forbidden placeholder="每行一个，或用逗号分隔">' + esc((ph.forbidden || []).join('\n')) + '</textarea></label>' + inheritedForbiddenSummaryHtml(globalForbidden) + '</div></div>'
+      var forbiddenWords = parseForbiddenWords(ph.forbidden)
+      h += '</select></label><details class="placeholder-forbidden-editor phone-placeholder-forbidden" data-placeholder-forbidden-editor><summary><span>单项违禁词</span><span class="placeholder-forbidden-count" data-forbidden-count>' + forbiddenWords.length + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><textarea class="form-textarea" data-ph-forbidden aria-label="单项违禁词" placeholder="每行一个，或用逗号分隔">' + esc(forbiddenWords.join('\n')) + '</textarea></div></details>' + inheritedForbiddenSummaryHtml(globalForbidden) + '</div></div>'
     })
     if (placeholders.length === 0) h += '<div class="phone-placeholder-empty">暂无占位符</div>'
     h += '</div></section>'
@@ -7394,12 +7395,22 @@ function openSettingsEditor(wid) {
     function applyPlaceholderSearch() {
       var query = String(frame.querySelector('[data-placeholder-search]')?.value || '').trim().toLocaleLowerCase()
       var visible = 0
+      var globalEditor = frame.querySelector('[data-global-forbidden-editor]')
+      var globalWords = String(frame.querySelector('#phoneGlobalForbidden')?.value || '').toLocaleLowerCase()
+      if (query && globalWords.includes(query) && globalEditor) globalEditor.open = true
       frame.querySelectorAll('[data-placeholder-index]').forEach(function(row) {
         var haystack = Array.from(row.querySelectorAll('input,textarea,select')).map(function(field) {
           return field.value || ''
         }).join(' ') + ' ' + (row.textContent || '')
         haystack = haystack.toLocaleLowerCase()
         row.hidden = Boolean(query) && !haystack.includes(query)
+        var forbiddenEditor = row.querySelector('[data-placeholder-forbidden-editor]')
+        var forbiddenWords = String(row.querySelector('[data-ph-forbidden]')?.value || '').toLocaleLowerCase()
+        if (query && forbiddenWords.includes(query) && forbiddenEditor) forbiddenEditor.open = true
+        row.querySelectorAll('[data-global-forbidden-summary]').forEach(function(summary) {
+          var inheritedWords = String(summary.querySelector('.placeholder-inherited-words')?.textContent || '').toLocaleLowerCase()
+          if (query && inheritedWords.includes(query)) summary.open = true
+        })
         if (!row.hidden) visible += 1
       })
       var status = frame.querySelector('[data-placeholder-search-status]')
@@ -7410,6 +7421,12 @@ function openSettingsEditor(wid) {
       placeholderSearch.oninput = applyPlaceholderSearch
       applyPlaceholderSearch()
     }
+    frame.querySelectorAll('#phoneGlobalForbidden,[data-ph-forbidden]').forEach(function(field) {
+      field.oninput = function() {
+        var count = field.closest('details')?.querySelector('[data-forbidden-count]')
+        if (count) count.textContent = parseForbiddenWords(field.value).length + ' 个'
+      }
+    })
     var cleanupForbiddenBtn = frame.querySelector('#phoneForbiddenCleanup')
     if (cleanupForbiddenBtn) cleanupForbiddenBtn.onclick = function() {
       collectPlaceholders()
