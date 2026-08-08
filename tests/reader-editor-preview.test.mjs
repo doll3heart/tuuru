@@ -65,6 +65,7 @@ function previewArticleWork() {
         },
       },
     }],
+    editorSettings: { indentFirstLine: true },
     startNode: "node-a",
   }
 }
@@ -92,6 +93,8 @@ test("author preview uses the real reader connection flow without author control
 
   assert.equal(document.querySelector(".pm-inline-card"), null)
   assert.equal(document.querySelector('[data-a="pm-hamburger"]'), null)
+  assert.equal(document.querySelector(".article-content").style.textIndent, "2em")
+  assert.equal(document.querySelector(".article-content p").style.textIndent, "2em")
   const trigger = document.querySelector(".rd-pm-trigger")
   assert.ok(trigger)
   trigger.click()

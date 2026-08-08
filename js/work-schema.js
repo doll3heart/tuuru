@@ -4,6 +4,7 @@ import { isSafeCssColor, isSafeIconValue, isSafeIdentifier } from "./safe-values
 import { normalizeWorkWatermark } from "./work-watermark.js"
 import { normalizeWorkRelease } from "./work-release.js"
 import { normalizeInteractiveScene } from "./interactive-scene-model.js"
+import { normalizeArticleFormatting } from "./article-formatting.js"
 import {
   articleNodeHasInteractiveSceneCard,
   migrateInteractiveSceneCards,
@@ -335,6 +336,9 @@ function normalizeArticle(input, path, sourceVersion) {
   if (!nodesResult.ok) return asWorkFailure(nodesResult, "invalid-article", "文章作品结构无效。")
 
   const work = cloneJsonValue(input)
+  if (Object.hasOwn(input, "articleFormatting")) {
+    work.articleFormatting = normalizeArticleFormatting(input.articleFormatting)
+  }
   work.nodes = nodesResult.value
   for (const key of ARTICLE_COLLECTIONS) {
     const result = recordArray(input[key], `${path}.${key}`)

@@ -66,6 +66,7 @@ test("current article and phone exports have identical JSON and PNG reader seman
       }],
       editorSettings: {
         fontSize: 18,
+        indentFirstLine: true,
         customFonts: [{
           id: "local-author-font",
           name: "Author Device Only",
@@ -140,6 +141,7 @@ test("current article and phone exports have identical JSON and PNG reader seman
     assert.doesNotMatch(serialized, /PRIVATE_OUTLINE|editorTextColor|tuuru_article_author_notes/)
     assert.doesNotMatch(serialized, /PRIVATE_READER_ID|PRIVATE_READER_AVATAR|_articleChoiceMemory/)
     if (fixture.type === "article") {
+      assert.deepEqual(jsonWork.articleFormatting, { indentFirstLine: true })
       assert.deepEqual(jsonWork.futureField, { preserved: true })
       const conditionalNode = jsonWork.nodes.find(node => node.id === "conditional")
       const sourceNode = jsonWork.nodes.find(node => node.id === "start")

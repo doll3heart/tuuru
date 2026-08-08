@@ -124,6 +124,7 @@ import {
   normalizeReaderAppearance,
   resolveReaderAppearanceTheme,
 } from './article-appearance.js'
+import { normalizeArticleFormatting } from '../js/article-formatting.js'
 import {
   READER_CUSTOM_CSS_MAX_LENGTH,
   compileScopedReaderCss,
@@ -4027,7 +4028,19 @@ function renderWorkWatermark(candidate, scope) {
 // ====== ARTICLE READER ======
 // ====== Reader Typography Settings ======
 function getReaderSettings() {
-  return normalizeReaderAppearance(lsGet('readerSettings'))
+  var stored = lsGet('readerSettings')
+  var settings = normalizeReaderAppearance(stored)
+  var authoredFormatting = _work && _work.type === 'article' && Object.hasOwn(_work, 'articleFormatting')
+    ? normalizeArticleFormatting(_work.articleFormatting)
+    : null
+  var readerHasIndentOverride = stored !== null
+    && typeof stored === 'object'
+    && !Array.isArray(stored)
+    && typeof stored.indentFirstLine === 'boolean'
+  if (authoredFormatting && (_editorPreviewMode || !readerHasIndentOverride)) {
+    settings.indentFirstLine = authoredFormatting.indentFirstLine
+  }
+  return settings
 }
 
 function saveReaderSettings(data) {
@@ -4219,6 +4232,7 @@ function applyReaderSettings(el, candidate) {
   el.style.letterSpacing = rs.letterSpacing + 'px'
   el.style.padding = '0 ' + rs.marginSize + 'px'
   el.style.textAlign = rs.textAlign
+  el.style.textIndent = rs.indentFirstLine ? '2em' : ''
   el.querySelectorAll('p').forEach(function(p) {
     p.style.marginBottom = rs.paragraphSpacing + 'px'
     p.style.textIndent = rs.indentFirstLine ? '2em' : ''
@@ -4285,6 +4299,7 @@ function applyReaderSettingsPreview(root, candidate) {
   copy.style.maxWidth = Math.min(rs.contentWidth, 480) + 'px'
   copy.style.fontFamily = rs.fontFamily
   copy.style.textAlign = rs.textAlign
+  copy.style.textIndent = rs.indentFirstLine ? '2em' : ''
   copy.querySelectorAll('p').forEach(function(paragraph) {
     paragraph.style.marginBottom = rs.paragraphSpacing + 'px'
     paragraph.style.textIndent = rs.indentFirstLine ? '2em' : ''

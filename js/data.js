@@ -12,6 +12,7 @@ import { migrateInteractiveSceneCards } from "./interactive-scene-node.js"
 import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 import { removeArticlePlaceholderMarkers } from "./article-placeholder-marker.js"
 import { createWorkRelease } from "./work-release.js"
+import { articleFormattingFromEditorSettings } from "./article-formatting.js"
 import {
   moveWorkBefore as moveWorkBeforeRecords,
   moveWorkByOffset as moveWorkByOffsetRecords,
@@ -385,6 +386,9 @@ export function exportWorkAsJSON(wid) {
   // Deep clone to avoid mutating original
   var copy = JSON.parse(JSON.stringify(w))
   copy.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
+  if (copy.type === WORK_TYPE.ARTICLE) {
+    copy.articleFormatting = articleFormattingFromEditorSettings(copy.editorSettings)
+  }
   // Remove editor-specific fields
   delete copy.editorSettings
   delete copy.updatedAt

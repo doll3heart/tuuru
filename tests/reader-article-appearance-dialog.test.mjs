@@ -251,6 +251,49 @@ test("saved article appearance applies below content when a cached work opens", 
   })
 })
 
+test("authored paragraph indentation is the reader default until the reader overrides it", async t => {
+  installDom(t)
+  const work = {
+    schemaVersion: 4,
+    id: "authored-indent-work",
+    type: "article",
+    title: "Authored indent",
+    nodes: [{
+      id: "start",
+      title: "Start",
+      content: "Plain text paragraph<div>Second paragraph</div>",
+      choices: [],
+    }],
+    chapters: [],
+    scenes: [],
+    placeholders: [],
+    phoneModules: [],
+    interactiveScenes: [],
+    articleFormatting: { indentFirstLine: true },
+    startNode: "start",
+  }
+  localStorage.setItem("moirain_recent", JSON.stringify([
+    { id: work.id, title: work.title, type: work.type, importedAt: Date.now() },
+  ]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+
+  await import(`../reader/reader.js?reader-authored-indent=${Date.now()}-${Math.random()}`)
+  document.querySelector("[data-reader-recent-index]").click()
+  document.getElementById("rdStartBtn").click()
+
+  const content = document.querySelector(".article-content")
+  assert.equal(content.style.textIndent, "2em")
+
+  document.querySelector(".reader-settings-btn").click()
+  const indent = document.getElementById("rsIndent")
+  assert.equal(indent.checked, true)
+  indent.checked = false
+  indent.dispatchEvent(new Event("change", { bubbles: true }))
+
+  assert.equal(content.style.textIndent, "")
+  assert.equal(JSON.parse(localStorage.getItem("moirain_readerSettings")).indentFirstLine, false)
+})
+
 test("article appearance controls are touch-safe and keyboard-visible", () => {
   for (const selector of [".rs-close-btn", ".rs-align-btn", ".rs-action-btn"]) {
     const rule = cssBody(selector)

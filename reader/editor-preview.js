@@ -1,5 +1,6 @@
 import { inspectLocalDatabase } from '../js/storage.js'
 import { prepareImportedWork } from '../js/work-import.js'
+import { articleFormattingFromEditorSettings } from '../js/article-formatting.js'
 
 function previewFailure(code, message) {
   return { preview: true, ok: false, code, message }
@@ -28,8 +29,14 @@ export function prepareEditorPreview({
     return previewFailure('preview-work-not-found', '找不到要预览的作品。它可能已被删除。')
   }
   const sourceWork = matchingWorks[0]
+  const previewWork = sourceWork.type === 'article'
+    ? {
+        ...sourceWork,
+        articleFormatting: articleFormattingFromEditorSettings(sourceWork.editorSettings),
+      }
+    : sourceWork
 
-  const prepared = prepareImportedWork(sourceWork, windowObject)
+  const prepared = prepareImportedWork(previewWork, windowObject)
   if (!prepared.ok) {
     return previewFailure('invalid-preview-work', '当前作品格式无法在阅读器中打开。')
   }
