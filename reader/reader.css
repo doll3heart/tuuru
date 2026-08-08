@@ -263,8 +263,8 @@ body {
 .rd-book-cover-title{display:-webkit-box;margin-top:18px;overflow:hidden;font-size:1.08rem;font-weight:760;line-height:1.4;text-wrap:balance;-webkit-box-orient:vertical;-webkit-line-clamp:4}
 .rd-book-cover-author{margin-top:auto;overflow:hidden;font-size:.68rem;opacity:.84;text-overflow:ellipsis;white-space:nowrap}
 .rd-book-cover-rule{width:32px;height:2px;margin-top:8px;background:color-mix(in srgb,var(--rd-book-cover-ink) 62%,transparent)}
-.rd-book-manage{position:absolute;top:0;right:0;z-index:4;display:inline-flex;width:44px;height:44px;align-items:center;justify-content:center;border:0;background:transparent;color:var(--rd-book-cover-bg);font:700 .72rem var(--font);letter-spacing:.04em;cursor:pointer;opacity:0;transition:opacity .15s}
-.rd-book-manage::before{position:absolute;inset:8px;z-index:-1;border-radius:3px;background:color-mix(in srgb,var(--rd-book-cover-ink) 78%,transparent);content:"";pointer-events:none;transition:background .15s}
+.rd-book-manage{position:absolute;top:0;right:0;z-index:4;display:inline-flex;width:44px;height:44px;align-items:center;justify-content:center;border:0;background:transparent;color:var(--rd-book-cover-bg);font:700 .6rem var(--font);letter-spacing:0;cursor:pointer;opacity:0;transition:opacity .15s}
+.rd-book-manage::before{position:absolute;inset:12px;z-index:-1;border-radius:3px;background:color-mix(in srgb,var(--rd-book-cover-ink) 78%,transparent);content:"";pointer-events:none;transition:background .15s}
 .rd-book-cover-wrap:hover .rd-book-manage,.rd-book-manage:focus-visible{opacity:1}
 .rd-book-manage:hover::before{background:var(--rd-book-cover-ink)}
 .rd-book-manage:focus-visible{outline-offset:-6px}
@@ -306,6 +306,7 @@ body {
 .rd-book-pin-row strong{font-size:.8rem}
 .rd-book-pin-row small{color:var(--c-text2);font-size:.68rem;line-height:1.45}
 .rd-book-pin-row button{min-height:40px;padding:7px 12px;border-radius:4px;font:650 .72rem var(--font);cursor:pointer;white-space:nowrap}
+.rd-book-pin-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .rd-book-manager-section+.rd-book-manager-section{margin-top:24px;padding-top:18px;border-top:1px solid var(--c-border)}
 .rd-book-manager-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:12px}
 .rd-book-manager-section-head h3{font-size:.88rem}
@@ -3350,7 +3351,13 @@ div.phone-story-widget-v7 { cursor: default; }
   .rd-book-manager-overlay{align-items:flex-end;padding:14px 0 0}
   .rd-book-manager{width:100%;max-height:calc(100vh - 14px);border-right:0;border-bottom:0;border-left:0;border-radius:8px 8px 0 0;box-shadow:0 -4px 0 rgba(76,54,61,.2)}
   .rd-book-manager-head,.rd-book-manager-body{padding-right:max(16px,env(safe-area-inset-right,0px));padding-left:max(16px,env(safe-area-inset-left,0px))}
+  .rd-book-manager-close{font-size:1rem}
+  .rd-book-manager .rd-book-manager-close:focus-visible{outline-offset:-7px}
   .rd-book-manager-field{grid-template-columns:1fr;gap:5px}
+  .rd-book-pin-row{align-items:stretch;flex-direction:column}
+  .rd-book-pin-row>span{min-width:0}
+  .rd-book-pin-actions{display:grid;width:100%;grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr)}
+  .rd-book-pin-actions button{width:100%;white-space:normal}
   .rd-book-manager-inline{align-items:flex-start;flex-direction:column}
   .rd-reader-slot-toolbar{align-items:stretch;flex-direction:column}
   .rd-reader-slot-toolbar label{width:100%}

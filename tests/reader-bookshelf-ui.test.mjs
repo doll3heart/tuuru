@@ -23,11 +23,13 @@ test("bookshelf has a deliberate responsive cover system and accessible alternat
   assert.match(readerCss, /\.rd-book-cover\{[^}]*background:var\(--rd-book-cover-bg\)[^}]*color:var\(--rd-book-cover-ink\)/s)
   assert.doesNotMatch(readerSource, /style="--rd-book-color:/)
   assert.match(readerCss, /\.rd-book-manage\{[^}]*width:44px[^}]*height:44px/s)
-  assert.match(readerCss, /\.rd-book-manage::before\{[^}]*inset:8px[^}]*border-radius:3px/s)
+  assert.match(readerCss, /\.rd-book-manage\{[^}]*font:700 \.6rem/s)
+  assert.match(readerCss, /\.rd-book-manage::before\{[^}]*inset:12px[^}]*border-radius:3px/s)
   assert.match(readerCss, /\.rd-book-updated\{[^}]*pointer-events:none/s)
   assert.match(readerCss, /\.rd-book-title-row\{[^}]*display:flex/s)
   assert.match(readerCss, /\.rd-book-pinned\{[^}]*white-space:nowrap/s)
   assert.match(readerCss, /\.rd-book-pin-row\{[^}]*display:flex/s)
+  assert.match(readerCss, /\.rd-book-pin-actions\{[^}]*display:flex/s)
   assert.match(readerCss, /\.rd-book-pin-row button\{[^}]*min-height:40px/s)
   assert.match(readerSource, /原位置已变动，已定位到附近内容/)
   assert.match(readerSource, /restoreReaderBookmark/)
@@ -39,6 +41,10 @@ test("bookshelf has a deliberate responsive cover system and accessible alternat
   assert.match(
     readerCss,
     /@media \(max-width: 480px\)\s*\{[\s\S]*?\.rd-bookshelf-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/,
+  )
+  assert.match(
+    readerCss,
+    /@media \(max-width: 480px\)\s*\{[\s\S]*?\.rd-book-manager \.rd-book-manager-close:focus-visible\{outline-offset:-7px\}/,
   )
   assert.match(readerCss, /@media \(prefers-reduced-motion: reduce\)/)
 })

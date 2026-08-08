@@ -2261,8 +2261,10 @@ function openReaderBookManager(workId, invoker) {
   h += '<div class="rd-book-manager-body">'
   h += '<div class="rd-book-pin-row"><span><strong>书架置顶</strong><small data-reader-book-pin-note>' +
     (book.pinnedAt ? '已固定在其他作品前面' : '固定在其他作品前面') + '</small></span>'
-  h += '<button type="button" class="rd-book-secondary" data-reader-book-pin aria-pressed="' +
-    (book.pinnedAt ? 'true' : 'false') + '">' + (book.pinnedAt ? '取消置顶' : '置顶') + '</button></div>'
+  h += '<div class="rd-book-pin-actions"><button type="button" class="rd-book-secondary" data-reader-book-pin aria-pressed="' +
+    (book.pinnedAt ? 'true' : 'false') + '">' + (book.pinnedAt ? '取消置顶' : '置顶') + '</button>'
+  h += '<button type="button" class="rd-book-danger" data-reader-book-remove>移除本书与数据</button></div></div>'
+  h += '<div class="rd-book-remove-confirm" hidden><p>这会同时移除本书的进度、占位符、书签和正文缓存；完成后可在短时间内撤销。</p><div><button type="button" class="rd-book-secondary" data-reader-book-remove-cancel>取消</button><button type="button" class="rd-book-danger" data-reader-book-remove-confirm>确认移除</button></div></div>'
   h += '<section class="rd-book-manager-section"><div class="rd-book-manager-section-head"><h3>阅读存档</h3><span>' + book.slots.length + ' / 5</span></div>'
   h += '<div class="rd-reader-slot-toolbar"><label><span class="sr-only">当前阅读存档</span><select data-reader-slot-select>'
   book.slots.forEach(function(slot, index) {
@@ -2366,9 +2368,7 @@ function openReaderBookManager(workId, invoker) {
   }
   h += '<section class="rd-book-manager-section"><details class="rd-reader-storage"><summary><strong>本地数据</strong><span data-reader-cache-size>' + esc(formatReaderStorageSize(cacheBytes)) + '</span></summary><div class="rd-reader-storage-body">'
   h += '<div class="rd-book-manager-storage"><p>清除正文缓存会保留进度、占位符和书签；下次阅读前需要重新导入原文件。</p>'
-  h += '<div><button type="button" class="rd-book-secondary" data-reader-book-clear-cache' + (cacheBytes ? '' : ' disabled') + '>清除正文缓存</button>'
-  h += '<button type="button" class="rd-book-danger" data-reader-book-remove>从书架移除</button></div></div>'
-  h += '<div class="rd-book-remove-confirm" hidden><p>这会同时移除本书的进度、占位符、书签和正文缓存；完成后可在短时间内撤销。</p><div><button type="button" class="rd-book-secondary" data-reader-book-remove-cancel>取消</button><button type="button" class="rd-book-danger" data-reader-book-remove-confirm>确认移除</button></div></div></div></details></section>'
+  h += '<div><button type="button" class="rd-book-secondary" data-reader-book-clear-cache' + (cacheBytes ? '' : ' disabled') + '>清除正文缓存</button></div></div></div></details></section>'
   h += '<p class="rd-book-manager-status rd-book-manager-global-status" role="status" aria-live="polite"></p>'
   h += '</div><footer class="rd-book-manager-actions">'
   if (book.progress) h += '<button type="button" class="rd-book-secondary" data-reader-book-restart>从头开始</button>'

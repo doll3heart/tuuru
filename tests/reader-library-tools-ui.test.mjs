@@ -98,6 +98,9 @@ test("reader shelf tools filter, sort, manage storage, and bookmark article scen
   assert.match(document.querySelector(".rd-book-manager").textContent, /本地数据/)
   assert.equal(document.querySelector(".rd-reader-storage").open, false)
   assert.match(document.querySelector("[data-reader-cache-size]").textContent, /B|KB/)
+  const removeBook = document.querySelector("[data-reader-book-remove]")
+  assert.equal(removeBook.textContent, "移除本书与数据")
+  assert.equal(removeBook.closest("details"), null)
 
   document.querySelector("[data-reader-book-clear-cache]").click()
   assert.equal(localStorage.getItem("moirain_work_library-work-1"), null)
