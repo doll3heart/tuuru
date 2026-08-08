@@ -810,6 +810,15 @@ function currentReaderScrollY() {
   return Number(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0)
 }
 
+function resetArticleChapterReadingPosition() {
+  if (currentReaderScrollY() <= 0) return
+  if (typeof window.scrollTo === 'function') {
+    window.scrollTo({top:0, left:0, behavior:'auto'})
+  }
+  document.documentElement.scrollTop = 0
+  document.body.scrollTop = 0
+}
+
 function captureArticleReadingPosition() {
   if (!document.querySelector('.article-reader')) return null
   var scrollY = currentReaderScrollY()
@@ -5831,6 +5840,7 @@ function renderArticleReader() {
         applyArticleRouteState(transition.path, branchSelection.state)
         _nodeId = _articlePath[_articlePath.length - 1]
         _visitedNodes = _articlePath.slice(0, -1)
+        if (transition.chapterChanged) resetArticleChapterReadingPosition()
         renderArticleReader()
         offerArticleChoiceUndo(choiceUndoSnapshot, choiceUndoLabel)
         markArticleChoiceReveal(sourcePathIndex)

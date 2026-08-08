@@ -294,6 +294,30 @@ test("branch prose reveals below the choice without forcing the reader back to t
   assert.match(readerCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.article-node\.is-choice-reveal/)
 })
 
+test("a cross-chapter branch starts at the beginning of the target chapter", async t => {
+  installDom(t)
+  const work = articleWork()
+  work.id = "cross-chapter-branch-position"
+
+  let scrollY = 640
+  Object.defineProperty(window, "scrollY", {
+    configurable:true,
+    get:() => scrollY,
+  })
+  const scrollCalls = []
+  window.scrollTo = options => {
+    scrollCalls.push(options)
+    scrollY = Number(options?.top || 0)
+  }
+
+  await startWork(work, "cross-chapter-branch-position")
+  document.querySelector('.article-choice-btn[data-target="second"]').click()
+
+  assert.equal(document.querySelector(".article-title").textContent, "第二节")
+  assert.equal(scrollY, 0)
+  assert.deepEqual(scrollCalls, [{ top:0, left:0, behavior:"auto" }])
+})
+
 test("a chapter ending without choices uses NEXT to open the next non-empty chapter", async t => {
   installDom(t)
   const work = articleWork()
