@@ -12,7 +12,7 @@ const phoneDataSource = readFileSync(new URL("../js/data.js", import.meta.url), 
 const interactiveSource = readFileSync(new URL("../js/interactive-scene-editor.js", import.meta.url), "utf8")
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
 const tutorialCopy = source.slice(
-  source.indexOf("function renderLegacyTutorialPage"),
+  source.indexOf("const TUTORIAL_FEATURE_SECTIONS"),
   source.indexOf("function renderTutorialFeature("),
 )
 
@@ -101,6 +101,63 @@ test("the tutorial lists features by meaning, location, use, and effect", () => 
   assert.match(source, /填写联系人包名称/)
   assert.match(source, /为 NPC 包命名/)
   assert.match(source, /导入只追加/)
+})
+
+test("the author tutorial follows the current work and encrypted export controls", () => {
+  assert.match(tutorialCopy, /删除作品[\s\S]*【更多 ▾】[\s\S]*【删除作品】/)
+  assert.match(tutorialCopy, /导出加密作品集/)
+  assert.match(tutorialCopy, /导出加密 PNG/)
+  assert.match(tutorialCopy, /支持 \.tuuru、\.json 和 \.png/)
+  assert.match(tutorialCopy, /分享作品应该使用哪种文件[\s\S]*\.tuuru[\s\S]*PNG/)
+  assert.doesNotMatch(tutorialCopy, /点卡片上的【删除】/)
+  assert.doesNotMatch(tutorialCopy, /【导出 JSON】/)
+  assert.doesNotMatch(tutorialCopy, /选择 JSON 或 PNG 文件/)
+})
+
+test("the author tutorial covers current writing, safety, and phone interaction tools", () => {
+  for (const feature of [
+    "本节与全文字数",
+    "发布前体检",
+    "全作品查找替换",
+    "批量顺延时间",
+    "阅读密码与作品水印",
+    "好友申请",
+    "回复节奏",
+  ]) {
+    assert.match(tutorialCopy, new RegExp(feature))
+  }
+  for (const detail of [
+    "本节",
+    "全文",
+    "撤销上次批量操作",
+    "直接出现",
+    "很快回复",
+    "正在输入后回复",
+    "稍后回复",
+    "读者需要选择同意或拒绝",
+    "字距",
+    "段首缩进",
+    "页边距",
+  ]) {
+    assert.match(tutorialCopy, new RegExp(detail))
+  }
+})
+
+test("the placeholder tutorial explains the collapsed forbidden-word editors", () => {
+  assert.match(tutorialCopy, /全局违禁词[\s\S]*默认折叠/)
+  assert.match(tutorialCopy, /单项违禁词[\s\S]*默认折叠/)
+  assert.match(tutorialCopy, /点击标题展开/)
+  assert.match(tutorialCopy, /词数/)
+  assert.match(tutorialCopy, /搜索命中[\s\S]*自动展开/)
+})
+
+test("the resources route renders the current data-driven tutorial", () => {
+  const currentRenderer = source.slice(
+    source.indexOf("function renderTutorialPage"),
+    source.indexOf("export function renderResourcesPage"),
+  )
+  assert.match(currentRenderer, /TUTORIAL_FEATURE_SECTIONS\.map\(renderTutorialSection\)/)
+  assert.doesNotMatch(currentRenderer, /renderLegacyTutorialPage/)
 })
 
 test("the article feature list distinguishes scene tags from chapters", () => {
