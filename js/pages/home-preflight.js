@@ -1,15 +1,17 @@
-import { exportWorkAsJSON, getWork } from "../data.js"
+import { getWork, prepareWorkForExport } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { navigate } from "../router.js"
 import { writeArticleEditorViewState } from "../article-editor-view-state.js"
 import { inspectWorkBeforePublish } from "../work-preflight.js"
 import { inspectArticleRoutes } from "../work-route-preflight.js"
-import { inspectWorkSize } from "../work-size-report.js"
+import { inspectWorkSizeWithAssets } from "../work-size-report.js"
+import { loadEditorMediaAssets } from "../editor-media-storage.js"
 import { openPhoneAppModal } from "./phone.js"
 import { buildReaderPreviewUrl } from "./reader.js"
-import { encryptWorkPackage } from "../work-package.js"
 import { downloadBlob } from "../download.js"
+import { createWorkArtifact } from "../work-export.js"
 import { runButtonAction } from "../interaction-feedback.js"
+import { isInteractiveExperienceWork } from "../interactive-experience.js"
 
 function esc(value) {
   return String(value ?? "")
@@ -62,7 +64,7 @@ export function renderArticleRouteReport(report) {
 }
 
 function renderRouteInspectionEntry(work) {
-  if (work?.type !== "article") return ""
+  if (work?.type !== "article" || isInteractiveExperienceWork(work)) return ""
   return `<section class="work-route-preflight" aria-labelledby="workRoutePreflightTitle">
     <div class="work-route-preflight-intro">
       <div>
@@ -84,17 +86,17 @@ function formatBytes(bytes) {
 
 export function renderWorkSizeReport(report) {
   const riskCopy = report.risk === "high"
-    ? "已超过 2 MiB，部分浏览器可能只能临时导入，关闭后无法继续保存。"
+    ? "已进入 9–10 MiB 高风险区，继续添加素材可能超过加密导出硬上限。"
     : report.risk === "caution"
-      ? "已超过 1.5 MiB，正在接近部分浏览器容易保存失败的区间。"
-      : "当前低于 1.5 MiB；浏览器实际可用空间仍会受设备和已有数据影响。"
+      ? "已超过 6 MiB，建议裁剪音频、压缩图片并为移动设备保留处理余量。"
+      : "当前低于 6 MiB，仍请留意设备存储空间与本地素材增长。"
   const visibleAssets = report.assets.slice(0, 8)
   const assets = visibleAssets.length
     ? `<ol class="work-size-asset-list">${visibleAssets.map(asset => `<li>
         <span class="work-size-asset-copy"><strong>${esc(asset.location)}</strong><small>${esc(asset.mediaType)} · ${formatBytes(asset.bytes)}</small></span>
         <button type="button" class="btn btn-sm btn-outline work-size-locate" data-work-size-locate="${esc(asset.id)}">去处理</button>
       </li>`).join("")}</ol>`
-    : '<p class="work-size-empty">没有发现内嵌图片、动图或视频；远程图片链接不会计入导出文件本体。</p>'
+    : '<p class="work-size-empty">没有发现内嵌图片、音频、动图或视频；远程素材链接不会计入导出文件本体。</p>'
   return `<section class="work-size-report is-${report.risk}" aria-labelledby="workSizeReportTitle">
     <div class="work-size-heading">
       <div><h3 id="workSizeReportTitle">作品体积账单</h3><p>${riskCopy}</p></div>
@@ -129,13 +131,19 @@ export function renderWorkPreflightBody(
   </div>`
 }
 
-export function openWorkPreflight(workId) {
+export async function openWorkPreflight(workId) {
   const work = getWork(workId)
   if (!work) {
     showToast("作品未找到", "error")
     return null
   }
-  const sizeReport = inspectWorkSize(work)
+  let sizeReport
+  try {
+    sizeReport = await inspectWorkSizeWithAssets(prepareWorkForExport(work), loadEditorMediaAssets)
+  } catch (error) {
+    showToast(`无法读取本地素材：${error instanceof Error ? error.message : "素材可能已经丢失"}`, "error")
+    return null
+  }
   const preflightReport = inspectWorkBeforePublish(work)
   const hasBlockingIssues = preflightReport.counts.error > 0
   const overlay = modal(
@@ -164,13 +172,8 @@ export function openWorkPreflight(workId) {
       const feedbackKey = `preflight-export-${work.id}`
       showToast("正在加密作品…", "info", {key:feedbackKey, duration:0})
       try {
-        const json = exportWorkAsJSON(work.id)
-        if (!json) throw new Error("作品数据无法读取")
-        const encrypted = await encryptWorkPackage(json)
-        downloadBlob(
-          new Blob([encrypted], {type:"application/vnd.tuuru.work"}),
-          `${work.title || "作品"}.tuuru`,
-        )
+        const artifact = await createWorkArtifact(work.id, { format:"tuuru" })
+        downloadBlob(artifact.blob, artifact.filename)
         showToast("加密作品已导出", "success", {key:feedbackKey})
         overlay.remove()
       } catch (error) {

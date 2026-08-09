@@ -1,6 +1,8 @@
 import { encodeSteganoPNG, exportWorkAsJSON, getWork } from "./data.js"
 import { downloadBlob } from "./download.js"
-import { encryptWorkPackage } from "./work-package.js"
+import { encryptPortableWorkPackage, encryptWorkPackage } from "./work-package.js"
+import { loadEditorMediaAssets } from "./editor-media-storage.js"
+import { MAX_WORK_PNG_FILE_BYTES } from "./png-payload.js"
 
 export const TUURU_WORK_MIME = "application/vnd.tuuru.work"
 
@@ -28,6 +30,8 @@ export async function createWorkArtifact(workId, {
   getWorkById = getWork,
   exportWork = exportWorkAsJSON,
   encrypt = encryptWorkPackage,
+  encryptPortable = encryptPortableWorkPackage,
+  loadAssets = loadEditorMediaAssets,
   encodePng = encodeSteganoPNG,
   BlobConstructor = globalThis.Blob,
 } = {}) {
@@ -35,7 +39,10 @@ export async function createWorkArtifact(workId, {
   if (!work) throw new TypeError("作品不存在")
   const serialized = exportWork(workId)
   if (!serialized) throw new Error("作品数据无法读取")
-  const encrypted = await encrypt(serialized)
+  const assets = await loadAssets(JSON.parse(serialized))
+  const encrypted = assets.length
+    ? await encryptPortable(serialized, assets)
+    : await encrypt(serialized)
   const title = String(work.title || "作品")
   const baseName = safeExportFilename(title)
   let blob
@@ -50,6 +57,9 @@ export async function createWorkArtifact(workId, {
       }
     })
     blob = dataUrlToBlob(dataUrl, BlobConstructor)
+    if (blob.size > MAX_WORK_PNG_FILE_BYTES) {
+      throw new RangeError("生成的 PNG 超过 25 MB 阅读器导入上限，请更换体积更小的封面图片，或改用 .tuuru 格式导出")
+    }
     filename = `${baseName}.png`
   } else if (format === "tuuru") {
     if (typeof BlobConstructor !== "function") throw new Error("当前环境无法生成作品文件")

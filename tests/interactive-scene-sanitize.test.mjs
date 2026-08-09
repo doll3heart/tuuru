@@ -87,3 +87,21 @@ test("import sanitizer removes unsafe scene media but keeps HTTPS and GIF data i
   assert.match(result.interactiveScenes[0].stages[2].image, /^data:image\/gif/)
   dom.window.close()
 })
+
+test("import sanitizer preserves portable asset references", () => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>")
+  const assetRef = `asset://${"b".repeat(64)}`
+  const result = sanitizeImportedWork({
+    type: "article",
+    nodes: [],
+    interactiveScenes: [{
+      dialogueStyle: { frameImage: assetRef },
+      stages: [{ image: assetRef, characterImage: assetRef, hotspots: [] }],
+    }],
+  }, dom.window)
+
+  assert.equal(result.interactiveScenes[0].dialogueStyle.frameImage, assetRef)
+  assert.equal(result.interactiveScenes[0].stages[0].image, assetRef)
+  assert.equal(result.interactiveScenes[0].stages[0].characterImage, assetRef)
+  dom.window.close()
+})

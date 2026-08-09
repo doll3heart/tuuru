@@ -126,6 +126,7 @@ test("current article and phone exports have identical JSON and PNG reader seman
 
   for (const fixture of fixtures) {
     const serialized = exportWorkAsJSON(fixture.id)
+    assert.equal(serialized, JSON.stringify(JSON.parse(serialized)))
     const jsonWork = throughReaderContract(serialized, windowObject)
     const pngWork = throughStegano(serialized, windowObject)
 

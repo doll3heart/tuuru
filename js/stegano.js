@@ -1,4 +1,6 @@
-export const MAX_STEGANO_PAYLOAD_BYTES = 10 * 1024 * 1024
+import { MAX_ENCRYPTED_WORK_PACKAGE_BYTES } from "./work-package.js"
+
+export const MAX_STEGANO_PAYLOAD_BYTES = MAX_ENCRYPTED_WORK_PACKAGE_BYTES
 
 function rgbChannelIndex(byteIndex) {
   return Math.floor(byteIndex / 3) * 4 + (byteIndex % 3)

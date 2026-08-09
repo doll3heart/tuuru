@@ -5,7 +5,16 @@ import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
 import { readSteganoPayload } from '../js/stegano.js'
-import { decryptWorkPackage, isEncryptedWorkPackage } from '../js/work-package.js'
+import { MAX_WORK_PNG_FILE_BYTES, pngBytesFromDataUrl, readPngPayload } from '../js/png-payload.js'
+import {
+  MAX_ENCRYPTED_WORK_PACKAGE_BYTES,
+  decryptPortableWorkPackage,
+  isEncryptedWorkPackage,
+} from '../js/work-package.js'
+import { createEditorMediaUrlResolver, syncEditorMediaAssetReferences } from '../js/editor-media-storage.js'
+import { createInteractiveBgmController } from '../js/interactive-bgm.js'
+import { isInteractiveExperienceWork } from '../js/interactive-experience.js'
+import { installPortableWorkAssets } from '../js/portable-media-import.js'
 import { parsePngDimensionsFromDataUrl, readerPngDimensionError } from './png-import-policy.js'
 import { buildReaderPhoneModuleTrigger, markReaderPhoneModuleTriggerRead } from './reader-phone-module-trigger.js'
 import { advanceCallPlayback, createCallPlaybackState } from './call-playback.js'
@@ -422,6 +431,7 @@ var _readerDataStatusMessage = ''
 var _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
 var _interactiveSceneCameraSession = null
 var _interactiveSceneController = null
+var _interactiveBgmController = null
 var _articleChoiceUndoBar = null
 var _articleChoiceUndoTimer = null
 var _articleImmersiveScrollHandler = null
@@ -2674,6 +2684,7 @@ function openReaderBookManager(workId, invoker) {
   var clearCacheButton = overlay.querySelector('[data-reader-book-clear-cache]')
   clearCacheButton.onclick = function() {
     try { localStorage.removeItem('moirain_work_' + workId) } catch (_) {}
+    syncEditorMediaAssetReferences('reader:work:' + workId, {}).catch(function() {})
     clearCacheButton.disabled = true
     var size = overlay.querySelector('[data-reader-cache-size]')
     if (size) size.textContent = '未缓存正文'
@@ -2725,6 +2736,12 @@ function openReaderBookManager(workId, invoker) {
         refreshBookshelfPage()
       }
     })
+    globalThis.setTimeout(function() {
+      var cached = null
+      try { cached = localStorage.getItem(cacheKey) } catch (_) {}
+      if (cached !== null || savedReaderBook(workId)) return
+      syncEditorMediaAssetReferences('reader:work:' + workId, {}).catch(function() {})
+    }, 6500)
   }
   overlay.querySelectorAll('[data-reader-book-bookmark-remove]').forEach(function(button) {
     button.onclick = function() {
@@ -3067,8 +3084,8 @@ function renderImportPanel(recoveryBook) {
   return h
 }
 
-var MAX_READER_JSON_IMPORT_BYTES = 10 * 1024 * 1024
-var MAX_READER_PNG_IMPORT_BYTES = 25 * 1024 * 1024
+var MAX_READER_JSON_IMPORT_BYTES = MAX_ENCRYPTED_WORK_PACKAGE_BYTES
+var MAX_READER_PNG_IMPORT_BYTES = MAX_WORK_PNG_FILE_BYTES
 
 function readerImportFileError(file, ext) {
   if (!file || !Number.isSafeInteger(file.size) || file.size < 0) {
@@ -3152,8 +3169,10 @@ function setupImport(root) {
       if (ext === 'tuuru') {
         try {
           var encryptedBytes = new Uint8Array(reader.result)
-          var serialized = await decryptWorkPackage(encryptedBytes)
-          importPayload(JSON.parse(serialized), root)
+          var portable = await decryptPortableWorkPackage(encryptedBytes)
+          var portablePayload = JSON.parse(portable.serialized)
+          await installPortableWorkAssets(portablePayload, portable.assets)
+          importPayload(portablePayload, root)
         } catch (e) {
           reportReaderImportError('Tuuru 作品包读取失败：' + e.message, root)
         }
@@ -3223,12 +3242,40 @@ function setupImport(root) {
 
 function parseSteganoWork(bytes) {
   if (isEncryptedWorkPackage(bytes)) {
-    return decryptWorkPackage(bytes).then(function(json) { return JSON.parse(json) })
+    return decryptPortableWorkPackage(bytes).then(async function(portable) {
+      var payload = JSON.parse(portable.serialized)
+      await installPortableWorkAssets(payload, portable.assets)
+      return payload
+    })
   }
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
+function importSteganoBytes(bytes, root) {
+  try {
+    var work = parseSteganoWork(bytes)
+    if (work && typeof work.then === 'function') {
+      work.then(function(payload) { importPayload(payload, root) }).catch(function(error) {
+        reportReaderImportError('隐写数据解析失败：' + error.message, root)
+      })
+    } else {
+      importPayload(work, root)
+    }
+  } catch (error) {
+    reportReaderImportError('隐写数据解析失败：' + error.message, root)
+  }
+}
+
 function decodeSteganoFromDataUrl(dataUrl, root) {
+  try {
+    var chunkBytes = readPngPayload(pngBytesFromDataUrl(dataUrl))
+    if (chunkBytes) {
+      importSteganoBytes(chunkBytes, root)
+      return
+    }
+  } catch (error) {
+    // Fall through to the historical RGB decoder for legacy exports.
+  }
   var img = new Image()
   img.onload = function() {
     var canvas = document.createElement('canvas')
@@ -3237,18 +3284,7 @@ function decodeSteganoFromDataUrl(dataUrl, root) {
     var pixels = ctx.getImageData(0, 0, img.width, img.height).data
     var bytes = readSteganoPayload(pixels)
     if (!bytes) { reportReaderImportError('未检测到隐写数据', root); return }
-    try {
-      var work = parseSteganoWork(bytes)
-      if (work && typeof work.then === 'function') {
-        work.then(function(payload) { importPayload(payload, root) }).catch(function(error) {
-          reportReaderImportError('隐写数据解析失败：' + error.message, root)
-        })
-      } else {
-        importPayload(work, root)
-      }
-    } catch(e) {
-      reportReaderImportError('隐写数据解析失败：' + e.message, root)
-    }
+    importSteganoBytes(bytes, root)
   }
   img.onerror = function() { reportReaderImportError('PNG 加载失败', root) }
   img.src = dataUrl
@@ -3900,6 +3936,8 @@ function loadWork(work, options) {
   _interactiveSceneCameraSession = null
   _interactiveSceneController?.destroy()
   _interactiveSceneController = null
+  _interactiveBgmController?.destroy()
+  _interactiveBgmController = null
   _interactiveCameraState = { granted:false, detectorAvailable:false, reason:"", preflighted:false }
   _activeReaderCollectionId = options && options.collectionId || ''
   var rememberedBook = rememberWork ? rememberReaderWorkState(work) : null
@@ -3948,6 +3986,8 @@ function loadWork(work, options) {
   function startReading() {
     if (_work.type === 'phone') {
       renderPhoneReader()
+    } else if (isInteractiveExperienceWork(_work)) {
+      renderInteractiveExperienceReader()
     } else {
       renderArticleReader()
     }
@@ -4920,6 +4960,7 @@ function openReaderInteractiveScene(sceneId, options = {}) {
   var sourceScene = readerInteractiveSceneById(_work, sceneId)
   if (!sourceScene) return
   var nodePage = options.nodePage === true
+  var standalone = options.standalone === true
   var returnReadingPosition = captureArticleReadingPosition()
   var returnFocusSceneId = String(sceneId || '')
   var scene = substituteInteractiveSceneText(sourceScene, _work.placeholders || [], {
@@ -4949,9 +4990,12 @@ function openReaderInteractiveScene(sceneId, options = {}) {
   _interactiveSceneCameraSession = null
   _interactiveSceneController?.destroy()
   _interactiveSceneController = null
+  _interactiveBgmController?.destroy()
+  _interactiveBgmController = null
 
   var html = '<main class="rd-interactive-scene-page">'
-  html += '<button type="button" class="rd-interactive-scene-exit" aria-label="返回文章" title="返回文章">←</button>'
+  html += '<button type="button" class="rd-interactive-scene-exit" aria-label="' + (standalone ? '返回书架' : '返回文章') + '" title="' + (standalone ? '返回书架' : '返回文章') + '">←</button>'
+  html += '<div class="rd-interactive-audio" aria-label="背景音乐控制"><button type="button" data-interactive-audio-mute aria-pressed="false" title="静音">♫</button><label><span>音量</span><input type="range" min="0" max="100" value="100" data-interactive-audio-volume></label></div>'
   html += '<div class="rd-interactive-scene-mount"></div>'
   html += '<video class="rd-interactive-camera-feed" muted playsinline aria-hidden="true"></video>'
   if (cameraDebugEnabled) html += '<output class="rd-interactive-camera-debug" aria-live="polite"></output>'
@@ -4984,16 +5028,54 @@ function openReaderInteractiveScene(sceneId, options = {}) {
     ].filter(Boolean).join('\n')
   }
 
+  var sceneMediaResolver = createEditorMediaUrlResolver()
+  var hasSceneAudio = Boolean((standalone && _work?.interactiveBgm?.source)
+    || (scene.stages || []).some(function(stage) { return stage?.bgm?.source }))
+  if (hasSceneAudio) {
+    _interactiveBgmController = createInteractiveBgmController({
+      documentObject:document,
+      globalBgm:standalone ? _work?.interactiveBgm : null,
+      resolveAssetUrl:sceneMediaResolver.resolve,
+    })
+  }
   _interactiveSceneController = mountInteractiveScene(mount, scene, {
     documentObject:document,
     cameraState:sceneCameraState,
+    resolveAssetUrl:sceneMediaResolver.resolve,
+    completionLabel:standalone ? '已探索最后一个画面，完成 Mini文游' : undefined,
     onInteraction:function() {
       renderCameraDebug({activations:cameraDebugState.activations + 1})
     },
-    onSceneComplete:nodePage ? function() {
+    onStageChange:function(event) {
+      _interactiveBgmController?.setStage(event.stage)
+    },
+    onSceneComplete:(nodePage || standalone) ? function() {
       closeScene({completed:true})
     } : undefined,
   })
+  _interactiveBgmController?.setStage(_interactiveSceneController.stage)
+  var audioMute = page.querySelector('[data-interactive-audio-mute]')
+  var audioVolume = page.querySelector('[data-interactive-audio-volume]')
+  var audioUnlocked = false
+  function unlockAudio() {
+    if (audioUnlocked) return
+    audioUnlocked = true
+    _interactiveBgmController?.unlock()
+  }
+  page.addEventListener('pointerdown', unlockAudio, {once:true})
+  page.addEventListener('keydown', unlockAudio, {once:true})
+  if (audioMute) audioMute.onclick = function() {
+    unlockAudio()
+    var muted = audioMute.getAttribute('aria-pressed') !== 'true'
+    audioMute.setAttribute('aria-pressed', String(muted))
+    audioMute.textContent = muted ? '♩' : '♫'
+    audioMute.title = muted ? '取消静音' : '静音'
+    _interactiveBgmController?.setMuted(muted)
+  }
+  if (audioVolume) audioVolume.oninput = function() {
+    unlockAudio()
+    _interactiveBgmController?.setMasterVolume(Number(audioVolume.value))
+  }
   renderCameraDebug({
     state:sceneCameraState.granted && sceneCameraState.detectorAvailable
       ? '准备启动'
@@ -5021,9 +5103,20 @@ function openReaderInteractiveScene(sceneId, options = {}) {
     _interactiveSceneCameraSession = null
     _interactiveSceneController?.destroy()
     _interactiveSceneController = null
+    _interactiveBgmController?.destroy()
+    _interactiveBgmController = null
+    sceneMediaResolver.release()
     signal.clear()
     document.removeEventListener('keydown', handleSceneKeydown)
     document.body.classList.remove('rd-interactive-scene-active')
+    if (standalone) {
+      if (completed) {
+        render('app', '<main class="rd-mini-complete"><span>THE END</span><h1>' + esc(_work?.title || 'Mini文游') + '</h1><p>这段短篇互动体验已经完成。</p><div><button type="button" class="drop-btn" data-mini-restart>重新开始</button><button type="button" class="drop-btn" data-reader-home>返回书架</button></div></main>')
+        var restartButton = document.querySelector('[data-mini-restart]')
+        if (restartButton) restartButton.onclick = renderInteractiveExperienceReader
+      } else renderHome()
+      return
+    }
     if (nodePage) {
       var scenePathIndex = _articlePath.length - 1
       var sceneNodeId = _articlePath[scenePathIndex] || ''
@@ -5150,6 +5243,16 @@ function openReaderInteractiveScene(sceneId, options = {}) {
       _interactiveSceneController?.goToStage(_interactiveSceneController.stage.id)
     })
   }
+}
+
+function renderInteractiveExperienceReader() {
+  if (!isInteractiveExperienceWork(_work)) return renderArticleReader()
+  var scene = Array.isArray(_work.interactiveScenes) ? _work.interactiveScenes[0] : null
+  if (!scene) {
+    render('app', '<div class="drop-zone"><p>这个 Mini文游还没有画面。</p><button type="button" class="drop-btn" data-reader-home>返回书架</button></div>')
+    return
+  }
+  openReaderInteractiveScene(scene.id, {standalone:true})
 }
 
 function readerInteractionResponseHTML(choice) {

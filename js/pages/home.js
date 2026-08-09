@@ -9,7 +9,7 @@ import { downloadBlob } from "../download.js"
 import { recordExport } from "../export-history.js"
 import { createWorkArtifact } from "../work-export.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
-import { serializeLocalDatabaseBackup } from "../storage.js"
+import { serializeLocalDatabaseBackupWithMedia } from "../library-media-backup.js"
 import { inspectLocalProfile, mergeLocalProfile, serializeLocalProfile } from "../local-profile-transport.js"
 import { FEATURE_FLAGS } from "../feature-flags.js"
 import {
@@ -45,6 +45,8 @@ import { runButtonAction } from "../interaction-feedback.js"
 import { shouldUseMotion } from "../motion-preference.js"
 import { refreshReorderedContent } from "../reorder-motion.js"
 import { installDialogInteraction } from "../dialog-interaction.js"
+import { syncEditorMediaAssetReferences } from "../editor-media-storage.js"
+import { isInteractiveExperienceWork } from "../interactive-experience.js"
 
 const CLEANUP_WARNING = "作品已经保存，但编辑锁清理未完成；请稍后刷新查看，不要重复操作。"
 const POST_COMMIT_UI_WARNING = "作品已经保存，但页面更新未完成；请刷新查看，不要重复操作。"
@@ -111,7 +113,7 @@ function renderWorkList(works, collections = []){
         <div class="work-card-title">${escHtml(w.title)}</div>
         <div class="work-card-desc">${escHtml(w.desc||"无描述")}</div>
         <div class="work-card-meta">
-          <span>${w.type===WORK_TYPE.PHONE?"小手机":"互动文章"}</span>
+          <span>${w.type===WORK_TYPE.PHONE?"小手机":isInteractiveExperienceWork(w)?"Mini文游":"互动文章"}</span>
           ${w.pinned?`<span class="work-card-pinned-badge">置顶</span>`:""}
           <span>${timeAgo(w.updatedAt)}</span>
 ${w.locked?`<span style="color:var(--c-accent3)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> 需阅读密码</span>`:""}
@@ -442,6 +444,7 @@ export function createHomeWriteController({
     if (!confirmed) return undefined
     if (!flags.reliableLocalWrites) {
       const removed = deleteLegacy(workId)
+      syncEditorMediaAssetReferences(workId, {}).catch(() => {})
       notify("已删除", "info")
       refresh()
       return removed
@@ -451,6 +454,7 @@ export function createHomeWriteController({
       workId,
       () => deleteReliable({ workId, expectedWorkToken }),
       () => {
+        syncEditorMediaAssetReferences(workId, {}).catch(() => {})
         notify("已删除", "info")
         close()
         refresh()
@@ -663,7 +667,7 @@ window.backupLibrary = function(trigger){
         else setTimeout(resolve, 0)
       })
       var exportedAt = new Date()
-      var json = serializeLocalDatabaseBackup(localStorage, exportedAt)
+      var json = await serializeLocalDatabaseBackupWithMedia(localStorage, exportedAt)
       var blob = new Blob([json], { type: 'application/json;charset=utf-8' })
       var filename = 'tuuru-library-backup-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json'
       downloadBlob(blob, filename)
@@ -896,10 +900,39 @@ window.expPNG = function(id){
     ov.innerHTML = '<div class="modal"><div class="modal-header"><span class="modal-title">PNG 隐写导出</span><button class="modal-close" style="border:none;background:transparent;cursor:pointer;font-size:1.2rem">&times;</button></div><div class="modal-body"><p style="font-size:.85rem;color:var(--c-text2);margin-bottom:12px">可选：选择一张封面图片作为 PNG 宿主图（不选则使用默认渐变图）</p><button id="pngCoverBtn" class="btn btn-sm btn-outline" style="width:100%;margin-bottom:12px">选择封面图片</button><div style="text-align:center;margin:8px 0"><span style="font-size:.75rem;color:var(--c-text2)" id="pngCoverLabel">未选择封面</span></div><button id="pngExportBtn" class="btn btn-sm btn-primary" style="width:100%">导出 PNG</button></div></div>'
     document.body.appendChild(ov)
     var coverUrl = ''
+    var coverState = 'none'
+    var coverReadError = ''
     var label = ov.querySelector('#pngCoverLabel')
+    var coverButton = ov.querySelector('#pngCoverBtn')
+    var exportButton = ov.querySelector('#pngExportBtn')
+
+    function setCoverReading(file) {
+      coverUrl = ''
+      coverState = 'reading'
+      coverReadError = ''
+      coverButton.disabled = true
+      coverButton.setAttribute('aria-busy', 'true')
+      exportButton.disabled = true
+      exportButton.textContent = '正在读取封面…'
+      label.textContent = '正在读取 ' + file.name + '…'
+      label.style.color = 'var(--c-text2)'
+    }
+
+    function finishCoverReading(state, message, error) {
+      coverState = state
+      coverReadError = error ? message : ''
+      coverButton.disabled = false
+      coverButton.removeAttribute('aria-busy')
+      exportButton.disabled = false
+      exportButton.textContent = '导出 PNG'
+      label.textContent = message
+      label.style.color = error ? 'var(--c-accent3)' : 'var(--c-primary-hover)'
+      if (error) showToast(message, 'error', {key:'png-cover-read-' + id})
+    }
+
     ov.querySelector('.modal-close').onclick = function() { ov.remove() }
     ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove() })
-    ov.querySelector('#pngCoverBtn').onclick = function() {
+    coverButton.onclick = function() {
       var input = document.createElement('input')
       input.type = 'file'
       input.accept = 'image/*'
@@ -907,20 +940,48 @@ window.expPNG = function(id){
         var file = input.files[0]
         if (!file) return
         var reader = new FileReader()
+        setCoverReading(file)
         reader.onload = function() {
+          if (coverState !== 'reading') return
+          if (typeof reader.result !== 'string' || !reader.result) {
+            coverUrl = ''
+            finishCoverReading('error', '封面图片读取失败：没有可用的图片内容，请重新选择。', true)
+            return
+          }
           coverUrl = reader.result
-          label.textContent = file.name
-          label.style.color = 'var(--c-primary-hover)'
+          finishCoverReading('ready', file.name, false)
         }
-        reader.readAsDataURL(file)
+        reader.onerror = function() {
+          if (coverState !== 'reading') return
+          coverUrl = ''
+          finishCoverReading('error', '封面图片读取失败，请重新选择。', true)
+        }
+        reader.onabort = function() {
+          if (coverState !== 'reading') return
+          coverUrl = ''
+          finishCoverReading('error', '封面图片读取已取消，请重新选择。', true)
+        }
+        try {
+          reader.readAsDataURL(file)
+        } catch (error) {
+          coverUrl = ''
+          finishCoverReading('error', '封面图片读取失败，请重新选择。', true)
+        }
       }
       input.click()
     }
-    var exportButton = ov.querySelector('#pngExportBtn')
     function handleExportError(error) {
       showToast('导出失败：' + (error instanceof Error ? error.message : '未知错误'), 'error', {key:'png-export-' + id})
     }
     exportButton.onclick = async function() {
+      if (coverState === 'reading') {
+        showToast('封面图片仍在读取，请稍候再导出。', 'error', {key:'png-cover-read-' + id})
+        return
+      }
+      if (coverState === 'error' || (coverState === 'ready' && !coverUrl)) {
+        showToast(coverReadError || '封面图片不可用，请重新选择。', 'error', {key:'png-cover-read-' + id})
+        return
+      }
       return runButtonAction(exportButton, async function() {
         showToast('正在编码加密 PNG…', 'info', {key:'png-export-' + id, duration:0})
         try {

@@ -1,8 +1,11 @@
-export const WORK_SIZE_CAUTION_BYTES = Math.round(1.5 * 1024 * 1024)
-export const WORK_SIZE_HIGH_RISK_BYTES = 2 * 1024 * 1024
+import { isInteractiveExperienceWork } from "./interactive-experience.js"
+import { ENCRYPTED_WORK_PACKAGE_OVERHEAD_BYTES } from "./work-package.js"
 
-const ENCRYPTED_PACKAGE_OVERHEAD_BYTES = 7 + 12 + 16
+export const WORK_SIZE_CAUTION_BYTES = 6 * 1024 * 1024
+export const WORK_SIZE_HIGH_RISK_BYTES = 9 * 1024 * 1024
+
 const DATA_URL_PATTERN = /data:([a-z0-9.+-]+\/[a-z0-9.+-]+)((?:;[a-z0-9=.+-]+)*);base64,([a-z0-9+/=_-]+)/gi
+const ASSET_REFERENCE_PATTERN = /^asset:\/\/([a-f0-9]{64})$/i
 
 const PHONE_COLLECTIONS = Object.freeze({
   chats:{ appType:"messages", label:"消息" },
@@ -74,6 +77,16 @@ function locatorFor(work, path) {
   }
   if (root === "interactiveScenes") {
     const scene = items(work?.interactiveScenes)[Number(path[1])]
+    if (isInteractiveExperienceWork(work)) {
+      const stageIndex = String(path[2] || "") === "stages" ? Number(path[3]) : -1
+      const stage = Number.isInteger(stageIndex) && stageIndex >= 0
+        ? items(scene?.stages)[stageIndex]
+        : null
+      return {
+        surface:"article",
+        label:`Mini文游 · ${cleanLabel(stage?.name, cleanLabel(scene?.title, stage ? `画面 ${stageIndex + 1}` : "画面与互动"))}`,
+      }
+    }
     const node = articleNodeForScene(work, scene)
     return {
       surface:"article",
@@ -144,12 +157,36 @@ function collectEmbeddedAssets(work) {
   return output.sort((left, right) => right.bytes - left.bytes || left.path.localeCompare(right.path))
 }
 
-export function inspectWorkSize(work) {
-  const serialized = JSON.stringify(work ?? null)
-  const plaintextBytes = new TextEncoder().encode(serialized).length
-  const encryptedPackageBytes = plaintextBytes + ENCRYPTED_PACKAGE_OVERHEAD_BYTES
-  const assets = collectEmbeddedAssets(work)
-  const embeddedAssetBytes = assets.reduce((sum, asset) => sum + asset.bytes, 0)
+function collectPortableAssetLocations(work) {
+  const locations = new Map()
+  const seenObjects = new WeakSet()
+  const stack = [{ value:work, path:[] }]
+  while (stack.length) {
+    const current = stack.pop()
+    if (typeof current.value === "string") {
+      const match = current.value.match(ASSET_REFERENCE_PATTERN)
+      if (match && !locations.has(match[1].toLowerCase())) {
+        const locator = locatorFor(work, current.path)
+        locations.set(match[1].toLowerCase(), { path:pathKey(current.path), locator })
+      }
+      continue
+    }
+    if (!current.value || typeof current.value !== "object" || seenObjects.has(current.value)) continue
+    seenObjects.add(current.value)
+    if (Array.isArray(current.value)) {
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({ value:current.value[index], path:[...current.path, index] })
+      }
+    } else {
+      for (const key of Object.keys(current.value)) {
+        stack.push({ value:current.value[key], path:[...current.path, key] })
+      }
+    }
+  }
+  return locations
+}
+
+function freezeReport({ plaintextBytes, encryptedPackageBytes, embeddedAssetBytes, assets }) {
   const risk = encryptedPackageBytes >= WORK_SIZE_HIGH_RISK_BYTES
     ? "high"
     : encryptedPackageBytes >= WORK_SIZE_CAUTION_BYTES
@@ -160,13 +197,62 @@ export function inspectWorkSize(work) {
     encryptedPackageBytes,
     embeddedAssetBytes,
     risk,
-    thresholds:Object.freeze({
-      caution:WORK_SIZE_CAUTION_BYTES,
-      high:WORK_SIZE_HIGH_RISK_BYTES,
-    }),
+    thresholds:Object.freeze({ caution:WORK_SIZE_CAUTION_BYTES, high:WORK_SIZE_HIGH_RISK_BYTES }),
     assets:Object.freeze(assets.map(asset => Object.freeze({
       ...asset,
       locator:Object.freeze({...asset.locator}),
     }))),
+  })
+}
+
+export function inspectWorkSize(work) {
+  const serialized = JSON.stringify(work ?? null)
+  const plaintextBytes = new TextEncoder().encode(serialized).length
+  const encryptedPackageBytes = plaintextBytes + ENCRYPTED_WORK_PACKAGE_OVERHEAD_BYTES
+  const assets = collectEmbeddedAssets(work)
+  const embeddedAssetBytes = assets.reduce((sum, asset) => sum + asset.bytes, 0)
+  return freezeReport({
+    plaintextBytes,
+    encryptedPackageBytes,
+    embeddedAssetBytes,
+    assets,
+  })
+}
+
+export async function inspectWorkSizeWithAssets(work, loadAssets) {
+  const base = inspectWorkSize(work)
+  if (typeof loadAssets !== "function") return base
+  const portableAssets = await loadAssets(work)
+  if (!portableAssets.length) return base
+  const locations = collectPortableAssetLocations(work)
+  const listed = portableAssets.map(asset => {
+    const location = locations.get(String(asset.id || "").toLowerCase()) || {
+      path:"interactiveScenes",
+      locator:locatorFor(work, ["interactiveScenes"]),
+    }
+    return {
+      id:`asset://${asset.id}`,
+      path:location.path,
+      bytes:Number(asset.blob?.size || asset.bytes?.length || 0),
+      mediaType:String(asset.type || asset.blob?.type || "application/octet-stream"),
+      location:location.locator.label,
+      locator:location.locator,
+    }
+  })
+  const portableBytes = listed.reduce((sum, asset) => sum + asset.bytes, 0)
+  const manifestBytes = new TextEncoder().encode(JSON.stringify({
+    assets:portableAssets.map(asset => ({
+      id:asset.id,
+      type:String(asset.type || asset.blob?.type || "application/octet-stream").slice(0, 120),
+      fileName:String(asset.fileName || "").slice(0, 240),
+      length:Number(asset.blob?.size || asset.bytes?.length || 0),
+    })),
+  })).length
+  const bundleOverhead = 16 + manifestBytes
+  return freezeReport({
+    plaintextBytes:base.plaintextBytes,
+    encryptedPackageBytes:base.encryptedPackageBytes + portableBytes + bundleOverhead,
+    embeddedAssetBytes:base.embeddedAssetBytes + portableBytes,
+    assets:[...base.assets, ...listed].sort((left, right) => right.bytes - left.bytes || left.path.localeCompare(right.path)),
   })
 }

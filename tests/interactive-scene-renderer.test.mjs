@@ -83,6 +83,110 @@ test("shared renderer exposes the same stage, prompt, dialogue, and hotspot DOM"
   assert.equal(controller.stage.id, "stage-1")
 })
 
+test("shared renderer respects each stage prompt visibility toggle", () => {
+  const dom = new JSDOM("<main id='root'></main>")
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  scene.stages[0].promptEnabled = false
+
+  mountInteractiveScene(root, scene, { documentObject: dom.window.document })
+
+  assert.equal(root.querySelector(".interactive-scene-prompt").hidden, true)
+  dom.window.close()
+})
+
+test("shared renderer reapplies the current stage prompt style when pictures switch", () => {
+  const dom = new JSDOM("<main id='root'></main>")
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  const firstStyle = {
+    ...scene.promptStyle,
+    surfaceColor:"#112233",
+    textColor:"#fefefe",
+    borderColor:"#445566",
+    opacity:61,
+    borderRadius:9,
+    position:"free",
+    x:22,
+    y:31,
+    width:64,
+    fontFamily:"Georgia, serif",
+    fontSize:18,
+    lineHeight:1.8,
+    letterSpacing:2,
+  }
+  const secondStyle = {
+    ...firstStyle,
+    surfaceColor:"#665544",
+    position:"bottom",
+    x:78,
+    y:84,
+    width:52,
+    fontFamily:"ui-monospace, monospace",
+    fontSize:24,
+  }
+  scene.promptStyle = firstStyle
+  scene.stages[0].promptStyle = firstStyle
+  scene.stages[1].prompt = "下一幕提示"
+  scene.stages[1].promptEnabled = true
+  scene.stages[1].promptStyle = secondStyle
+  const controller = mountInteractiveScene(root, scene, { documentObject:dom.window.document })
+  const prompt = root.querySelector(".interactive-scene-prompt")
+
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-surface"), "#112233")
+  assert.equal(prompt.dataset.position, "free")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-font-size"), "18px")
+
+  controller.goToStage("stage-2")
+
+  assert.equal(prompt.textContent, "下一幕提示")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-surface"), "#665544")
+  assert.equal(prompt.dataset.position, "bottom")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-x"), "78%")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-y"), "84%")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-width"), "52%")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-font-family"), "ui-monospace, monospace")
+  assert.equal(prompt.style.getPropertyValue("--interactive-prompt-font-size"), "24px")
+  controller.destroy()
+  dom.window.close()
+})
+
+test("shared renderer keeps one logical artboard and renders extra layers and dialogue boxes", () => {
+  const dom = new JSDOM("<main id='root'></main>")
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  scene.canvas = { width:1920, height:1080, backgroundColor:"#201b1d" }
+  scene.stages[0].layers = [{
+    id:"arrow",
+    name:"箭头",
+    source:"https://example.test/arrow.png",
+    alt:"提示箭头",
+    fit:"contain",
+    transform:{ scale:1.2, x:8, y:-4 },
+    opacity:70,
+    visible:true,
+  }]
+  scene.stages[0].dialogues = [{
+    id:"pressure",
+    speaker:"B",
+    text:"这里。",
+    style:{ position:"free", x:24, y:32, width:50, height:12 },
+  }]
+
+  mountInteractiveScene(root, scene, { documentObject:dom.window.document })
+
+  const artboard = root.querySelector(".interactive-scene")
+  const layer = root.querySelector(".interactive-scene-authored-layer")
+  const dialogue = root.querySelector(".interactive-scene-dialogue-extra")
+  assert.equal(artboard.style.getPropertyValue("--interactive-canvas-aspect"), String(1920 / 1080))
+  assert.equal(artboard.dataset.canvasOrientation, "landscape")
+  assert.equal(layer.getAttribute("src"), "https://example.test/arrow.png")
+  assert.equal(layer.style.opacity, "0.7")
+  assert.equal(dialogue.querySelector(".interactive-scene-dialogue-text").textContent, "这里。")
+  assert.equal(dialogue.style.getPropertyValue("--interactive-dialogue-x"), "24%")
+  dom.window.close()
+})
+
 test("shared renderer applies author image composition, hotspot shapes, and PNG dialogue frame", () => {
   const dom = new JSDOM("<main id='root'></main>")
   const root = dom.window.document.getElementById("root")
@@ -150,6 +254,28 @@ test("empty optional images do not resolve to the current page or show broken-im
   assert.equal(character.hidden, true)
   assert.equal(frame.hasAttribute("src"), false)
   assert.equal(frame.hidden, true)
+})
+
+test("shared renderer resolves local binary asset references on demand", async () => {
+  const dom = new JSDOM("<main id='root'></main>")
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  const reference = `asset://${"a".repeat(64)}`
+  scene.stages[0].image = reference
+  const resolved = []
+
+  mountInteractiveScene(root, scene, {
+    documentObject: dom.window.document,
+    resolveAssetUrl: async value => {
+      resolved.push(value)
+      return "blob:reader-scene"
+    },
+  })
+  await new Promise(resolve => dom.window.queueMicrotask(resolve))
+
+  assert.deepEqual(resolved, [reference])
+  assert.equal(root.querySelector(".interactive-scene-background").getAttribute("src"), "blob:reader-scene")
+  dom.window.close()
 })
 
 test("shared renderer projects author-canvas hotspots onto the same source pixels in landscape", () => {
@@ -677,6 +803,40 @@ test("a static action image automatically returns after the author duration", ()
   assert.equal(root.querySelector(".interactive-scene").dataset.actionFrameActive, "false")
   assert.equal(root.querySelector(".interactive-scene-dialogue-text").textContent, scene.stages[0].dialogue.text)
   assert.equal(ended, 1)
+})
+
+test("an author preview can keep an action frame visible until it is cleared", () => {
+  const dom = new JSDOM("<main id='root'></main>", { pretendToBeVisual: true })
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  scene.stages[0].hotspots[0].actionFrame = {
+    enabled:true,
+    source:"https://example.test/reaction.png",
+    type:"image",
+    fit:"contain",
+    durationMs:300,
+    gifDurationMs:0,
+    fileName:"reaction.png",
+  }
+  const scheduled = []
+  const controller = mountInteractiveScene(root, scene, {
+    documentObject:dom.window.document,
+    autoFinishActionFrame:false,
+    setTimeout(callback, delay) {
+      scheduled.push({ callback, delay })
+      return scheduled.length
+    },
+    clearTimeout() {},
+  })
+
+  controller.previewHotspotReaction("hotspot-1")
+
+  assert.equal(scheduled.length, 0)
+  assert.equal(root.querySelector(".interactive-scene").dataset.actionFrameActive, "true")
+  controller.clearHotspotReaction()
+  assert.equal(root.querySelector(".interactive-scene").dataset.actionFrameActive, "false")
+  controller.destroy()
+  dom.window.close()
 })
 
 test("a GIF action frame uses its detected first-loop duration", () => {

@@ -16,9 +16,10 @@ test("reader accepts encrypted Tuuru packages while retaining legacy transports"
 })
 
 test("reader decrypts dedicated packages and encrypted PNG payloads", () => {
-  assert.match(readerSource, /await decryptWorkPackage\(encryptedBytes\)/)
+  assert.match(readerSource, /await decryptPortableWorkPackage\(encryptedBytes\)/)
+  assert.match(readerSource, /await installPortableWorkAssets\(portablePayload, portable\.assets\)/)
   assert.match(readerSource, /isEncryptedWorkPackage\(bytes\)/)
-  assert.match(readerSource, /return decryptWorkPackage\(bytes\)\.then/)
+  assert.match(readerSource, /return decryptPortableWorkPackage\(bytes\)\.then/)
   assert.match(readerSource, /JSON\.parse\(new TextDecoder\(\)\.decode\(bytes\)\)/)
 })
 
@@ -29,7 +30,8 @@ test("author exports dedicated and PNG works through the encrypted package", () 
   assert.match(workExportSource, /application\/vnd\.tuuru\.work/)
   assert.match(workExportSource, /`\$\{baseName\}\.tuuru`/)
   assert.doesNotMatch(homeSource, /a\.download = \(w \? w\.title : '作品'\) \+ '\.json'/)
-  assert.match(collectionsSource, /const encrypted = await encryptWorkPackage\(json\)/)
+  assert.match(collectionsSource, /encryptPortableWorkPackage\(json, assets\)/)
+  assert.match(collectionsSource, /encryptWorkPackage\(json\)/)
   assert.match(collectionsSource, /application\/vnd\.tuuru\.work/)
   assert.doesNotMatch(collectionsSource, /\.tuuru\.json/)
 })

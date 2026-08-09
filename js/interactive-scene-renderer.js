@@ -18,6 +18,7 @@ function safeImageSource(value) {
   const source = String(value || "").trim()
   if (/^https:\/\//i.test(source)) return source
   if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(source)) return source
+  if (/^blob:/i.test(source)) return source
   if (source && !/^[a-z][a-z0-9+.-]*:/i.test(source)) return source
   return ""
 }
@@ -26,12 +27,28 @@ function safeVideoSource(value) {
   const source = String(value || "").trim()
   if (/^https:\/\//i.test(source)) return source
   if (/^data:video\/(?:mp4|webm);base64,/i.test(source)) return source
+  if (/^blob:/i.test(source)) return source
   if (source && !/^[a-z][a-z0-9+.-]*:/i.test(source)) return source
   return ""
 }
 
-function setOptionalImageSource(element, value) {
-  const source = safeImageSource(value)
+function setOptionalImageSource(element, value, resolveAssetUrl) {
+  const requestedSource = String(value || "").trim()
+  if (/^asset:\/\//i.test(requestedSource) && typeof resolveAssetUrl === "function") {
+    element.dataset.assetSource = requestedSource
+    element.removeAttribute("src")
+    element.hidden = true
+    Promise.resolve(resolveAssetUrl(requestedSource)).then(resolved => {
+      if (element.dataset.assetSource !== requestedSource) return
+      const source = safeImageSource(resolved)
+      if (!source) return
+      element.src = source
+      element.hidden = false
+    }).catch(() => {})
+    return true
+  }
+  delete element.dataset.assetSource
+  const source = safeImageSource(requestedSource)
   if (!source) {
     element.removeAttribute("src")
     element.hidden = true
@@ -100,6 +117,16 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   root.setAttribute("aria-label", scene.title || "互动场景")
   container.appendChild(root)
 
+  function renderCanvas() {
+    const width = Math.max(1, Number(scene.canvas?.width) || 1080)
+    const height = Math.max(1, Number(scene.canvas?.height) || 1920)
+    root.style.setProperty("--interactive-canvas-aspect", String(width / height))
+    root.style.setProperty("--interactive-canvas-inverse-aspect", String(height / width))
+    root.style.setProperty("--interactive-canvas-background", scene.canvas?.backgroundColor || "#40383b")
+    root.dataset.canvasOrientation = width > height ? "landscape" : width === height ? "square" : "portrait"
+  }
+  renderCanvas()
+
   const media = documentObject.createElement("div")
   media.className = "interactive-scene-media"
   root.appendChild(media)
@@ -115,6 +142,10 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   characterImage.decoding = "async"
   characterImage.draggable = false
   media.appendChild(characterImage)
+
+  const authoredLayerContainer = documentObject.createElement("div")
+  authoredLayerContainer.className = "interactive-scene-authored-layers"
+  media.appendChild(authoredLayerContainer)
 
   const actionFrame = documentObject.createElement("div")
   actionFrame.className = "interactive-scene-action-frame"
@@ -156,6 +187,10 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   const dialogueText = appendTextElement(documentObject, dialogueContent, "p", "interactive-scene-dialogue-text", "")
   dialogue.appendChild(dialogueContent)
   root.appendChild(dialogue)
+
+  const extraDialogueContainer = documentObject.createElement("div")
+  extraDialogueContainer.className = "interactive-scene-extra-dialogues"
+  root.appendChild(extraDialogueContainer)
 
   const status = appendTextElement(documentObject, root, "div", "interactive-scene-status", "")
   status.setAttribute("role", "status")
@@ -212,7 +247,9 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
       dialogue.setAttribute(
         "aria-label",
         ready
-          ? (canFinish ? "已探索最后一个画面，继续阅读正文" : "已探索当前画面，进入下一画面")
+          ? (canFinish
+            ? (options.completionLabel || "已探索最后一个画面，继续阅读正文")
+            : "已探索当前画面，进入下一画面")
           : `当前画面还有 ${remaining} 个互动位置尚未探索`,
       )
     } else {
@@ -321,9 +358,50 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
       clearActionFrame()
       return false
     }
+    const frameTransform = frame.transform || { scale:1, x:0, y:0 }
+    for (const element of [actionImage, actionVideo]) {
+      element.style.setProperty("--interactive-action-scale", String(frameTransform.scale))
+      element.style.setProperty("--interactive-action-x", `${frameTransform.x}%`)
+      element.style.setProperty("--interactive-action-y", `${frameTransform.y}%`)
+    }
     const source = frame.type === "video"
       ? safeVideoSource(frame.source)
       : safeImageSource(frame.source)
+    const assetSource = /^asset:\/\//i.test(String(frame.source || ""))
+    if (!source && assetSource && typeof options.resolveAssetUrl === "function") {
+      actionFrameActive = true
+      root.dataset.actionFrameActive = "true"
+      actionFrame.hidden = false
+      const requestedSource = frame.source
+      Promise.resolve(options.resolveAssetUrl(requestedSource)).then(resolved => {
+        if (!actionFrameActive || hotspot.actionFrame.source !== requestedSource) return
+        const resolvedSource = frame.type === "video" ? safeVideoSource(resolved) : safeImageSource(resolved)
+        if (!resolvedSource) {
+          clearActionFrame({ restoreDialogue: true })
+          return
+        }
+        if (frame.type === "video") {
+          actionImage.hidden = true
+          actionVideo.hidden = false
+          actionVideo.src = resolvedSource
+          actionVideo.style.objectFit = frame.fit
+          if (options.playActionMedia !== false) actionVideo.play()?.catch?.(() => {})
+        } else {
+          actionVideo.hidden = true
+          actionImage.hidden = false
+          actionImage.src = resolvedSource
+          actionImage.style.objectFit = frame.fit
+          const duration = frame.gifDurationMs > 0 ? frame.gifDurationMs : frame.durationMs
+          if (options.autoFinishActionFrame !== false) {
+            actionFrameTimer = scheduleTimeout(() => {
+              actionFrameTimer = null
+              finishActionFrame()
+            }, duration)
+          }
+        }
+      }).catch(() => clearActionFrame({ restoreDialogue: true }))
+      return true
+    }
     if (!source) {
       clearActionFrame()
       return false
@@ -349,10 +427,12 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
       actionImage.src = source
       actionImage.style.objectFit = frame.fit
       const duration = frame.gifDurationMs > 0 ? frame.gifDurationMs : frame.durationMs
-      actionFrameTimer = scheduleTimeout(() => {
-        actionFrameTimer = null
-        finishActionFrame()
-      }, duration)
+      if (options.autoFinishActionFrame !== false) {
+        actionFrameTimer = scheduleTimeout(() => {
+          actionFrameTimer = null
+          finishActionFrame()
+        }, duration)
+      }
     }
     return true
   }
@@ -469,7 +549,7 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   }
 
   function renderMediaImage(element, source, alt, fit, transform) {
-    const hasSource = setOptionalImageSource(element, source)
+    const hasSource = setOptionalImageSource(element, source, options.resolveAssetUrl)
     element.alt = alt
     element.style.objectFit = fit
     element.style.setProperty("--interactive-media-scale", String(transform.scale))
@@ -530,16 +610,45 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
       stage.characterFit,
       stage.characterTransform,
     )
-    media.classList.toggle("is-empty", !hasBackground && !hasCharacter)
+    authoredLayerContainer.replaceChildren()
+    let hasAuthoredLayer = false
+    for (const layer of stage.layers || []) {
+      if (!layer.visible || !layer.source) continue
+      const image = documentObject.createElement("img")
+      image.className = "interactive-scene-authored-layer"
+      image.dataset.layerId = layer.id
+      image.alt = layer.alt
+      image.decoding = "async"
+      image.draggable = false
+      image.style.objectFit = layer.fit
+      image.style.opacity = String(layer.opacity / 100)
+      image.style.setProperty("--interactive-media-scale", String(layer.transform.scale))
+      image.style.setProperty("--interactive-media-x", `${layer.transform.x}%`)
+      image.style.setProperty("--interactive-media-y", `${layer.transform.y}%`)
+      setOptionalImageSource(image, layer.source, options.resolveAssetUrl)
+      authoredLayerContainer.appendChild(image)
+      hasAuthoredLayer = true
+    }
+    media.classList.toggle("is-empty", !hasBackground && !hasCharacter && !hasAuthoredLayer)
 
     prompt.textContent = stage.prompt
-    prompt.hidden = !stage.prompt
-    const promptStyle = normalizeInteractivePromptStyle(scene.promptStyle)
+    prompt.hidden = !stage.promptEnabled || !stage.prompt
+    const promptStyle = normalizeInteractivePromptStyle({
+      ...scene.promptStyle,
+      ...stage.promptStyle,
+    })
     prompt.style.setProperty("--interactive-prompt-surface", promptStyle.surfaceColor)
     prompt.style.setProperty("--interactive-prompt-text", promptStyle.textColor)
     prompt.style.setProperty("--interactive-prompt-border", promptStyle.borderColor)
     prompt.style.setProperty("--interactive-prompt-opacity", `${promptStyle.opacity}%`)
     prompt.style.setProperty("--interactive-prompt-radius", `${promptStyle.borderRadius}px`)
+    prompt.style.setProperty("--interactive-prompt-x", `${promptStyle.x}%`)
+    prompt.style.setProperty("--interactive-prompt-y", `${promptStyle.y}%`)
+    prompt.style.setProperty("--interactive-prompt-width", `${promptStyle.width}%`)
+    prompt.style.setProperty("--interactive-prompt-font-family", promptStyle.fontFamily)
+    prompt.style.setProperty("--interactive-prompt-font-size", `${promptStyle.fontSize}px`)
+    prompt.style.setProperty("--interactive-prompt-line-height", String(promptStyle.lineHeight))
+    prompt.style.setProperty("--interactive-prompt-letter-spacing", `${promptStyle.letterSpacing}px`)
     prompt.dataset.position = promptStyle.position
 
     const style = normalizeInteractiveDialogueStyle({
@@ -554,10 +663,52 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
     dialogue.style.setProperty("--interactive-dialogue-radius", `${style.borderRadius}px`)
     dialogue.style.setProperty("--interactive-dialogue-width", `${style.width}%`)
     dialogue.style.setProperty("--interactive-dialogue-height", `${style.height}%`)
+    dialogue.style.setProperty("--interactive-dialogue-x", `${style.x}%`)
+    dialogue.style.setProperty("--interactive-dialogue-y", `${style.y}%`)
+    dialogue.style.setProperty("--interactive-dialogue-font-family", style.fontFamily)
+    dialogue.style.setProperty("--interactive-dialogue-font-size", `${style.fontSize}px`)
+    dialogue.style.setProperty("--interactive-dialogue-line-height", String(style.lineHeight))
+    dialogue.style.setProperty("--interactive-dialogue-letter-spacing", `${style.letterSpacing}px`)
     dialogue.dataset.position = style.position
-    setOptionalImageSource(dialogueFrame, style.frameImage)
+    setOptionalImageSource(dialogueFrame, style.frameImage, options.resolveAssetUrl)
     dialogueFrame.style.setProperty("--interactive-dialogue-frame-outset", `${style.frameOutset}px`)
     updateDialogue(stage.dialogue.speaker, stage.dialogue.text)
+
+    extraDialogueContainer.replaceChildren()
+    for (const box of stage.dialogues || []) {
+      if (!box.speaker && !box.text) continue
+      const boxStyle = normalizeInteractiveDialogueStyle({ ...scene.dialogueStyle, ...box.style })
+      const element = documentObject.createElement("div")
+      element.className = "interactive-scene-dialogue interactive-scene-dialogue-extra"
+      element.dataset.dialogueId = box.id
+      element.dataset.position = boxStyle.position
+      element.style.setProperty("--interactive-dialogue-surface", boxStyle.surfaceColor)
+      element.style.setProperty("--interactive-dialogue-text", boxStyle.textColor)
+      element.style.setProperty("--interactive-dialogue-accent", boxStyle.accentColor)
+      element.style.setProperty("--interactive-dialogue-border", boxStyle.borderColor)
+      element.style.setProperty("--interactive-dialogue-opacity", `${boxStyle.opacity}%`)
+      element.style.setProperty("--interactive-dialogue-radius", `${boxStyle.borderRadius}px`)
+      element.style.setProperty("--interactive-dialogue-width", `${boxStyle.width}%`)
+      element.style.setProperty("--interactive-dialogue-height", `${boxStyle.height}%`)
+      element.style.setProperty("--interactive-dialogue-x", `${boxStyle.x}%`)
+      element.style.setProperty("--interactive-dialogue-y", `${boxStyle.y}%`)
+      element.style.setProperty("--interactive-dialogue-font-family", boxStyle.fontFamily)
+      element.style.setProperty("--interactive-dialogue-font-size", `${boxStyle.fontSize}px`)
+      element.style.setProperty("--interactive-dialogue-line-height", String(boxStyle.lineHeight))
+      element.style.setProperty("--interactive-dialogue-letter-spacing", `${boxStyle.letterSpacing}px`)
+      const frame = documentObject.createElement("img")
+      frame.className = "interactive-scene-dialogue-frame"
+      frame.alt = ""
+      frame.draggable = false
+      frame.style.setProperty("--interactive-dialogue-frame-outset", `${boxStyle.frameOutset}px`)
+      setOptionalImageSource(frame, boxStyle.frameImage, options.resolveAssetUrl)
+      const content = documentObject.createElement("div")
+      content.className = "interactive-scene-dialogue-content"
+      appendTextElement(documentObject, content, "strong", "interactive-scene-dialogue-speaker", box.speaker)
+      appendTextElement(documentObject, content, "p", "interactive-scene-dialogue-text", box.text)
+      element.append(frame, content)
+      extraDialogueContainer.appendChild(element)
+    }
 
     if (!preserveHotspots) {
       hotspotLayer.replaceChildren()
@@ -587,7 +738,11 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
 
     const followingStage = nextStage()
     if (followingStage) {
-      for (const source of [followingStage.image, followingStage.characterImage]) {
+      for (const source of [
+        followingStage.image,
+        followingStage.characterImage,
+        ...(followingStage.layers || []).filter(layer => layer.visible).map(layer => layer.source),
+      ]) {
         if (!safeImageSource(source)) continue
         const preload = new documentObject.defaultView.Image()
         preload.src = safeImageSource(source)
@@ -636,7 +791,9 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   })
   backgroundImage.addEventListener("load", layoutHotspots)
   characterImage.addEventListener("load", layoutHotspots)
-  actionVideo.addEventListener("ended", finishActionFrame)
+  actionVideo.addEventListener("ended", () => {
+    if (options.autoFinishActionFrame !== false) finishActionFrame()
+  })
   const ResizeObserverConstructor = documentObject.defaultView?.ResizeObserver
     || globalThis.ResizeObserver
   if (typeof ResizeObserverConstructor === "function") {
@@ -663,6 +820,7 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
       scene = updateOptions.normalized === true
         ? nextSceneValue
         : normalizeInteractiveScene(nextSceneValue)
+      renderCanvas()
       stage = scene.stages.find(candidate => candidate.id === stageId)
         || scene.stages.find(candidate => candidate.id === scene.startStageId)
         || scene.stages[0]

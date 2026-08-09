@@ -43,6 +43,7 @@ const IMAGE_FIELD_NAMES = new Set([
   "characterImage",
 ])
 const DATA_IMAGE_PATTERN = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i
+const PORTABLE_ASSET_PATTERN = /^asset:\/\/[a-f0-9]{64}$/i
 const MAX_DATA_IMAGE_LENGTH = 10 * 1024 * 1024
 const purifierCache = new WeakMap()
 
@@ -67,6 +68,7 @@ export function isSafeImageUrl(value) {
   const url = value.trim()
   if (!url || /[\u0000-\u001f\u007f]/.test(url)) return false
   if (DATA_IMAGE_PATTERN.test(url)) return url.length <= MAX_DATA_IMAGE_LENGTH
+  if (PORTABLE_ASSET_PATTERN.test(url)) return true
   if (/[\s"'<>`]/.test(url) || /[();{}\\]/.test(url)) return false
   if (/^https?:\/\//i.test(url) || /^\/\//.test(url)) return true
   return !/^[a-z][a-z0-9+.-]*:/i.test(url)

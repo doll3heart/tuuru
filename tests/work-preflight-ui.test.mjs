@@ -52,11 +52,12 @@ test("publish inspection forms one repair, preview, and export flow", () => {
 
 test("publish inspection shows package size risk and locatable embedded assets", () => {
   assert.match(preflightUiSource, /inspectWorkSize/)
+  assert.match(preflightUiSource, /inspectWorkSizeWithAssets\(prepareWorkForExport\(work\)/)
   assert.match(preflightUiSource, /work-size-report/)
   assert.match(preflightUiSource, /data-work-size-locate/)
   assert.match(preflightUiSource, /encryptedPackageBytes/)
-  assert.match(preflightUiSource, /1\.5 MiB/)
-  assert.match(preflightUiSource, /2 MiB/)
+  assert.match(preflightUiSource, /9–10 MiB/)
+  assert.match(preflightUiSource, /6 MiB/)
   assert.match(authorCss, /\.work-size-report/)
   assert.match(authorCss, /\.work-size-asset-list/)
 })

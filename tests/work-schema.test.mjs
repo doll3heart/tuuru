@@ -89,6 +89,38 @@ test("article imports normalize interactive scene stages and hotspots", () => {
   assert.equal(result.work.interactiveScenes[0].nodeId, interactiveNode.id)
 })
 
+test("standalone interactive works preserve their mode and normalize default BGM", () => {
+  const result = validateWorkForImport({
+    type:"article",
+    experienceMode:"interactive",
+    interactiveBgm:{ source:"https://example.test/default.mp3", volume:38, loop:false },
+    nodes:[],
+    interactiveScenes:[{ id:"scene-1", stages:[{ id:"stage-1" }] }],
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.work.experienceMode, "interactive")
+  assert.deepEqual(result.work.interactiveBgm, {
+    source:"https://example.test/default.mp3",
+    fileName:"",
+    volume:38,
+    loop:false,
+    durationMs:0,
+    bytes:0,
+    startMs:0,
+    endMs:null,
+  })
+  assert.deepEqual(result.work.interactiveScenes[0].stages[0].bgm, {
+    source:"",
+    fileName:"",
+    volume:70,
+    loop:true,
+    durationMs:0,
+    bytes:0,
+    startMs:0,
+    endMs:null,
+  })
+})
+
 test("legacy inline interactive cards become chapter nodes during import", () => {
   const result = validateWorkForImport({
     type: "article",

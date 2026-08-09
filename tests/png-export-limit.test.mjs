@@ -69,6 +69,112 @@ test("an oversized PNG export restores its button and reports the limit", async 
   assert.match(feedback.textContent, /精简/)
 })
 
+test("PNG export stays unavailable while the selected cover is still being read", async t => {
+  const { overlay, exportButton } = await openPngExport(t, "slow-cover-work", "png-cover-reading")
+  const OriginalFileReader = globalThis.FileReader
+  const createElement = document.createElement.bind(document)
+  let fileInput = null
+  let pendingReader = null
+
+  globalThis.FileReader = class {
+    constructor() {
+      pendingReader = this
+    }
+
+    readAsDataURL(file) {
+      this.file = file
+    }
+  }
+  document.createElement = function(tagName, options) {
+    if (String(tagName).toLowerCase() === "input") {
+      fileInput = createElement(tagName, options)
+      return fileInput
+    }
+    return createElement(tagName, options)
+  }
+  t.after(() => {
+    globalThis.FileReader = OriginalFileReader
+    document.createElement = createElement
+  })
+
+  const coverButton = overlay.querySelector("#pngCoverBtn")
+  coverButton.onclick()
+  Object.defineProperty(fileInput, "files", {
+    configurable: true,
+    value: [{ name: "slow-cover.png" }],
+  })
+  fileInput.onchange()
+
+  assert.ok(pendingReader)
+  assert.equal(pendingReader.file.name, "slow-cover.png")
+  assert.equal(exportButton.disabled, true)
+  assert.equal(coverButton.disabled, true)
+  assert.match(exportButton.textContent, /读取封面/)
+  assert.match(overlay.querySelector("#pngCoverLabel").textContent, /正在读取/)
+
+  exportButton.click()
+  assert.equal(document.querySelector(".toast"), null)
+})
+
+for (const scenario of [
+  { eventName: "onerror", labelPattern: /读取失败/, title: "failure" },
+  { eventName: "onabort", labelPattern: /读取已取消/, title: "cancellation" },
+]) {
+  test(`a FileReader ${scenario.title} restores the cover UI and blocks default export`, async t => {
+    const { overlay, exportButton } = await openPngExport(t, `cover-read-${scenario.title}`, `png-cover-read-${scenario.title}`)
+    const OriginalFileReader = globalThis.FileReader
+    const createElement = document.createElement.bind(document)
+    let fileInput = null
+    let activeReader = null
+    let canvasCreations = 0
+
+    globalThis.FileReader = class {
+      constructor() {
+        activeReader = this
+      }
+
+      readAsDataURL() {}
+    }
+    document.createElement = function(tagName, options) {
+      const normalizedName = String(tagName).toLowerCase()
+      if (normalizedName === "input") {
+        fileInput = createElement(tagName, options)
+        return fileInput
+      }
+      if (normalizedName === "canvas") {
+        canvasCreations += 1
+        throw new Error("default PNG export must not start after a cover read error")
+      }
+      return createElement(tagName, options)
+    }
+    t.after(() => {
+      globalThis.FileReader = OriginalFileReader
+      document.createElement = createElement
+    })
+
+    const coverButton = overlay.querySelector("#pngCoverBtn")
+    coverButton.onclick()
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [{ name: "broken-cover.png" }],
+    })
+    fileInput.onchange()
+    activeReader[scenario.eventName]?.()
+
+    assert.equal(exportButton.disabled, false)
+    assert.equal(coverButton.disabled, false)
+    assert.equal(exportButton.textContent, "导出 PNG")
+    assert.match(overlay.querySelector("#pngCoverLabel").textContent, scenario.labelPattern)
+    const readFeedback = document.querySelector(".toast")
+    assert.ok(readFeedback)
+    assert.match(readFeedback.textContent, scenario.labelPattern)
+
+    await exportButton.onclick()
+    assert.equal(canvasCreations, 0)
+    assert.equal(overlay.isConnected, true)
+  })
+}
+
 test("an asynchronous cover encoding failure restores the PNG export", async t => {
   const { alerts, overlay, exportButton } = await openPngExport(t, "cover-work", "png-cover-failure")
   const OriginalFileReader = globalThis.FileReader

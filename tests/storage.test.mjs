@@ -895,7 +895,7 @@ test("backup parsing distinguishes unrelated and newer backup formats", () => {
     error => error instanceof LocalDatabaseError && error.code === "invalid-backup-format",
   )
   assert.throws(
-    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, backupVersion: 2 })),
+    () => parseLocalDatabaseBackup(JSON.stringify({ ...base, backupVersion: 3 })),
     error => error instanceof LocalDatabaseError && error.code === "backup-version-newer",
   )
   for (const backupVersion of [undefined, "1", 1.5, 0, -1, Number.MAX_SAFE_INTEGER + 1]) {

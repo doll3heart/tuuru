@@ -4,6 +4,7 @@ import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 import { articleInteractionMarkerIds } from "./article-interaction-group-model.js"
 import { articlePlaceholderMarkerIds } from "./article-placeholder-marker.js"
 import { ARTICLE_RANDOM_GAME_KIND, normalizeArticleRandomGame } from "./article-random-game.js"
+import { isInteractiveExperienceWork } from "./interactive-experience.js"
 
 function items(value) {
   return Array.isArray(value) ? value : []
@@ -412,6 +413,23 @@ function inspectArticle(work, issues) {
   }
 }
 
+function inspectInteractiveExperience(work, issues) {
+  const scenes = items(work?.interactiveScenes)
+  if (!scenes.length) {
+    addIssue(issues, "interactive-experience-scene-missing", "error", "Mini文游还没有场景", "Mini文游 · 画面与互动", "创建第一个互动场景并至少添加一个画面。")
+    return
+  }
+  const stages = items(scenes[0]?.stages)
+  if (!stages.length) {
+    addIssue(issues, "interactive-experience-stages-empty", "error", "Mini文游还没有画面", "Mini文游 · 画面与互动", "至少添加一个画面。")
+    return
+  }
+  stages.forEach(function(stage, index) {
+    if (stage?.image || stage?.characterImage || items(stage?.layers).some(layer => layer?.source)) return
+    addIssue(issues, "interactive-experience-stage-media-empty", "warning", `第 ${index + 1} 个画面没有图片素材`, `Mini文游 · ${plainText(stage?.name) || `画面 ${index + 1}`}`, "添加背景图、立绘或叠加图层，避免读者看到空画布。")
+  })
+}
+
 function chatMessages(chat) {
   const messages = [...items(chat?.messages)]
   for (const round of items(chat?.rounds)) messages.push(...items(round?.messages))
@@ -657,7 +675,8 @@ export function inspectWorkBeforePublish(work) {
   }
   inspectPlaceholders(work, issues)
   if (work?.type === "article") {
-    inspectArticle(work, issues)
+    if (isInteractiveExperienceWork(work)) inspectInteractiveExperience(work, issues)
+    else inspectArticle(work, issues)
     if (work?.phoneData && typeof work.phoneData === "object") inspectPhone(work, issues)
   } else if (work?.type === "phone") inspectPhone(work, issues)
 

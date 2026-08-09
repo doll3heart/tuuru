@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 
 import { createWorkArtifact, deliverArtifact } from "../js/work-export.js"
+import { MAX_WORK_PNG_FILE_BYTES } from "../js/png-payload.js"
 
 class FakeFile {
   constructor(parts, name, options = {}) {
@@ -109,4 +110,51 @@ test("PNG artifacts convert the encoded data URL into an image blob", async () =
   assert.equal(artifact.filename, "Cover.png")
   assert.equal(artifact.blob.type, "image/png")
   assert.deepEqual([...new Uint8Array(await artifact.blob.arrayBuffer())], [1, 2, 3])
+})
+
+test("PNG artifacts larger than the reader import limit are rejected after encoding", async () => {
+  class OversizedPngBlob {
+    constructor(_parts, options = {}) {
+      this.type = options.type || ""
+      this.size = MAX_WORK_PNG_FILE_BYTES + 1
+    }
+  }
+
+  await assert.rejects(
+    createWorkArtifact("work-png-limit", {
+      format:"png",
+      coverUrl:"data:image/png;base64,cover",
+      getWorkById:() => ({ id:"work-png-limit", title:"Large cover", updatedAt:456 }),
+      exportWork:() => "{}",
+      loadAssets:async () => [],
+      encrypt:async () => new Uint8Array([1, 2, 3]),
+      encodePng:(_encrypted, _coverUrl, resolve) => resolve("data:image/png;base64,AQID"),
+      BlobConstructor:OversizedPngBlob,
+    }),
+    /25 MB.*封面.*\.tuuru/,
+  )
+})
+
+test("work artifacts include referenced binary assets in the encrypted package", async () => {
+  const reference = `asset://${"a".repeat(64)}`
+  const work = { id: "work-assets", title: "Assets", updatedAt: 789, image: reference }
+  const calls = []
+  const artifact = await createWorkArtifact("work-assets", {
+    format: "tuuru",
+    getWorkById: () => work,
+    exportWork: () => JSON.stringify(work),
+    loadAssets: async exported => {
+      assert.equal(exported.image, reference)
+      return [{ id: "a".repeat(64), blob: new Blob(["image"]) }]
+    },
+    encrypt: async () => { throw new Error("legacy package must not be used") },
+    encryptPortable: async (serialized, assets) => {
+      calls.push([serialized, assets])
+      return new Uint8Array([7, 8, 9])
+    },
+  })
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0][1].length, 1)
+  assert.deepEqual([...new Uint8Array(await artifact.blob.arrayBuffer())], [7, 8, 9])
 })

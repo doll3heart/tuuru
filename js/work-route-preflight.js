@@ -1,4 +1,5 @@
 import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
+import { isInteractiveExperienceWork } from "./interactive-experience.js"
 
 function records(value) {
   return Array.isArray(value)
@@ -181,7 +182,7 @@ function cyclicComponents(edges, reachable) {
 }
 
 export function inspectArticleRoutes(work) {
-  if (work?.type !== "article") return emptyReport(false)
+  if (work?.type !== "article" || isInteractiveExperienceWork(work)) return emptyReport(false)
 
   const authoredNodes = records(work?.nodes)
   const uniqueNodes = uniqueRecordsById(authoredNodes)

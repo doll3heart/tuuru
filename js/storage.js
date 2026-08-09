@@ -13,10 +13,10 @@ export const LOCAL_DATABASE_REPLACED_EVENT = "tuuru:local-database-replaced"
 const DATABASE_KEY = LOCAL_DATABASE_KEY
 
 export const LOCAL_DATABASE_BACKUP_FORMAT = "tuuru-local-library-backup"
-export const LOCAL_DATABASE_BACKUP_VERSION = 1
+export const LOCAL_DATABASE_BACKUP_VERSION = 2
 export const MAX_LOCAL_DATABASE_BACKUP_BYTES = 25 * 1024 * 1024
 
-const SUPPORTED_LOCAL_DATABASE_BACKUP_VERSIONS = new Set([1])
+const SUPPORTED_LOCAL_DATABASE_BACKUP_VERSIONS = new Set([1, 2])
 const preparedRestorePlans = new WeakSet()
 const MAX_JSON_ARRAY_INDEX = (2 ** 32) - 2
 
@@ -420,7 +420,7 @@ export function writeLocalDatabase(data, storage = localStorage) {
 function serializeBackupDatabase(database, exportedAt) {
   return JSON.stringify({
     format: LOCAL_DATABASE_BACKUP_FORMAT,
-    backupVersion: LOCAL_DATABASE_BACKUP_VERSION,
+    backupVersion: 1,
     exportedAt,
     database,
   }, null, 2)
@@ -633,12 +633,34 @@ export function parseLocalDatabaseBackup(raw) {
     )
   }
   const validatedDatabase = databaseResult.data
+  const mediaAssets = []
+  if (backup.backupVersion >= 2) {
+    if (!Array.isArray(backup.mediaAssets) || backup.mediaAssets.length > 256) {
+      throw backupValidationError("备份文件中的本地素材清单无效。", "invalid-backup-media")
+    }
+    const seenAssets = new Set()
+    for (const asset of backup.mediaAssets) {
+      const id = typeof asset?.id === "string" ? asset.id.toLowerCase() : ""
+      const data = typeof asset?.data === "string" ? asset.data : ""
+      if (!/^[a-f0-9]{64}$/.test(id) || seenAssets.has(id) || !/^(?:[a-z0-9+/]+={0,2})?$/i.test(data)) {
+        throw backupValidationError("备份文件中的本地素材清单无效。", "invalid-backup-media")
+      }
+      seenAssets.add(id)
+      mediaAssets.push({
+        id,
+        type:typeof asset.type === "string" ? asset.type.slice(0, 120) : "application/octet-stream",
+        fileName:typeof asset.fileName === "string" ? asset.fileName.slice(0, 240) : "",
+        data,
+      })
+    }
+  }
 
   return {
     format: backup.format,
     backupVersion: backup.backupVersion,
     exportedAt: backup.exportedAt,
     database: validatedDatabase,
+    mediaAssets,
     summary: summarizeDatabase(validatedDatabase),
   }
 }

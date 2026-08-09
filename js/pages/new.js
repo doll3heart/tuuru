@@ -2,6 +2,7 @@
 import { navigate } from "../router.js"
 import { showToast } from "../app.js"
 import { FEATURE_FLAGS } from "../feature-flags.js"
+import { INTERACTIVE_EXPERIENCE_MODE } from "../interactive-experience.js"
 import {
   createHomeWork,
   describeHomeMutationFailure,
@@ -26,14 +27,20 @@ export function createNewWorkController({
   const pending = new Map()
   const blocked = new Map()
 
-  function submit({ type, title, desc, author }) {
+  function submit({ type, title, desc, author, experienceMode }) {
+    const interactiveExperience = type === WORK_TYPE.ARTICLE
+      && experienceMode === INTERACTIVE_EXPERIENCE_MODE
+    const creationKey = interactiveExperience ? INTERACTIVE_EXPERIENCE_MODE : type
     const data = {
       type,
       title: normalizedText(title) || (
-        type === WORK_TYPE.PHONE ? "未命名小手机" : "未命名互动文章"
+        type === WORK_TYPE.PHONE
+          ? "未命名小手机"
+          : interactiveExperience ? "未命名 Mini文游" : "未命名互动文章"
       ),
       desc: normalizedText(desc),
       author: normalizedText(author),
+      ...(interactiveExperience ? { experienceMode:INTERACTIVE_EXPERIENCE_MODE } : {}),
     }
     const routeFor = work => `/${type === WORK_TYPE.PHONE ? "phone" : "edit"}/${work.id}`
 
@@ -44,9 +51,9 @@ export function createNewWorkController({
       return work
     }
 
-    if (pending.has(type)) return pending.get(type)
-    if (blocked.has(type)) return blocked.get(type)
-    publish("create", type, { status: "pending", pending: true, message: "正在创建…" })
+    if (pending.has(creationKey)) return pending.get(creationKey)
+    if (blocked.has(creationKey)) return blocked.get(creationKey)
+    publish("create", creationKey, { status: "pending", pending: true, message: "正在创建…" })
     let task
     task = Promise.resolve()
       .then(() => createReliable(data))
@@ -55,8 +62,8 @@ export function createNewWorkController({
         async outcome => {
           const cleanupWarning = Object.hasOwn(outcome, "cleanupError")
           if (cleanupWarning) {
-            blocked.set(type, task)
-            publish("create", type, {
+            blocked.set(creationKey, task)
+            publish("create", creationKey, {
               status: "warning",
               pending: false,
               blocked: true,
@@ -65,7 +72,7 @@ export function createNewWorkController({
             })
             return outcome
           }
-          publish("create", type, {
+          publish("create", creationKey, {
             status: "success",
             pending: false,
             persistent: false,
@@ -75,7 +82,7 @@ export function createNewWorkController({
             notify("作品已创建")
             await navigateTo(routeFor(outcome.work))
           } catch (error) {
-            publish("create", type, {
+            publish("create", creationKey, {
               status: "warning",
               pending: false,
               persistent: true,
@@ -87,7 +94,7 @@ export function createNewWorkController({
           return outcome
         },
         error => {
-          publish("create", type, {
+          publish("create", creationKey, {
             status: "error",
             pending: false,
             persistent: true,
@@ -98,9 +105,9 @@ export function createNewWorkController({
         },
       )
       .finally(() => {
-        if (pending.get(type) === task) pending.delete(type)
+        if (pending.get(creationKey) === task) pending.delete(creationKey)
       })
-    pending.set(type, task)
+    pending.set(creationKey, task)
     return task
   }
 
@@ -109,7 +116,7 @@ export function createNewWorkController({
 
 function publishNewWorkState(action, type, state) {
   if (action !== "create") return
-  const prefix = type === WORK_TYPE.PHONE ? "phone" : "article"
+  const prefix = type === WORK_TYPE.PHONE ? "phone" : type === INTERACTIVE_EXPERIENCE_MODE ? "interactive" : "article"
   const button = document.getElementById(`${prefix}CreateBtn`)
   const status = document.getElementById(`${prefix}CreateStatus`)
   if (button) button.disabled = state.pending === true || state.blocked === true
@@ -130,13 +137,22 @@ export function renderNew(){
   return `
     <h2 style="font-size:1.3rem;font-weight:600;margin-bottom:24px;text-align:center">新建作品</h2>
     
-    <div class="grid-2">
+    <div class="grid-2 new-work-kind-grid">
       <div class="card" style="cursor:pointer;text-align:center;padding:40px 20px" onclick="document.getElementById('articleForm').style.display='block';this.style.borderColor='var(--c-primary)'">
         <h3 style="font-weight:600;margin-bottom:8px">互动文章</h3>
         <p style="font-size:.85rem;color:var(--c-text2)">节点式分支故事，每节末尾设置选项跳转</p>
         <div style="margin-top:12px">
           <div class="badge badge-primary">占位符替换</div>
           <div class="badge badge-primary">分支选项</div>
+        </div>
+      </div>
+
+      <div class="card" style="cursor:pointer;text-align:center;padding:40px 20px" onclick="document.getElementById('interactiveForm').style.display='block';this.style.borderColor='var(--c-primary)'">
+        <h3 style="font-weight:600;margin-bottom:8px">Mini文游</h3>
+        <p style="font-size:.85rem;color:var(--c-text2)">适合短篇、固定顺序的画面互动与对话推进</p>
+        <div style="margin-top:12px">
+          <div class="badge badge-primary">固定顺序画面</div>
+          <div class="badge badge-primary">画面特殊 BGM</div>
         </div>
       </div>
       
@@ -149,6 +165,15 @@ export function renderNew(){
           <div class="badge badge-primary">论坛</div>
         </div>
       </div>
+    </div>
+
+    <div id="interactiveForm" style="display:none" class="mt-4 card">
+      <h3 style="font-weight:600;margin-bottom:16px">创建 Mini文游</h3>
+      <div class="form-group"><label class="form-label">作品标题</label><input class="form-input" id="igTitle" placeholder="输入作品标题"></div>
+      <div class="form-group"><label class="form-label">作品描述</label><input class="form-input" id="igDesc" placeholder="简短描述"></div>
+      <div class="form-group"><label class="form-label">作者署名</label><input class="form-input" id="igAuthor" placeholder="作者名称（可选）"></div>
+      <button class="btn btn-primary" id="interactiveCreateBtn" onclick="createInteractiveExperience()">创建作品</button>
+      <div id="interactiveCreateStatus" role="status" aria-live="polite" style="margin-top:8px;color:var(--c-accent3);font-size:.8rem"></div>
     </div>
     
     <div id="articleForm" style="display:none" class="mt-4 card">
@@ -206,6 +231,18 @@ window.createPhone = function(){
     title: document.getElementById("phTitle")?.value,
     desc: document.getElementById("phDesc")?.value,
     author: document.getElementById("phAuthor")?.value,
+  })
+  if (result instanceof Promise) result.catch(() => {})
+  return result
+}
+
+window.createInteractiveExperience = function(){
+  const result = newWorkController.submit({
+    type: WORK_TYPE.ARTICLE,
+    experienceMode: INTERACTIVE_EXPERIENCE_MODE,
+    title: document.getElementById("igTitle")?.value,
+    desc: document.getElementById("igDesc")?.value,
+    author: document.getElementById("igAuthor")?.value,
   })
   if (result instanceof Promise) result.catch(() => {})
   return result

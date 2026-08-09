@@ -253,6 +253,23 @@ test("article inspection blocks missing and invalid interactive-picture continua
   assert.equal(valid.issues.some(issue => issue.code.startsWith("interactive-scene-next-node-")), false)
 })
 
+test("standalone interactive works validate their画面 without requiring article nodes or continuation targets", () => {
+  const report = inspectWorkBeforePublish({
+    type:"article",
+    experienceMode:"interactive",
+    title:"门后",
+    placeholders:[],
+    nodes:[],
+    interactiveScenes:[{
+      id:"scene-1",
+      stages:[{ id:"stage-1", name:"门外", image:"https://example.test/door.jpg", hotspots:[] }],
+    }],
+  })
+  assert.equal(report.counts.error, 0)
+  assert.equal(report.issues.some(issue => issue.code === "interactive-scene-next-node-missing"), false)
+  assert.equal(report.issues.some(issue => issue.code === "article-nodes-empty"), false)
+})
+
 test("article inspection accepts placed ordinary interaction groups and their independent response text", () => {
   const report = inspectWorkBeforePublish({
     schemaVersion:4,

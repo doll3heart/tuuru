@@ -2,7 +2,13 @@
 import { readLocalDatabase, writeLocalDatabase } from "./storage.js"
 import { CURRENT_WORK_SCHEMA_VERSION } from "./work-schema.js"
 import { substitutePlaceholders } from "./placeholders.js"
-import { assertSteganoPayloadSize, readSteganoPayload, writeSteganoPayload } from "./stegano.js"
+import { assertSteganoPayloadSize, readSteganoPayload } from "./stegano.js"
+import {
+  embedPngPayload,
+  pngBytesFromDataUrl,
+  pngBytesToDataUrl,
+  readPngPayload,
+} from "./png-payload.js"
 import {
   createWorkCollectionRecord,
   normalizeWorkCollection,
@@ -13,6 +19,9 @@ import { resolveAutomaticArticleStartNodeId } from "./article-start-node.js"
 import { removeArticlePlaceholderMarkers } from "./article-placeholder-marker.js"
 import { createWorkRelease } from "./work-release.js"
 import { articleFormattingFromEditorSettings } from "./article-formatting.js"
+import { createInteractiveScene } from "./interactive-scene-model.js"
+import { INTERACTIVE_EXPERIENCE_MODE } from "./interactive-experience.js"
+import { normalizeInteractiveBgm } from "./interactive-bgm.js"
 import {
   moveWorkBefore as moveWorkBeforeRecords,
   moveWorkByOffset as moveWorkByOffsetRecords,
@@ -173,10 +182,15 @@ export function createWorkRecord(data, {
   updatedAt = now,
 }) {
   var rawType=data.type
+  var interactiveExperience=rawType===WORK_TYPE.ARTICLE&&data.experienceMode===INTERACTIVE_EXPERIENCE_MODE
   var w={
     id:workId,
     schemaVersion:CURRENT_WORK_SCHEMA_VERSION,
     type:data.type||WORK_TYPE.ARTICLE,
+    ...(interactiveExperience?{
+      experienceMode:INTERACTIVE_EXPERIENCE_MODE,
+      interactiveBgm:normalizeInteractiveBgm(data.interactiveBgm),
+    }:{}),
     title:data.title||"无标题作品",
     desc:data.desc||"",
     coverColor:data.coverColor||avatarColor(colorSeedId),
@@ -186,14 +200,17 @@ export function createWorkRecord(data, {
     updatedAt:updatedAt,
     password:data.password||"",
     locked:data.locked||false,
-    nodes:rawType===WORK_TYPE.ARTICLE?[{id:firstNodeId,title:"开始",content:"",choices:[],interactionGroups:[],scene:"",chapterId:firstChapterId}]:[],
+    nodes:rawType===WORK_TYPE.ARTICLE&&!interactiveExperience?[{id:firstNodeId,title:"开始",content:"",choices:[],interactionGroups:[],scene:"",chapterId:firstChapterId}]:[],
     chapters:rawType===WORK_TYPE.ARTICLE?[{id:firstChapterId,name:"第一章"}]:[],
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
     globalForbidden:Array.isArray(data.globalForbidden)?data.globalForbidden.slice():[],
     placeholderMode:data.placeholderMode||PLACEHOLDER_MODE.RANDOM_EACH,
    phoneModules:rawType===WORK_TYPE.ARTICLE?[]:undefined,
-   interactiveScenes:rawType===WORK_TYPE.ARTICLE?[]:undefined,
+   interactiveScenes:rawType===WORK_TYPE.ARTICLE?(interactiveExperience?[createInteractiveScene({
+     id:`interactive-${firstSceneId}`,
+     stageId:`stage-${firstNodeId}`,
+   })]:[]):undefined,
    phoneData:rawType===WORK_TYPE.PHONE?{
       contacts:[],
       chats:[],
@@ -379,12 +396,11 @@ export function getPhoneModule(wid, pmid) {
   return (w.phoneModules || []).find(function(x) { return x.id === pmid })
 }
 
-export function exportWorkAsJSON(wid) {
-  var w = getWork(wid)
-  if (!w) return null
-  var releaseRevision = w.updatedAt || w.createdAt || 1
+export function prepareWorkForExport(work) {
+  if (!work) return null
+  var releaseRevision = work.updatedAt || work.createdAt || 1
   // Deep clone to avoid mutating original
-  var copy = JSON.parse(JSON.stringify(w))
+  var copy = JSON.parse(JSON.stringify(work))
   copy.schemaVersion = CURRENT_WORK_SCHEMA_VERSION
   if (copy.type === WORK_TYPE.ARTICLE) {
     copy.articleFormatting = articleFormattingFromEditorSettings(copy.editorSettings)
@@ -412,7 +428,13 @@ export function exportWorkAsJSON(wid) {
     }
   }
   copy.release = createWorkRelease(copy, { revision:releaseRevision })
-  return JSON.stringify(copy, null, 2)
+  return copy
+}
+
+export function exportWorkAsJSON(wid) {
+  var w = getWork(wid)
+  var copy = prepareWorkForExport(w)
+  return copy ? JSON.stringify(copy) : null
 }
 
 export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback) {
@@ -425,13 +447,7 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback
     ? new TextEncoder().encode(jsonStr)
     : (jsonStr instanceof Uint8Array ? jsonStr : new Uint8Array(jsonStr))
   assertSteganoPayloadSize(data.length)
-  var totalBytes = 4 + data.length
-  var pixelCount = Math.ceil(totalBytes / 3)
-  var size = Math.max(240, Math.ceil(Math.sqrt(pixelCount)))
-  
-  // Ensure enough pixels
-  while (size * size < pixelCount) size++
-  
+  var size = 720
   var canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
@@ -451,16 +467,10 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback
   
   function encodeOnCanvas() {
     if (settled) return
-    // Get pixel data
-    var imageData = ctx.getImageData(0, 0, size, size)
-    var pixels = imageData.data
-    
-    // Write the length header and payload into RGB channels (skip alpha)
-    writeSteganoPayload(pixels, data)
-    
-    ctx.putImageData(imageData, 0, 0)
-    callback(canvas.toDataURL('image/png'))
+    var visiblePng = pngBytesFromDataUrl(canvas.toDataURL('image/png'))
+    var encodedPng = embedPngPayload(visiblePng, data)
     settled = true
+    callback(pngBytesToDataUrl(encodedPng))
   }
 
   function drawAndEncode(drawBackground) {
@@ -483,20 +493,22 @@ export function encodeSteganoPNG(jsonStr, coverImageUrl, callback, errorCallback
     }
     img.onload = function() {
       drawAndEncode(function() {
-        // Draw cover image scaled to fill
-        var scale = Math.max(size / img.width, size / img.height)
-        var sw = img.width * scale
-        var sh = img.height * scale
-        var sx = (size - sw) / 2
-        var sy = (size - sh) / 2
+        var sourceWidth = Number(img.naturalWidth || img.width) || size
+        var sourceHeight = Number(img.naturalHeight || img.height) || size
+        var scale = Math.min(1, 1920 / Math.max(sourceWidth, sourceHeight))
+        if (sourceWidth * sourceHeight * scale * scale > 4 * 1024 * 1024) {
+          scale = Math.sqrt((4 * 1024 * 1024) / (sourceWidth * sourceHeight))
+        }
+        canvas.width = Math.max(1, Math.round(sourceWidth * scale))
+        canvas.height = Math.max(1, Math.round(sourceHeight * scale))
+        size = Math.max(canvas.width, canvas.height)
         ctx.fillStyle = '#1a1a2e'
-        ctx.fillRect(0, 0, size, size)
-        ctx.drawImage(img, sx, sy, sw, sh)
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       })
     }
     img.onerror = function() {
-      // Fallback to gradient
-      drawAndEncode(function() { drawDefaultBg(ctx, size) })
+      reportError(new Error('所选封面图片无法解码，请换一张图片后重试'))
     }
     try {
       img.src = coverImageUrl
@@ -537,6 +549,17 @@ function drawDefaultBg(ctx, size) {
 export function decodeSteganoPNG(pngDataUrl) {
   // Returns the hidden JSON string, or null
   return new Promise(function(resolve, reject) {
+    try {
+      var chunkBytes = readPngPayload(pngBytesFromDataUrl(pngDataUrl))
+      if (chunkBytes) {
+        var chunkJson = new TextDecoder().decode(chunkBytes)
+        JSON.parse(chunkJson)
+        resolve(chunkJson)
+        return
+      }
+    } catch (error) {
+      // Continue with the legacy RGB decoder below.
+    }
     var img = new Image()
     img.onload = function() {
       var canvas = document.createElement('canvas')

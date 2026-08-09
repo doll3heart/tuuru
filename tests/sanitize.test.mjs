@@ -40,6 +40,8 @@ test("unsafe image schemes are rejected while supported images remain", () => {
   assert.equal(isSafeImageUrl("https://example.com/image.png"), true)
   assert.equal(isSafeImageUrl("/images/local.png"), true)
   assert.equal(isSafeImageUrl("data:image/png;base64,aGVsbG8="), true)
+  assert.equal(isSafeImageUrl(`asset://${"a".repeat(64)}`), true)
+  assert.equal(isSafeImageUrl("asset://not-a-valid-content-hash"), false)
 
   const clean = sanitizeRichHtml(
     '<img src="javascript:alert(1)"><img src="data:image/svg+xml,<svg></svg>"><img src="https://example.com/a.png">',

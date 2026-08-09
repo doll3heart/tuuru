@@ -241,7 +241,7 @@ export function renderHeader(){
 // ==================== Pages ====================
 import { bindHome, renderHome } from "./pages/home.js"
 import { renderNew } from "./pages/new.js"
-import { renderEditor } from "./pages/editor.js"
+import { bindEditor, renderEditor } from "./pages/editor.js"
 import { buildReaderPreviewUrl, openReaderPreview } from "./pages/reader.js"
 import { renderPhoneEditor } from "./pages/phone.js"
 import { bindResourcesPage, renderResourcesPage } from "./pages/resources.js"
@@ -550,6 +550,7 @@ export function init(){
   
   router("/edit/:id", (container, p) => {
     app.innerHTML = renderHeader() + renderEditor(p.id)
+    bindEditor(p.id)
   })
   
   router("/read/:id", (container, p) => {

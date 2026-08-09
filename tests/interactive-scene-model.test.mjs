@@ -35,8 +35,116 @@ test("new interactive scenes start with one editable stage and shared dialogue s
   assert.equal(scene.startStageId, "stage-1")
   assert.equal(scene.nextNodeId, "")
   assert.equal(scene.stages.length, 1)
+  assert.equal(scene.stages[0].promptEnabled, true)
+  assert.deepEqual(scene.stages[0].bgm, {
+    source:"", fileName:"", volume:70, loop:true,
+    durationMs:0, bytes:0, startMs:0, endMs:null,
+  })
+  assert.deepEqual(scene.canvas, { width:1080, height:1920, backgroundColor:"#40383b" })
+  assert.ok(scene.stages[0].prompt)
+  assert.deepEqual(scene.stages[0].promptStyle, DEFAULT_INTERACTIVE_PROMPT_STYLE)
   assert.deepEqual(scene.promptStyle, DEFAULT_INTERACTIVE_PROMPT_STYLE)
   assert.deepEqual(scene.dialogueStyle, DEFAULT_INTERACTIVE_DIALOGUE_STYLE)
+})
+
+test("interactive scene normalization gives every stage its own compatible prompt style", () => {
+  const legacyPromptStyle = {
+    surfaceColor:"#112233",
+    textColor:"#fefefe",
+    borderColor:"#445566",
+    opacity:61,
+    borderRadius:9,
+    position:"free",
+    x:22,
+    y:31,
+    width:64,
+    fontFamily:"Georgia, serif",
+    fontSize:18,
+    lineHeight:1.8,
+    letterSpacing:2,
+  }
+  const scene = normalizeInteractiveScene({
+    promptStyle:legacyPromptStyle,
+    stages:[
+      {
+        id:"stage-1",
+        prompt:"第一幕",
+        promptStyle:{ surfaceColor:"#abcdef", position:"bottom", fontSize:27 },
+      },
+      { id:"stage-2", prompt:"第二幕" },
+      { id:"stage-3", prompt:"第三幕" },
+    ],
+  })
+
+  assert.deepEqual(scene.stages[0].promptStyle, {
+    ...legacyPromptStyle,
+    surfaceColor:"#abcdef",
+    position:"bottom",
+    fontSize:27,
+  })
+  assert.deepEqual(scene.stages[1].promptStyle, legacyPromptStyle)
+  assert.deepEqual(scene.stages[2].promptStyle, legacyPromptStyle)
+  assert.notStrictEqual(scene.stages[1].promptStyle, scene.stages[2].promptStyle)
+
+  const imported = normalizeInteractiveScene(JSON.parse(JSON.stringify(scene)))
+  assert.deepEqual(imported.stages.map(stage => stage.promptStyle), scene.stages.map(stage => stage.promptStyle))
+})
+
+test("interactive scene normalization preserves fixed canvas, authored layers, and free typography", () => {
+  const scene = normalizeInteractiveScene({
+    canvas:{ width:1920, height:1080, backgroundColor:"#201b1d" },
+    promptStyle:{ position:"free", x:22, y:31, fontSize:18, lineHeight:1.8, letterSpacing:2 },
+    stages:[{
+      id:"stage-1",
+      bgm:{ source:"https://example.test/tension.mp3", fileName:"tension.mp3", volume:42, loop:false },
+      layers:[{
+        id:"glow",
+        name:"光圈",
+        source:`asset://${"a".repeat(64)}`,
+        opacity:64,
+        transform:{ scale:1.5, x:12, y:-8 },
+      }],
+      dialogues:[{
+        id:"pressure",
+        speaker:"A",
+        text:"别看。",
+        style:{ position:"free", x:20, y:20, width:55 },
+      }],
+    }],
+  })
+
+  assert.deepEqual(scene.canvas, { width:1920, height:1080, backgroundColor:"#201b1d" })
+  assert.equal(scene.promptStyle.position, "free")
+  assert.equal(scene.promptStyle.fontSize, 18)
+  assert.deepEqual(scene.stages[0].layers[0].transform, { scale:1.5, x:12, y:-8 })
+  assert.equal(scene.stages[0].layers[0].opacity, 64)
+  assert.equal(scene.stages[0].dialogues[0].style.x, 20)
+  assert.deepEqual(scene.stages[0].bgm, {
+    source:"https://example.test/tension.mp3",
+    fileName:"tension.mp3",
+    volume:42,
+    loop:false,
+    durationMs:0,
+    bytes:0,
+    startMs:0,
+    endMs:null,
+  })
+})
+
+test("interactive scene prompt visibility remains backward compatible", () => {
+  const withLegacyPrompt = normalizeInteractiveScene({
+    stages: [{ id: "stage-1", prompt: "点击这里" }],
+  })
+  const withoutLegacyPrompt = normalizeInteractiveScene({
+    stages: [{ id: "stage-1", prompt: "" }],
+  })
+  const explicitlyHidden = normalizeInteractiveScene({
+    stages: [{ id: "stage-1", prompt: "点击这里", promptEnabled: false }],
+  })
+
+  assert.equal(withLegacyPrompt.stages[0].promptEnabled, true)
+  assert.equal(withoutLegacyPrompt.stages[0].promptEnabled, false)
+  assert.equal(explicitlyHidden.stages[0].promptEnabled, false)
 })
 
 test("interactive scene normalization preserves a stable fixed continuation node id", () => {
@@ -206,6 +314,7 @@ test("interactive scene normalization preserves hotspot action frames and clamps
     fileName: "reaction.webm",
     durationMs: 2400,
     gifDurationMs: 900,
+    transform: { scale: 1, x: 0, y: 0 },
   })
 
   const bounded = normalizeInteractiveScene({
@@ -221,5 +330,6 @@ test("interactive scene normalization preserves hotspot action frames and clamps
     fileName: "",
     durationMs: 1800,
     gifDurationMs: 0,
+    transform: { scale: 1, x: 0, y: 0 },
   })
 })

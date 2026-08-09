@@ -279,7 +279,11 @@ test("the tutorial documents reader appearance package privacy in the existing f
 })
 
 test("the tutorial gives interactive pictures a complete searchable section", () => {
-  assert.match(source, /id:"interactive", title:"互动图片"/)
+  assert.match(source, /id:"interactive", title:"互动图片与 Mini文游"/)
+  assert.match(source, /裁剪并只保留所选音乐/)
+  assert.match(source, /按所选片段时长实时处理并重新编码/)
+  assert.match(source, /【取消裁剪】/)
+  assert.match(source, /完整原文件仍会计入包体/)
   for (const feature of [
     "创建独立互动页",
     "管理多个画面",
@@ -290,7 +294,7 @@ test("the tutorial gives interactive pictures a complete searchable section", ()
     "摄像头靠近互动",
     "热区动作帧",
     "动作帧播放与返回",
-    "说话人、台词与占位符",
+    "说话人、台词与文章占位符",
     "对话框与触摸提示美化",
     "素材体积与保存",
     "读者端逐页验收",
@@ -320,6 +324,30 @@ test("interactive-picture guidance documents page splitting, final continuation,
   assert.match(source, /后续跳转至/)
   assert.match(source, /稳定节点 ID/)
   assert.match(source, /严格进入作者选择的节点/)
+})
+
+test("interactive-picture guidance explains asset composition and direct action-frame adjustment", () => {
+  for (const detail of [
+    "背景图建议与逻辑画布使用相同比例",
+    "1080×1920",
+    "透明立绘",
+    "透明边距",
+    "动作帧建议沿用逻辑画布比例",
+    "直接拖动动作帧",
+    "缩放、横向偏移和纵向偏移",
+    "不是完整设备模拟器",
+  ]) assert.match(source, new RegExp(detail))
+})
+
+test("interactive-picture guidance treats prompt presentation as picture-specific", () => {
+  assert.match(source, /提示的开关、文案、位置和排版都属于当前画面/)
+  assert.match(source, /不同画面可以使用不同的提示位置与字体/)
+})
+
+test("interactive media size guidance points to the nested report and lists every local asset kind", () => {
+  assert.match(source, /作品卡片【更多 ▾】里的【发布前体检】中[^。]*【作品体积账单】/)
+  assert.doesNotMatch(source, /【发布前体检】和【作品体积账单】/)
+  assert.match(source, /本地背景、立绘、叠加图层、动作帧、对话框 PNG 和 BGM 都会计入载荷/)
 })
 
 test("shipped tutorial copy uses neutral route terms", () => {

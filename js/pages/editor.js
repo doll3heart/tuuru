@@ -25,6 +25,16 @@ import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, ins
 import { downloadBlob } from "../download.js"
 import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js"
 import { openInteractiveSceneEditor } from "../interactive-scene-editor.js"
+import { createEditorMediaUrlResolver, loadEditorMediaAsset, syncEditorMediaAssetReferences } from "../editor-media-storage.js"
+import { createInteractiveScene } from "../interactive-scene-model.js"
+import { createInteractiveBgmController, normalizeInteractiveBgm } from "../interactive-bgm.js"
+import { probeAudioBlob, probeAudioUrl } from "../audio-clip.js"
+import { createInteractiveBgmClipEditor } from "../interactive-bgm-clip-editor.js"
+import {
+  importInteractiveBgmFile,
+  replaceInteractiveBgmWithCompressedClip,
+} from "../interactive-bgm-clip.js"
+import { isInteractiveExperienceWork } from "../interactive-experience.js"
 import { createEditorPersistenceBuffer } from "../editor-persistence-buffer.js"
 import { createArticleEditorRenderIndex } from "../article-editor-render-index.js"
 import {
@@ -52,6 +62,7 @@ import {
 import { findWorkReferences } from "../work-references.js"
 import { openDeletionImpactDialog } from "../deletion-impact-ui.js"
 import { transferArticlePhoneModule } from "../article-save-adapter.js"
+import { buildReaderPreviewUrl } from "./reader.js"
 
 // State
 var _workId = null
@@ -69,6 +80,10 @@ var _movingInteractionGroup = null
 var _splitPaneController = null
 var _editorPersistenceState = {state:"saved", pendingCount:0, error:null}
 var _editorPersistence = createEditorPersistenceBuffer({onStateChange:updateEditorPersistenceState})
+var _miniBgmPreview = null
+var _miniBgmPreviewResolver = null
+var _miniBgmClipEditor = null
+var _miniMediaLinkHelpTrigger = null
 var FORMAT_COMMANDS = { bold:'bold', italic:'italic', underline:'underline', left:'justifyLeft', center:'justifyCenter', right:'justifyRight' }
 var RANDOM_GAME_ICON = '<svg class="editor-game-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7.5 3.5h9a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-9a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4Z"/><circle cx="8" cy="8" r="1.15"/><circle cx="16" cy="8" r="1.15"/><circle cx="12" cy="12" r="1.15"/><circle cx="8" cy="16" r="1.15"/><circle cx="16" cy="16" r="1.15"/></svg>'
 var AUTHOR_NOTE_GROUPS = [
@@ -346,6 +361,7 @@ export function renderEditor(wid) {
   _workId = wid
   var w = migrateInteractiveSceneWork(wid) || getWork(wid)
   if (!w) return '<div class="app-main"><div class="empty-state"><h3>作品未找到</h3></div></div>'
+  if (isInteractiveExperienceWork(w)) return buildInteractiveExperienceEditor(w)
   loadEditorCustomFonts(wid, w.editorSettings?.customFonts)
   var ns = w.nodes || []
   if (workChanged) {
@@ -369,6 +385,245 @@ export function renderEditor(wid) {
   var divider = '<div class="editor-splitter" data-editor-splitter role="separator" aria-label="调整正文与作品结构宽度" aria-orientation="vertical" aria-valuemin="180" aria-valuemax="520" aria-valuenow="' + split.width + '" tabindex="0"><span aria-hidden="true"></span></div>'
   var reopen = '<button type="button" class="editor-outline-reopen" data-editor-outline-reopen data-a="outline-reopen" aria-label="打开作品结构">结构</button>'
   return '<div class="editor-page">' + buildPreflightReturnBar(wid) + '<div class="editor-body-area" data-mobile-pane="' + _mobilePane + '"' + splitState + ' style="--editor-outline-width:' + split.width + 'px">' + L + buildMobileViewSwitch() + E + divider + W + reopen + M + '</div></div>'
+}
+
+function stopMiniBgmPreview() {
+  _miniBgmPreview?.destroy()
+  _miniBgmPreview = null
+  _miniBgmPreviewResolver?.release()
+  _miniBgmPreviewResolver = null
+}
+
+function stopMiniBgmClipEditor() {
+  _miniBgmClipEditor?.destroy()
+  _miniBgmClipEditor = null
+}
+
+function interactiveExperienceScene(work) {
+  return Array.isArray(work?.interactiveScenes) ? work.interactiveScenes[0] : null
+}
+
+function interactiveExperienceStats(work) {
+  var scene = interactiveExperienceScene(work)
+  var stages = scene?.stages || []
+  return {
+    stages:stages.length,
+    hotspots:stages.reduce(function(total, stage) { return total + (stage.hotspots || []).length }, 0),
+  }
+}
+
+function buildInteractiveExperienceEditor(work) {
+  var scene = interactiveExperienceScene(work)
+  var stats = interactiveExperienceStats(work)
+  var bgm = normalizeInteractiveBgm(work.interactiveBgm)
+  var bgmLinkValue = /^asset:\/\//i.test(bgm.source) ? '' : bgm.source
+  var sourceLabel = bgm.fileName || (bgm.source ? "已设置链接音乐" : "还没有默认 BGM")
+  var hasLocalBgm = Boolean(bgm.fileName || /^asset:\/\//i.test(bgm.source) || /^data:audio\//i.test(bgm.source))
+  var bgmFileLabel = hasLocalBgm ? '重新选择音频' : bgm.source ? '改用本地音频' : '选择音频'
+  var bgmFileStatus = bgm.fileName
+    ? '已嵌入 · ' + bgm.fileName
+    : hasLocalBgm
+    ? '已嵌入本地音频'
+    : bgm.source
+    ? '当前使用链接音乐'
+    : '未选择文件'
+  return '<main class="mini-game-studio app-main">'
+    + '<section class="mini-game-hero"><div><span class="mini-game-kicker">Mini文游 · 短篇互动</span><h1>' + esc(work.title || '未命名 Mini文游') + '</h1><p>用固定顺序的画面、热区、对话和音乐制作短篇互动体验；不提供自由分支或完整游戏系统。</p></div>'
+    + '<a class="btn btn-outline" href="' + escAttr(buildReaderPreviewUrl(work.id, globalThis.location?.href)) + '">读者预览</a></section>'
+    + '<div class="mini-game-layout">'
+    + '<section class="card mini-game-scene-card"><div class="mini-game-card-head"><div><span>核心内容</span><h2>画面与互动</h2></div><strong>' + stats.stages + ' 个画面 · ' + stats.hotspots + ' 个热区</strong></div>'
+    + '<div class="mini-game-scene-visual"><span>' + (scene ? '场景已创建' : '等待创建场景') + '</span><strong>' + esc(scene?.title || '第一段互动体验') + '</strong><small>在同一个编辑器里管理画面顺序、图层、热区、提示与对话</small></div>'
+    + '<button type="button" class="btn btn-primary" data-a="mini-scene-edit" data-w="' + escAttr(work.id) + '">' + (scene ? '编辑画面与互动' : '创建第一个互动场景') + '</button></section>'
+    + '<section class="card mini-game-bgm-card"><div class="mini-game-card-head"><div><span>全局声音</span><h2>默认 BGM</h2></div><strong>' + esc(sourceLabel) + '</strong></div>'
+    + '<p class="mini-game-help">贯穿整个作品；某个画面设置了特殊 BGM 时会暂时切歌，离开后自动恢复。</p>'
+    + '<div class="form-group"><div class="media-link-help-label-row"><label class="form-label" for="miniGameBgmSource">音乐链接</label><button type="button" class="media-link-help-trigger" data-a="mini-media-link-help-open" data-media-link-help-trigger="audio" aria-label="查看「音乐链接」的链接与体积说明" aria-haspopup="dialog" aria-controls="miniBgmMediaLinkHelp" aria-expanded="false"><span aria-hidden="true">?</span></button></div><input class="form-input" id="miniGameBgmSource" data-a="mini-bgm-source" data-w="' + escAttr(work.id) + '" value="' + escAttr(bgmLinkValue) + '" placeholder="https://…/music.mp3"></div>'
+    + '<div class="form-group media-file-field"><span class="form-label" id="miniGameBgmFileLabel">嵌入本地音频</span><div class="media-file-picker" data-media-file-picker data-state="' + (hasLocalBgm ? 'embedded' : bgm.source ? 'remote' : 'empty') + '" role="group" aria-labelledby="miniGameBgmFileLabel"><input class="sr-only media-file-picker-input" id="miniGameBgmFile" type="file" accept="audio/*,.mp3,.ogg,.wav,.m4a,.aac,.webm" aria-label="嵌入本地音频，' + escAttr(bgmFileLabel) + '" aria-describedby="miniGameBgmFileStatus" data-media-file-input data-bgm-file-input data-a="mini-bgm-file" data-w="' + escAttr(work.id) + '"><label class="btn btn-secondary media-file-picker-button" for="miniGameBgmFile" data-media-file-trigger data-bgm-file-trigger data-idle-label="' + escAttr(bgmFileLabel) + '">' + esc(bgmFileLabel) + '</label><output class="media-file-picker-status" id="miniGameBgmFileStatus" for="miniGameBgmFile" aria-live="polite" aria-atomic="true" title="' + escAttr(bgmFileStatus) + '" data-media-file-name data-bgm-file-name>' + esc(bgmFileStatus) + '</output></div></div>'
+    + '<div class="mini-game-bgm-row media-playback-settings"><div class="media-volume-control"><div class="media-volume-heading"><label for="miniGameBgmVolume">音量</label><output class="media-volume-value" id="miniGameBgmVolumeValue" for="miniGameBgmVolume" data-media-volume-value data-bgm-volume-value>' + bgm.volume + '%</output></div><input class="media-volume-range" id="miniGameBgmVolume" type="range" min="0" max="100" step="1" value="' + bgm.volume + '" style="--media-volume:' + bgm.volume + '%" aria-describedby="miniGameBgmVolumeValue" aria-valuetext="' + bgm.volume + '%" data-media-volume data-bgm-volume data-a="mini-bgm-volume" data-w="' + escAttr(work.id) + '"></div><label class="mini-game-loop media-loop-toggle"><input type="checkbox"' + (bgm.loop ? ' checked' : '') + ' data-a="mini-bgm-loop" data-w="' + escAttr(work.id) + '"><span>循环播放</span></label></div>'
+    + '<div data-mini-bgm-clip-host></div>'
+    + '<div class="media-link-help-popover" id="miniBgmMediaLinkHelp" data-media-link-help-popover role="dialog" aria-modal="false" aria-labelledby="miniBgmMediaLinkHelpTitle" aria-describedby="miniBgmMediaLinkHelpCopy" tabindex="-1" hidden><div class="media-link-help-head"><strong id="miniBgmMediaLinkHelpTitle" data-media-link-help-title>链接与作品体积</strong><button type="button" class="media-link-help-close" data-a="mini-media-link-help-close" aria-label="关闭音乐链接说明">×</button></div><p class="media-link-help-copy" id="miniBgmMediaLinkHelpCopy" data-media-link-help-copy>使用 HTTPS 音乐链接时，作品只保存网址，不会把音频文件打进 .tuuru 或加密 PNG，也不占用 256 个本地素材名额，因此通常可以减小导出文件。读者播放时需要联网；链接失效、防盗链或站点跨域限制可能导致时长读取或播放失败。远程音乐可以设置播放区间，但 Tuuru 不会裁剪远程文件；链接只改变包体，播放时仍需解码和缓冲，不能据此判断运行内存更低。</p></div>'
+    + '</section></div></main>'
+}
+
+function syncMediaVolumeControl(control) {
+  if (!control) return
+  var amount = Math.min(100, Math.max(0, Math.round(Number(control.value) || 0)))
+  var text = amount + '%'
+  control.style.setProperty('--media-volume', text)
+  control.setAttribute('aria-valuetext', text)
+  var value = control.closest('.media-volume-control')?.querySelector('[data-media-volume-value]')
+  if (value) value.textContent = text
+}
+
+function setMiniMediaFilePickerState(control, state, text) {
+  var picker = control?.closest?.('[data-media-file-picker]')
+  if (!picker) return
+  var trigger = picker.querySelector('[data-media-file-trigger]')
+  var status = picker.querySelector('[data-media-file-name]')
+  picker.dataset.state = state
+  picker.setAttribute('aria-busy', state === 'busy' ? 'true' : 'false')
+  if (trigger) trigger.textContent = state === 'busy' ? '正在处理…' : trigger.dataset.idleLabel
+  if (status) {
+    status.textContent = text
+    status.title = text
+  }
+}
+
+function miniMediaLinkHelpPopover(trigger) {
+  var id = trigger?.getAttribute("aria-controls")
+  return id ? document.getElementById(id) : null
+}
+
+function positionMiniMediaLinkHelp(trigger, popover) {
+  if (!trigger || !popover) return
+  popover.style.removeProperty("--media-link-help-left")
+  popover.style.removeProperty("--media-link-help-top")
+  if (globalThis.matchMedia?.("(max-width: 640px)").matches) return
+  var triggerRect = trigger.getBoundingClientRect()
+  var edge = 12
+  var gap = 8
+  var width = popover.offsetWidth || 360
+  var height = popover.offsetHeight || 220
+  var viewportWidth = globalThis.innerWidth || document.documentElement.clientWidth
+  var viewportHeight = globalThis.innerHeight || document.documentElement.clientHeight
+  var left = Math.min(Math.max(triggerRect.left, edge), Math.max(edge, viewportWidth - width - edge))
+  var top = triggerRect.bottom + gap
+  if (top + height > viewportHeight - edge) top = Math.max(edge, triggerRect.top - height - gap)
+  popover.style.setProperty("--media-link-help-left", Math.round(left) + "px")
+  popover.style.setProperty("--media-link-help-top", Math.round(top) + "px")
+}
+
+function closeMiniMediaLinkHelp(restoreFocus) {
+  var popover = document.querySelector('.mini-game-studio [data-media-link-help-popover]:not([hidden])')
+  if (!popover) return
+  popover.hidden = true
+  var trigger = _miniMediaLinkHelpTrigger
+  if (trigger) trigger.setAttribute("aria-expanded", "false")
+  _miniMediaLinkHelpTrigger = null
+  if (restoreFocus && trigger?.isConnected) trigger.focus()
+}
+
+function openMiniMediaLinkHelp(trigger) {
+  var popover = miniMediaLinkHelpPopover(trigger)
+  if (!popover) return
+  if (!popover.hidden && _miniMediaLinkHelpTrigger === trigger) {
+    closeMiniMediaLinkHelp(true)
+    return
+  }
+  closeMiniMediaLinkHelp(false)
+  _miniMediaLinkHelpTrigger = trigger
+  trigger.setAttribute("aria-expanded", "true")
+  popover.hidden = false
+  positionMiniMediaLinkHelp(trigger, popover)
+  popover.focus()
+}
+
+function mountInteractiveExperienceBgmEditor(wid) {
+  stopMiniBgmClipEditor()
+  var host = document.querySelector('[data-mini-bgm-clip-host]')
+  var work = getWork(wid)
+  var bgm = normalizeInteractiveBgm(work?.interactiveBgm)
+  if (!host || !isInteractiveExperienceWork(work) || !bgm.source) return
+  _miniBgmClipEditor = createInteractiveBgmClipEditor({
+    documentObject:document,
+    track:bgm,
+    label:'作品默认 BGM 播放片段',
+    onRangeChange:function(range) {
+      updateInteractiveExperienceBgm(wid, range, false)
+    },
+    onProbe:async function() {
+      var current = normalizeInteractiveBgm(getWork(wid)?.interactiveBgm)
+      if (/^asset:\/\//i.test(current.source)) {
+        var asset = await loadEditorMediaAsset(current.source)
+        return probeAudioBlob(asset.blob)
+      }
+      return probeAudioUrl(current.source)
+    },
+    onMetadata:function(metadata) {
+      updateInteractiveExperienceBgm(wid, metadata, false)
+    },
+    onPreview:function() { previewInteractiveExperienceBgm(wid) },
+    onStop:stopMiniBgmPreview,
+    onClear:function() {
+      updateInteractiveExperienceBgm(wid, {
+        source:'', fileName:'', durationMs:0, bytes:0, startMs:0, endMs:null,
+      }, true)
+    },
+    onTrim:async function(range, handlers) {
+      var latest = normalizeInteractiveBgm(getWork(wid)?.interactiveBgm)
+      var clipped = await replaceInteractiveBgmWithCompressedClip(latest, range, {
+        signal:handlers.signal,
+        onProgress:handlers.onProgress,
+      })
+      updateInteractiveExperienceBgm(wid, clipped.track, false)
+      showToast('默认 BGM 已裁剪：' + formatEditorMediaSize(clipped.result.originalBytes) + ' → ' + formatEditorMediaSize(clipped.result.bytes))
+      refreshEditor(wid)
+    },
+  })
+  host.appendChild(_miniBgmClipEditor.element)
+}
+
+function formatEditorMediaSize(bytes) {
+  var value = Number(bytes) || 0
+  if (value >= 1024 * 1024) return (value / 1024 / 1024).toFixed(2) + ' MiB'
+  return Math.max(1, Math.round(value / 1024)) + ' KiB'
+}
+
+export function bindEditor(wid) {
+  if (isInteractiveExperienceWork(getWork(wid))) mountInteractiveExperienceBgmEditor(wid)
+}
+
+function openInteractiveExperienceScene(wid) {
+  var work = getWork(wid)
+  if (!isInteractiveExperienceWork(work)) return
+  var scene = interactiveExperienceScene(work) || createInteractiveScene({
+    id:uid(),
+    stageId:uid(),
+  })
+  openInteractiveSceneEditor({
+    scene:scene,
+    workStyle:work.interactiveDialogueStyle,
+    allScenes:[scene],
+    idFactory:uid,
+    allowDelete:false,
+    onSave:async function(updatedScene, syncResult) {
+      var latest = getWork(wid)
+      if (!latest) return
+      var updated = updateWork(wid, {
+        interactiveScenes:[updatedScene],
+        interactiveDialogueStyle:syncResult?.interactiveDialogueStyle || latest.interactiveDialogueStyle,
+      })
+      if (updated) await syncEditorMediaAssetReferences(wid, updated)
+      refreshEditor(wid)
+      showToast('Mini文游已保存')
+    },
+  })
+}
+
+function updateInteractiveExperienceBgm(wid, patch, refresh) {
+  var work = getWork(wid)
+  if (!isInteractiveExperienceWork(work)) return null
+  stopMiniBgmPreview()
+  var updated = updateWork(wid, {
+    interactiveBgm:normalizeInteractiveBgm(Object.assign({}, work.interactiveBgm, patch)),
+  })
+  if (updated) syncEditorMediaAssetReferences(wid, updated).catch(function() {})
+  if (refresh) refreshEditor(wid)
+  return updated
+}
+
+function previewInteractiveExperienceBgm(wid) {
+  var work = getWork(wid)
+  var bgm = normalizeInteractiveBgm(work?.interactiveBgm)
+  if (!bgm.source) return
+  stopMiniBgmPreview()
+  _miniBgmPreviewResolver = createEditorMediaUrlResolver()
+  _miniBgmPreview = createInteractiveBgmController({
+    documentObject:document,
+    globalBgm:bgm,
+    resolveAssetUrl:_miniBgmPreviewResolver.resolve,
+  })
+  _miniBgmPreview.setStage({bgm:{}})
+  _miniBgmPreview.unlock()
 }
 
 function buildPreflightReturnBar(wid) {
@@ -1647,6 +1902,13 @@ function nodeHTML(w, n, actionIndex, targetPick, renderIndex) {
 // ====== Event Delegation ======
 document.addEventListener("click", handleClick)
 document.addEventListener("change", handleChange)
+document.addEventListener("keydown", function(event) {
+  if (event.key !== "Escape") return
+  var popover = document.querySelector('.mini-game-studio [data-media-link-help-popover]:not([hidden])')
+  if (!popover) return
+  event.preventDefault()
+  closeMiniMediaLinkHelp(true)
+})
 document.addEventListener("pointerdown", function(event) {
   var button = event.target.closest?.('[data-a]')
   if (button && (FORMAT_COMMANDS[button.dataset.a] || button.dataset.a === "ph" || button.dataset.a === "ig" || button.dataset.a === "game" || button.dataset.a === "place-ig")) event.preventDefault()
@@ -1676,6 +1938,10 @@ function syncEditorFormatButtons() {
 
 function handleClick(e) {
   _editorPersistence.flush()
+  var openMiniHelp = document.querySelector('.mini-game-studio [data-media-link-help-popover]:not([hidden])')
+  if (openMiniHelp && !openMiniHelp.contains(e.target) && !e.target.closest?.('[data-a="mini-media-link-help-open"]')) {
+    closeMiniMediaLinkHelp(false)
+  }
   if (_movingInteractionGroup) {
     var placementEditor = e.target.closest?.(".content-editable")
     if (placementEditor && !e.target.closest(".article-interaction-editor-card")) {
@@ -1722,6 +1988,17 @@ function handleClick(e) {
   var a = b.dataset.a
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
+  if (a === "mini-scene-edit") { openInteractiveExperienceScene(w); return }
+  if (a === "mini-media-link-help-open") { openMiniMediaLinkHelp(b); return }
+  if (a === "mini-media-link-help-close") { closeMiniMediaLinkHelp(true); return }
+  if (a === "mini-bgm-preview") { previewInteractiveExperienceBgm(w); return }
+  if (a === "mini-bgm-stop") { stopMiniBgmPreview(); return }
+  if (a === "mini-bgm-clear") {
+    updateInteractiveExperienceBgm(w, {
+      source:"", fileName:"", durationMs:0, bytes:0, startMs:0, endMs:null,
+    }, true)
+    return
+  }
   var mobileShell = b.closest(".editor-body-area")
   if (a === "return-preflight") {
     _editorPersistence.flush()
@@ -2166,6 +2443,37 @@ function handleChange(e) {
   var a = b.dataset.a
   var w = b.dataset.w || _workId
   var n = b.dataset.n || _nodeId
+
+  if (a === "mini-bgm-source") {
+    updateInteractiveExperienceBgm(w, {
+      source:b.value.trim(), fileName:"", durationMs:0, bytes:0, startMs:0, endMs:null,
+    }, true)
+    return
+  }
+  if (a === "mini-bgm-volume") {
+    updateInteractiveExperienceBgm(w, {volume:Number(b.value)}, false)
+    return
+  }
+  if (a === "mini-bgm-loop") {
+    updateInteractiveExperienceBgm(w, {loop:b.checked}, false)
+    return
+  }
+  if (a === "mini-bgm-file") {
+    var audioFile = b.files?.[0]
+    if (!audioFile) return
+    b.disabled = true
+    setMiniMediaFilePickerState(b, 'busy', '正在导入：' + audioFile.name + '…')
+    importInteractiveBgmFile(audioFile, getWork(w)?.interactiveBgm).then(function(track) {
+      updateInteractiveExperienceBgm(w, track, true)
+      showToast('默认 BGM 已嵌入作品素材库')
+    }).catch(function(error) {
+      showToast(error?.message || '音频导入失败', 'error')
+      b.disabled = false
+      b.value = ''
+      setMiniMediaFilePickerState(b, 'error', '导入失败，可重新选择')
+    })
+    return
+  }
 
   // Node title rename (from editor header input)
   if (a === "rn") {
@@ -3295,6 +3603,7 @@ function insertImageAtCursor(src) {
 
 function refreshEditor(wid) {
   _editorPersistence.flush()
+  stopMiniBgmClipEditor()
   var a = document.getElementById("app")
   if (a) {
     a.innerHTML = renderHeader() + '<div id="editorMain">' + renderEditor(wid) + '</div>'
@@ -3307,6 +3616,7 @@ function refreshEditor(wid) {
       })
       chapterHandle?.focus()
     }
+    if (isInteractiveExperienceWork(getWork(wid))) mountInteractiveExperienceBgmEditor(wid)
   }
 }
 
@@ -3427,7 +3737,7 @@ document.addEventListener("keydown", function(e) {
 
 // ====== Interactive Scene Nodes ======
 
-function saveInteractiveScene(wid, scene, syncResult) {
+async function saveInteractiveScene(wid, scene, syncResult) {
   var work = getWork(wid)
   if (!work) return
   var scenes = (work.interactiveScenes || []).slice()
@@ -3435,10 +3745,11 @@ function saveInteractiveScene(wid, scene, syncResult) {
   if (index >= 0) scenes[index] = scene
   else scenes.push(scene)
   if (syncResult?.interactiveScenes) scenes = syncResult.interactiveScenes
-  updateWork(wid, {
+  var updated = updateWork(wid, {
     interactiveScenes:scenes,
     interactiveDialogueStyle:syncResult?.interactiveDialogueStyle || work.interactiveDialogueStyle,
   })
+  if (updated) await syncEditorMediaAssetReferences(wid, updated)
 }
 
 function buildInteractiveSceneContinuationGroups(work, sourceNodeId) {
@@ -3506,7 +3817,7 @@ function createInteractiveSceneNode(wid, afterNodeId, chapterId) {
     targetGroups:buildInteractiveSceneContinuationGroups(work, draftRecords.node.id),
     idFactory:uid,
     allowDelete:false,
-    onSave:function(scene, syncResult) {
+    onSave:async function(scene, syncResult) {
       var latest = getWork(wid)
       if (!latest) return
       var node = Object.assign({}, draftRecords.node, {
@@ -3529,11 +3840,12 @@ function createInteractiveSceneNode(wid, afterNodeId, chapterId) {
           return candidate.id === scene.id ? Object.assign({}, candidate, {nodeId:node.id}) : candidate
         })
       }
-      updateWork(wid, {
+      var updated = updateWork(wid, {
         nodes:nodes,
         interactiveScenes:scenes,
         interactiveDialogueStyle:syncResult?.interactiveDialogueStyle || latest.interactiveDialogueStyle,
       })
+      if (updated) await syncEditorMediaAssetReferences(wid, updated)
       _nodeId = node.id
       prepareMobilePaneRefresh("editor", true)
       refreshEditor(wid)
@@ -3556,9 +3868,9 @@ function openInteractiveSceneForNode(wid, nid) {
     allScenes:work.interactiveScenes || [],
     targetGroups:buildInteractiveSceneContinuationGroups(work, nid),
     idFactory:uid,
-    onSave:function(updatedScene, syncResult) {
+    onSave:async function(updatedScene, syncResult) {
       var linkedScene = Object.assign({}, updatedScene, {nodeId:nid})
-      saveInteractiveScene(wid, linkedScene, syncResult)
+      await saveInteractiveScene(wid, linkedScene, syncResult)
       updateNode(wid, nid, {title:linkedScene.title || node.title})
       refreshEditor(wid)
       showToast('互动页已保存')
@@ -3953,6 +4265,26 @@ function renderWorkSearchResults(input) {
 
 // Auto-save content on input
 document.addEventListener("input", function(e) {
+  var miniBgmVolume = e.target.closest?.('[data-a="mini-bgm-volume"]')
+  if (miniBgmVolume) {
+    syncMediaVolumeControl(miniBgmVolume)
+    return
+  }
+  var miniBgmSource = e.target.closest?.('[data-a="mini-bgm-source"]')
+  if (miniBgmSource) {
+    var miniWorkId = miniBgmSource.dataset.w || _workId
+    var miniSourceValue = miniBgmSource.value.trim()
+    _editorPersistence.schedule("mini-bgm-source:" + miniWorkId, function() {
+      updateInteractiveExperienceBgm(miniWorkId, {
+        source:miniSourceValue, fileName:"", durationMs:0, bytes:0, startMs:0, endMs:null,
+      }, false)
+    })
+    var miniStudio = miniBgmSource.closest(".mini-game-bgm-card")
+    miniStudio?.querySelectorAll('[data-a="mini-bgm-preview"],[data-a="mini-bgm-clear"]').forEach(function(control) {
+      control.disabled = !miniSourceValue
+    })
+    return
+  }
   var authorNote = e.target.closest?.("[data-author-note]")
   if (authorNote) {
     var section = authorNote.dataset.authorNote

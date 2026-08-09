@@ -11,7 +11,8 @@ import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
 import { recordExport } from "../export-history.js"
 import { compressEditorImage } from "../image-compression.js"
-import { encryptWorkPackage } from "../work-package.js"
+import { encryptPortableWorkPackage, encryptWorkPackage } from "../work-package.js"
+import { loadEditorMediaAssets } from "../editor-media-storage.js"
 import { dataUrlToBlob } from "../work-export.js"
 
 export const COLLECTION_LONG_PRESS_MS = 550
@@ -255,7 +256,10 @@ async function downloadCollectionJson(id) {
   const collection = getWorkCollections().find(candidate => candidate.id === id)
   const json = exportWorkCollectionAsJSON(id)
   if (!collection || !json) throw new TypeError("作品集不存在")
-  const encrypted = await encryptWorkPackage(json)
+  const assets = await loadEditorMediaAssets(JSON.parse(json))
+  const encrypted = assets.length
+    ? await encryptPortableWorkPackage(json, assets)
+    : await encryptWorkPackage(json)
   const blob = new Blob([encrypted], { type: "application/vnd.tuuru.work" })
   downloadBlob(blob, `${safeFilename(collection.title)}.tuuru`)
   recordExport({ entityType:"collection", entityId:id, title:collection.title || "作品集", format:"tuuru", bytes:blob.size, revision:Number(collection.updatedAt || collection.createdAt || 1) }, "downloaded")
@@ -266,7 +270,10 @@ async function downloadCollectionPng(id) {
   const collection = getWorkCollections().find(candidate => candidate.id === id)
   const json = exportWorkCollectionAsJSON(id)
   if (!collection || !json) throw new TypeError("作品集不存在")
-  const encrypted = await encryptWorkPackage(json)
+  const assets = await loadEditorMediaAssets(JSON.parse(json))
+  const encrypted = assets.length
+    ? await encryptPortableWorkPackage(json, assets)
+    : await encryptWorkPackage(json)
   const dataUrl = await new Promise((resolve, reject) => {
     encodeSteganoPNG(encrypted, collection.coverImage || "", resolve, reject)
   })

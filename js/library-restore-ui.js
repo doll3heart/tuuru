@@ -9,6 +9,10 @@ import {
   restoreLocalDatabaseBackup,
   restoreLocalDatabaseBackupLocked,
 } from "./storage.js"
+import {
+  attachLocalDatabaseBackupMedia,
+  stageLocalDatabaseBackupMedia,
+} from "./library-media-backup.js"
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -33,6 +37,8 @@ export function startLocalLibraryRestore({
   createGenerationId,
   restoreLegacy = restoreLocalDatabaseBackup,
   restoreLocked = restoreLocalDatabaseBackupLocked,
+  stageBackupMedia = stageLocalDatabaseBackupMedia,
+  attachBackupMedia = attachLocalDatabaseBackupMedia,
 } = {}) {
   let activeSession = null
   let pendingRequest = null
@@ -336,6 +342,27 @@ export function startLocalLibraryRestore({
       updateGate()
 
       const reliable = featureEnabled("reliableLocalWrites", flags)
+      const includesMedia = Array.isArray(backup.mediaAssets) && backup.mediaAssets.length > 0
+      if (includesMedia) {
+        Promise.resolve()
+          .then(() => stageBackupMedia(backup))
+          .then(() => reliable
+            ? restoreLocked(plan, {
+              storage,
+              lockManager,
+              createGenerationId,
+              now: () => {
+                const value = now()
+                return value instanceof Date ? value.getTime() : value
+              },
+            })
+            : restoreLegacy(plan, storage))
+          .then(async result => {
+            await attachBackupMedia(backup.database)
+            finishRestoreSuccess(result, reliable)
+          }, finishRestoreFailure)
+        return
+      }
       if (!reliable) {
         let result
         try {

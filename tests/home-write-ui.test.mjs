@@ -15,7 +15,8 @@ globalThis.sessionStorage = dom.window.sessionStorage
 
 const { WORK_TYPE } = await import("../js/data.js")
 const { createHomeWriteController } = await import("../js/pages/home.js?home-write-controller")
-const { createNewWorkController } = await import("../js/pages/new.js?new-work-controller")
+const { createNewWorkController, renderNew } = await import("../js/pages/new.js?new-work-controller")
+const { INTERACTIVE_EXPERIENCE_MODE } = await import("../js/interactive-experience.js")
 
 const LEGACY_FLAGS = Object.freeze({ reliableLocalWrites: false })
 const RELIABLE_FLAGS = Object.freeze({ reliableLocalWrites: true })
@@ -95,6 +96,41 @@ test("new-work legacy mode remains synchronous with the exact effect order", () 
     ["notify", "作品已创建"],
     ["navigate", "/phone/phone-a"],
   ])
+})
+
+test("standalone interactive game creation reuses the article editor route with its own single-flight key", () => {
+  const events = []
+  const controller = createNewWorkController({
+    flags: LEGACY_FLAGS,
+    createLegacy(data) { events.push(["create", data]); return { id:"mini-1" } },
+    createReliable: unexpected("createReliable"),
+    notify() {},
+    navigate(path) { events.push(["navigate", path]) },
+    publish: unexpected("publish"),
+  })
+  controller.submit({
+    type:WORK_TYPE.ARTICLE,
+    experienceMode:INTERACTIVE_EXPERIENCE_MODE,
+    title:" ",
+    desc:"迷你游戏",
+    author:"A",
+  })
+  assert.deepEqual(events, [["create", {
+    type:WORK_TYPE.ARTICLE,
+    title:"未命名 Mini文游",
+    desc:"迷你游戏",
+    author:"A",
+    experienceMode:INTERACTIVE_EXPERIENCE_MODE,
+  }], ["navigate", "/edit/mini-1"]])
+})
+
+test("new-work chooser exposes standalone interactive games as a distinct authoring path", () => {
+  const html = renderNew()
+  assert.match(html, /Mini文游/)
+  assert.doesNotMatch(html, /互动文游|mini\s*文游/)
+  assert.match(html, /短篇.*固定顺序/)
+  assert.match(html, /createInteractiveExperience/)
+  assert.match(html, /画面特殊 BGM/)
 })
 
 test("reliable creation is single-flight and delays success effects until verification", async () => {

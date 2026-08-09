@@ -4,6 +4,15 @@ import { Buffer } from "node:buffer"
 import { JSDOM } from "jsdom"
 import { CURRENT_WORK_SCHEMA_VERSION } from "../js/work-schema.js"
 import { createWorkRelease } from "../js/work-release.js"
+import { encryptWorkPackage } from "../js/work-package.js"
+import {
+  MAX_WORK_PNG_FILE_BYTES,
+  embedPngPayload,
+  pngBytesFromDataUrl,
+  pngBytesToDataUrl,
+} from "../js/png-payload.js"
+
+const ONE_PIXEL_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 
 function phoneWork() {
   return {
@@ -403,7 +412,7 @@ test("reader rejects unsafe import sizes before creating a FileReader", async t 
     { name: "unknown-size.json" },
     { name: "empty.json", size: 0 },
     { name: "too-large.json", size: 10 * MiB + 1 },
-    { name: "too-large.png", size: 25 * MiB + 1 },
+    { name: "too-large.png", size: MAX_WORK_PNG_FILE_BYTES + 1 },
   ]) {
     dropFile(dom, file)
     assert.equal(importStatus().dataset.state, "error")
@@ -415,7 +424,7 @@ test("reader rejects unsafe import sizes before creating a FileReader", async t 
   assert.equal(alerts.length, 0)
 
   const jsonAtLimit = { name: "limit.json", size: 10 * MiB }
-  const pngAtLimit = { name: "limit.png", size: 25 * MiB }
+  const pngAtLimit = { name: "limit.png", size: MAX_WORK_PNG_FILE_BYTES }
   dropFile(dom, jsonAtLimit)
   assert.equal(importStatus().dataset.state, "loading")
   assert.equal(document.getElementById("pickFileBtn").disabled, true)
@@ -486,6 +495,43 @@ test("reader decodes the four-byte PNG header from RGB channels", async t => {
 
   assert.ok(document.getElementById("rdStartBtn"))
   assert.equal(document.querySelector(".rd-landing-title")?.textContent, work.title)
+  assert.deepEqual(alerts, [])
+})
+
+test("reader imports current PNG payload chunks without decoding cover pixels", async t => {
+  const alerts = []
+  const dom = installDom(t, null, alerts)
+  const work = phoneWork()
+  work.id = "reader-png-chunk-work"
+  work.title = "Visible cover"
+  const encrypted = await encryptWorkPackage(JSON.stringify(work))
+  const dataUrl = pngBytesToDataUrl(embedPngPayload(
+    pngBytesFromDataUrl(ONE_PIXEL_PNG),
+    encrypted,
+  ))
+  let imageConstructions = 0
+  globalThis.Image = class {
+    constructor() { imageConstructions += 1 }
+  }
+  globalThis.FileReader = class {
+    readAsText() { throw new Error("unexpected JSON read") }
+    readAsDataURL() {
+      this.result = dataUrl
+      this.onload?.()
+    }
+  }
+
+  await import(`../reader/reader.js?reader-import-png-chunk=${Date.now()}`)
+  openImportDialog()
+  dropFile(dom, { name: "visible-cover.png", size: dataUrl.length })
+  for (let attempt = 0; attempt < 100 && !document.getElementById("rdStartBtn"); attempt += 1) {
+    if (importStatus().dataset.state === "error") break
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+
+  assert.ok(document.getElementById("rdStartBtn"))
+  assert.equal(document.querySelector(".rd-landing-title")?.textContent, work.title)
+  assert.equal(imageConstructions, 0)
   assert.deepEqual(alerts, [])
 })
 
