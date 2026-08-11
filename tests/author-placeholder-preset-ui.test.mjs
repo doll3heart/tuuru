@@ -68,6 +68,19 @@ test("global forbidden editors explain substring and exact matching", () => {
   assert.match(styles, /\.placeholder-forbidden-group/)
 })
 
+test("global forbidden editors use a scoped responsive hierarchy", () => {
+  for (const source of [article, phone]) {
+    assert.match(source, /placeholder-global-heading/)
+    assert.match(source, /placeholder-scope-badge[^>]*>全作品</)
+    assert.match(source, /placeholder-forbidden-actions/)
+    assert.match(source, /支持换行、逗号、顿号、分号或斜杠分隔/)
+  }
+  assert.match(styles, /\.placeholder-global-forbidden\{[^}]*container-type:inline-size/)
+  assert.match(styles, /\.placeholder-global-forbidden>\.placeholder-forbidden-body\{[^}]*grid-template-columns:1fr/)
+  assert.match(styles, /@container placeholder-global \(min-width:520px\)/)
+  assert.match(styles, /\.placeholder-forbidden-actions\{[^}]*justify-content:space-between/)
+})
+
 test("global and per-placeholder forbidden editors start collapsed", () => {
   for (const source of [article, phone]) {
     assert.match(source, /<details class="placeholder-global-forbidden"/)

@@ -126,11 +126,31 @@ test("Mini studio exposes landing placeholders without article-only inline contr
   panel.closest(".modal-overlay")?.remove()
 })
 
+test("Mini studio gives the scene a wide primary column and keeps compact global settings together", () => {
+  const { root } = renderMini()
+  const layout = root.querySelector(".mini-game-layout")
+  const primary = layout?.firstElementChild
+  const settings = layout?.lastElementChild
+
+  assert.ok(primary?.classList.contains("mini-game-primary-column"))
+  assert.ok(settings?.classList.contains("mini-game-settings-column"))
+  assert.ok(primary.children[0].classList.contains("mini-game-scene-card"))
+  assert.equal(primary.children.length, 1)
+  assert.ok(settings.children[0].classList.contains("mini-game-placeholder-card"))
+  assert.ok(settings.children[1].classList.contains("mini-game-bgm-card"))
+  assert.match(css, /\.mini-game-layout\{[^}]*grid-template-columns:minmax\(0,2fr\) minmax\(340px,1fr\)/)
+  assert.match(css, /\.mini-game-settings-column\{[^}]*gap:12px/)
+  assert.match(css, /\.mini-game-placeholder-card\{[^}]*grid-template-columns:minmax\(0,1fr\) auto[^}]*gap:8px 12px[^}]*padding:16px/)
+  assert.match(css, /\.mini-game-bgm-card\{[^}]*gap:12px[^}]*padding:16px/)
+  assert.match(css, /\.mini-game-scene-visual\{[^}]*min-height:300px/)
+  assert.match(css, /@media\(max-width:900px\)\{\.new-work-kind-grid\{grid-template-columns:1fr\}\.mini-game-layout\{grid-template-columns:1fr\}/)
+})
+
 test("shared media controls remain touch-safe, themed, and responsive", () => {
   assert.match(css, /\.media-file-picker-button\s*\{[^}]*min-height:\s*44px/s)
   assert.match(css, /\.media-file-picker-input:focus-visible\s*\+\s*\.media-file-picker-button/s)
   assert.match(css, /\.media-file-picker-status\s*\{[^}]*min-width:\s*0[^}]*text-overflow:\s*ellipsis/s)
   assert.match(css, /\.media-volume-range\s*\{[^}]*appearance:\s*none[^}]*min-height:\s*44px/s)
   assert.match(css, /\.media-volume-range::?-webkit-slider-thumb\s*\{[^}]*width:\s*18px[^}]*height:\s*18px/s)
-  assert.match(css, /@container\s*\(max-width:\s*360px\)[\s\S]*\.media-file-picker\s*\{[^}]*grid-template-columns:\s*1fr/s)
+  assert.match(css, /@container\s*\(max-width:\s*320px\)[\s\S]*\.media-file-picker\s*\{[^}]*grid-template-columns:\s*1fr/s)
 })
