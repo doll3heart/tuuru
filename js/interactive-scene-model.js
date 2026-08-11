@@ -224,6 +224,16 @@ function normalizeHotspot(value, index, stageIds) {
   }
 }
 
+function normalizeStageChoice(value, index, stageIds) {
+  const source = record(value)
+  const targetStageId = identifier(source.targetStageId, "")
+  return {
+    id: identifier(source.id, `choice-${index + 1}`),
+    label: string(source.label, `选项 ${index + 1}`).slice(0, 120),
+    targetStageId: stageIds.has(targetStageId) ? targetStageId : "",
+  }
+}
+
 function normalizeMediaTransform(value) {
   const source = record(value)
   return {
@@ -272,6 +282,9 @@ function normalizeStage(value, index, stageIds, legacyPromptStyle) {
     }),
     dialogue: normalizeDialogue(source.dialogue),
     dialogues: list(source.dialogues).slice(0, 12).map(normalizeDialogueBox),
+    choices: list(source.choices).slice(0, 6).map((choice, choiceIndex) => (
+      normalizeStageChoice(choice, choiceIndex, stageIds)
+    )),
     hotspots: list(source.hotspots).map((hotspot, hotspotIndex) => (
       normalizeHotspot(hotspot, hotspotIndex, stageIds)
     )),
@@ -320,6 +333,8 @@ export function createInteractiveScene({ id, nodeId, stageId } = {}) {
       prompt: DEFAULT_INTERACTIVE_PROMPT_TEXT,
       promptEnabled: true,
       dialogue: { speaker: "", text: "" },
+      dialogues: [],
+      choices: [],
       hotspots: [],
     }],
   })

@@ -838,6 +838,35 @@ test("reader applies one global forbidden word list to every placeholder", async
   assert.ok(document.querySelector(".rd-landing"))
 })
 
+test("reader exact forbidden words reject only the complete trimmed value", async t => {
+  installDom(t)
+  const work = flowPhoneWork()
+  work.id = "exact-forbidden-phone-placeholder"
+  work.phoneData.readingFlow.enabled = false
+  work.placeholders = [{
+    id:"reader-name",
+    label:"姓名",
+    key:"{{reader}}",
+    prompt:"填写名字",
+    forbidden:[],
+    exactForbidden:["哥哥"],
+  }]
+  work.globalExactForbidden = ["MOMO"]
+  seedWork(work)
+  await import(`../reader/reader.js?exact-forbidden=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+
+  const input = document.querySelector('[data-ph-id="reader-name"]')
+  input.value = " 哥哥 "
+  document.getElementById("rdStartBtn").click()
+  assert.ok(document.querySelector(".rd-landing"), "the complete trimmed exact value must remain blocked")
+  assert.match(input.parentElement.querySelector(".rd-placeholder-error").textContent, /违禁词/)
+
+  input.value = "不算依赖哥哥算长大吗"
+  document.getElementById("rdStartBtn").click()
+  assert.ok(document.querySelector(".phone-frame"), "a longer value containing an exact rule should be allowed")
+})
+
 test("reader message list and bubbles show group avatar and roles", async t => {
   installDom(t)
   const work = flowPhoneWork()

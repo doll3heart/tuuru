@@ -149,9 +149,9 @@ export function renderNew(){
 
       <div class="card" style="cursor:pointer;text-align:center;padding:40px 20px" onclick="document.getElementById('interactiveForm').style.display='block';this.style.borderColor='var(--c-primary)'">
         <h3 style="font-weight:600;margin-bottom:8px">Mini文游</h3>
-        <p style="font-size:.85rem;color:var(--c-text2)">适合短篇、固定顺序的画面互动与对话推进</p>
+        <p style="font-size:.85rem;color:var(--c-text2)">适合短篇画面互动、对话推进与轻量选择分支</p>
         <div style="margin-top:12px">
-          <div class="badge badge-primary">固定顺序画面</div>
+          <div class="badge badge-primary">轻量画面分支</div>
           <div class="badge badge-primary">画面特殊 BGM</div>
         </div>
       </div>

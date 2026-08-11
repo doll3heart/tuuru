@@ -92,6 +92,7 @@ export function createInteractiveBgmClipEditor(options = {}) {
     const title = documentObject.createElement("strong")
     title.textContent = "播放片段"
     const metadata = documentObject.createElement("small")
+    metadata.dataset.audioClipMetadata = ""
     const metadataBits = []
     if (track.durationMs) metadataBits.push(`全曲 ${formatClock(track.durationMs)}`)
     if (track.bytes) metadataBits.push(formatBytes(track.bytes))
@@ -319,6 +320,8 @@ export function createInteractiveBgmClipEditor(options = {}) {
       render()
     }).catch(error => {
       if (destroyed) return
+      const metadata = element.querySelector("[data-audio-clip-metadata]")
+      if (metadata) metadata.textContent = "音频时长读取失败"
       const note = element.querySelector(".audio-clip-note")
       if (note) {
         note.classList.add("is-error")

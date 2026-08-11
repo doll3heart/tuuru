@@ -256,6 +256,34 @@ test("empty optional images do not resolve to the current page or show broken-im
   assert.equal(frame.hidden, true)
 })
 
+test("optional images disappear when their configured source fails to load", () => {
+  const dom = new JSDOM("<main id='root'></main>", { url:"https://tuuru.test/reader" })
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  scene.stages[0].characterImage = "https://example.test/missing-character.png"
+  scene.dialogueStyle.frameImage = "https://example.test/missing-frame.png"
+  scene.stages[0].layers = [{
+    id:"missing-layer",
+    source:"https://example.test/missing-layer.png",
+    visible:true,
+  }]
+
+  mountInteractiveScene(root, scene, { documentObject:dom.window.document })
+
+  for (const image of root.querySelectorAll([
+    ".interactive-scene-background",
+    ".interactive-scene-character",
+    ".interactive-scene-authored-layer",
+    ".interactive-scene-dialogue-frame",
+  ].join(","))) {
+    assert.equal(image.hidden, true, "an optional image stays hidden until it loads")
+    image.dispatchEvent(new dom.window.Event("error"))
+    assert.equal(image.hidden, true)
+    assert.equal(image.hasAttribute("src"), false, "a failed source cannot leave a broken-image glyph")
+  }
+  dom.window.close()
+})
+
 test("shared renderer resolves local binary asset references on demand", async () => {
   const dom = new JSDOM("<main id='root'></main>")
   const root = dom.window.document.getElementById("root")
@@ -473,6 +501,39 @@ test("an empty final picture completes when its dialogue is activated", () => {
   assert.equal(dialogue.dataset.advanceReady, "true")
   dialogue.click()
   assert.equal(completedStageId, "stage-2")
+})
+
+test("picture choices appear after exploration and jump to the authored target", () => {
+  const dom = new JSDOM("<main id='root'></main>", { pretendToBeVisual:true })
+  const root = dom.window.document.getElementById("root")
+  const scene = sceneFixture()
+  scene.stages.push({
+    ...structuredClone(scene.stages[1]),
+    id:"stage-3",
+    name:"留下",
+    dialogue:{ speaker:"裴亦惜", text:"那就留下。" },
+  })
+  scene.stages[0].choices = [{ id:"stay", label:"留在这里", targetStageId:"stage-3" }]
+  const changes = []
+  const controller = mountInteractiveScene(root, scene, {
+    documentObject:dom.window.document,
+    onStageChange:detail => changes.push(detail),
+  })
+  const choiceLayer = root.querySelector(".interactive-scene-choices")
+
+  assert.equal(choiceLayer.hidden, true)
+  root.querySelector(".interactive-scene-hotspot").click()
+  assert.equal(choiceLayer.hidden, false)
+  assert.equal(root.querySelector(".interactive-scene-dialogue").dataset.advanceReady, "false")
+  const choice = choiceLayer.querySelector("[data-scene-choice-id='stay']")
+  assert.equal(choice.textContent, "留在这里")
+  choice.click()
+
+  assert.equal(controller.stage.id, "stage-3")
+  assert.equal(root.querySelector(".interactive-scene-dialogue-text").textContent, "那就留下。")
+  assert.equal(changes.at(-1).choice.id, "stay")
+  controller.destroy()
+  dom.window.close()
 })
 
 test("swiping across a hotspot activates it while a short movement does not", () => {

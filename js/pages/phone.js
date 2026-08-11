@@ -98,12 +98,17 @@ function escAttr(s) {
     .replace(/>/g, '&gt;')
 }
 
-function inheritedForbiddenSummaryHtml(words) {
+function inheritedForbiddenSummaryHtml(words, exactWords) {
   var inherited = parseForbiddenWords(words)
-  var h = '<details class="placeholder-inherited-forbidden" data-global-forbidden-summary' + (inherited.length ? '' : ' hidden') + '>'
-  h += '<summary><span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-count">' + inherited.length + ' 个违禁词</span><svg class="placeholder-inherited-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-inherited-words">'
+  var inheritedExact = parseForbiddenWords(exactWords)
+  var total = inherited.length + inheritedExact.length
+  var h = '<details class="placeholder-inherited-forbidden" data-global-forbidden-summary' + (total ? '' : ' hidden') + '>'
+  h += '<summary><span class="placeholder-inherited-label">全局生效</span><span class="placeholder-inherited-count">' + total + ' 个违禁词</span><svg class="placeholder-inherited-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-inherited-words">'
   inherited.forEach(function(word) {
-    h += '<span class="placeholder-inherited-word">' + esc(word) + '</span>'
+    h += '<span class="placeholder-inherited-word" data-match-mode="包含">' + esc(word) + '</span>'
+  })
+  inheritedExact.forEach(function(word) {
+    h += '<span class="placeholder-inherited-word" data-match-mode="完全">' + esc(word) + '</span>'
   })
   h += '</div></details>'
   return h
@@ -202,21 +207,27 @@ function bindStandalonePhoneMention(frame, pd, placeholders) {
 function openThreadReplyChoiceEditor(owner, options) {
   if (!owner || typeof owner !== 'object') return null
   options = options || {}
+  function nonnegativeCount(value) {
+    var number = Number(value)
+    return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0
+  }
   var originalChoices = Array.isArray(owner.choices) ? owner.choices : []
   var groups = originalChoices.map(function(choice) {
     return {
       id: choice.id || '',
       text: choice.text || '',
       replyText: choice.replyText || '',
+      replyPace: normalizeChatReplyPace(choice.replyPace),
+      replyLikes: nonnegativeCount(choice.replyLikes),
       followUps: Array.isArray(choice.followUpMessages)
         ? choice.followUpMessages.map(function(message) {
             var senderId = message.senderId || message.contactId || options.defaultFollowUpSenderId || owner.contactId || 'self'
-            return { id:message.id || '', actorKey:String(senderId) + '::' + String(message.aliasId || ''), text:message.text || message.content || '' }
+            return { id:message.id || '', actorKey:String(senderId) + '::' + String(message.aliasId || ''), text:message.text || message.content || '', likes:nonnegativeCount(message.likes) }
           })
         : []
     }
   })
-  if (!groups.length) groups.push({id: '', text: '', replyText: '', followUps: []})
+  if (!groups.length) groups.push({id: '', text: '', replyText: '', replyPace:'normal', replyLikes:0, followUps: []})
   var actors = Array.isArray(options.followUpActors) && options.followUpActors.length
     ? options.followUpActors
     : [{ id:options.defaultFollowUpSenderId || owner.contactId || 'self', aliasId:'', name:'角色' }]
@@ -247,11 +258,18 @@ function openThreadReplyChoiceEditor(owner, options) {
       if (!groups[index]) return
       groups[index].text = row.querySelector('.thread-choice-text')?.value || ''
       groups[index].replyText = row.querySelector('.thread-choice-reply')?.value || ''
+      if (options.showReplyPace === true) {
+        groups[index].replyPace = normalizeChatReplyPace(row.querySelector('.thread-choice-reply-pace')?.value)
+      }
+      if (options.showLikeCounts === true) {
+        groups[index].replyLikes = nonnegativeCount(row.querySelector('.thread-choice-reply-likes')?.value)
+      }
       groups[index].followUps = Array.from(row.querySelectorAll('.thread-choice-followup-row')).map(function(followUpRow) {
         return {
           id:followUpRow.dataset.followupId || '',
           actorKey:followUpRow.querySelector('.thread-choice-followup-sender')?.value || String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::',
-          text:followUpRow.querySelector('.thread-choice-followups')?.value || ''
+          text:followUpRow.querySelector('.thread-choice-followups')?.value || '',
+          likes:options.showLikeCounts === true ? nonnegativeCount(followUpRow.querySelector('.thread-choice-followup-likes')?.value) : 0
         }
       })
     })
@@ -262,10 +280,18 @@ function openThreadReplyChoiceEditor(owner, options) {
       var html = '<div class="thread-choice-row" data-thread-choice-index="' + index + '" style="position:relative;margin-bottom:8px;padding:9px;border:1px solid var(--c-border)">'
       html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input" value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
       html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input" value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
+      if (options.showReplyPace === true) {
+        html += '<label class="form-label thread-choice-pace-label">角色回复节奏</label><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(group.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select><div class="form-hint">除“直接出现”外，读者会先看到角色正在输入。</div>'
+      }
+      if (options.showLikeCounts === true) {
+        html += '<label class="form-label thread-choice-like-label">读者回复初始点赞数</label><input class="thread-choice-reply-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(group.replyLikes) + '">'
+      }
       html += '<div class="thread-choice-followup-head"><span>角色后续消息</span><button type="button" data-thread-followup-add="' + index + '">＋ 添加</button></div>'
       html += '<div class="thread-choice-followup-list">'
       ;(group.followUps || []).forEach(function(followUp, followUpIndex) {
-        html += '<div class="thread-choice-followup-row" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input" value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容"><button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
+        html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input" value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
+        if (options.showLikeCounts === true) html += '<label class="thread-choice-followup-like"><span>赞</span><input class="thread-choice-followup-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(followUp.likes) + '" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复初始点赞数"></label>'
+        html += '<button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
       })
       html += '</div>'
       html += '<button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除这条回复" style="position:absolute;right:5px;top:5px;border:0;background:transparent;color:var(--c-text2);cursor:pointer">×</button></div>'
@@ -275,7 +301,7 @@ function openThreadReplyChoiceEditor(owner, options) {
       button.onclick = function() {
         collect()
         groups.splice(Number(button.dataset.threadChoiceRemove), 1)
-        if (!groups.length) groups.push({id: '', text: '', replyText: '', followUps: []})
+        if (!groups.length) groups.push({id: '', text: '', replyText: '', replyPace:'normal', replyLikes:0, followUps: []})
         render()
       }
     })
@@ -284,7 +310,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         collect()
         var group = groups[Number(button.dataset.threadFollowupAdd)]
         if (!group) return
-        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'' })
+        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0 })
         render()
       }
     })
@@ -301,7 +327,7 @@ function openThreadReplyChoiceEditor(owner, options) {
 
   overlay.querySelector('#threadChoiceAdd').onclick = function() {
     collect()
-    groups.push({id: '', text: '', replyText: '', followUps: []})
+    groups.push({id: '', text: '', replyText: '', replyPace:'normal', replyLikes:0, followUps: []})
     render()
   }
   overlay.querySelector('#threadChoiceCancel').onclick = function() { overlay.remove() }
@@ -323,22 +349,34 @@ function openThreadReplyChoiceEditor(owner, options) {
         var oldMessage = previousFollowUps.find(function(message) { return followUp.id && message.id === followUp.id }) || previousFollowUps[index]
         var actorParts = String(followUp.actorKey || '').split('::')
         var senderId = actorParts[0] || options.defaultFollowUpSenderId || owner.contactId || 'self'
-        return Object.assign({}, oldMessage || {}, {
+        var messagePatch = {
           id: oldMessage?.id || uid(),
           senderId: senderId,
-          contactId: senderId,
-          aliasId: actorParts[1] || '',
           text: followUp.text.trim(),
           content: followUp.text.trim(),
           type: oldMessage?.type || 'text'
-        })
+        }
+        if (options.includeFollowUpIdentityFields !== false) {
+          messagePatch.contactId = senderId
+          messagePatch.aliasId = actorParts[1] || ''
+        }
+        if (options.showLikeCounts === true) messagePatch.likes = nonnegativeCount(followUp.likes)
+        if (!oldMessage?.time && typeof options.followUpTimeFactory === 'function') {
+          messagePatch.time = options.followUpTimeFactory()
+        }
+        return Object.assign({}, oldMessage || {}, messagePatch)
       })
-      var next = Object.assign({}, previous || {}, {
+      var replyText = group.replyText.trim()
+      if (!replyText && options.preserveEmptyReplyText !== true) replyText = text
+      var choicePatch = {
         id: previous?.id || uid(),
         text: text,
-        replyText: group.replyText.trim() || text,
+        replyText: replyText,
         followUpMessages: followUpMessages
-      })
+      }
+      if (options.showLikeCounts === true) choicePatch.replyLikes = nonnegativeCount(group.replyLikes)
+      var next = Object.assign({}, previous || {}, choicePatch)
+      if (options.showReplyPace === true) next.replyPace = normalizeChatReplyPace(group.replyPace)
       delete next.used
       nextChoices.push(next)
     })
@@ -3795,6 +3833,7 @@ function openForumEditor(frame, wid, contact, pd) {
         ov.querySelector('#fcReaderChoices').onclick = function() {
           openThreadReplyChoiceEditor(choiceOwner, {
             title: '编辑读者回复选项',
+            showLikeCounts: true,
             defaultFollowUpSenderId: defaultFollowUpSenderId,
             followUpActors: followUpActors,
             onSave: function() {
@@ -6809,119 +6848,25 @@ function openChatEditor(frame, wid, chatId, pd) {
         })
 
         addItem('添加选项', function() {
-          var choiceGroups = []
-          if (msg.choices && msg.choices.length) {
-            msg.choices.forEach(function(c) {
-              choiceGroups.push({
-                id: c.id || '',
-                text: c.text || '',
-                replyText: c.replyText || '',
-                replyPace: normalizeChatReplyPace(c.replyPace),
-                followUpLines: c.followUpMessages ? c.followUpMessages.map(function(fm) { return fm.text || fm.content || '' }).join('\n') : ''
-              })
-            })
-          }
-          if (choiceGroups.length === 0) choiceGroups.push({ id: '', text: '', replyText: '', replyPace: 'normal', followUpLines: '' })
-
-          function renderGroups() {
-            var listEl = document.getElementById('chGroupsList')
-            if (!listEl) return
-            // Collect current values from DOM before rebuilding
-            var curTexts = listEl.querySelectorAll('.ch-grp-text')
-            var curReplies = listEl.querySelectorAll('.ch-grp-reply')
-            var curFollows = listEl.querySelectorAll('.ch-grp-follow')
-            var curPaces = listEl.querySelectorAll('.ch-grp-pace')
-            for (var si = 0; si < curTexts.length && si < choiceGroups.length; si++) {
-              choiceGroups[si].text = curTexts[si].value || ''
-              choiceGroups[si].replyText = curReplies[si] ? curReplies[si].value : ''
-              choiceGroups[si].followUpLines = curFollows[si] ? curFollows[si].value : ''
-              choiceGroups[si].replyPace = curPaces[si] ? normalizeChatReplyPace(curPaces[si].value) : 'instant'
+          var followUpActors = (ch.contactIds || []).map(function(contactId) {
+            return { id:contactId, aliasId:'', name:getSpeakerName(contactId) }
+          })
+          var defaultFollowUpSenderId = (ch.contactIds || []).includes(msg.senderId)
+            ? msg.senderId
+            : (ch.contactIds?.[0] || 'self')
+          openThreadReplyChoiceEditor(msg, {
+            title:'编辑消息回复选项',
+            defaultFollowUpSenderId:defaultFollowUpSenderId,
+            followUpActors:followUpActors,
+            showReplyPace:true,
+            preserveEmptyReplyText:true,
+            includeFollowUpIdentityFields:false,
+            followUpTimeFactory:function() { return new Date().toLocaleString() },
+            onSave:function() {
+              save()
+              renderChat()
             }
-            var h = ''
-            for (var gi = 0; gi < choiceGroups.length; gi++) {
-              var g = choiceGroups[gi]
-              h += '<div style="border:1px solid var(--c-border);padding:8px;margin-bottom:6px;position:relative">'
-              h += '<div style="font-size:.7rem;color:var(--c-text2);margin-bottom:4px">选项组 ' + (gi + 1) + '</div>'
-              h += '<label style="font-size:.7rem;color:var(--c-text2)">选项文本</label>'
-              h += '<input class="ch-grp-text" value="' + esc(g.text) + '" placeholder="选项描述" style="width:100%;padding:4px 8px;font-size:.75rem;border:1px solid var(--c-border);margin-bottom:4px">'
-              h += '<label style="font-size:.7rem;color:var(--c-text2)">读者回复</label>'
-              h += '<input class="ch-grp-reply" value="' + esc(g.replyText) + '" placeholder="选中后读者的回复" style="width:100%;padding:4px 8px;font-size:.75rem;border:1px solid var(--c-border);margin-bottom:4px">'
-              h += '<label style="font-size:.7rem;color:var(--c-text2)">角色后续回复（每行=一个气泡）</label>'
-              h += '<textarea class="ch-grp-follow" placeholder="每行一条消息" style="width:100%;padding:4px 8px;font-size:.75rem;border:1px solid var(--c-border);min-height:50px">' + esc(g.followUpLines) + '</textarea>'
-              h += '<label style="display:block;margin-top:6px;font-size:.7rem;color:var(--c-text2)">角色回复节奏</label>'
-              h += '<select class="ch-grp-pace form-select" aria-label="选项组 ' + (gi + 1) + ' 的角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(g.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select>'
-              h += '<div class="form-hint">除“直接出现”外，读者会先看到角色正在输入。</div>'
-              h += '<button class="ch-grp-del" data-ch-grp-idx="' + gi + '" style="position:absolute;top:4px;right:4px;border:none;background:transparent;color:var(--c-text2);cursor:pointer;font-size:.7rem">x</button>'
-              h += '</div>'
-            }
-            listEl.innerHTML = h
-            // Re-bind delete buttons
-            var dels = listEl.querySelectorAll('.ch-grp-del')
-            dels.forEach(function(btn) {
-              btn.onclick = function() {
-                var idx = parseInt(btn.dataset.chGrpIdx)
-                if (choiceGroups.length > 1) {
-                  choiceGroups.splice(idx, 1)
-                  renderGroups()
-                }
-              }
-            })
-          }
-
-          var h2 = '<div id="chGroupsList" style="max-height:50vh;overflow-y:auto;margin-bottom:8px"></div>'
-          h2 += '<button id="chAddGroup" class="btn btn-sm btn-outline" style="width:100%">+ 添加选项组</button>'
-          var ov = modal('添加分支选项', h2,
-            '<button id="chSave" class="btn btn-primary btn-sm">保存</button><button id="chCancel" class="btn btn-ghost btn-sm">取消</button>')
-          renderGroups()
-
-          ov.querySelector('#chAddGroup').onclick = function() {
-            choiceGroups.push({ id: '', text: '', replyText: '', replyPace: 'normal', followUpLines: '' })
-            renderGroups()
-          }
-
-          ov.querySelector('#chSave').onclick = function() {
-            // Collect from DOM
-            var listEl = ov.querySelector('#chGroupsList')
-            if (!listEl) return
-            var texts = listEl.querySelectorAll('.ch-grp-text')
-            var replies = listEl.querySelectorAll('.ch-grp-reply')
-            var follows = listEl.querySelectorAll('.ch-grp-follow')
-            var paces = listEl.querySelectorAll('.ch-grp-pace')
-            var previousChoices = Array.isArray(msg.choices) ? msg.choices : []
-            var nextChoices = []
-            for (var i = 0; i < texts.length; i++) {
-              var grpText = (texts[i].value || '').trim()
-              if (!grpText) continue
-              var replyText = (replies[i] ? replies[i].value : '').trim()
-              var followLines = (follows[i] ? follows[i].value : '').split('\n').filter(function(l) { return l.trim() })
-              var groupId = choiceGroups[i]?.id || ''
-              var previousChoice = previousChoices.find(function(choice) { return groupId && choice.id === groupId })
-              var previousFollowUps = Array.isArray(previousChoice?.followUpMessages) ? previousChoice.followUpMessages : []
-              var fms = followLines.map(function(line, lineIndex) {
-                var previousFollowUp = previousFollowUps[lineIndex]
-                return Object.assign({}, previousFollowUp || {}, {
-                  id: previousFollowUp?.id || uid(),
-                  senderId: previousFollowUp?.senderId || ch.contactIds[0] || 'self',
-                  text: line.trim(),
-                  content: line.trim(),
-                  type: previousFollowUp?.type || 'text',
-                  time: previousFollowUp?.time || new Date().toLocaleString()
-                })
-              })
-              var nextChoice = Object.assign({}, previousChoice || {}, {
-                id: previousChoice?.id || uid(),
-                text: grpText,
-                replyText: replyText,
-                replyPace: normalizeChatReplyPace(paces[i]?.value, 'normal'),
-                followUpMessages: fms
-              })
-              delete nextChoice.used
-              nextChoices.push(nextChoice)
-            }
-            msg.choices = nextChoices.length ? nextChoices : undefined
-            save(); ov.remove(); renderChat()
-          }
-          ov.querySelector('#chCancel').onclick = function() { ov.remove() }
+          })
         })
 
         if (canTransitionMessage) {
@@ -7251,6 +7196,7 @@ function openSettingsEditor(wid) {
   var pd = w.phoneData
   var placeholders = Array.isArray(w.placeholders) ? JSON.parse(JSON.stringify(w.placeholders)) : []
   var globalForbidden = parseForbiddenWords(w.globalForbidden)
+  var globalExactForbidden = parseForbiddenWords(w.globalExactForbidden)
   var authorPresets = readAuthorPlaceholderPresets()
   if (!pd.readingFlow) pd.readingFlow = { enabled: false, sequence: [] }
   pd.readingFlow.sequence = expandPhoneReadingFlowSequence(pd, pd.readingFlow.sequence)
@@ -7278,7 +7224,7 @@ function openSettingsEditor(wid) {
     h += '<div class="cu-body">'
     h += '<section class="phone-display-settings"><div class="st-row"><div><div class="st-label">内容时间戳</div><div class="st-desc">隐藏各 App 的内容时间，但保留原始数据和状态栏时钟；编辑器中的时间输入仍可修改。</div></div>'
     h += '<label class="tgl-switch"><input type="checkbox" id="hideAllTimestamps"' + (hideAllTimestamps ? ' checked' : '') + ' aria-label="隐藏全机所有内容时间戳"><span class="tgl-slider"></span></label></div></section>'
-    h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">正文写入“标记”，读者填写“问题”后会替换对应内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="form-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label><details class="placeholder-global-forbidden" data-global-forbidden-editor><summary><span><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></span><span class="placeholder-forbidden-count" data-forbidden-count>' + globalForbidden.length + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><textarea id="phoneGlobalForbidden" class="form-textarea" aria-label="全局违禁词" placeholder="可用换行、逗号、顿号、分号或斜杠分隔。填写单字也会拦截所有包含该字的内容">' + esc(globalForbidden.join('\n')) + '</textarea><button type="button" class="btn btn-sm btn-outline" id="phoneForbiddenCleanup">整理全部词库</button></div></details><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
+    h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">正文写入“标记”，读者填写“问题”后会替换对应内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="form-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label><details class="placeholder-global-forbidden" data-global-forbidden-editor><summary><span><strong>全局违禁词</strong><small>对当前作品的所有占位符生效</small></span><span class="placeholder-forbidden-count" data-forbidden-count>' + (globalForbidden.length + globalExactForbidden.length) + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><div class="placeholder-forbidden-groups"><label class="placeholder-forbidden-group"><span><strong>包含匹配</strong><small>内容中出现即拦截；单字也会生效</small></span><textarea id="phoneGlobalForbidden" class="form-textarea" aria-label="全局包含匹配违禁词" placeholder="例如：蠢（会拦截“小蠢蛋”）">' + esc(globalForbidden.join('\n')) + '</textarea></label><label class="placeholder-forbidden-group"><span><strong>完全匹配</strong><small>整段内容完全相同时才拦截</small></span><textarea id="phoneGlobalExactForbidden" class="form-textarea" aria-label="全局完全匹配违禁词" placeholder="例如：哥哥（不会拦截包含它的长句）">' + esc(globalExactForbidden.join('\n')) + '</textarea></label></div><button type="button" class="btn btn-sm btn-outline" id="phoneForbiddenCleanup">整理全部词库</button></div></details><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
     authorPresets.forEach(function(preset) { h += '<option value="' + escapeHtmlAttribute(preset.id) + '">' + esc(preset.name) + '</option>' })
     h += '</select><button type="button" class="btn btn-sm btn-outline" id="phoneAuthorPresetApply">套用预设</button><details class="placeholder-preset-management"><summary>管理预设</summary><div><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetSave">保存当前为预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetDelete">删除预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetExport">导出预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetImport">导入预设</button></div></details><input type="file" id="phoneAuthorPresetFile" accept=".json,application/json" hidden></div><div id="phonePlaceholderList">'
     placeholders.forEach(function(ph, index) {
@@ -7290,7 +7236,8 @@ function openSettingsEditor(wid) {
       PH_MODES.forEach(function(mode) { h += '<option value="' + escapeHtmlAttribute(mode.value) + '"' + (currentMode === mode.value ? ' selected' : '') + '>' + esc(mode.label) + '</option>' })
       if (!PH_MODES.some(function(mode) { return mode.value === currentMode })) h += '<option value="' + escapeHtmlAttribute(currentMode) + '" selected>保留原模式</option>'
       var forbiddenWords = parseForbiddenWords(ph.forbidden)
-      h += '</select></label><details class="placeholder-forbidden-editor phone-placeholder-forbidden" data-placeholder-forbidden-editor><summary><span>单项违禁词</span><span class="placeholder-forbidden-count" data-forbidden-count>' + forbiddenWords.length + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><textarea class="form-textarea" data-ph-forbidden aria-label="单项违禁词" placeholder="每行一个，或用逗号分隔">' + esc(forbiddenWords.join('\n')) + '</textarea></div></details>' + inheritedForbiddenSummaryHtml(globalForbidden) + '</div></div>'
+      var exactForbiddenWords = parseForbiddenWords(ph.exactForbidden)
+      h += '</select></label><details class="placeholder-forbidden-editor phone-placeholder-forbidden" data-placeholder-forbidden-editor><summary><span>单项违禁词</span><span class="placeholder-forbidden-count" data-forbidden-count>' + (forbiddenWords.length + exactForbiddenWords.length) + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><div class="placeholder-forbidden-groups"><label class="placeholder-forbidden-group"><span><strong>包含匹配</strong><small>内容中出现即拦截</small></span><textarea class="form-textarea" data-ph-forbidden aria-label="包含匹配违禁词" placeholder="每行一个，或用逗号分隔">' + esc(forbiddenWords.join('\n')) + '</textarea></label><label class="placeholder-forbidden-group"><span><strong>完全匹配</strong><small>整段完全相同时拦截</small></span><textarea class="form-textarea" data-ph-exact-forbidden aria-label="完全匹配违禁词" placeholder="每行一个，或用逗号分隔">' + esc(exactForbiddenWords.join('\n')) + '</textarea></label></div></div></details>' + inheritedForbiddenSummaryHtml(globalForbidden, globalExactForbidden) + '</div></div>'
     })
     if (placeholders.length === 0) h += '<div class="phone-placeholder-empty">暂无占位符</div>'
     h += '</div></section>'
@@ -7385,18 +7332,20 @@ function openSettingsEditor(wid) {
           key: key || previous.key || '新占位符',
           prompt: row.querySelector('[data-ph-prompt]').value.trim() || previous.prompt || '请填写',
           forbidden: parseForbiddenWords(row.querySelector('[data-ph-forbidden]').value),
+          exactForbidden: parseForbiddenWords(row.querySelector('[data-ph-exact-forbidden]').value),
           values: Array.isArray(previous.values) ? previous.values : [],
           default: previous.default || '',
           mode: row.querySelector('[data-ph-mode]').value || previous.mode || 'each'
         })
       })
       globalForbidden = parseForbiddenWords(frame.querySelector('#phoneGlobalForbidden')?.value)
+      globalExactForbidden = parseForbiddenWords(frame.querySelector('#phoneGlobalExactForbidden')?.value)
     }
     function applyPlaceholderSearch() {
       var query = String(frame.querySelector('[data-placeholder-search]')?.value || '').trim().toLocaleLowerCase()
       var visible = 0
       var globalEditor = frame.querySelector('[data-global-forbidden-editor]')
-      var globalWords = String(frame.querySelector('#phoneGlobalForbidden')?.value || '').toLocaleLowerCase()
+      var globalWords = [frame.querySelector('#phoneGlobalForbidden')?.value, frame.querySelector('#phoneGlobalExactForbidden')?.value].join(' ').toLocaleLowerCase()
       if (query && globalWords.includes(query) && globalEditor) globalEditor.open = true
       frame.querySelectorAll('[data-placeholder-index]').forEach(function(row) {
         var haystack = Array.from(row.querySelectorAll('input,textarea,select')).map(function(field) {
@@ -7405,7 +7354,7 @@ function openSettingsEditor(wid) {
         haystack = haystack.toLocaleLowerCase()
         row.hidden = Boolean(query) && !haystack.includes(query)
         var forbiddenEditor = row.querySelector('[data-placeholder-forbidden-editor]')
-        var forbiddenWords = String(row.querySelector('[data-ph-forbidden]')?.value || '').toLocaleLowerCase()
+        var forbiddenWords = [row.querySelector('[data-ph-forbidden]')?.value, row.querySelector('[data-ph-exact-forbidden]')?.value].join(' ').toLocaleLowerCase()
         if (query && forbiddenWords.includes(query) && forbiddenEditor) forbiddenEditor.open = true
         row.querySelectorAll('[data-global-forbidden-summary]').forEach(function(summary) {
           var inheritedWords = String(summary.querySelector('.placeholder-inherited-words')?.textContent || '').toLocaleLowerCase()
@@ -7421,18 +7370,28 @@ function openSettingsEditor(wid) {
       placeholderSearch.oninput = applyPlaceholderSearch
       applyPlaceholderSearch()
     }
-    frame.querySelectorAll('#phoneGlobalForbidden,[data-ph-forbidden]').forEach(function(field) {
+    frame.querySelectorAll('#phoneGlobalForbidden,#phoneGlobalExactForbidden,[data-ph-forbidden],[data-ph-exact-forbidden]').forEach(function(field) {
       field.oninput = function() {
-        var count = field.closest('details')?.querySelector('[data-forbidden-count]')
-        if (count) count.textContent = parseForbiddenWords(field.value).length + ' 个'
+        var details = field.closest('details')
+        var count = details?.querySelector('[data-forbidden-count]')
+        if (count) {
+          var total = Array.from(details.querySelectorAll('textarea')).reduce(function(sum, textarea) {
+            return sum + parseForbiddenWords(textarea.value).length
+          }, 0)
+          count.textContent = total + ' 个'
+        }
       }
     })
     var cleanupForbiddenBtn = frame.querySelector('#phoneForbiddenCleanup')
     if (cleanupForbiddenBtn) cleanupForbiddenBtn.onclick = function() {
       collectPlaceholders()
       globalForbidden = dedupeForbiddenWords(globalForbidden)
+      globalExactForbidden = dedupeForbiddenWords(globalExactForbidden)
       placeholders = placeholders.map(function(placeholder) {
-        return Object.assign({}, placeholder, { forbidden:dedupeForbiddenWords(placeholder.forbidden) })
+        return Object.assign({}, placeholder, {
+          forbidden:dedupeForbiddenWords(placeholder.forbidden),
+          exactForbidden:dedupeForbiddenWords(placeholder.exactForbidden),
+        })
       })
       frame.innerHTML = buildPanel()
       bindAll()
@@ -7473,7 +7432,10 @@ function openSettingsEditor(wid) {
       presetModal.querySelector('#phoneAuthorPresetConfirm').onclick = function() {
         var name = presetModal.querySelector('#phoneAuthorPresetName').value.trim()
         if (!name) { showToast('请填写预设名称'); return }
-        var saved = saveAuthorPlaceholderPreset(name, placeholders, { globalForbidden:globalForbidden })
+        var saved = saveAuthorPlaceholderPreset(name, placeholders, {
+          globalForbidden:globalForbidden,
+          globalExactForbidden:globalExactForbidden,
+        })
         if (!saved) { showToast('预设保存失败'); return }
         authorPresets = readAuthorPlaceholderPresets()
         presetModal.remove()
@@ -7493,6 +7455,7 @@ function openSettingsEditor(wid) {
       collectPlaceholders()
       placeholders = placeholders.concat(instantiateAuthorPlaceholderPreset(preset, uid))
       globalForbidden = dedupeForbiddenWords(globalForbidden.concat(preset.globalForbidden || []))
+      globalExactForbidden = dedupeForbiddenWords(globalExactForbidden.concat(preset.globalExactForbidden || []))
       frame.innerHTML = buildPanel(); bindAll()
       showToast('已套用预设')
     }
@@ -7515,14 +7478,17 @@ function openSettingsEditor(wid) {
     if (presetNameBtn) presetNameBtn.onclick = function() {
       collectPlaceholders()
       PH_PRESETS.name.fields.forEach(function(field) {
-        placeholders.push(Object.assign({ id:uid(), values:[], default:'' }, field, { forbidden:(field.forbidden || []).slice() }))
+        placeholders.push(Object.assign({ id:uid(), values:[], default:'' }, field, {
+          forbidden:(field.forbidden || []).slice(),
+          exactForbidden:(field.exactForbidden || []).slice(),
+        }))
       })
       frame.innerHTML = buildPanel(); bindAll()
     }
     var addPlaceholderBtn = frame.querySelector('#phonePlaceholderAdd')
     if (addPlaceholderBtn) addPlaceholderBtn.onclick = function() {
       collectPlaceholders()
-      placeholders.push({ id:uid(), label:'新占位符', key:'新占位符', prompt:'请填写', forbidden:[], values:[], default:'', mode:'each' })
+      placeholders.push({ id:uid(), label:'新占位符', key:'新占位符', prompt:'请填写', forbidden:[], exactForbidden:[], values:[], default:'', mode:'each' })
       frame.innerHTML = buildPanel(); bindAll()
     }
     frame.querySelectorAll('[data-ph-remove]').forEach(function(button) {
@@ -7560,7 +7526,7 @@ function openSettingsEditor(wid) {
       collectPlaceholders()
       pd.readingFlow = flow
       pd.displaySettings = Object.assign({}, pd.displaySettings, { hideAllTimestamps: hideAllTimestamps })
-      updateWork(wid, { phoneData: pd, placeholders: placeholders, globalForbidden:globalForbidden })
+      updateWork(wid, { phoneData: pd, placeholders: placeholders, globalForbidden:globalForbidden, globalExactForbidden:globalExactForbidden })
       showToast('设置已保存')
       restore()
     }

@@ -1398,6 +1398,9 @@ body.rd-reading-active .article-meta {
   background: var(--c-surface2);
   color: var(--c-text);
 }
+.reader-back[hidden] {
+  display: none;
+}
 
 .reader-settings-btn {
   position: fixed;
@@ -3535,6 +3538,10 @@ body.rd-interactive-scene-active {
   transform: translate(var(--interactive-media-x, 0%), var(--interactive-media-y, 0%)) scale(var(--interactive-media-scale, 1));
   transform-origin: center;
 }
+.interactive-scene-media img[hidden],
+.interactive-scene-dialogue-frame[hidden] {
+  display: none;
+}
 .interactive-scene-background {
   z-index: 0;
 }
@@ -3651,6 +3658,40 @@ body.rd-interactive-scene-active {
   inset: 0;
   pointer-events: none;
 }
+.interactive-scene-choices {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(82%, 420px);
+  gap: 9px;
+  transform: translate(-50%, -50%);
+}
+.interactive-scene-choices[hidden] {
+  display: none;
+}
+.interactive-scene-choice {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--interactive-dialogue-border, rgba(255,255,255,.5));
+  border-radius: var(--interactive-dialogue-radius, 7px);
+  background: color-mix(in srgb, var(--interactive-dialogue-surface, #fffaf9) 92%, transparent);
+  color: var(--interactive-dialogue-text, #40383b);
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--interactive-dialogue-accent, #c7a1aa) 48%, transparent);
+  font: 700 .82rem/1.45 var(--interactive-dialogue-font-family, system-ui, sans-serif);
+  text-align: center;
+  backdrop-filter: blur(7px);
+  cursor: pointer;
+}
+.interactive-scene-choice:hover {
+  border-color: var(--interactive-dialogue-accent, #c7a1aa);
+  transform: translateY(-1px);
+}
+.interactive-scene-choice:focus-visible {
+  outline: 2px solid var(--interactive-dialogue-accent, #c7a1aa);
+  outline-offset: 3px;
+}
 .interactive-scene-dialogue-extra {
   z-index: auto;
   pointer-events: none;
@@ -3671,9 +3712,6 @@ body.rd-interactive-scene-active {
   color: var(--interactive-dialogue-accent);
   font-size: .72rem;
   font-weight: 700;
-}
-.interactive-scene-dialogue[data-advance-ready="true"] {
-  padding-bottom: 27px;
 }
 .interactive-scene-dialogue-frame {
   position: absolute;
@@ -5357,6 +5395,37 @@ body.rd-interactive-scene-active {
   background: var(--phone-system-surface);
 }
 .rd-forum-detail-header strong { flex: 1; font-size: .86rem; text-align: center; }
+.rd-forum-account-button {
+  display:flex;
+  max-width:94px;
+  min-height:44px;
+  align-items:center;
+  gap:5px;
+  padding:3px 6px;
+  border:0;
+  border-radius:6px;
+  background:transparent;
+  color:var(--phone-system-primary);
+  font:inherit;
+  cursor:pointer;
+}
+.rd-forum-account-button:hover { background:color-mix(in srgb,var(--phone-system-accent) 10%,transparent); }
+.rd-forum-account-button:focus-visible { outline:2px solid var(--phone-system-accent); outline-offset:1px; }
+.rd-forum-account-avatar {
+  display:grid;
+  width:24px;
+  height:24px;
+  flex:0 0 24px;
+  place-items:center;
+  overflow:hidden;
+  border-radius:var(--rd-forum-avatar-radius,50%);
+  background:var(--phone-system-accent);
+  color:#fff;
+  font-size:.62rem;
+  font-weight:700;
+}
+.rd-forum-account-avatar img { width:100%; height:100%; object-fit:cover; }
+.rd-forum-account-name { overflow:hidden; font-size:.58rem; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
 .rd-forum-detail-scroll { min-height: 0; flex: 1; padding: 10px; overflow-y: auto; overscroll-behavior: contain; }
 .rd-forum-thread { margin-top: 10px; }
 .rd-forum-thread-head {
@@ -5375,6 +5444,14 @@ body.rd-interactive-scene-active {
 }
 .rd-forum-thread-head h4 span { color: var(--phone-system-muted); }
 .rd-forum-sort{display:flex;gap:3px}.rd-forum-sort button{border:0;background:transparent;color:var(--phone-system-muted);font:inherit;cursor:pointer;padding:2px 4px;font-size:.58rem}.rd-forum-sort button[aria-pressed="true"]{color:var(--phone-system-primary);font-weight:700}
+
+.reader-forum-account-dialog { max-width:400px; }
+.reader-forum-account-form { display:grid; gap:8px; color:var(--c-text); }
+.reader-forum-account-form p { margin:0 0 4px; color:var(--c-text2); font-size:.76rem; line-height:1.6; }
+.reader-forum-account-form label { font-size:.76rem; font-weight:650; }
+.reader-forum-account-form .rd-input-row { margin:0; }
+.reader-forum-account-preview { display:flex; align-items:center; gap:10px; padding-top:4px; }
+.reader-forum-account-preview img { width:48px; height:48px; border-radius:50%; object-fit:cover; }
 
 /* ---- Reader chat reply choices ---- */
 .rd-chat-message {

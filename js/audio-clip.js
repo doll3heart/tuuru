@@ -69,18 +69,24 @@ function audioConstructor(environment) {
 
 function createAudio(environment) {
   const AudioConstructor = audioConstructor(environment)
-  if (typeof AudioConstructor !== "function") throw new Error("当前浏览器无法读取音频")
-  const audio = new AudioConstructor()
+  const audio = typeof AudioConstructor === "function"
+    ? new AudioConstructor()
+    : environment.documentObject?.createElement?.("audio")
+  if (!audio) throw new Error("当前浏览器无法读取音频")
   audio.preload = "metadata"
   return audio
 }
 
 function timerApi(environment) {
+  const timer = name => {
+    const owner = typeof environment[name] === "function" ? environment : globalThis
+    return (...args) => owner[name](...args)
+  }
   return {
-    setTimeout:environment.setTimeout || globalThis.setTimeout,
-    clearTimeout:environment.clearTimeout || globalThis.clearTimeout,
-    setInterval:environment.setInterval || globalThis.setInterval,
-    clearInterval:environment.clearInterval || globalThis.clearInterval,
+    setTimeout:timer("setTimeout"),
+    clearTimeout:timer("clearTimeout"),
+    setInterval:timer("setInterval"),
+    clearInterval:timer("clearInterval"),
   }
 }
 
@@ -118,12 +124,17 @@ function waitForAudioMetadata(audio, environment, timeoutMs = 10_000, signal) {
       finish(resolve)(Math.round(duration * 1000))
     }
     const failed = finish(() => reject(new Error("音频无法播放或格式不受支持")))
+    const timedOut = finish(() => {
+      const error = new Error("音频时长读取超时")
+      error.name = "AudioMetadataTimeoutError"
+      reject(error)
+    })
     const aborted = finish(() => reject(abortError()))
     audio.addEventListener?.("loadedmetadata", loaded)
     audio.addEventListener?.("durationchange", loaded)
     audio.addEventListener?.("error", failed)
     signal?.addEventListener?.("abort", aborted, { once:true })
-    timeout = timers.setTimeout(failed, timeoutMs)
+    timeout = timers.setTimeout(timedOut, timeoutMs)
   })
 }
 
@@ -199,7 +210,7 @@ async function resolveAudioBlobDuration(blob, metadataPromise, environment, sign
     return await metadataPromise
   } catch (metadataError) {
     if (metadataError?.name === "AbortError") throw metadataError
-    if (metadataError?.name !== "AudioDurationUnavailableError") throw metadataError
+    if (!["AudioDurationUnavailableError", "AudioMetadataTimeoutError"].includes(metadataError?.name)) throw metadataError
     try {
       return await decodeAudioBlobDuration(blob, environment, signal)
     } catch (decodeError) {
@@ -233,12 +244,20 @@ export async function probeAudioBlob(blob, environment = {}, signal) {
 export async function probeAudioUrl(source, environment = {}) {
   const url = String(source || "").trim()
   if (!url) throw new TypeError("音频链接为空")
+  if (!/^https:\/\//i.test(url)) throw new TypeError("请填写 HTTPS 音频直链")
   const audio = createAudio(environment)
   try {
     const metadata = waitForAudioMetadata(audio, environment)
     audio.src = url
     audio.load?.()
-    return { durationMs:await metadata, bytes:0, type:"" }
+    try {
+      return { durationMs:await metadata, bytes:0, type:"" }
+    } catch (error) {
+      if (error?.name === "AudioMetadataTimeoutError") {
+        throw new Error("音乐链接读取超时，请确认它是公开可访问的 HTTPS 音频直链，而不是分享页")
+      }
+      throw new Error("无法读取音乐链接，请确认它是公开可访问的 HTTPS 音频直链")
+    }
   } finally {
     revokeAudio(audio, "", null)
   }

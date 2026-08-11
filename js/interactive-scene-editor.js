@@ -1023,7 +1023,7 @@ export function openInteractiveSceneEditor(options = {}) {
     stagePanel.replaceChildren()
     const heading = documentObject.createElement("div")
     heading.className = "interactive-scene-panel-heading"
-    heading.innerHTML = `<strong>画面流程</strong><small>${scene.stages.length} 幕 · 按顺序播放</small>`
+    heading.innerHTML = `<strong>画面流程</strong><small>${scene.stages.length} 幕 · ${requiresNextNode ? "按顺序播放" : "可设置轻量分支"}</small>`
     stagePanel.appendChild(heading)
 
     const title = input(documentObject, scene.title)
@@ -1115,7 +1115,8 @@ export function openInteractiveSceneEditor(options = {}) {
       const mediaSummary = stage.image
         ? "背景图"
         : (stage.characterImage ? "仅立绘" : "未添加画面")
-      summary.textContent = `${mediaSummary} · ${stage.hotspots.length} 个互动点`
+      const choiceSummary = !requiresNextNode && stage.choices?.length ? ` · ${stage.choices.length} 个选项` : ""
+      summary.textContent = `${mediaSummary} · ${stage.hotspots.length} 个互动点${choiceSummary}`
       copy.append(name, summary)
       control.append(number, copy)
       control.addEventListener("click", () => {
@@ -1139,7 +1140,7 @@ export function openInteractiveSceneEditor(options = {}) {
     progressionNote.className = "interactive-scene-stage-note"
     progressionNote.textContent = requiresNextNode
       ? "读者探索完当前画面的全部互动点后，点击对话框按列表顺序进入下一画面；没有互动点的画面可直接点击。最后一个画面完成后会固定跳转到下方选择的后续普通节点。互动图片暂不支持承载剧情分支，也不能在画面内设置选项组；需要分流时，请把选项组设置在所选的后续普通节点。"
-      : "读者探索完当前画面的全部互动点后，点击对话框按列表顺序进入下一画面；没有互动点的画面可直接点击。最后一个画面完成后会进入 Mini文游完成页，可以重新开始或返回书架。Mini文游不支持画面分支或选项组。"
+      : "默认按左侧列表顺序播放；某个画面设置选项后，读者探索完该画面的互动点会看到选项，并跳到作者指定的画面。最后一个没有选项的画面会进入完成页。这里只提供轻量画面分支，不包含变量、条件判断、背包或脚本系统。"
     progressionDetails.append(progressionSummary, progressionNote)
     stagePanel.appendChild(progressionDetails)
 
@@ -1209,6 +1210,7 @@ export function openInteractiveSceneEditor(options = {}) {
         promptStyle:normalizeInteractivePromptStyle(selectedStage()?.promptStyle || scene.promptStyle),
         dialogue: { speaker: "", text: "" },
         dialogues: [],
+        choices: [],
         hotspots: [],
       })
       selectedStageId = id
@@ -1252,6 +1254,7 @@ export function openInteractiveSceneEditor(options = {}) {
           stage.hotspots = stage.hotspots.map(hotspot => (
             hotspot.targetStageId === removedId ? { ...hotspot, targetStageId: "" } : hotspot
           ))
+          stage.choices = (stage.choices || []).filter(choice => choice.targetStageId !== removedId)
         })
         selectedStageId = stages[0].id
         selectedHotspotId = ""
@@ -1629,6 +1632,90 @@ export function openInteractiveSceneEditor(options = {}) {
     parent.appendChild(remove)
   }
 
+  function renderStageChoiceEditor(parent) {
+    if (requiresNextNode) return
+    const stage = selectedStage()
+    const intro = documentObject.createElement("div")
+    intro.className = "interactive-scene-section-intro interactive-scene-choice-intro"
+    intro.innerHTML = "<strong>画面选项</strong><p>读者探索完本画面的互动点后显示。没有设置选项时，会继续播放左侧列表中的下一画面。</p>"
+    parent.appendChild(intro)
+
+    const list = documentObject.createElement("div")
+    list.className = "interactive-scene-choice-editor"
+    const targetStages = scene.stages.filter(candidate => candidate.id !== stage.id)
+    const mutateChoice = (choiceId, fields) => {
+      const currentStage = selectedStage()
+      mutateStage({
+        choices:(currentStage.choices || []).map(choice => (
+          choice.id === choiceId ? { ...choice, ...fields } : choice
+        )),
+      })
+    }
+    for (const choice of stage.choices || []) {
+      const row = documentObject.createElement("div")
+      row.className = "interactive-scene-choice-row"
+      row.dataset.stageChoiceId = choice.id
+      const choiceLabel = input(documentObject, choice.label)
+      choiceLabel.dataset.stageChoiceLabel = ""
+      choiceLabel.maxLength = 120
+      choiceLabel.placeholder = "例如：追上去"
+      choiceLabel.addEventListener("input", () => mutateChoice(choice.id, { label:choiceLabel.value }))
+      const target = documentObject.createElement("select")
+      target.dataset.stageChoiceTarget = ""
+      target.appendChild(option(documentObject, "", "请选择目标画面"))
+      targetStages.forEach((candidate, index) => {
+        const stageNumber = scene.stages.findIndex(item => item.id === candidate.id) + 1
+        target.appendChild(option(
+          documentObject,
+          candidate.id,
+          `${String(stageNumber).padStart(2, "0")} · ${candidate.name || `画面 ${index + 1}`}`,
+        ))
+      })
+      target.value = choice.targetStageId
+      target.addEventListener("change", () => mutateChoice(choice.id, { targetStageId:target.value }))
+      const remove = button(documentObject, "删除", "interactive-scene-choice-delete")
+      remove.dataset.stageChoiceDelete = choice.id
+      remove.setAttribute("aria-label", `删除画面选项：${choice.label || "未命名选项"}`)
+      remove.addEventListener("click", () => {
+        mutateStage({ choices:(selectedStage().choices || []).filter(item => item.id !== choice.id) })
+        renderProperties()
+        refreshPreview()
+      })
+      row.append(
+        field(documentObject, "选项文字", choiceLabel),
+        field(documentObject, "跳转画面", target),
+        remove,
+      )
+      list.appendChild(row)
+    }
+    parent.appendChild(list)
+
+    const add = button(documentObject, "＋ 添加画面选项", "interactive-scene-add")
+    add.dataset.stageChoiceAdd = ""
+    add.disabled = (stage.choices || []).length >= 6 || targetStages.length === 0
+    add.addEventListener("click", () => {
+      const id = options.idFactory?.() || `choice-${Date.now().toString(36)}`
+      mutateStage({
+        choices:[...(selectedStage().choices || []), {
+          id,
+          label:`选项 ${(selectedStage().choices || []).length + 1}`,
+          targetStageId:targetStages[0]?.id || "",
+        }],
+      })
+      renderProperties()
+      refreshPreview()
+      properties.querySelector(`[data-stage-choice-id="${id}"] [data-stage-choice-label]`)?.focus()
+    })
+    parent.appendChild(add)
+
+    const note = documentObject.createElement("p")
+    note.className = "interactive-scene-stage-note"
+    note.textContent = targetStages.length
+      ? "每个画面最多 6 个选项，可跳到任意其他画面。请避免让选项彼此循环，导致读者无法到达完成页。"
+      : "请先在左侧添加另一个画面，再为当前画面设置选项。"
+    parent.appendChild(note)
+  }
+
   function renderProperties() {
     closeMediaLinkHelp(false)
     audioClipEditor?.destroy()
@@ -1762,8 +1849,9 @@ export function openInteractiveSceneEditor(options = {}) {
         status.textContent = `已嵌入本画面特殊 BGM：${file.name}（${formatBytes(file.size)}）`
         renderProperties()
       } catch (error) {
-        status.textContent = `音频导入失败：${String(error?.message || "请更换音频后重试")}`
-        failMediaFileImport(bgmUpload, "导入失败，可重新选择")
+        const message = String(error?.message || "请更换音频后重试")
+        status.textContent = `音频导入失败：${message}`
+        failMediaFileImport(bgmUpload, `导入失败：${message}`)
       }
     })
     propertyTarget.appendChild(bgmUploadField)
@@ -2516,6 +2604,7 @@ export function openInteractiveSceneEditor(options = {}) {
 
     propertyTarget = interactionBody
     renderHotspotEditor(propertyTarget)
+    renderStageChoiceEditor(propertyTarget)
   }
 
   function render() {
@@ -2540,6 +2629,20 @@ export function openInteractiveSceneEditor(options = {}) {
   overlay.querySelector("[data-scene-close]").addEventListener("click", close)
   overlay.querySelector("[data-scene-cancel]").addEventListener("click", close)
   overlay.querySelector("[data-scene-save]").addEventListener("click", async () => {
+    const invalidChoice = !requiresNextNode
+      ? scene.stages.flatMap(stage => (stage.choices || []).map(choice => ({ stage, choice }))).find(({ stage, choice }) => (
+        !choice.label?.trim()
+        || !scene.stages.some(candidate => candidate.id === choice.targetStageId && candidate.id !== stage.id)
+      ))
+      : null
+    if (invalidChoice) {
+      selectedStageId = invalidChoice.stage.id
+      inspectorSection = "interaction"
+      render()
+      status.textContent = "请为画面选项填写文字，并选择另一个有效的目标画面"
+      overlay.querySelector(`[data-stage-choice-id="${invalidChoice.choice.id}"] [data-stage-choice-label]`)?.focus()
+      return
+    }
     if (requiresNextNode && !validNextNodeIds.has(scene.nextNodeId)) {
       status.textContent = "请选择互动图片完成后的后续跳转节点"
       overlay.querySelector(".interactive-scene-editor").dataset.mobilePane = "stages"

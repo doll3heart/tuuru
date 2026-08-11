@@ -128,9 +128,9 @@ test("new-work chooser exposes standalone interactive games as a distinct author
   const html = renderNew()
   assert.match(html, /Mini文游/)
   assert.doesNotMatch(html, /互动文游|mini\s*文游/)
-  assert.match(html, /短篇.*固定顺序/)
+  assert.match(html, /短篇.*轻量选择分支/)
   assert.match(html, /createInteractiveExperience/)
-  assert.match(html, /画面特殊 BGM/)
+  assert.match(html, /轻量画面分支/)
 })
 
 test("reliable creation is single-flight and delays success effects until verification", async () => {

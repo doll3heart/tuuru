@@ -45,8 +45,10 @@ const VISIBLE_TEXT_KEYS = new Set([
   "username",
 ])
 const VISIBLE_STRING_ARRAY_KEYS = new Set([
+  "exactForbidden",
   "forbidden",
   "followUpLines",
+  "globalExactForbidden",
   "globalForbidden",
   "keywords",
   "tags",
@@ -54,6 +56,7 @@ const VISIBLE_STRING_ARRAY_KEYS = new Set([
 ])
 const APPROVED_ROOT_BRANCHES = new Set([
   "chapters",
+  "globalExactForbidden",
   "globalForbidden",
   "interactiveScenes",
   "nodes",
@@ -130,8 +133,10 @@ const FIELD_LABELS = new Map([
   ["quoteText", "引用文字"],
   ["username", "用户名"],
   ["values", "候选值"],
+  ["exactForbidden", "完全匹配禁用词"],
   ["forbidden", "禁用词"],
   ["followUpLines", "后续文字"],
+  ["globalExactForbidden", "全局完全匹配禁用词"],
   ["globalForbidden", "全局禁用词"],
   ["keywords", "关键词"],
   ["tags", "标签"],

@@ -33,3 +33,27 @@ export function effectiveForbiddenWords(placeholder, globalForbidden) {
     ...parseForbiddenWords(placeholder?.forbidden),
   ])
 }
+
+export function effectiveExactForbiddenWords(placeholder, globalExactForbidden) {
+  return dedupeForbiddenWords([
+    ...parseForbiddenWords(globalExactForbidden),
+    ...parseForbiddenWords(placeholder?.exactForbidden),
+  ])
+}
+
+export function matchForbiddenWord(value, placeholder, globalForbidden, globalExactForbidden) {
+  const normalizedValue = String(value ?? "").trim().toLocaleLowerCase()
+  if (!normalizedValue) return null
+
+  const containsWord = effectiveForbiddenWords(placeholder, globalForbidden).find(word => {
+    const candidate = String(word ?? "").trim().toLocaleLowerCase()
+    return candidate && normalizedValue.includes(candidate)
+  })
+  if (containsWord) return { word:containsWord, mode:"contains" }
+
+  const exactWord = effectiveExactForbiddenWords(placeholder, globalExactForbidden).find(word => {
+    const candidate = String(word ?? "").trim().toLocaleLowerCase()
+    return candidate && normalizedValue === candidate
+  })
+  return exactWord ? { word:exactWord, mode:"exact" } : null
+}

@@ -424,9 +424,20 @@ function inspectInteractiveExperience(work, issues) {
     addIssue(issues, "interactive-experience-stages-empty", "error", "Mini文游还没有画面", "Mini文游 · 画面与互动", "至少添加一个画面。")
     return
   }
+  const stageIds = new Set(stages.map(stage => String(stage?.id || "")).filter(Boolean))
   stages.forEach(function(stage, index) {
+    const location = `Mini文游 · ${plainText(stage?.name) || `画面 ${index + 1}`}`
+    items(stage?.choices).forEach(function(choice) {
+      if (!plainText(choice?.label)) {
+        addIssue(issues, "interactive-experience-choice-label-empty", "error", "画面选项没有显示文字", location, "填写选项文字，或删除这个画面选项。")
+      }
+      const targetStageId = String(choice?.targetStageId || "")
+      if (!stageIds.has(targetStageId) || targetStageId === String(stage?.id || "")) {
+        addIssue(issues, "interactive-experience-choice-target-invalid", "error", "画面选项缺少有效目标", location, "为选项选择另一个现有画面。")
+      }
+    })
     if (stage?.image || stage?.characterImage || items(stage?.layers).some(layer => layer?.source)) return
-    addIssue(issues, "interactive-experience-stage-media-empty", "warning", `第 ${index + 1} 个画面没有图片素材`, `Mini文游 · ${plainText(stage?.name) || `画面 ${index + 1}`}`, "添加背景图、立绘或叠加图层，避免读者看到空画布。")
+    addIssue(issues, "interactive-experience-stage-media-empty", "warning", `第 ${index + 1} 个画面没有图片素材`, location, "添加背景图、立绘或叠加图层，避免读者看到空画布。")
   })
 }
 

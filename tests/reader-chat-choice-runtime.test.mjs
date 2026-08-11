@@ -282,3 +282,42 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
   assert.match(visibleText[3], /这是作者原本排在后面的消息/)
   assert.equal(document.querySelectorAll(".rd-chat-choice-reselect").length, 1)
 })
+
+test("separate message choice groups become available in conversation order", async t => {
+  const work = choiceWork()
+  const messages = work.phoneData.chats[0].rounds[0].messages
+  messages[0].choices = [{
+    id:"first-choice",
+    text:"Reply to the first message",
+    replyText:"First reader reply",
+    followUpMessages:[],
+  }]
+  messages.splice(1, 0, {
+    id:"second-owner-message",
+    type:"text",
+    senderId:"contact-1",
+    text:"This is the second question.",
+    choices:[{
+      id:"second-choice",
+      text:"Reply to the second message",
+      replyText:"Second reader reply",
+      followUpMessages:[],
+    }],
+  })
+
+  await openSeededChat(t, work)
+
+  let options = [...document.querySelectorAll(".rd-reply-option")]
+  assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
+  options[0].click()
+
+  assert.match(document.querySelector("#chatMsgArea").textContent, /First reader reply/)
+  options = [...document.querySelectorAll(".rd-reply-option")]
+  assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the second message"])
+  options[0].click()
+
+  const renderedText = document.querySelector("#chatMsgArea").textContent
+  assert.match(renderedText, /First reader reply/)
+  assert.match(renderedText, /Second reader reply/)
+  assert.equal(document.querySelectorAll(".rd-chat-choice-reselect").length, 2)
+})

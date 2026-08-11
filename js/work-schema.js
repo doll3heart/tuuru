@@ -451,6 +451,13 @@ function normalizeArticle(input, path, sourceVersion) {
         `${path}.interactiveScenes[${sceneIndex}].stages[${stageIndex}].hotspots`,
       )
       if (!hotspotsResult.ok) return asWorkFailure(hotspotsResult, "invalid-article", "互动场景结构无效。")
+      if (sourceScene.stages[stageIndex].choices !== undefined) {
+        const choicesResult = recordArray(
+          sourceScene.stages[stageIndex].choices,
+          `${path}.interactiveScenes[${sceneIndex}].stages[${stageIndex}].choices`,
+        )
+        if (!choicesResult.ok) return asWorkFailure(choicesResult, "invalid-article", "互动场景画面选项结构无效。")
+      }
     }
     work.interactiveScenes[sceneIndex] = normalizeInteractiveScene(sourceScene)
   }

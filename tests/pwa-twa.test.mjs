@@ -31,6 +31,7 @@ test("the shared web manifest installs Tuuru and exposes author and reader short
 test("both production entries share root-scoped install metadata and registration", async () => {
   for (const path of ["index.html", "reader/index.html"]) {
     const html = await text(path)
+    assert.match(html, /<title>TuuruChat<\/title>/)
     assert.match(html, /rel="manifest"\s+href="\/manifest\.webmanifest"/)
     assert.match(html, /name="theme-color"\s+content="#C7A1AA"/)
     assert.match(html, /src="(?:\.\.\/)?js\/pwa-register\.js"/)
@@ -43,7 +44,7 @@ test("the reader entry exposes the Tuuru reader name without the retired brand",
     text("js/app.js"),
   ])
 
-  assert.match(readerHtml, /<title>Tuuru Works — 读者端<\/title>/)
+  assert.match(readerHtml, /<title>TuuruChat<\/title>/)
   assert.doesNotMatch(readerHtml, /Moirain/i)
   assert.match(authorShell, />tuuru\.chat<\/span>/)
   assert.doesNotMatch(authorShell, /moirain\.com/i)

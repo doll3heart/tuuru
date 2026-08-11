@@ -15,6 +15,8 @@ test("interactive scene visible text uses reader placeholder values without muta
       alt: "name站在窗边",
       prompt: "触碰name",
       dialogue: { speaker: "name", text: "name，水给你。" },
+      dialogues: [{ id:"aside", speaker:"旁白", text:"name没有回头。" }],
+      choices: [{ id:"follow", label:"跟上name", targetStageId:"stage-2" }],
       hotspots: [{
         id: "hotspot-1",
         label: "name的手",
@@ -35,9 +37,14 @@ test("interactive scene visible text uses reader placeholder values without muta
   assert.equal(result.stages[0].alt, "阿雾站在窗边")
   assert.equal(result.stages[0].prompt, "触碰阿雾")
   assert.deepEqual(result.stages[0].dialogue, { speaker: "阿雾", text: "阿雾，水给你。" })
+  assert.equal(result.stages[0].dialogues[0].speaker, "旁白")
+  assert.equal(result.stages[0].dialogues[0].text, "阿雾没有回头。")
+  assert.equal(result.stages[0].choices[0].label, "跟上阿雾")
+  assert.equal(result.stages[0].choices[0].targetStageId, "stage-2")
   assert.equal(result.stages[0].hotspots[0].label, "阿雾的手")
   assert.equal(result.stages[0].hotspots[0].speaker, "阿雾")
   assert.equal(result.stages[0].hotspots[0].dialogue, "抓到阿雾了。")
   assert.equal(result.stages[0].image, "https://example.test/name.png")
   assert.equal(scene.stages[0].dialogue.text, "name，水给你。")
+  assert.equal(scene.stages[0].choices[0].label, "跟上name")
 })

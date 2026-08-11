@@ -84,7 +84,7 @@ import { buildTakeawayOpenTarget, safeMessageCardUrl } from '../js/message-card-
 import { orderedForumPosts } from '../js/forum-post-order.js'
 import { orderedChats } from '../js/chat-order.js'
 import { visiblePhoneModuleContacts } from '../js/phone-module-draft.js'
-import { effectiveForbiddenWords } from '../js/forbidden-words.js'
+import { matchForbiddenWord } from '../js/forbidden-words.js'
 import { shouldShowPhoneTimestamp } from '../js/phone-timestamps.js'
 import { normalizeDynamicIslandStyle } from '../js/phone-dynamic-island.js'
 import {
@@ -295,8 +295,23 @@ function cloneReaderThreadItems(items) {
 
 function readerThreadDisplayName(pd, custom) {
   var customName = String(custom && custom.readerId || '').trim()
+  var profileName = String(getProfile()?.readerId || '').trim()
   var authoredName = String(pd && pd.skin && pd.skin.readerId || '').trim()
-  return customName || authoredName || '我'
+  return customName || profileName || authoredName || '我'
+}
+
+function readerThreadAvatar(pd, custom) {
+  var candidates = [custom?.readerAvatar, getProfile()?.readerAvatar, pd?.skin?.readerAvatar]
+  for (var index = 0; index < candidates.length; index++) {
+    var candidate = typeof candidates[index] === 'string' ? candidates[index].trim() : ''
+    if (candidate && isSafeImageUrl(candidate)) return candidate
+  }
+  return ''
+}
+
+function readerThreadLikeCount(value) {
+  var number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0
 }
 
 function readerThreadActorName(pd, contactId, authoredName, fallbackName) {
@@ -324,7 +339,9 @@ function readerThreadRuntimeOptions(pd, custom, scope) {
         contactName: readerName,
         content: text,
         text: text,
-        time: ''
+        time: '',
+        likes: readerThreadLikeCount(context.choice?.replyLikes),
+        replies: []
       }
     },
     createFollowUp: function(context) {
@@ -340,7 +357,9 @@ function readerThreadRuntimeOptions(pd, custom, scope) {
         contactName: contactName,
         content: content,
         text: content,
-        time: template.time || ''
+        time: template.time || '',
+        likes: readerThreadLikeCount(template.likes),
+        replies: []
       })
     }
   }
@@ -1799,6 +1818,7 @@ window.saveProfileField = function(field, value) {
   var profile = getProfile()
   profile[field] = value || ''
   lsSet('profile', profile)
+  if (field === 'readerId') savePhoneCustom({ readerId:profile.readerId })
 }
 
 window.handleProfileAvatar = function(input) {
@@ -1809,6 +1829,7 @@ window.handleProfileAvatar = function(input) {
     var profile = getProfile()
     profile.readerAvatar = reader.result
     lsSet('profile', profile)
+    savePhoneCustom({ readerAvatar:profile.readerAvatar })
     refreshPersonalPage()
   }
   reader.readAsDataURL(file)
@@ -2429,12 +2450,12 @@ function openReaderBookManager(workId, invoker) {
     var invalidLabel = ''
     sourcePlaceholders.forEach(function(placeholder) {
       var value = values[placeholder.id]?.[0] || ''
-      if (!invalidLabel && placeholderForbiddenWord(placeholder, value, work?.globalForbidden)) {
+      if (!invalidLabel && placeholderForbiddenWord(placeholder, value, work?.globalForbidden, work?.globalExactForbidden)) {
         invalidLabel = placeholder.label || placeholder.key || placeholder.id
       }
     })
     if (invalidLabel) {
-      if (status) status.textContent = '“' + invalidLabel + '”包含作者设置的违禁词，请修改后保存。'
+      if (status) status.textContent = '“' + invalidLabel + '”使用了作者设置的违禁词，请修改后保存。'
       return false
     }
     if (!saveReaderWorkPlaceholders({id:workId}, values)) {
@@ -3635,12 +3656,8 @@ function importWork(work, root) {
 }
 
 // ====== Landing Page (work info + password + placeholders) ======
-function placeholderForbiddenWord(placeholder, value, globalForbidden) {
-  var normalized = String(value || '').toLocaleLowerCase()
-  return effectiveForbiddenWords(placeholder, globalForbidden).find(function(word) {
-    var candidate = String(word || '').trim().toLocaleLowerCase()
-    return candidate && normalized.includes(candidate)
-  }) || ''
+function placeholderForbiddenWord(placeholder, value, globalForbidden, globalExactForbidden) {
+  return matchForbiddenWord(value, placeholder, globalForbidden, globalExactForbidden)?.word || ''
 }
 
 async function ensureInteractiveCameraPreflight(statusElement, button) {
@@ -3771,11 +3788,11 @@ function showLandingPage(work, callback) {
     var forbiddenFound = false
     inputs.forEach(function(inp) {
       var placeholder = phs.find(function(ph) { return String(ph.id || '') === String(inp.dataset.phId || '') })
-      var forbidden = placeholderForbiddenWord(placeholder, inp.value, work.globalForbidden)
+      var forbidden = placeholderForbiddenWord(placeholder, inp.value, work.globalForbidden, work.globalExactForbidden)
       var error = inp.parentElement ? inp.parentElement.querySelector('.rd-placeholder-error') : null
       if (error) {
         error.hidden = !forbidden
-        error.textContent = forbidden ? '内容包含作者设置的违禁词，请修改后继续。' : ''
+        error.textContent = forbidden ? '内容使用了作者设置的违禁词，请修改后继续。' : ''
       }
       if (forbidden) { forbiddenFound = true; return }
       values[inp.dataset.phId] = [inp.value || '']
@@ -5470,11 +5487,11 @@ function saveReaderInlinePlaceholderField(field) {
   var error = field?.querySelector('.rd-placeholder-error')
   if (!placeholder || !input) return false
   var value = String(input.value || '').trim()
-  var forbidden = placeholderForbiddenWord(placeholder, value, _work?.globalForbidden)
+  var forbidden = placeholderForbiddenWord(placeholder, value, _work?.globalForbidden, _work?.globalExactForbidden)
   var message = !value
     ? '请填写后再继续。'
     : forbidden
-      ? '内容包含作者设置的违禁词，请修改后继续。'
+      ? '内容使用了作者设置的违禁词，请修改后继续。'
       : ''
   if (error) {
     error.hidden = !message
@@ -6532,12 +6549,22 @@ function stopActiveReaderVoicePlayback() {
   if (typeof stop === 'function') stop()
 }
 
+function hideReaderPhoneOuterBack(phoneFrame, inOverlay) {
+  var outerBack = inOverlay
+    ? document.querySelector('.rd-pm-back')
+    : phoneFrame?.closest('.phone-reader')?.previousElementSibling
+  if (outerBack?.matches('.reader-back[data-reader-home], .rd-pm-back')) {
+    outerBack.hidden = true
+  }
+}
+
 // ---- Reader App Panels ----
 function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, navigationContext) {
   stopActiveReaderVoicePlayback()
   var inOverlay = _work._inOverlay
   var phoneFrame = document.querySelector('.phone-frame')
   if (!phoneFrame) return
+  hideReaderPhoneOuterBack(phoneFrame, inOverlay)
   _readerPhoneLocation = {
     appType:String(type || ''),
     view:'app',
@@ -8016,26 +8043,26 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       : []
     var chatName = getChatName()
 
-    // The latest authored choice group stays active until it has produced a run.
-    // While that run exists, older groups do not resurface underneath it.
+    // Offer one authored choice group at a time in conversation order.
+    // Completed groups stay attached to their own message while scanning continues
+    // to the next unresolved group.
     var allChoices = []
     choiceScan:
-    for (var lri = rounds.length - 1; lri >= 0; lri--) {
+    for (var lri = 0; lri < rounds.length; lri++) {
       if (rounds[lri].messages) {
-        for (var lmi = rounds[lri].messages.length - 1; lmi >= 0; lmi--) {
+        for (var lmi = 0; lmi < rounds[lri].messages.length; lmi++) {
           var lm = rounds[lri].messages[lmi]
           if (!isMessageVisible(lm, visibleMessageIds)) continue
           if (lm.choices && lm.choices.length > 0) {
             var ownerRunKey = choiceRunKey(lri, lm.id)
-            if (!choiceRuns.has(ownerRunKey)) {
-              for (var lci = 0; lci < lm.choices.length; lci++) {
-                allChoices.push({
-                  roundIdx: lri,
-                  ownerMessageId: lm.id,
-                  choiceIdx: lci,
-                  text: lm.choices[lci].text || lm.choices[lci].replyText || '',
-                })
-              }
+            if (choiceRuns.has(ownerRunKey)) continue
+            for (var lci = 0; lci < lm.choices.length; lci++) {
+              allChoices.push({
+                roundIdx: lri,
+                ownerMessageId: lm.id,
+                choiceIdx: lci,
+                text: lm.choices[lci].text || lm.choices[lci].replyText || '',
+              })
             }
             break choiceScan
           }
@@ -8915,6 +8942,66 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   renderChat()
 }
 
+function openReaderForumAccountDialog(pd, triggerElement, onSaved) {
+  var custom = getPhoneCustom()
+  var currentName = readerThreadDisplayName(pd, custom)
+  var currentAvatar = readerThreadAvatar(pd, custom)
+  var body = '<div class="reader-forum-account-form">' +
+    '<p>这个身份会用于论坛、动态和小手机聊天中的读者回复，并同步到读者个人资料。</p>' +
+    '<label for="readerForumAccountName">昵称</label>' +
+    '<input class="rd-input" id="readerForumAccountName" maxlength="80" value="' + escapeHtmlAttribute(currentName) + '" placeholder="读者">' +
+    '<label for="readerForumAccountAvatar">头像</label>' +
+    '<div class="rd-input-row"><input class="rd-input" id="readerForumAccountAvatar" value="' + escapeHtmlAttribute(currentAvatar) + '" placeholder="输入头像 URL">' +
+    '<button type="button" class="rs-action-btn subtle" id="readerForumAccountUpload">本地图片</button></div>' +
+    '<div class="reader-forum-account-preview" id="readerForumAccountPreview"' + (currentAvatar ? '' : ' hidden') + '><img src="' + escapeHtmlAttribute(currentAvatar) + '" alt="头像预览"><button type="button" class="rs-action-btn subtle" id="readerForumAccountClear">清除头像</button></div>' +
+    '</div>'
+  var ov = openCuModal('我的论坛账号', body, function(modal) {
+    var name = modal.querySelector('#readerForumAccountName')?.value.trim() || ''
+    var avatarValue = modal.querySelector('#readerForumAccountAvatar')?.value.trim() || ''
+    var avatar = avatarValue && isSafeImageUrl(avatarValue) ? avatarValue : null
+    var profile = getProfile()
+    profile.readerId = name
+    profile.readerAvatar = avatar || ''
+    lsSet('profile', profile)
+    savePhoneCustom({ readerId:name, readerAvatar:avatar })
+    if (typeof onSaved === 'function') onSaved()
+    showReaderToast('论坛账号已保存')
+  }, triggerElement)
+  var dialog = ov.querySelector('.cu-modal')
+  if (dialog) dialog.classList.add('reader-forum-account-dialog')
+  var save = ov.querySelector('#cuModalSave')
+  if (save) save.id = 'readerForumAccountSave'
+  var avatarInput = ov.querySelector('#readerForumAccountAvatar')
+  var preview = ov.querySelector('#readerForumAccountPreview')
+  var previewImage = preview?.querySelector('img')
+
+  function setAvatar(value) {
+    var nextValue = String(value || '')
+    if (avatarInput) avatarInput.value = nextValue
+    if (previewImage) previewImage.src = nextValue
+    if (preview) preview.hidden = !nextValue
+  }
+
+  if (avatarInput) avatarInput.addEventListener('input', function() { setAvatar(avatarInput.value.trim()) })
+  var clear = ov.querySelector('#readerForumAccountClear')
+  if (clear) clear.onclick = function() { setAvatar('') }
+  var upload = ov.querySelector('#readerForumAccountUpload')
+  if (upload) upload.onclick = function() {
+    var input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = function() {
+      var file = input.files && input.files[0]
+      if (!file) return
+      var reader = new FileReader()
+      reader.onload = function() { setAvatar(reader.result) }
+      reader.readAsDataURL(file)
+    }
+    input.click()
+  }
+  return ov
+}
+
 // ---- Forum post viewer ----
 function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext) {
   var posts = pd.forumPosts || []
@@ -9034,7 +9121,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
         if (isReader) {
           return {
             name:readerThreadDisplayName(pd, custom),
-            avatar:custom.readerAvatar || pd.skin?.readerAvatar || '',
+            avatar:readerThreadAvatar(pd, custom),
             isReader:true,
           }
         }
@@ -9075,10 +9162,62 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
     }
   }
 
+  function forumReplyTarget(item) {
+    if (item?.contactId === 'self' || item?.senderId === 'self') {
+      return {
+        id:item.id,
+        contactId:'self',
+        aliasId:'',
+        name:readerThreadDisplayName(pd, custom),
+      }
+    }
+    var identity = resolveReaderContactIdentity(pd, item?.contactId || item?.senderId, {
+      surface:'forum',
+      aliasId:item?.aliasId,
+      authoredName:item?.contactName,
+      authoredAvatar:item?.contactAvatar,
+    })
+    return {
+      id:item?.id,
+      contactId:item?.contactId || item?.senderId || '',
+      aliasId:item?.aliasId || '',
+      name:identity.name || item?.contactName || '用户',
+    }
+  }
+
+  function applyForumThreadChoice(container, ownerId, choiceIndex) {
+    var result = applyThreadChoice(container.items, ownerId, choiceIndex, readerThreadRuntimeOptions(pd, custom, 'forum'))
+    if (!result.ok) return result
+    var generatedIds = new Set(result.run.generatedItemIds.map(function(id) { return String(id) }))
+    var generatedItems = result.items.filter(function(item) { return generatedIds.has(String(item?.id)) })
+    var nextItems = cloneReaderThreadItems(container.items)
+    var owner = nextItems.find(function(item) { return String(item?.id) === String(ownerId) })
+    if (!owner) return { ok:false, reason:'owner-item-not-found-after-clone' }
+    var ownerTarget = forumReplyTarget(owner)
+    var readerReply = generatedItems.find(function(item) { return String(item?.id) === String(result.run.replyItemId) }) || null
+    var readerTarget = readerReply ? forumReplyTarget(readerReply) : ownerTarget
+    generatedItems.forEach(function(item) {
+      var target = item === readerReply ? ownerTarget : readerTarget
+      item.replyToCommentId = target.id
+      item.replyToContactId = target.contactId
+      item.replyToAliasId = target.aliasId
+      item.replyToName = target.name
+      item.likes = readerThreadLikeCount(item.likes)
+      item.replies = Array.isArray(item.replies) ? item.replies : []
+    })
+    owner.replies = Array.isArray(owner.replies) ? owner.replies : []
+    owner.replies.push.apply(owner.replies, generatedItems)
+    container.set(nextItems)
+    return Object.assign({}, result, { generatedContainerKey:'replies::' + String(ownerId) })
+  }
+
   function renderForumPost() {
     var postIdentity = resolveReaderContactIdentity(pd, post.contactId, { surface: 'forum', aliasId:post.aliasId, authoredName: post.contactName, authoredAvatar: post.contactAvatar, authoredIpLocation:post.contactIpLocation })
+    var readerName = readerThreadDisplayName(pd, custom)
+    var readerAvatar = readerThreadAvatar(pd, custom)
     var h = '<div class="rd-forum-detail" style="--rd-forum-avatar-radius:' + forumVisual.avatarRadius + '">'
-    h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><span class="rd-back-spacer" aria-hidden="true"></span></header>'
+    h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><button type="button" class="rd-forum-account-button" data-reader-forum-account aria-label="设置我的论坛账号">'
+    h += '<span class="rd-forum-account-avatar">' + (readerAvatar ? '<img src="' + escapeHtmlAttribute(readerAvatar) + '" alt="">' : esc(readerName.charAt(0) || '我')) + '</span><span class="rd-forum-account-name">' + esc(readerName) + '</span></button></header>'
     h += '<div class="rd-forum-detail-scroll">'
     h += renderPhoneForumPost(post, {
       resolveIdentity:function() {
@@ -9111,6 +9250,13 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
 
     var backBtn = frame.querySelector('.rd-back-btn')
     if (backBtn) backBtn.onclick = backToList
+    var accountButton = frame.querySelector('[data-reader-forum-account]')
+    if (accountButton) accountButton.onclick = function() {
+      openReaderForumAccountDialog(pd, accountButton, function() {
+        custom = getPhoneCustom()
+        renderForumPost()
+      })
+    }
 
     frame.querySelectorAll('[data-forum-sort]').forEach(function(button) {
       button.onclick = function() {
@@ -9140,10 +9286,9 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
         var runKey = readerThreadRunKey(containerKey, ownerId)
         if (forumChoiceRuns.has(runKey)) return
         var choiceIndex = Number(button.dataset.threadChoiceIndex)
-        var result = applyThreadChoice(container.items, ownerId, choiceIndex, readerThreadRuntimeOptions(pd, custom, 'forum'))
+        var result = applyForumThreadChoice(container, ownerId, choiceIndex)
         if (!result.ok) return
-        container.set(result.items)
-        forumChoiceRuns.set(runKey, { containerKey: containerKey, run: result.run })
+        forumChoiceRuns.set(runKey, { containerKey:result.generatedContainerKey, ownerContainerKey:containerKey, run:result.run })
         renderForumPost()
         focusForumThreadControl('.rd-thread-choice-reselect', 'threadRunKey', runKey)
       }

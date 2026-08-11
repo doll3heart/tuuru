@@ -18,6 +18,7 @@ function sanitizeField(field) {
     prompt: cleanText(source.prompt) || "请填写",
     mode: cleanText(source.mode) || "each",
     forbidden: parseForbiddenWords(source.forbidden),
+    exactForbidden: parseForbiddenWords(source.exactForbidden),
   }
 }
 
@@ -32,6 +33,7 @@ function sanitizePreset(preset) {
     name,
     fields:preset.fields.map(sanitizeField),
     globalForbidden:parseForbiddenWords(preset.globalForbidden),
+    globalExactForbidden:parseForbiddenWords(preset.globalExactForbidden),
     updatedAt,
   }
 }
@@ -70,6 +72,7 @@ export function saveAuthorPlaceholderPreset(name, placeholders, options = {}) {
     name: cleanName,
     fields: placeholders.map(sanitizeField),
     globalForbidden:parseForbiddenWords(options.globalForbidden),
+    globalExactForbidden:parseForbiddenWords(options.globalExactForbidden),
     updatedAt: Number(now()),
   }
   if (existingIndex >= 0) presets.splice(existingIndex, 1, next)
@@ -94,6 +97,7 @@ export function instantiateAuthorPlaceholderPreset(preset, idFactory = defaultId
     prompt: field.prompt,
     mode: field.mode,
     forbidden: field.forbidden.slice(),
+    exactForbidden: field.exactForbidden.slice(),
     values: [],
     default: "",
   }))

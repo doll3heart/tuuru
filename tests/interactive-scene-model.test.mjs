@@ -45,6 +45,35 @@ test("new interactive scenes start with one editable stage and shared dialogue s
   assert.deepEqual(scene.stages[0].promptStyle, DEFAULT_INTERACTIVE_PROMPT_STYLE)
   assert.deepEqual(scene.promptStyle, DEFAULT_INTERACTIVE_PROMPT_STYLE)
   assert.deepEqual(scene.dialogueStyle, DEFAULT_INTERACTIVE_DIALOGUE_STYLE)
+  assert.deepEqual(scene.stages[0].choices, [])
+})
+
+test("interactive scene normalization preserves bounded picture choices and validates their targets", () => {
+  const scene = normalizeInteractiveScene({
+    stages:[
+      {
+        id:"stage-1",
+        choices:[
+          { id:"choice-a", label:"追上去", targetStageId:"stage-2" },
+          { id:"choice-b", label:"留在原地", targetStageId:"missing-stage" },
+          ...Array.from({ length:8 }, (_, index) => ({
+            id:`extra-${index}`,
+            label:`选项 ${index}`,
+            targetStageId:"stage-2",
+          })),
+        ],
+      },
+      { id:"stage-2" },
+    ],
+  })
+
+  assert.equal(scene.stages[0].choices.length, 6)
+  assert.deepEqual(scene.stages[0].choices[0], {
+    id:"choice-a",
+    label:"追上去",
+    targetStageId:"stage-2",
+  })
+  assert.equal(scene.stages[0].choices[1].targetStageId, "")
 })
 
 test("interactive scene normalization gives every stage its own compatible prompt style", () => {

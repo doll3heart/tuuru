@@ -154,6 +154,42 @@ test("reordering standalone stages keeps the first listed stage as the reader st
   dom.window.close()
 })
 
+test("standalone Mini scenes can author lightweight picture choices", () => {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual:true })
+  const scene = createInteractiveScene({ id:"scene-1", stageId:"stage-1" })
+  scene.stages.push(
+    { ...structuredClone(scene.stages[0]), id:"stage-2", name:"追上去" },
+    { ...structuredClone(scene.stages[0]), id:"stage-3", name:"留下" },
+  )
+  let id = 0
+  const editor = openInteractiveSceneEditor({
+    scene,
+    documentObject:dom.window.document,
+    idFactory:() => `choice-${++id}`,
+  })
+
+  editor.overlay.querySelector("[data-inspector-section='interaction']").click()
+  assert.match(editor.overlay.querySelector("[data-inspector-body='interaction']").textContent, /画面选项/)
+  editor.overlay.querySelector("[data-stage-choice-add]").click()
+
+  const label = editor.overlay.querySelector("[data-stage-choice-label]")
+  const target = editor.overlay.querySelector("[data-stage-choice-target]")
+  label.value = "留在这里"
+  label.dispatchEvent(new dom.window.Event("input", { bubbles:true }))
+  target.value = "stage-3"
+  target.dispatchEvent(new dom.window.Event("change", { bubbles:true }))
+
+  assert.deepEqual(editor.scene.stages[0].choices, [{
+    id:"choice-1",
+    label:"留在这里",
+    targetStageId:"stage-3",
+  }])
+  editor.overlay.querySelector("[data-stage-choice-delete]").click()
+  assert.deepEqual(editor.scene.stages[0].choices, [])
+  editor.close()
+  dom.window.close()
+})
+
 test("each stage can author, embed, preview, and clear a special BGM", async () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual:true })
   const reference = `asset://${"b".repeat(64)}`

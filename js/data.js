@@ -205,6 +205,7 @@ export function createWorkRecord(data, {
     scenes:data.scenes||[],
     placeholders:data.placeholders||[],
     globalForbidden:Array.isArray(data.globalForbidden)?data.globalForbidden.slice():[],
+    globalExactForbidden:Array.isArray(data.globalExactForbidden)?data.globalExactForbidden.slice():[],
     placeholderMode:data.placeholderMode||PLACEHOLDER_MODE.RANDOM_EACH,
    phoneModules:rawType===WORK_TYPE.ARTICLE?[]:undefined,
    interactiveScenes:rawType===WORK_TYPE.ARTICLE?(interactiveExperience?[createInteractiveScene({
@@ -320,7 +321,7 @@ export function deleteChoice(wid,nid,cid){const db=rd();const w=db.works.find(x=
 
 export function addScene(wid,name){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const s={id:uid(),name};w.scenes.push(s);w.updatedAt=Date.now();wr(db);return s}
 export function deleteScene(wid,sid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;w.scenes=w.scenes.filter(x=>x.id!==sid);w.nodes.forEach(n=>{if(n.scene===sid)n.scene=""});w.updatedAt=Date.now();wr(db)}
-export function addPlaceholder(wid,key,label,prompt,preset,extra){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;if(preset&&PH_PRESETS[preset]){var nps=PH_PRESETS[preset].fields.map(function(f){return {id:uid(),key:f.key,label:f.label,prompt:f.prompt,mode:f.mode,fillMode:"landing",forbidden:f.forbidden||[],values:[],default:""}});w.placeholders=w.placeholders.concat(nps);w.updatedAt=Date.now();wr(db);return nps}else{var ph={id:uid(),key:key||uid(),label:label||"占位符",prompt:prompt||"请填写",mode:extra&&extra.mode||"each",fillMode:extra&&extra.fillMode==="inline"?"inline":"landing",forbidden:extra&&extra.forbidden||[],values:[],default:""};w.placeholders.push(ph);w.updatedAt=Date.now();wr(db);return [ph]}}
+export function addPlaceholder(wid,key,label,prompt,preset,extra){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;if(preset&&PH_PRESETS[preset]){var nps=PH_PRESETS[preset].fields.map(function(f){return {id:uid(),key:f.key,label:f.label,prompt:f.prompt,mode:f.mode,fillMode:"landing",forbidden:f.forbidden||[],exactForbidden:f.exactForbidden||[],values:[],default:""}});w.placeholders=w.placeholders.concat(nps);w.updatedAt=Date.now();wr(db);return nps}else{var ph={id:uid(),key:key||uid(),label:label||"占位符",prompt:prompt||"请填写",mode:extra&&extra.mode||"each",fillMode:extra&&extra.fillMode==="inline"?"inline":"landing",forbidden:extra&&extra.forbidden||[],exactForbidden:extra&&extra.exactForbidden||[],values:[],default:""};w.placeholders.push(ph);w.updatedAt=Date.now();wr(db);return [ph]}}
 export function updatePlaceholder(wid,pid,data){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return null;const p=w.placeholders.find(x=>x.id===pid);if(!p)return null;Object.assign(p,data);w.updatedAt=Date.now();wr(db);return p}
 export function deletePlaceholder(wid,pid){const db=rd();const w=db.works.find(x=>x.id===wid);if(!w)return;w.placeholders=w.placeholders.filter(x=>x.id!==pid);if(Array.isArray(w.nodes)){w.nodes.forEach(function(node){node.content=removeArticlePlaceholderMarkers(node.content,pid)})}w.updatedAt=Date.now();wr(db)}
 

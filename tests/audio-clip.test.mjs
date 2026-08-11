@@ -7,6 +7,7 @@ import {
   createCompressedAudioClip,
   normalizeAudioRange,
   probeAudioBlob,
+  probeAudioUrl,
 } from "../js/audio-clip.js"
 
 test("output duration tolerance stays strict for long clips", () => {
@@ -92,6 +93,86 @@ test("a playable WebM without container duration falls back to decoded audio dur
 
   assert.equal(result.durationMs, 15_040)
   assert.deepEqual(revoked, ["blob:durationless"])
+})
+
+test("a local file whose metadata times out can still use decoded duration", async () => {
+  class SlowMetadataAudio {
+    constructor() { this.listeners = new Map(); this.duration = Number.NaN }
+    addEventListener(type, callback) { this.listeners.set(type, callback) }
+    removeEventListener(type) { this.listeners.delete(type) }
+    set src(value) { this._src = value }
+    load() {}
+    pause() {}
+    removeAttribute() {}
+  }
+  class DecodeContext {
+    async decodeAudioData() { return { duration:12.5 } }
+    async close() {}
+  }
+  let scheduled
+  const pending = probeAudioBlob(new Blob(["slow-metadata"], { type:"audio/mpeg" }), {
+    Audio:SlowMetadataAudio,
+    AudioContext:DecodeContext,
+    URL:{ createObjectURL:() => "blob:slow", revokeObjectURL() {} },
+    setTimeout(callback) { scheduled = callback; return 1 },
+    clearTimeout() {},
+  })
+  scheduled()
+
+  assert.equal((await pending).durationMs, 12_500)
+})
+
+test("browser timer methods keep their owning environment during metadata probing", async () => {
+  class MetadataAudio {
+    constructor() { this.listeners = new Map(); this.duration = 2.25 }
+    addEventListener(type, callback) { this.listeners.set(type, callback) }
+    removeEventListener(type) { this.listeners.delete(type) }
+    set src(value) {
+      this._src = value
+      queueMicrotask(() => this.listeners.get("loadedmetadata")?.())
+    }
+    load() {}
+    pause() {}
+    removeAttribute() {}
+  }
+  const environment = {
+    Audio:MetadataAudio,
+    URL:{ createObjectURL:() => "blob:bound-timer", revokeObjectURL() {} },
+    setTimeout() {
+      assert.equal(this, environment)
+      return 1
+    },
+    clearTimeout() {
+      assert.equal(this, environment)
+    },
+  }
+
+  assert.equal((await probeAudioBlob(new Blob(["audio"]), environment)).durationMs, 2_250)
+})
+
+test("remote BGM rejects share pages and explains metadata timeouts", async () => {
+  await assert.rejects(
+    probeAudioUrl("http://example.test/share/song"),
+    /HTTPS \u97f3\u9891\u76f4\u94fe/,
+  )
+
+  class SlowRemoteAudio {
+    constructor() { this.listeners = new Map(); this.duration = Number.NaN }
+    addEventListener(type, callback) { this.listeners.set(type, callback) }
+    removeEventListener(type) { this.listeners.delete(type) }
+    set src(value) { this._src = value }
+    load() {}
+    pause() {}
+    removeAttribute() {}
+  }
+  let scheduled
+  const pending = probeAudioUrl("https://example.test/song.mp3", {
+    Audio:SlowRemoteAudio,
+    setTimeout(callback) { scheduled = callback; return 1 },
+    clearTimeout() {},
+  })
+  scheduled()
+  await assert.rejects(pending, /\u516c\u5f00\u53ef\u8bbf\u95ee.*HTTPS \u97f3\u9891\u76f4\u94fe.*\u5206\u4eab\u9875/)
 })
 
 test("aborting during metadata loading immediately releases the clipping pipeline", async () => {

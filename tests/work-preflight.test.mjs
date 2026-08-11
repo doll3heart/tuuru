@@ -168,6 +168,35 @@ test("missing type-specific content fails closed without throwing", () => {
   assert.deepEqual(phone.issues.map(issue => issue.code), ["phone-data-missing"])
 })
 
+test("Mini picture choices must have visible text and a valid different target", () => {
+  const report = inspectWorkBeforePublish({
+    id:"mini-choice",
+    type:"article",
+    experienceMode:"interactive",
+    title:"分岔",
+    placeholders:[],
+    interactiveScenes:[{
+      id:"scene-1",
+      stages:[
+        {
+          id:"stage-1",
+          image:"https://example.test/one.jpg",
+          choices:[
+            { id:"empty", label:"", targetStageId:"stage-2" },
+            { id:"missing", label:"离开", targetStageId:"gone" },
+          ],
+        },
+        { id:"stage-2", image:"https://example.test/two.jpg", choices:[] },
+      ],
+    }],
+  })
+
+  assert.deepEqual(
+    report.issues.filter(issue => issue.code.startsWith("interactive-experience-choice-")).map(issue => issue.code),
+    ["interactive-experience-choice-label-empty", "interactive-experience-choice-target-invalid"],
+  )
+})
+
 test("an article also inspects its embedded phone data and image sources", () => {
   const report = inspectWorkBeforePublish({
     id:"article-with-phone",

@@ -95,7 +95,10 @@ test("standalone interactive works preserve their mode and normalize default BGM
     experienceMode:"interactive",
     interactiveBgm:{ source:"https://example.test/default.mp3", volume:38, loop:false },
     nodes:[],
-    interactiveScenes:[{ id:"scene-1", stages:[{ id:"stage-1" }] }],
+    interactiveScenes:[{ id:"scene-1", stages:[
+      { id:"stage-1", choices:[{ id:"enter", label:"进去", targetStageId:"stage-2" }] },
+      { id:"stage-2" },
+    ] }],
   })
   assert.equal(result.ok, true)
   assert.equal(result.work.experienceMode, "interactive")
@@ -119,6 +122,11 @@ test("standalone interactive works preserve their mode and normalize default BGM
     startMs:0,
     endMs:null,
   })
+  assert.deepEqual(result.work.interactiveScenes[0].stages[0].choices, [{
+    id:"enter",
+    label:"进去",
+    targetStageId:"stage-2",
+  }])
 })
 
 test("legacy inline interactive cards become chapter nodes during import", () => {
@@ -162,6 +170,14 @@ test("interactive scene nested collections reject invalid entries at stable path
   })
   assert.equal(invalidHotspots.ok, false)
   assert.equal(invalidHotspots.issues[0].path, "$.interactiveScenes[0].stages[0].hotspots[0]")
+
+  const invalidChoices = validateWorkForImport({
+    type:"article",
+    nodes:[],
+    interactiveScenes:[{ id:"touch-1", stages:[{ id:"stage-1", hotspots:[], choices:[false] }] }],
+  })
+  assert.equal(invalidChoices.ok, false)
+  assert.equal(invalidChoices.issues[0].path, "$.interactiveScenes[0].stages[0].choices[0]")
 })
 
 test("article normalization repairs a dangling start node to the first valid node", () => {

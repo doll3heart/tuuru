@@ -64,6 +64,33 @@ test("author presets carry their global forbidden words through export and impor
   assert.deepEqual(readAuthorPlaceholderPresets(target)[0].globalForbidden, ["老公", "MOMO"])
 })
 
+test("author presets preserve exact-match forbidden words through export and import", () => {
+  const storage = memoryStorage()
+  saveAuthorPlaceholderPreset("精确词库", [{
+    key:"姓名",
+    forbidden:["蠢"],
+    exactForbidden:["哥哥", "MOMO", "momo"],
+  }], {
+    storage,
+    globalForbidden:["坏"],
+    globalExactForbidden:["姐姐", "Hero", "hero"],
+    now:() => 100,
+    idFactory:() => "preset-exact",
+  })
+
+  const serialized = serializeAuthorPlaceholderPresetBundle(readAuthorPlaceholderPresets(storage))
+  const parsed = parseAuthorPlaceholderPresetBundle(serialized)
+  assert.deepEqual(parsed.presets[0].fields[0].exactForbidden, ["哥哥", "MOMO"])
+  assert.deepEqual(parsed.presets[0].globalExactForbidden, ["姐姐", "Hero"])
+
+  const target = memoryStorage()
+  importAuthorPlaceholderPresetBundle(serialized, { storage:target })
+  const imported = readAuthorPlaceholderPresets(target)[0]
+  assert.deepEqual(imported.fields[0].exactForbidden, ["哥哥", "MOMO"])
+  assert.deepEqual(imported.globalExactForbidden, ["姐姐", "Hero"])
+  assert.deepEqual(instantiateAuthorPlaceholderPreset(imported, () => "placeholder-exact")[0].exactForbidden, ["哥哥", "MOMO"])
+})
+
 test("placeholder preset import rejects unrelated or malformed files", () => {
   assert.throws(() => parseAuthorPlaceholderPresetBundle('{"version":1}'), /占位符预设文件/)
   assert.throws(() => parseAuthorPlaceholderPresetBundle('not json'), /占位符预设文件/)
@@ -90,6 +117,7 @@ test("saving a preset keeps author fields but excludes work and reader state", (
     prompt: "你的名字？",
     mode: "each",
     forbidden: ["偷吃", "7"],
+    exactForbidden: [],
   }])
   assert.equal(readAuthorPlaceholderPresets(storage).length, 1)
 })
@@ -119,6 +147,7 @@ test("applying a preset creates fresh work placeholders and deletion stays local
     prompt: "名字？",
     mode: "scene",
     forbidden: ["禁用"],
+    exactForbidden: [],
     values: [],
     default: "",
   }])

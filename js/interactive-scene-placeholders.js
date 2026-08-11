@@ -21,6 +21,15 @@ export function substituteInteractiveSceneText(sceneValue, placeholders, options
         speaker: substitute(stage?.dialogue?.speaker, placeholderList, options),
         text: substitute(stage?.dialogue?.text, placeholderList, options),
       },
+      dialogues: (Array.isArray(stage?.dialogues) ? stage.dialogues : []).map(dialogue => ({
+        ...dialogue,
+        speaker: substitute(dialogue?.speaker, placeholderList, options),
+        text: substitute(dialogue?.text, placeholderList, options),
+      })),
+      choices: (Array.isArray(stage?.choices) ? stage.choices : []).map(choice => ({
+        ...choice,
+        label: substitute(choice?.label, placeholderList, options),
+      })),
       hotspots: (Array.isArray(stage?.hotspots) ? stage.hotspots : []).map(hotspot => ({
         ...hotspot,
         label: substitute(hotspot?.label, placeholderList, options),

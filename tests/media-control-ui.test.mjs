@@ -107,6 +107,25 @@ test("Mini default BGM volume exposes and updates a live numeric value before pe
   assert.equal(getWork(work.id).interactiveBgm.volume, 37)
 })
 
+test("Mini studio exposes landing placeholders without article-only inline controls", () => {
+  const { root } = renderMini()
+  const entry = root.querySelector("[data-a='ph']")
+  assert.ok(entry)
+  assert.match(entry.closest(".mini-game-placeholder-card").textContent, /占位符/)
+
+  entry.click()
+  const panel = document.querySelector("#phPanel")
+  assert.ok(panel)
+  assert.match(panel.textContent, /画面中的提示、说话人、台词和选项文字/)
+  panel.querySelector("[data-ph-a='add']").click()
+  const card = panel.querySelector("[data-ph-id]")
+  assert.ok(card)
+  assert.equal(card.querySelector("[data-ph-a='insert-inline']"), null)
+  assert.equal(card.querySelector("[id^='ph_fill_']"), null)
+  assert.match(card.textContent, /阅读前集中填写/)
+  panel.closest(".modal-overlay")?.remove()
+})
+
 test("shared media controls remain touch-safe, themed, and responsive", () => {
   assert.match(css, /\.media-file-picker-button\s*\{[^}]*min-height:\s*44px/s)
   assert.match(css, /\.media-file-picker-input:focus-visible\s*\+\s*\.media-file-picker-button/s)

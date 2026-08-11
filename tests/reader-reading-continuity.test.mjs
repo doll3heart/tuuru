@@ -146,6 +146,7 @@ test("article settings and phone modules return to the same visible passage", as
   phoneTrigger.focus()
   phoneTrigger.click()
   assert.ok(document.querySelector(".rd-pm-modal"))
+  assert.equal(document.querySelector(".rd-pm-back").hidden, true)
   layout.setAnchorTop(103)
   document.querySelector(".rd-pm-back").click()
 

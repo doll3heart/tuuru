@@ -671,15 +671,19 @@ test("selecting the reader as reply author unlocks choices without adding a fixe
     const choiceEditor = document.querySelector("#threadChoiceGroups")
     choiceEditor.querySelector(".thread-choice-text").value = "我先想一想。"
     choiceEditor.querySelector(".thread-choice-reply").value = "我先想一想。"
+    choiceEditor.querySelector(".thread-choice-reply-likes").value = "18"
     document.querySelector('[data-thread-followup-add="0"]').click()
     choiceEditor.querySelector(".thread-choice-followups").value = "好，我等你。"
+    choiceEditor.querySelector(".thread-choice-followup-likes").value = "7"
     document.querySelector("#threadChoiceSave").click()
     replyModal.querySelector("#fcSave").click()
 
     const saved = draft.snapshot().phoneData.forumPosts[0].comments[1]
     assert.equal(saved.replies.length, 0)
     assert.equal(saved.choices[0].text, "我先想一想。")
+    assert.equal(saved.choices[0].replyLikes, 18)
     assert.equal(saved.choices[0].followUpMessages[0].text, "好，我等你。")
+    assert.equal(saved.choices[0].followUpMessages[0].likes, 7)
   } finally {
     closeFixture(fixture)
   }

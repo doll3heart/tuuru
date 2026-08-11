@@ -279,8 +279,13 @@ test("messages exposes chat and moments, then inserts and precisely reselects a 
   assert.equal(persisted.phoneData.moments[0].comments[0].choices[0].used, undefined)
 })
 
-test("forum detail renders authored comments and keeps generated replies next to their trigger", async t => {
-  const authoredWork = await openSeededPhone(t)
+test("forum detail nests generated replies under their target and keeps authored floors stable", async t => {
+  const authoredWork = socialChoiceWork()
+  const owner = authoredWork.phoneData.forumPosts[0].comments[0]
+  owner.displayFloor = 5
+  owner.choices[0].replyLikes = 12
+  owner.choices[0].followUpMessages[0].likes = 4
+  await openSeededPhone(t, authoredWork)
   const forumBeforePlay = JSON.parse(localStorage.getItem(`moirain_work_${authoredWork.id}`)).phoneData.forumPosts
   document.querySelector('[data-app-type="forum"]').click()
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
@@ -304,7 +309,16 @@ test("forum detail renders authored comments and keeps generated replies next to
     "这是作者排在后面的论坛评论。",
   ])
   assert.deepEqual(items.map(item => item.querySelector('.forum-comment-name, .forum-reply-name').textContent.trim()), ["沈岚", "小鱼", "沈岚", "沈岚"])
-  assert.equal(items[3].querySelector('.forum-comment-floor').textContent, "4楼")
+  const roots = [...document.querySelectorAll('.rd-forum-thread > .forum-comment')]
+  assert.equal(roots.length, 2)
+  assert.equal(roots[0].querySelector(':scope > .forum-comment-row .forum-comment-floor').textContent, "5楼")
+  assert.equal(roots[1].querySelector(':scope > .forum-comment-row .forum-comment-floor').textContent, "2楼")
+  const generatedReplies = [...roots[0].querySelectorAll('.forum-reply-item.is-generated')]
+  assert.equal(generatedReplies.length, 2)
+  assert.equal(generatedReplies[0].querySelector('.forum-reply-target').textContent, "沈岚")
+  assert.equal(generatedReplies[1].querySelector('.forum-reply-target').textContent, "小鱼")
+  assert.equal(generatedReplies[0].querySelector('.forum-comment-like-reader').textContent.trim(), "♡12")
+  assert.equal(generatedReplies[1].querySelector('.forum-comment-like-reader').textContent.trim(), "♡4")
 
   const reselect = document.querySelector('.rd-thread-choice-reselect[data-thread-scope="forum"]')
   assert.ok(reselect)
@@ -325,6 +339,37 @@ test("forum detail renders authored comments and keeps generated replies next to
   const persisted = JSON.parse(localStorage.getItem(`moirain_work_${authoredWork.id}`))
   assert.deepEqual(persisted.phoneData.forumPosts, forumBeforePlay)
   assert.equal(persisted.phoneData.forumPosts[0].comments[0].choices[0].used, undefined)
+})
+
+test("reader forum inherits the reader profile and exposes a local account shortcut", async t => {
+  const work = await openSeededPhone(t)
+  localStorage.setItem("moirain_phoneCustom", JSON.stringify({}))
+  localStorage.setItem("moirain_profile", JSON.stringify({
+    readerId:"主页小鱼",
+    readerAvatar:"data:image/png;base64,cHJvZmlsZQ==",
+    bio:"",
+  }))
+
+  document.querySelector('[data-app-type="forum"]').click()
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+  const accountButton = document.querySelector('[data-reader-forum-account]')
+  assert.ok(accountButton)
+  assert.match(accountButton.textContent, /主页小鱼/)
+  accountButton.click()
+
+  const nameInput = document.querySelector('#readerForumAccountName')
+  const avatarInput = document.querySelector('#readerForumAccountAvatar')
+  assert.equal(nameInput.value, "主页小鱼")
+  nameInput.value = "论坛小鱼"
+  avatarInput.value = "data:image/png;base64,Zm9ydW0="
+  document.querySelector('#readerForumAccountSave').click()
+
+  assert.equal(JSON.parse(localStorage.getItem("moirain_profile")).readerId, "论坛小鱼")
+  assert.equal(JSON.parse(localStorage.getItem("moirain_phoneCustom")).readerId, "论坛小鱼")
+  document.querySelector('.rd-thread-choice-option[data-thread-scope="forum"]').click()
+  const generated = document.querySelector('.forum-reply-item.is-reader')
+  assert.equal(generated.querySelector('.forum-reply-name').textContent, "论坛小鱼")
+  assert.match(generated.querySelector('.forum-reply-avatar img')?.getAttribute('src') || '', /^data:image\/png/)
 })
 
 test("reader keeps the post time and hides all reply times when the post setting is enabled", async t => {

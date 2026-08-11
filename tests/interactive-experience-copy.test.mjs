@@ -40,8 +40,11 @@ test("the Mini文游 tutorial teaches a complete short-work flow without promisi
     "删除误建热区",
     "预览、导出与交给读者",
     "不是完整文游引擎",
-    "不提供自由剧情分支、背包、数值养成、战斗或自定义脚本",
-    "在一个互动场景里安排多个固定顺序画面",
+    "只提供画面选项跳转，不提供条件分支、变量、背包、数值养成、战斗、自定义脚本",
+    "在一个互动场景里安排多个画面和轻量选择分支",
+    "设置轻量画面分支",
+    "设置 Mini文游占位符",
+    "每个画面最多 6 个选项",
     "最多 24 个叠加图层",
     "最多 12 个叠加对话框",
     "不会保存画面内的中途探索进度",
@@ -50,7 +53,7 @@ test("the Mini文游 tutorial teaches a complete short-work flow without promisi
     "最终加密载荷已经包含约 35 字节封装开销",
     "完整 PNG 最多 25 MiB",
     "更换较小封面或改用 .tuuru",
-    "最后一个画面完成后进入作品完成页",
+    "最后一个没有选项的画面完成后进入作品完成页",
     "超过 10 MiB 无法导出",
   ]) assert.ok(source.includes(copy), copy)
   assert.doesNotMatch(source, /不能把文件刚好塞满|贴近边界.*可能无法生成|贴近边界.*被读者拒绝/)

@@ -42,6 +42,8 @@ test("the writing-habits page keeps contact transfer explicit and placeholder pr
   assert.match(source, /saveAuthorPlaceholderPreset/)
   assert.match(source, /data-preset-global-forbidden/)
   assert.match(source, /globalForbidden:parseForbiddenWords/)
+  assert.match(source, /data-preset-global-exact-forbidden/)
+  assert.match(source, /globalExactForbidden:parseForbiddenWords/)
   assert.doesNotMatch(source, /updateWork\([^)]*placeholders/s)
 })
 
@@ -381,6 +383,9 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /长按消息；电脑右键消息.*撤回.*发送失败/s)
   assert.match(source, /发送失败时[^。]*先看到消息发出[^。]*迅速消失/)
   assert.match(source, /撤回时[^。]*可点开查看原文的系统提示/)
+  assert.match(source, /多条消息都设置了选项时[^。]*按消息顺序逐组选择/)
+  assert.match(source, /选择接话的群成员/)
+  assert.match(source, /每条后续消息都会按所选群成员的身份显示/)
 })
 
 test("the shopping tutorial explains how to edit an existing product card", () => {
@@ -398,6 +403,7 @@ test("the forum tutorial explains the current comment controls and reader reply 
     "评论与楼中楼排序",
     "论坛读者回复选项",
     "论坛角色后续回复",
+    "读者论坛账号",
   ]) {
     assert.match(source, new RegExp(feature))
   }
@@ -412,6 +418,8 @@ test("the forum tutorial explains the current comment controls and reader reply 
   assert.match(source, /回复人选择器中点【读者】/)
   assert.match(source, /已设置的选项会显示在评论下方[^。]*再次编辑/)
   assert.match(source, /逐条选择联系人、小号或 NPC/)
+  assert.match(source, /回复会进入目标评论的楼中楼/)
+  assert.match(source, /标题栏右侧的账号入口/)
 })
 
 test("the placeholder feature list covers global words, search, and cleanup", () => {
@@ -420,6 +428,9 @@ test("the placeholder feature list covers global words, search, and cleanup", ()
   }
   assert.match(source, /整理全部词库/)
   assert.match(source, /换行、逗号、顿号、分号、斜杠或竖线/)
+  assert.match(source, /包含匹配/)
+  assert.match(source, /完全匹配/)
+  assert.match(source, /哥哥！/)
 })
 
 test("every tutorial category keeps a searchable FAQ", () => {

@@ -147,6 +147,8 @@ test("a failed duration probe never traps an existing track without playback or 
   dom.window.document.body.appendChild(editor.element)
   await new Promise(resolve => dom.window.setTimeout(resolve, 0))
 
+  assert.equal(editor.element.querySelector("[data-audio-clip-metadata]").textContent, "音频时长读取失败")
+  assert.doesNotMatch(editor.element.textContent, /正在读取音频时长/)
   assert.match(editor.element.querySelector(".audio-clip-note").textContent, /无法读取这条旧链接/)
   editor.element.querySelector("[data-audio-clip-preview]").click()
   editor.element.querySelector("[data-audio-clip-clear]").click()

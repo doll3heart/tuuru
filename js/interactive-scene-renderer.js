@@ -34,28 +34,42 @@ function safeVideoSource(value) {
 
 function setOptionalImageSource(element, value, resolveAssetUrl) {
   const requestedSource = String(value || "").trim()
+  const requestToken = String((Number(element.dataset.optionalImageRequest) || 0) + 1)
+  element.dataset.optionalImageRequest = requestToken
+  element.onload = null
+  element.onerror = null
+  element.removeAttribute("src")
+  element.hidden = true
+
+  const isCurrentRequest = () => element.dataset.optionalImageRequest === requestToken
+  const applySource = resolved => {
+    if (!isCurrentRequest()) return
+    const source = safeImageSource(resolved)
+    if (!source) return
+    element.onload = () => {
+      if (isCurrentRequest() && element.getAttribute("src") === source) element.hidden = false
+    }
+    element.onerror = () => {
+      if (!isCurrentRequest()) return
+      element.hidden = true
+      element.removeAttribute("src")
+    }
+    element.src = source
+    if (element.complete && Number(element.naturalWidth) > 0) element.hidden = false
+  }
+
   if (/^asset:\/\//i.test(requestedSource) && typeof resolveAssetUrl === "function") {
     element.dataset.assetSource = requestedSource
-    element.removeAttribute("src")
-    element.hidden = true
     Promise.resolve(resolveAssetUrl(requestedSource)).then(resolved => {
       if (element.dataset.assetSource !== requestedSource) return
-      const source = safeImageSource(resolved)
-      if (!source) return
-      element.src = source
-      element.hidden = false
+      applySource(resolved)
     }).catch(() => {})
     return true
   }
   delete element.dataset.assetSource
   const source = safeImageSource(requestedSource)
-  if (!source) {
-    element.removeAttribute("src")
-    element.hidden = true
-    return false
-  }
-  element.src = source
-  element.hidden = false
+  if (!source) return false
+  applySource(source)
   return true
 }
 
@@ -192,6 +206,13 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   extraDialogueContainer.className = "interactive-scene-extra-dialogues"
   root.appendChild(extraDialogueContainer)
 
+  const choiceLayer = documentObject.createElement("div")
+  choiceLayer.className = "interactive-scene-choices"
+  choiceLayer.setAttribute("role", "group")
+  choiceLayer.setAttribute("aria-label", "选择接下来的画面")
+  choiceLayer.hidden = true
+  root.appendChild(choiceLayer)
+
   const status = appendTextElement(documentObject, root, "div", "interactive-scene-status", "")
   status.setAttribute("role", "status")
   status.setAttribute("aria-live", "polite")
@@ -219,6 +240,42 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
     return currentIndex >= 0 ? scene.stages[currentIndex + 1] || null : null
   }
 
+  function stageChoices() {
+    return (stage.choices || []).map(choice => ({
+      choice,
+      target:scene.stages.find(candidate => candidate.id === choice.targetStageId),
+    })).filter(item => item.choice.label && item.target && item.target.id !== stage.id)
+  }
+
+  function chooseStage(choice, target) {
+    if (destroyed || options.interactive === false || !target) return
+    const previousStage = stage
+    stage = target
+    explorationNotice = ""
+    root.dataset.advanceBlocked = "false"
+    renderStage()
+    options.onChoice?.({ scene, stage, previousStage, choice })
+    options.onStageChange?.({ scene, stage, previousStage, choice })
+  }
+
+  function renderStageChoices() {
+    choiceLayer.replaceChildren()
+    for (const { choice, target } of stageChoices()) {
+      const control = buttonForChoice(choice, target)
+      choiceLayer.appendChild(control)
+    }
+  }
+
+  function buttonForChoice(choice, target) {
+    const control = documentObject.createElement("button")
+    control.type = "button"
+    control.className = "interactive-scene-choice"
+    control.dataset.sceneChoiceId = choice.id
+    control.textContent = choice.label
+    control.addEventListener("click", () => chooseStage(choice, target))
+    return control
+  }
+
   function exploredHotspots() {
     let explored = exploredHotspotsByStage.get(stage.id)
     if (!explored) {
@@ -232,15 +289,20 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
     const explored = exploredHotspots()
     const remaining = stage.hotspots.filter(hotspot => !explored.has(hotspot.id)).length
     const followingStage = nextStage()
-    const canFinish = !followingStage && typeof options.onSceneComplete === "function"
-    const canAdvance = (Boolean(followingStage) || canFinish) && options.interactive !== false
+    const branchChoices = stageChoices()
+    const hasChoices = branchChoices.length > 0
+    const canFinish = !followingStage && !hasChoices && typeof options.onSceneComplete === "function"
+    const canAdvance = !hasChoices && (Boolean(followingStage) || canFinish) && options.interactive !== false
     const ready = canAdvance && remaining === 0
+    const choicesReady = hasChoices && remaining === 0 && !actionFrameActive && options.interactive !== false
     root.dataset.exploredHotspots = String(stage.hotspots.length - remaining)
     root.dataset.totalHotspots = String(stage.hotspots.length)
     root.dataset.explorationComplete = String(remaining === 0)
     dialogue.dataset.hasNext = String(canAdvance)
     dialogue.dataset.completesScene = String(canFinish)
     dialogue.dataset.advanceReady = String(ready)
+    root.dataset.choicesReady = String(choicesReady)
+    choiceLayer.hidden = !choicesReady
     dialogue.tabIndex = canAdvance ? 0 : -1
     if (canAdvance) {
       dialogue.setAttribute("role", "button")
@@ -260,14 +322,15 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
       button.dataset.explored = String(explored.has(button.dataset.hotspotId))
     })
     if (ready && !speaker.textContent && !dialogueText.textContent) dialogue.hidden = false
-    return { remaining, followingStage, canFinish, ready }
+    return { remaining, followingStage, canFinish, ready, hasChoices, choicesReady, branchChoices }
   }
 
   function attemptDialogueAdvance() {
     if (destroyed || options.interactive === false) return
-    const progress = syncExplorationState()
+    let progress = syncExplorationState()
     if (actionFrameActive) {
       clearActionFrame({ restoreDialogue: true })
+      progress = syncExplorationState()
       if (!progress.followingStage || progress.remaining > 0) {
         explorationNotice = ""
         root.dataset.advanceBlocked = "false"
@@ -278,6 +341,12 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
     if (progress.remaining > 0) {
       explorationNotice = `还有 ${progress.remaining} 个互动位置尚未探索。`
       root.dataset.advanceBlocked = "true"
+      renderStatus()
+      return
+    }
+    if (progress.hasChoices) {
+      explorationNotice = "请选择接下来的行动。"
+      root.dataset.advanceBlocked = "false"
       renderStatus()
       return
     }
@@ -348,6 +417,7 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
   function finishActionFrame() {
     if (!actionFrameActive) return
     clearActionFrame({ restoreDialogue: true })
+    syncExplorationState()
     renderStatus()
     options.onActionFrameEnd?.({ scene, stage })
   }
@@ -459,7 +529,8 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
     options.onInteraction?.({ scene, stage, hotspot })
     showHotspotReaction(hotspot)
     const progress = syncExplorationState()
-    if (progress.ready) explorationNotice = "本画面已探索完毕，点击对话框继续。"
+    if (progress.choicesReady) explorationNotice = "本画面已探索完毕，请选择接下来的行动。"
+    else if (progress.ready) explorationNotice = "本画面已探索完毕，点击对话框继续。"
     renderStatus()
     options.onComplete?.({ scene, stage, hotspot })
   }
@@ -669,6 +740,12 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
     dialogue.style.setProperty("--interactive-dialogue-font-size", `${style.fontSize}px`)
     dialogue.style.setProperty("--interactive-dialogue-line-height", String(style.lineHeight))
     dialogue.style.setProperty("--interactive-dialogue-letter-spacing", `${style.letterSpacing}px`)
+    choiceLayer.style.setProperty("--interactive-dialogue-surface", style.surfaceColor)
+    choiceLayer.style.setProperty("--interactive-dialogue-text", style.textColor)
+    choiceLayer.style.setProperty("--interactive-dialogue-accent", style.accentColor)
+    choiceLayer.style.setProperty("--interactive-dialogue-border", style.borderColor)
+    choiceLayer.style.setProperty("--interactive-dialogue-radius", `${style.borderRadius}px`)
+    choiceLayer.style.setProperty("--interactive-dialogue-font-family", style.fontFamily)
     dialogue.dataset.position = style.position
     setOptionalImageSource(dialogueFrame, style.frameImage, options.resolveAssetUrl)
     dialogueFrame.style.setProperty("--interactive-dialogue-frame-outset", `${style.frameOutset}px`)
@@ -731,13 +808,15 @@ export function mountInteractiveScene(container, sceneValue, options = {}) {
         hotspotLayer.appendChild(button)
       })
     }
+    renderStageChoices()
     layoutHotspots()
     root.dataset.faceArmed = "false"
     syncExplorationState()
     renderStatus()
 
-    const followingStage = nextStage()
-    if (followingStage) {
+    const preloadStages = [nextStage(), ...stageChoices().map(item => item.target)]
+      .filter((candidate, index, candidates) => candidate && candidates.findIndex(item => item?.id === candidate.id) === index)
+    for (const followingStage of preloadStages) {
       for (const source of [
         followingStage.image,
         followingStage.characterImage,

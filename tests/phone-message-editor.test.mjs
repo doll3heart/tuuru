@@ -536,7 +536,7 @@ test("the Settings App places editable placeholders and forbidden words before r
   assert.match(settings, /data-ph-forbidden/)
   assert.doesNotMatch(settings, /placeholder="显示名称"/)
   assert.doesNotMatch(settings, /placeholder="正文中的占位文字"/)
-  assert.match(settings, /updateWork\(wid, \{ phoneData: pd, placeholders: placeholders, globalForbidden:globalForbidden \}\)/)
+  assert.match(settings, /updateWork\(wid, \{ phoneData: pd, placeholders: placeholders, globalForbidden:globalForbidden, globalExactForbidden:globalExactForbidden \}\)/)
 })
 
 test("phone authors can save and reapply their local placeholder preset", async () => {
@@ -1111,16 +1111,16 @@ test("author choice buttons edit their owner instead of executing a reader branc
     assert.ok(choiceButton)
     choiceButton.click()
 
-    const editor = document.querySelector("#chGroupsList")
+    const editor = document.querySelector("#threadChoiceGroups")
     assert.ok(editor, "clicking an authored choice should open its local option editor")
-    const pace = editor.querySelector(".ch-grp-pace")
+    const pace = editor.querySelector(".thread-choice-reply-pace")
     assert.ok(pace)
     assert.equal(pace.value, "instant")
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
 
-    editor.querySelectorAll(".ch-grp-text")[0].value = "改过的第一句"
+    editor.querySelectorAll(".thread-choice-text")[0].value = "改过的第一句"
     pace.value = "delayed"
-    document.querySelector("#chSave").click()
+    document.querySelector("#threadChoiceSave").click()
 
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
     assert.equal(saved.choices[0].id, "choice-stable-a")
@@ -1130,6 +1130,68 @@ test("author choice buttons edit their owner instead of executing a reader branc
     assert.deepEqual(saved.choices[0].customMeta, { keep: true })
     assert.equal(saved.choices[0].used, undefined)
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("group chat reply branches let every follow-up choose its sender", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts = [
+    { id:"contact-1", name:"林澈", avatarUrl:"" },
+    { id:"contact-2", name:"沈岚", avatarUrl:"" },
+    { id:"contact-3", name:"小满", avatarUrl:"" },
+  ]
+  phoneData.chats[0].type = "group"
+  phoneData.chats[0].groupName = "夜谈组"
+  phoneData.chats[0].contactIds = ["contact-1", "contact-2", "contact-3"]
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"group-choice-owner",
+    type:"text",
+    senderId:"contact-1",
+    text:"大家怎么看？",
+    choices:[{
+      id:"group-choice",
+      text:"我先说说。",
+      replyText:"",
+      replyPace:"quick",
+      followUpMessages:[
+        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。" },
+        { id:"group-follow-2", senderId:"contact-2", type:"text", text:"沈岚也接话。" },
+      ],
+    }],
+  })
+  const fixture = await openSingleChat("message-group-choice-senders", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector(".chat-choice-btn").click()
+
+    const editor = document.querySelector("#threadChoiceGroups")
+    assert.ok(editor, "group reply branches should use the sender-aware editor")
+    const senders = [...editor.querySelectorAll(".thread-choice-followup-sender")]
+    assert.equal(senders.length, 2)
+    assert.deepEqual(senders.map(select => select.value), ["contact-1::", "contact-2::"])
+    assert.deepEqual(
+      [...senders[0].options].map(option => option.textContent),
+      ["林澈", "沈岚", "小满"],
+    )
+    assert.equal(editor.querySelector(".thread-choice-reply-pace").value, "quick")
+
+    editor.querySelector('[data-thread-followup-add="0"]').click()
+    const updatedSenders = [...editor.querySelectorAll(".thread-choice-followup-sender")]
+    assert.equal(updatedSenders[2].value, "contact-1::", "new follow-ups default to the owner of the choice message")
+    updatedSenders[0].value = "contact-3::"
+    updatedSenders[2].value = "contact-2::"
+    editor.querySelectorAll(".thread-choice-followups")[2].value = "沈岚补充一句。"
+    document.querySelector("#threadChoiceSave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices[0]
+    assert.equal(saved.replyPace, "quick")
+    assert.equal(saved.replyText, "", "a deliberately silent reader choice must stay silent")
+    assert.deepEqual(saved.followUpMessages.map(message => message.senderId), ["contact-3", "contact-2", "contact-2"])
+    assert.equal(Object.hasOwn(saved.followUpMessages[0], "contactId"), false)
+    assert.equal(Object.hasOwn(saved.followUpMessages[0], "likes"), false)
   } finally {
     closeFixture(fixture)
   }

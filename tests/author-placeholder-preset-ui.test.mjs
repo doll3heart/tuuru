@@ -55,10 +55,17 @@ test("article and phone placeholder panels expose one compact cleanup workflow",
   assert.match(styles, /\.placeholder-preset-management/)
 })
 
-test("global forbidden editors explain single-character substring matching", () => {
+test("global forbidden editors explain substring and exact matching", () => {
   for (const source of [article, phone]) {
-    assert.match(source, /填写单字也会拦截所有包含该字的内容/)
+    assert.match(source, /包含匹配/)
+    assert.match(source, /完全匹配/)
+    assert.match(source, /单字也会生效/)
+    assert.match(source, /不会拦截包含它的长句/)
+    assert.match(source, /globalExactForbidden/)
+    assert.match(source, /data-ph-exact-forbidden/)
   }
+  assert.match(styles, /\.placeholder-forbidden-groups/)
+  assert.match(styles, /\.placeholder-forbidden-group/)
 })
 
 test("global and per-placeholder forbidden editors start collapsed", () => {

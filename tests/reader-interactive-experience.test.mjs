@@ -50,7 +50,14 @@ test("standalone interactive works switch from default BGM to a stage special an
     type:"article",
     experienceMode:"interactive",
     title:"门后",
-    placeholders:[],
+    placeholders:[{
+      id:"reader-name",
+      key:"name",
+      label:"姓名",
+      prompt:"输入姓名",
+      values:[],
+      fillMode:"landing",
+    }],
     nodes:[],
     chapters:[],
     scenes:[],
@@ -66,6 +73,7 @@ test("standalone interactive works switch from default BGM to a stage special an
         image:"https://example.test/door.jpg",
         dialogue:{speaker:"", text:"推门。"},
         hotspots:[],
+        choices:[{ id:"enter", label:"name，推门进去", targetStageId:"stage-2" }],
       }, {
         id:"stage-2",
         name:"门内",
@@ -81,6 +89,7 @@ test("standalone interactive works switch from default BGM to a stage special an
   await import(`../reader/reader.js?mini-runtime=${Date.now()}-${Math.random()}`)
 
   document.querySelector(".rd-recent-item").click()
+  document.querySelector('[data-ph-id="reader-name"]').value = "阿雾"
   document.getElementById("rdStartBtn").click()
   await waitFor(() => document.querySelector(".rd-interactive-scene-page"))
   const page = document.querySelector(".rd-interactive-scene-page")
@@ -89,7 +98,9 @@ test("standalone interactive works switch from default BGM to a stage special an
   page.dispatchEvent(new dom.window.Event("pointerdown", { bubbles:true }))
   await waitFor(() => audio.src === "https://example.test/default.mp3" && audio.playCount > 0)
 
-  page.querySelector(".interactive-scene-dialogue").click()
+  const choice = page.querySelector(".interactive-scene-choice")
+  assert.equal(choice.textContent, "阿雾，推门进去")
+  choice.click()
   await waitFor(() => audio.src === "https://example.test/danger.ogg")
   assert.equal(audio.volume, .35)
   page.querySelector(".interactive-scene-dialogue").click()
