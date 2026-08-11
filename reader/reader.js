@@ -7593,16 +7593,29 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
   function flowVisibleMessageIds() {
     if (!flowEnabled) {
       var unsequencedPlayback = chatSession.flowGeneratedPlayback
-      if (!unsequencedPlayback || !Array.isArray(unsequencedPlayback.ids)) return null
       var unsequencedVisible = new Set()
-      ;(ch.rounds || []).forEach(function(round) {
-        ;(round.messages || []).forEach(function(message) {
-          if (message?.id != null) unsequencedVisible.add(String(message.id))
-        })
-      })
-      unsequencedPlayback.ids.forEach(function(id, generatedIndex) {
-        if (generatedIndex > unsequencedPlayback.index) unsequencedVisible.delete(String(id))
-      })
+      var activeUnsequencedId = unsequencedPlayback && Array.isArray(unsequencedPlayback.ids)
+        ? unsequencedPlayback.ids[unsequencedPlayback.index]
+        : null
+      unsequencedMessageScan:
+      for (var roundIndex = 0; roundIndex < (ch.rounds || []).length; roundIndex++) {
+        var messages = Array.isArray(ch.rounds[roundIndex]?.messages) ? ch.rounds[roundIndex].messages : []
+        for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+          var message = messages[messageIndex]
+          if (message?.id == null) continue
+          unsequencedVisible.add(String(message.id))
+          if (activeUnsequencedId != null && String(message.id) === String(activeUnsequencedId)) {
+            break unsequencedMessageScan
+          }
+          if (
+            Array.isArray(message.choices)
+            && message.choices.length > 0
+            && !choiceRuns.has(choiceRunKey(roundIndex, message.id))
+          ) {
+            break unsequencedMessageScan
+          }
+        }
+      }
       return unsequencedVisible
     }
     var visible = new Set()
@@ -8906,16 +8919,38 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       button.onclick = function(e) {
         e.stopPropagation()
         var key = button.dataset.choiceRunKey
-        var entry = choiceRuns.get(key)
-        if (!entry || !rounds[entry.roundIndex]) return
-        rounds[entry.roundIndex] = rollbackChatChoice(rounds[entry.roundIndex], entry.run)
-        ;(entry.run.generatedMessageIds || []).forEach(function(id) {
-          chatSession.flowTypedMessageIds.delete(String(id))
-        })
-        if (chatSession.flowGeneratedPlayback && chatSession.flowGeneratedPlayback.runKey === key) {
+        var orderedRuns = Array.from(choiceRuns.entries())
+        var selectedRunIndex = orderedRuns.findIndex(function(runEntry) { return runEntry[0] === key })
+        if (selectedRunIndex < 0) return
+        var rollbackRuns = orderedRuns.slice(selectedRunIndex)
+        var rollbackKeys = new Set(rollbackRuns.map(function(runEntry) { return runEntry[0] }))
+        for (var rollbackIndex = rollbackRuns.length - 1; rollbackIndex >= 0; rollbackIndex--) {
+          var rollbackKey = rollbackRuns[rollbackIndex][0]
+          var entry = rollbackRuns[rollbackIndex][1]
+          if (!entry || !rounds[entry.roundIndex]) continue
+          rounds[entry.roundIndex] = rollbackChatChoice(rounds[entry.roundIndex], entry.run)
+          ;(entry.run.generatedMessageIds || []).forEach(function(id) {
+            var messageId = String(id)
+            chatSession.flowTypedMessageIds.delete(messageId)
+            chatSession.claimedMessageIds.delete(messageId)
+            chatSession.endedCallIds.delete(messageId)
+            chatSession.voicePlaybacks.delete(messageId)
+            chatSession.revealedEventIds.delete(messageId)
+            chatSession.retriedEventIds.delete(messageId)
+            chatSession.burnedEventIds.delete(messageId)
+            chatSession.reactedEventIds.delete(messageId)
+            chatSession.eventResponses.delete(messageId)
+            chatSession.completedActionIds.delete(messageId)
+            ;['failed:' + messageId, 'recall:' + messageId].forEach(function(transientKey) {
+              chatSession.transientMessageStartedAt.delete(transientKey)
+              chatSession.settledTransientMessageIds.delete(transientKey)
+            })
+          })
+          choiceRuns.delete(rollbackKey)
+        }
+        if (chatSession.flowGeneratedPlayback && rollbackKeys.has(chatSession.flowGeneratedPlayback.runKey)) {
           chatSession.flowGeneratedPlayback = null
         }
-        choiceRuns.delete(key)
         renderChat()
         var reopenedList = frame.querySelector('#rdChoiceList')
         var reopenedInput = frame.querySelector('#chatInput')

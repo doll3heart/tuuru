@@ -1156,7 +1156,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       replyText:"",
       replyPace:"quick",
       followUpMessages:[
-        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。" },
+        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。", deliveryState:"failed", replyPace:"delayed" },
         { id:"group-follow-2", senderId:"contact-2", type:"text", text:"沈岚也接话。" },
       ],
     }],
@@ -1177,19 +1177,44 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       ["林澈", "沈岚", "小满"],
     )
     assert.equal(editor.querySelector(".thread-choice-reply-pace").value, "quick")
+    assert.deepEqual(
+      [...editor.querySelectorAll(".thread-choice-followup-delivery")].map(select => select.value),
+      ["failed", "normal"],
+    )
+    assert.deepEqual(
+      [...editor.querySelectorAll(".thread-choice-followup-pace")].map(select => select.value),
+      ["delayed", "inherit"],
+    )
 
     editor.querySelector('[data-thread-followup-add="0"]').click()
     const updatedSenders = [...editor.querySelectorAll(".thread-choice-followup-sender")]
     assert.equal(updatedSenders[2].value, "contact-1::", "new follow-ups default to the owner of the choice message")
+    assert.equal(editor.querySelectorAll(".thread-choice-followup-delivery")[2].value, "normal")
+    assert.equal(editor.querySelectorAll(".thread-choice-followup-pace")[2].value, "inherit")
     updatedSenders[0].value = "contact-3::"
     updatedSenders[2].value = "contact-2::"
     editor.querySelectorAll(".thread-choice-followups")[2].value = "沈岚补充一句。"
+    editor.querySelectorAll(".thread-choice-followup-delivery")[0].value = "recalled"
+    editor.querySelectorAll(".thread-choice-followup-pace")[0].value = "instant"
+    editor.querySelectorAll(".thread-choice-followup-delivery")[2].value = "failed"
+    editor.querySelectorAll(".thread-choice-followup-pace")[2].value = "quick"
     document.querySelector("#threadChoiceSave").click()
 
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices[0]
     assert.equal(saved.replyPace, "quick")
     assert.equal(saved.replyText, "", "a deliberately silent reader choice must stay silent")
     assert.deepEqual(saved.followUpMessages.map(message => message.senderId), ["contact-3", "contact-2", "contact-2"])
+    assert.deepEqual(
+      saved.followUpMessages.map(message => message.deliveryState),
+      ["recalled", undefined, "failed"],
+    )
+    assert.deepEqual(
+      saved.followUpMessages.map(message => message.replyPace),
+      ["instant", undefined, "quick"],
+    )
+    assert.deepEqual(saved.followUpMessages.map(message => message.type), ["text", "text", "text"])
+    assert.equal(Object.hasOwn(saved.followUpMessages[0], "failed"), false)
+    assert.equal(Object.hasOwn(saved.followUpMessages[0], "eventKind"), false)
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "contactId"), false)
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "likes"), false)
   } finally {

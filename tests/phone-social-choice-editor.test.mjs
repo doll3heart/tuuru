@@ -252,6 +252,8 @@ test("author forum comments expose and edit reply choices without executing them
 
     const editor = document.querySelector("#threadChoiceGroups")
     assert.ok(editor)
+    assert.equal(editor.querySelector(".thread-choice-followup-delivery"), null)
+    assert.equal(editor.querySelector(".thread-choice-followup-pace"), null)
     editor.querySelector(".thread-choice-text").value = "改过的论坛回复"
     editor.querySelector(".thread-choice-followups").value = "Updated follow-up"
     document.querySelector("#threadChoiceSave").click()

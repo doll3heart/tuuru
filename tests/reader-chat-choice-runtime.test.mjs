@@ -267,7 +267,7 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
   assert.doesNotMatch(visibleText, /好，我会准时到/)
   assert.doesNotMatch(visibleText, /那我在老地方等你/)
   assert.match(visibleText, /今晚要不要见面/)
-  assert.match(visibleText, /这是作者原本排在后面的消息/)
+  assert.doesNotMatch(visibleText, /这是作者原本排在后面的消息/)
 
   const choiceList = document.querySelector("#rdChoiceList")
   assert.ok(choiceList)
@@ -290,7 +290,12 @@ test("separate message choice groups become available in conversation order", as
     id:"first-choice",
     text:"Reply to the first message",
     replyText:"First reader reply",
-    followUpMessages:[],
+    followUpMessages:[{
+      id:"first-follow-up",
+      type:"text",
+      senderId:"contact-1",
+      text:"First character follow-up",
+    }],
   }]
   messages.splice(1, 0, {
     id:"second-owner-message",
@@ -301,17 +306,29 @@ test("separate message choice groups become available in conversation order", as
       id:"second-choice",
       text:"Reply to the second message",
       replyText:"Second reader reply",
-      followUpMessages:[],
+      followUpMessages:[{
+        id:"second-follow-up",
+        type:"text",
+        senderId:"contact-1",
+        text:"Second character follow-up",
+      }],
     }],
   })
 
   await openSeededChat(t, work)
 
+  assert.doesNotMatch(
+    document.querySelector("#chatMsgArea").textContent,
+    /This is the second question/,
+    "later choice owners must stay hidden until the current gate is answered",
+  )
   let options = [...document.querySelectorAll(".rd-reply-option")]
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
   options[0].click()
 
   assert.match(document.querySelector("#chatMsgArea").textContent, /First reader reply/)
+  assert.match(document.querySelector("#chatMsgArea").textContent, /First character follow-up/)
+  assert.match(document.querySelector("#chatMsgArea").textContent, /This is the second question/)
   options = [...document.querySelectorAll(".rd-reply-option")]
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the second message"])
   options[0].click()
@@ -319,5 +336,18 @@ test("separate message choice groups become available in conversation order", as
   const renderedText = document.querySelector("#chatMsgArea").textContent
   assert.match(renderedText, /First reader reply/)
   assert.match(renderedText, /Second reader reply/)
+  assert.match(renderedText, /Second character follow-up/)
   assert.equal(document.querySelectorAll(".rd-chat-choice-reselect").length, 2)
+
+  document.querySelectorAll(".rd-chat-choice-reselect")[0].click()
+
+  const rerolledText = document.querySelector("#chatMsgArea").textContent
+  assert.doesNotMatch(rerolledText, /First reader reply/)
+  assert.doesNotMatch(rerolledText, /First character follow-up/)
+  assert.doesNotMatch(rerolledText, /This is the second question/)
+  assert.doesNotMatch(rerolledText, /Second reader reply/)
+  assert.doesNotMatch(rerolledText, /Second character follow-up/)
+  assert.equal(document.querySelectorAll(".rd-chat-choice-reselect").length, 0)
+  options = [...document.querySelectorAll(".rd-reply-option")]
+  assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
 })

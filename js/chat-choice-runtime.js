@@ -1,4 +1,5 @@
 import { chatReplyTypingDuration } from "./chat-reply-pace.js"
+import { normalizeChatFollowUpDeliveryState } from "./chat-follow-up.js"
 
 function cloneValue(value) {
   if (Array.isArray(value)) return value.map(cloneValue)
@@ -60,12 +61,11 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
   const followUpMessages = Array.isArray(choice.followUpMessages)
     ? choice.followUpMessages
     : []
-  const typingDuration = chatReplyTypingDuration(choice.replyPace)
-  let insertedTypingEvent = false
 
   for (const followUpMessage of followUpMessages) {
     const followUpSenderId = followUpMessage?.senderId || followUpMessage?.contactId || ""
-    if (!insertedTypingEvent && typingDuration > 0 && followUpSenderId && followUpSenderId !== "self") {
+    const typingDuration = chatReplyTypingDuration(followUpMessage?.replyPace ?? choice.replyPace)
+    if (typingDuration > 0 && followUpSenderId && followUpSenderId !== "self") {
       generatedMessages.push({
         id: options.idFactory(),
         type: "system-event",
@@ -75,10 +75,28 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
         durationMs: typingDuration,
         transientTyping: true,
       })
-      insertedTypingEvent = true
     }
-    const generatedMessage = cloneValue(followUpMessage)
-    generatedMessage.id = options.idFactory()
+    const deliveryState = normalizeChatFollowUpDeliveryState(followUpMessage?.deliveryState)
+    const messageTemplate = cloneValue(followUpMessage)
+    delete messageTemplate.replyPace
+    delete messageTemplate.deliveryState
+    let generatedMessage
+    if (deliveryState === "recalled") {
+      generatedMessage = {
+        id: options.idFactory(),
+        type: "system-event",
+        eventKind: "recall",
+        senderId: "system",
+        actorContactId: followUpSenderId,
+        originalText: typeof messageTemplate.text === "string" ? messageTemplate.text : "",
+        allowReveal: false,
+        recalledMessage: messageTemplate,
+      }
+    } else {
+      generatedMessage = messageTemplate
+      generatedMessage.id = options.idFactory()
+      if (deliveryState === "failed") generatedMessage.failed = true
+    }
     generatedMessages.push(generatedMessage)
   }
 

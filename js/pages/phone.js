@@ -16,6 +16,7 @@ import { contactAvatar, contactDisplayName, listForumIdentities, resolveContactI
 import { normalizeContactSortMode, orderedContacts, reorderContacts } from "../contact-order.js"
 import { createContactFriendRequest } from "../contact-friend-request.js"
 import { CHAT_REPLY_PACES, normalizeChatReplyPace } from "../chat-reply-pace.js"
+import { CHAT_FOLLOW_UP_DELIVERY_STATES, normalizeChatFollowUpDeliveryState } from "../chat-follow-up.js"
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from "../message-card-links.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
@@ -221,8 +222,19 @@ function openThreadReplyChoiceEditor(owner, options) {
       replyLikes: nonnegativeCount(choice.replyLikes),
       followUps: Array.isArray(choice.followUpMessages)
         ? choice.followUpMessages.map(function(message) {
-            var senderId = message.senderId || message.contactId || options.defaultFollowUpSenderId || owner.contactId || 'self'
-            return { id:message.id || '', actorKey:String(senderId) + '::' + String(message.aliasId || ''), text:message.text || message.content || '', likes:nonnegativeCount(message.likes) }
+            var recalledMessage = message.recalledMessage && typeof message.recalledMessage === 'object' ? message.recalledMessage : null
+            var senderId = recalledMessage?.senderId || message.senderId || message.actorContactId || message.contactId || options.defaultFollowUpSenderId || owner.contactId || 'self'
+            var legacyDeliveryState = message.failed === true
+              ? 'failed'
+              : (message.type === 'system-event' && message.eventKind === 'recall' ? 'recalled' : message.deliveryState)
+            return {
+              id:message.id || '',
+              actorKey:String(senderId) + '::' + String(recalledMessage?.aliasId || message.aliasId || ''),
+              text:recalledMessage?.text || message.originalText || message.text || message.content || '',
+              likes:nonnegativeCount(recalledMessage?.likes ?? message.likes),
+              deliveryState:normalizeChatFollowUpDeliveryState(legacyDeliveryState),
+              replyPace:message.replyPace || 'inherit'
+            }
           })
         : []
     }
@@ -265,12 +277,17 @@ function openThreadReplyChoiceEditor(owner, options) {
         groups[index].replyLikes = nonnegativeCount(row.querySelector('.thread-choice-reply-likes')?.value)
       }
       groups[index].followUps = Array.from(row.querySelectorAll('.thread-choice-followup-row')).map(function(followUpRow) {
-        return {
+        var followUp = {
           id:followUpRow.dataset.followupId || '',
           actorKey:followUpRow.querySelector('.thread-choice-followup-sender')?.value || String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::',
           text:followUpRow.querySelector('.thread-choice-followups')?.value || '',
           likes:options.showLikeCounts === true ? nonnegativeCount(followUpRow.querySelector('.thread-choice-followup-likes')?.value) : 0
         }
+        if (options.showReplyPace === true) {
+          followUp.deliveryState = normalizeChatFollowUpDeliveryState(followUpRow.querySelector('.thread-choice-followup-delivery')?.value)
+          followUp.replyPace = followUpRow.querySelector('.thread-choice-followup-pace')?.value || 'inherit'
+        }
+        return followUp
       })
     })
   }
@@ -281,7 +298,7 @@ function openThreadReplyChoiceEditor(owner, options) {
       html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input" value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
       html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input" value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
       if (options.showReplyPace === true) {
-        html += '<label class="form-label thread-choice-pace-label">角色回复节奏</label><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(group.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select><div class="form-hint">除“直接出现”外，读者会先看到角色正在输入。</div>'
+        html += '<label class="form-label thread-choice-pace-label">默认角色回复节奏</label><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的默认角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(group.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select><div class="form-hint">应用于本组全部角色消息；每条消息还可以单独覆盖。</div>'
       }
       if (options.showLikeCounts === true) {
         html += '<label class="form-label thread-choice-like-label">读者回复初始点赞数</label><input class="thread-choice-reply-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(group.replyLikes) + '">'
@@ -289,9 +306,14 @@ function openThreadReplyChoiceEditor(owner, options) {
       html += '<div class="thread-choice-followup-head"><span>角色后续消息</span><button type="button" data-thread-followup-add="' + index + '">＋ 添加</button></div>'
       html += '<div class="thread-choice-followup-list">'
       ;(group.followUps || []).forEach(function(followUp, followUpIndex) {
-        html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input" value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
+        html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><div class="thread-choice-followup-main"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input" value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
         if (options.showLikeCounts === true) html += '<label class="thread-choice-followup-like"><span>赞</span><input class="thread-choice-followup-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(followUp.likes) + '" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复初始点赞数"></label>'
         html += '<button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
+        if (options.showReplyPace === true) {
+          html += '<div class="thread-choice-followup-settings"><label><span>消息状态</span><select class="thread-choice-followup-delivery" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复消息状态">' + CHAT_FOLLOW_UP_DELIVERY_STATES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatFollowUpDeliveryState(followUp.deliveryState) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
+          html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label></div>'
+        }
+        html += '</div>'
       })
       html += '</div>'
       html += '<button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除这条回复" style="position:absolute;right:5px;top:5px;border:0;background:transparent;color:var(--c-text2);cursor:pointer">×</button></div>'
@@ -310,7 +332,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         collect()
         var group = groups[Number(button.dataset.threadFollowupAdd)]
         if (!group) return
-        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0 })
+        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit' })
         render()
       }
     })
@@ -354,7 +376,7 @@ function openThreadReplyChoiceEditor(owner, options) {
           senderId: senderId,
           text: followUp.text.trim(),
           content: followUp.text.trim(),
-          type: oldMessage?.type || 'text'
+          type: options.showReplyPace === true ? 'text' : (oldMessage?.type || 'text')
         }
         if (options.includeFollowUpIdentityFields !== false) {
           messagePatch.contactId = senderId
@@ -364,7 +386,21 @@ function openThreadReplyChoiceEditor(owner, options) {
         if (!oldMessage?.time && typeof options.followUpTimeFactory === 'function') {
           messagePatch.time = options.followUpTimeFactory()
         }
-        return Object.assign({}, oldMessage || {}, messagePatch)
+        var nextMessage = Object.assign({}, oldMessage || {}, messagePatch)
+        if (options.showReplyPace === true) {
+          delete nextMessage.failed
+          delete nextMessage.eventKind
+          delete nextMessage.actorContactId
+          delete nextMessage.originalText
+          delete nextMessage.allowReveal
+          delete nextMessage.recalledMessage
+          var deliveryState = normalizeChatFollowUpDeliveryState(followUp.deliveryState)
+          if (deliveryState === 'normal') delete nextMessage.deliveryState
+          else nextMessage.deliveryState = deliveryState
+          if (followUp.replyPace === 'inherit') delete nextMessage.replyPace
+          else nextMessage.replyPace = normalizeChatReplyPace(followUp.replyPace)
+        }
+        return nextMessage
       })
       var replyText = group.replyText.trim()
       if (!replyText && options.preserveEmptyReplyText !== true) replyText = text

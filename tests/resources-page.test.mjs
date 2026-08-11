@@ -384,8 +384,12 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /发送失败时[^。]*先看到消息发出[^。]*迅速消失/)
   assert.match(source, /撤回时[^。]*可点开查看原文的系统提示/)
   assert.match(source, /多条消息都设置了选项时[^。]*按消息顺序逐组选择/)
+  assert.match(source, /当前一组还未选择时[^。]*后面的消息[^。]*隐藏/)
+  assert.match(source, /重选前面的选项[^。]*清除[^。]*后续选择/)
   assert.match(source, /选择接话的群成员/)
   assert.match(source, /每条后续消息都会按所选群成员的身份显示/)
+  assert.match(source, /正常发送[^。]*发送失败[^。]*发送后撤回/)
+  assert.match(source, /继承本组选项/)
 })
 
 test("the shopping tutorial explains how to edit an existing product card", () => {
@@ -572,4 +576,11 @@ test("the resources layout reflows form rows and keeps readable tutorial prose o
   assert.match(css, /@media\s*\(max-width:\s*700px\)[\s\S]*\.tutorial-directory\s*\{[^}]*overflow-x\s*:\s*auto/s)
   assert.match(css, /@media\s*\(max-width:\s*600px\)[\s\S]*\.preset-field-row\s*\{[^}]*grid-template-columns\s*:\s*1fr/)
   assert.match(css, /\.resource-status\s*\{[^}]*overflow-wrap\s*:\s*anywhere/s)
+})
+
+test("follow-up message controls stay grouped and reflow on narrow touch screens", () => {
+  assert.match(css, /\.thread-choice-followup-row\s*\{[^}]*padding\s*:\s*8px[^}]*border\s*:/s)
+  assert.match(css, /\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,minmax\(0,1fr\)\)/s)
+  assert.match(css, /@media\(max-width:420px\)[^}]*[\s\S]*\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,1fr\)/s)
+  assert.match(css, /@media\(pointer:coarse\)[\s\S]*?\.thread-choice-followup-row button\s*\{[^}]*width\s*:\s*44px[^}]*height\s*:\s*44px/s)
 })

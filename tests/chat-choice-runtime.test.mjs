@@ -145,7 +145,7 @@ test("a paced character reply inserts a temporary typing event before follow-ups
   assert.equal(result.ok, true)
   assert.deepEqual(
     result.round.messages.map(message => message.id),
-    ["before", "owner", "paced-1", "paced-2", "paced-3", "paced-4", "suffix"],
+    ["before", "owner", "paced-1", "paced-2", "paced-3", "paced-4", "paced-5", "suffix"],
   )
   assert.deepEqual(result.round.messages[3], {
     id: "paced-2",
@@ -156,7 +156,105 @@ test("a paced character reply inserts a temporary typing event before follow-ups
     durationMs: 700,
     transientTyping: true,
   })
-  assert.deepEqual(result.run.generatedMessageIds, ["paced-1", "paced-2", "paced-3", "paced-4"])
+  assert.deepEqual(result.round.messages[5], {
+    id: "paced-4",
+    type: "system-event",
+    eventKind: "typing",
+    senderId: "system",
+    actorContactId: "contact-2",
+    durationMs: 700,
+    transientTyping: true,
+  })
+  assert.deepEqual(result.run.generatedMessageIds, ["paced-1", "paced-2", "paced-3", "paced-4", "paced-5"])
+})
+
+test("each character follow-up can override pace and render as failed or recalled", () => {
+  const round = fixtureRound()
+  const choice = round.messages[1].choices[0]
+  choice.replyText = ""
+  choice.replyPace = "quick"
+  choice.followUpMessages = [
+    {
+      id:"failed-template",
+      senderId:"contact-1",
+      text:"This one fails.",
+      type:"text",
+      replyPace:"instant",
+      deliveryState:"failed",
+    },
+    {
+      id:"recalled-template",
+      senderId:"contact-2",
+      text:"This one is recalled.",
+      type:"text",
+      replyPace:"delayed",
+      deliveryState:"recalled",
+    },
+    {
+      id:"inherited-template",
+      senderId:"contact-1",
+      text:"This one inherits the choice pace.",
+      type:"text",
+    },
+  ]
+  let sequence = 0
+
+  const result = callApply(round, "owner", 0, {
+    idFactory: () => `state-${++sequence}`,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(
+    result.round.messages.map(message => message.id),
+    ["before", "owner", "state-1", "state-2", "state-3", "state-4", "state-5", "suffix"],
+  )
+  assert.deepEqual(result.round.messages[2], {
+    id:"state-1",
+    senderId:"contact-1",
+    text:"This one fails.",
+    type:"text",
+    failed:true,
+  })
+  assert.deepEqual(result.round.messages[3], {
+    id:"state-2",
+    type:"system-event",
+    eventKind:"typing",
+    senderId:"system",
+    actorContactId:"contact-2",
+    durationMs:4200,
+    transientTyping:true,
+  })
+  assert.deepEqual(result.round.messages[4], {
+    id:"state-3",
+    type:"system-event",
+    eventKind:"recall",
+    senderId:"system",
+    actorContactId:"contact-2",
+    originalText:"This one is recalled.",
+    allowReveal:false,
+    recalledMessage:{
+      id:"recalled-template",
+      senderId:"contact-2",
+      text:"This one is recalled.",
+      type:"text",
+    },
+  })
+  assert.deepEqual(result.round.messages[5], {
+    id:"state-4",
+    type:"system-event",
+    eventKind:"typing",
+    senderId:"system",
+    actorContactId:"contact-1",
+    durationMs:700,
+    transientTyping:true,
+  })
+  assert.deepEqual(result.round.messages[6], {
+    id:"state-5",
+    senderId:"contact-1",
+    text:"This one inherits the choice pace.",
+    type:"text",
+  })
+  assert.deepEqual(result.run.generatedMessageIds, ["state-1", "state-2", "state-3", "state-4", "state-5"])
 })
 
 test("rollback removes exactly the generated ids without mutating round or run", () => {
