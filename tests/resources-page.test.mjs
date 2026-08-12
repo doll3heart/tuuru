@@ -303,7 +303,7 @@ test("the tutorial gives interactive pictures a complete searchable section", ()
   ]) assert.match(source, new RegExp(feature))
   for (const detail of [
     "探索完当前画面的全部互动点",
-    "点击对话框进入下一画面",
+    "无画面选项时点击主对话框进入",
     "靠近后点击",
     "靠近后长按",
     "静态图",
@@ -315,6 +315,14 @@ test("the tutorial gives interactive pictures a complete searchable section", ()
     "HTTPS 图床",
     "不会替换图片链接",
   ]) assert.match(source, new RegExp(detail))
+})
+
+test("Mini game guidance distinguishes direct continuation from authored scene choices", () => {
+  assert.match(source, /无画面选项时点击主对话框继续[^。]*有画面选项时[^。]*选择目标画面/)
+  assert.match(source, /最后一个画面没有画面选项时[^。]*作品完成页/)
+  assert.match(source, /如果设置了画面选项[^。]*跳到所选目标画面/)
+  assert.match(source, /设置标记、问题和违禁词/)
+  assert.doesNotMatch(source, /设置标记、问题、模式和违禁词/)
 })
 
 test("interactive-picture guidance documents page splitting, final continuation, and branch placement", () => {
@@ -367,12 +375,31 @@ test("the tutorial explains article message contact visibility without reviving 
 
 test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {
   for (const feature of [
-    "App 排列", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
+    "App 排列", "小手机 App 与详情返回", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
     "外卖卡片", "消息编辑菜单", "消息多选与转发", "会话置顶与排序", "消息回复选项", "聊天轮次", "语音与视频通话",
     "动态", "论坛", "楼中楼回复关系", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
   ]) {
     assert.match(source, new RegExp(feature))
   }
+})
+
+test("the tutorial explains phone image export, naming, pagination, masking, and external-image limits", () => {
+  assert.match(source, /小手机图片导出/)
+  assert.match(source, /作品名-模块-内容名/)
+  assert.match(source, /过长内容[^。]*自动分页/)
+  assert.match(source, /▖▜▖▗[^。]*自动打码/)
+  assert.match(source, /读者本人头像[^。]*NPC 与角色头像保持原样/)
+  assert.match(source, /外链图片[^。]*空白/)
+  assert.match(source, /没有内容的 App 自动跳过/)
+  assert.match(source, /导出过程中可以取消/)
+  assert.match(source, /查看未导出的项目/)
+  assert.match(source, /已成功图片仍会打包/)
+})
+
+test("the phone tutorial explains layered back navigation without exiting to the bookshelf", () => {
+  assert.match(source, /聊天详情回消息列表[^。]*帖子详情回论坛列表[^。]*手机桌面/)
+  assert.match(source, /从聊天卡片进入的帖子会回到原聊天位置/)
+  assert.match(source, /不会直接跳回书架/)
 })
 
 test("the message tutorial explains the distilled composer and multi-select forwarding", () => {
@@ -391,6 +418,9 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /每条后续消息都会按所选群成员的身份显示/)
   assert.match(source, /正常发送[^。]*发送失败[^。]*发送后撤回/)
   assert.match(source, /继承本组选项/)
+  assert.match(source, /每点一次【添加】就新增一个气泡/)
+  assert.match(source, /换行不会自动拆成多个气泡/)
+  assert.doesNotMatch(source, /每行文字会生成一个气泡/)
 })
 
 test("the shopping tutorial explains how to edit an existing product card", () => {
@@ -436,6 +466,11 @@ test("the placeholder feature list covers global words, search, and cleanup", ()
   assert.match(source, /包含匹配/)
   assert.match(source, /完全匹配/)
   assert.match(source, /哥哥！/)
+  assert.match(source, /每个答案会同时检查当前占位符自己的词库和作品全局词库/)
+  assert.match(source, /小手机中整理后仍需点【保存设置】/)
+  assert.match(source, /按忽略大小写去重/)
+  assert.match(source, /预设中的全局违禁词会与目标作品现有词库合并去重[^。]*不会覆盖原词/)
+  assert.match(source, /作品文件会包含当前作品正在使用的占位符、单项违禁词和全局违禁词/)
 })
 
 test("every tutorial category keeps a searchable FAQ", () => {

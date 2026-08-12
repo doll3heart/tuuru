@@ -164,6 +164,8 @@ test("package keeps the exact browser-lock script alongside approved runtime dep
   assert.deepEqual(packageJson.dependencies, {
     "@mediapipe/tasks-vision": "^0.10.35",
     dompurify: "^3.4.11",
+    fflate: "^0.8.3",
+    "html-to-image": "^1.11.13",
   })
   assert.deepEqual(packageJson.devDependencies, {
     "@types/node": "^24.13.3",

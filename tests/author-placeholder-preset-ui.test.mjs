@@ -68,6 +68,13 @@ test("global forbidden editors explain substring and exact matching", () => {
   assert.match(styles, /\.placeholder-forbidden-group/)
 })
 
+test("the inline placeholder help explains forbidden scope and preset merging", () => {
+  assert.match(article, /单项词只限制当前占位符[^。]*全局词会叠加到本作品全部占位符/)
+  assert.match(article, /包含匹配会拦截含有该词的长句/)
+  assert.match(article, /完全匹配只拦截去除首尾空格后整段相同的答案/)
+  assert.match(article, /预设中的全局违禁词会与当前作品词库合并去重[^。]*不会覆盖原词/)
+})
+
 test("global forbidden editors use a scoped responsive hierarchy", () => {
   for (const source of [article, phone]) {
     assert.match(source, /placeholder-global-heading/)
