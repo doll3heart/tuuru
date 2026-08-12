@@ -285,6 +285,8 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
 
 test("separate message choice groups become available in conversation order", async t => {
   const work = choiceWork()
+  work.phoneData.chats[0].type = "group"
+  work.phoneData.chats[0].groupName = "Choice group"
   const messages = work.phoneData.chats[0].rounds[0].messages
   messages[0].choices = [{
     id:"first-choice",
@@ -298,6 +300,11 @@ test("separate message choice groups become available in conversation order", as
     }],
   }]
   messages.splice(1, 0, {
+    id:"second-system-message",
+    type:"system",
+    senderId:"system",
+    text:"A second group system message.",
+  }, {
     id:"second-owner-message",
     type:"text",
     senderId:"contact-1",
@@ -322,6 +329,11 @@ test("separate message choice groups become available in conversation order", as
     /This is the second question/,
     "later choice owners must stay hidden until the current gate is answered",
   )
+  assert.match(
+    document.querySelector("#chatMsgArea").textContent,
+    /A second group system message/,
+    "system messages in the current group segment must not be swallowed by the reply gate",
+  )
   let options = [...document.querySelectorAll(".rd-reply-option")]
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
   options[0].click()
@@ -344,6 +356,7 @@ test("separate message choice groups become available in conversation order", as
   const rerolledText = document.querySelector("#chatMsgArea").textContent
   assert.doesNotMatch(rerolledText, /First reader reply/)
   assert.doesNotMatch(rerolledText, /First character follow-up/)
+  assert.match(rerolledText, /A second group system message/)
   assert.doesNotMatch(rerolledText, /This is the second question/)
   assert.doesNotMatch(rerolledText, /Second reader reply/)
   assert.doesNotMatch(rerolledText, /Second character follow-up/)

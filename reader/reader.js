@@ -7597,12 +7597,19 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
       var activeUnsequencedId = unsequencedPlayback && Array.isArray(unsequencedPlayback.ids)
         ? unsequencedPlayback.ids[unsequencedPlayback.index]
         : null
+      var unsequencedChoiceGateActive = false
       unsequencedMessageScan:
       for (var roundIndex = 0; roundIndex < (ch.rounds || []).length; roundIndex++) {
         var messages = Array.isArray(ch.rounds[roundIndex]?.messages) ? ch.rounds[roundIndex].messages : []
         for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
           var message = messages[messageIndex]
           if (message?.id == null) continue
+          if (unsequencedChoiceGateActive) {
+            if (Array.isArray(message.choices) && message.choices.length > 0) {
+              break unsequencedMessageScan
+            }
+            if (message.type !== 'system') continue
+          }
           unsequencedVisible.add(String(message.id))
           if (activeUnsequencedId != null && String(message.id) === String(activeUnsequencedId)) {
             break unsequencedMessageScan
@@ -7612,7 +7619,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep) {
             && message.choices.length > 0
             && !choiceRuns.has(choiceRunKey(roundIndex, message.id))
           ) {
-            break unsequencedMessageScan
+            unsequencedChoiceGateActive = true
           }
         }
       }
