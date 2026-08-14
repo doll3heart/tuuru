@@ -1,6 +1,9 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { JSDOM } from "jsdom"
+import { readFileSync } from "node:fs"
+
+const authorCss = readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
 
 function installDom() {
   const dom = new JSDOM("<!doctype html><html><body><div id=app></div></body></html>", {
@@ -14,6 +17,7 @@ function installDom() {
   globalThis.Node = dom.window.Node
   globalThis.Event = dom.window.Event
   globalThis.MouseEvent = dom.window.MouseEvent
+  globalThis.FileReader = dom.window.FileReader
   globalThis.MutationObserver = dom.window.MutationObserver
   globalThis.requestAnimationFrame = callback => { callback(); return 1 }
   return dom
@@ -1137,6 +1141,7 @@ test("author choice buttons edit their owner instead of executing a reader branc
         id: "choice-stable-a",
         text: "第一句",
         replyText: "第一句",
+        imageUrl: "https://example.invalid/choice-before.png",
         customMeta: { keep: true },
         followUpMessages: [{
           id: "follow-stable-a",
@@ -1158,23 +1163,84 @@ test("author choice buttons edit their owner instead of executing a reader branc
 
     const editor = document.querySelector("#threadChoiceGroups")
     assert.ok(editor, "clicking an authored choice should open its local option editor")
+    assert.equal(document.querySelector("#threadChoiceAdd").textContent.trim(), "+ 添加新选项组")
+    const imageInput = editor.querySelector(".thread-choice-image-url")
+    const imagePreview = editor.querySelector(".thread-choice-image-preview img")
+    const optionalSettings = editor.querySelector(".thread-choice-more")
+    assert.equal(optionalSettings?.open, true, "saved optional settings should reopen for editing")
+    assert.equal(optionalSettings?.contains(imageInput), true)
+    assert.equal(optionalSettings?.contains(editor.querySelector(".thread-choice-text")), false)
+    assert.equal(imageInput?.value, "https://example.invalid/choice-before.png")
+    assert.equal(imagePreview?.getAttribute("src"), "https://example.invalid/choice-before.png")
     const pace = editor.querySelector(".thread-choice-reply-pace")
     assert.ok(pace)
     assert.equal(pace.value, "instant")
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
 
     editor.querySelectorAll(".thread-choice-text")[0].value = "改过的第一句"
+    imageInput.value = "https://example.invalid/choice-after.png"
     pace.value = "delayed"
     document.querySelector("#threadChoiceSave").click()
 
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
     assert.equal(saved.choices[0].id, "choice-stable-a")
     assert.equal(saved.choices[0].text, "改过的第一句")
+    assert.equal(saved.choices[0].imageUrl, "https://example.invalid/choice-after.png")
     assert.equal(saved.choices[0].followUpMessages[0].id, "follow-stable-a")
     assert.equal(saved.choices[0].replyPace, "delayed")
     assert.deepEqual(saved.choices[0].customMeta, { keep: true })
     assert.equal(saved.choices[0].used, undefined)
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
+    assert.equal(
+      overlay.querySelector(".chat-choice-btn img")?.getAttribute("src"),
+      "https://example.invalid/choice-after.png",
+    )
+
+    overlay.querySelector(".chat-choice-btn").click()
+    const clearButton = document.querySelector(".thread-choice-image-clear")
+    clearButton.click()
+    assert.equal(document.querySelector(".thread-choice-image-preview").hidden, true)
+    document.querySelector("#threadChoiceSave").click()
+    assert.equal(
+      Object.hasOwn(draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices[0], "imageUrl"),
+      false,
+    )
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("authors can import one local image for a reader choice", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id: "image-choice-owner",
+    type: "text",
+    senderId: "contact-1",
+    text: "Choose an image",
+    choices: [{ id: "image-choice", text: "Send it", replyText: "Send it", followUpMessages: [] }],
+  })
+  const fixture = await openSingleChat("message-editor-local-choice-image", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector(".chat-choice-btn").click()
+    const optionalSettings = document.querySelector(".thread-choice-more")
+    assert.equal(optionalSettings?.open, false, "unused optional settings should stay collapsed")
+    optionalSettings.open = true
+    const fileInput = document.querySelector(".thread-choice-image-file")
+    const file = new window.File(["tiny-image"], "choice.png", { type: "image/png" })
+    Object.defineProperty(fileInput, "files", { configurable: true, value: [file] })
+    fileInput.dispatchEvent(new window.Event("change", { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    const imageUrl = document.querySelector(".thread-choice-image-url").value
+    assert.match(imageUrl, /^data:image\/png;base64,/)
+    assert.equal(document.querySelector(".thread-choice-image-preview").hidden, false)
+    document.querySelector("#threadChoiceSave").click()
+    assert.equal(
+      draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices[0].imageUrl,
+      imageUrl,
+    )
   } finally {
     closeFixture(fixture)
   }
@@ -1234,6 +1300,19 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       [...editor.querySelectorAll(".thread-choice-followup-delay")].map(input => input.value),
       ["1.25", ""],
     )
+    const silent = editor.querySelector(".thread-choice-silent")
+    const endRound = editor.querySelector(".thread-choice-end-round")
+    const replyField = editor.querySelector(".thread-choice-reply")
+    assert.ok(silent)
+    assert.ok(endRound)
+    assert.ok(replyField.id)
+    assert.equal(editor.querySelector(`label[for="${replyField.id}"]`)?.control, replyField)
+    silent.focus()
+    silent.checked = true
+    silent.dispatchEvent(new window.Event("change", { bubbles:true }))
+    assert.equal(document.activeElement, silent)
+    assert.equal(editor.querySelector(".thread-choice-reply").disabled, true)
+    editor.querySelector(".thread-choice-end-round").checked = true
 
     editor.querySelector('[data-thread-followup-add="0"]').click()
     const updatedSenders = [...editor.querySelectorAll(".thread-choice-followup-sender")]
@@ -1253,6 +1332,8 @@ test("group chat reply branches let every follow-up choose its sender", async ()
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices[0]
     assert.equal(saved.replyPace, "quick")
     assert.equal(saved.replyText, "", "a deliberately silent reader choice must stay silent")
+    assert.equal(saved.silent, true)
+    assert.equal(saved.endRound, true)
     assert.deepEqual(saved.followUpMessages.map(message => message.senderId), ["contact-3", "contact-2", "contact-2"])
     assert.deepEqual(
       saved.followUpMessages.map(message => message.deliveryState),
@@ -1271,6 +1352,13 @@ test("group chat reply branches let every follow-up choose its sender", async ()
   } finally {
     closeFixture(fixture)
   }
+})
+
+test("reply-choice actions expose practical pointer targets", () => {
+  assert.match(authorCss, /\.thread-choice-remove\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*32px/s)
+  assert.match(authorCss, /\.thread-choice-modal\s+\.modal-footer\s+\.btn\s*\{[^}]*min-height:\s*40px/s)
+  assert.match(authorCss, /@media\(pointer:coarse\)\s*\{[^}]*\.thread-choice-followup-head button\s*\{[^}]*min-height:\s*44px/s)
+  assert.match(authorCss, /@media\(pointer:coarse\)\s*\{[\s\S]*\.thread-choice-remove\s*\{[^}]*min-width:\s*44px[^}]*min-height:\s*44px/s)
 })
 
 test("message context menus expose a dedicated per-choice reply pace editor", async () => {
@@ -1342,6 +1430,48 @@ test("every authored message can set an exact pre-send delay from its context me
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
     assert.equal(saved.delayBeforeMs, 2500)
     assert.match(overlay.querySelector('[data-message-id="delay-message"] .chat-message-delay-badge').textContent, /\+2\.5s/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("authors can reveal a later message after one stable reader choice", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push(
+    {
+      id:"condition-owner",
+      senderId:"contact-1",
+      type:"text",
+      text:"你愿意吗？",
+      choices:[
+        { id:"condition-yes", text:"愿意", replyText:"愿意", followUpMessages:[] },
+        { id:"condition-no", text:"拒绝", replyText:"拒绝", followUpMessages:[] },
+      ],
+    },
+    { id:"condition-later", senderId:"contact-1", type:"text", text:"只有拒绝后才出现。" },
+  )
+  const fixture = await openSingleChat("message-story-visibility", phoneData)
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('[data-message-id="condition-later"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:30,
+      clientY:30,
+    }))
+    const action = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "剧情显示条件")
+    assert.ok(action)
+    action.click()
+    const select = document.querySelector("#chatMessageVisibilityChoice")
+    assert.equal(select.options[0].textContent, "始终显示")
+    select.value = "condition-no"
+    document.querySelector("#chatMessageVisibilitySave").click()
+
+    assert.equal(
+      draft.snapshot().phoneData.chats[0].rounds[0].messages[1].visibleAfterChoiceId,
+      "condition-no",
+    )
   } finally {
     closeFixture(fixture)
   }

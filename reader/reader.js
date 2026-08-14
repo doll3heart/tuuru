@@ -129,6 +129,13 @@ import {
   resolvePhoneReadingFlowStep,
 } from '../js/phone-reading-flow.js'
 import {
+  phoneStoryChoiceById,
+  phoneStoryItemIsVisible,
+  phoneStoryMessageBlockedByEndedRound,
+  prunePhoneStoryChoiceSelections,
+  selectedPhoneStoryChoiceIds,
+} from '../js/phone-story-state.js'
+import {
   READER_APPEARANCE_DEFAULTS,
   READER_APPEARANCE_THEMES,
   normalizeReaderAppearance,
@@ -341,13 +348,17 @@ function readerThreadRuntimeOptions(pd, custom, scope) {
     },
     createReply: function(context) {
       var text = String(context.choice && context.choice.replyText || '')
+      var imageUrl = typeof context.choice?.imageUrl === 'string' && isSafeImageUrl(context.choice.imageUrl)
+        ? context.choice.imageUrl.trim()
+        : ''
       return {
         id: context.id,
         contactId: 'self',
         senderId: 'self',
         contactName: readerName,
-        content: text,
-        text: text,
+        content: imageUrl ? '' : text,
+        text: imageUrl ? '' : text,
+        ...(imageUrl ? { imageUrl:imageUrl } : {}),
         time: '',
         likes: readerThreadLikeCount(context.choice?.replyLikes),
         replies: []
@@ -417,7 +428,8 @@ function renderReaderThreadChoiceControls(item, scope, containerKey, runs) {
   item.choices.forEach(function(choice, choiceIndex) {
     var label = String(choice && (choice.text || choice.replyText) || '').trim()
     if (!label) return
-    h += '<button type="button" class="rd-thread-choice-option" data-thread-scope="' + escapeHtmlAttribute(scope) + '" data-thread-container="' + escapeHtmlAttribute(containerKey) + '" data-thread-owner-id="' + escapeHtmlAttribute(String(item.id)) + '" data-thread-choice-index="' + choiceIndex + '">' + esc(label) + '</button>'
+    var imageUrl = typeof choice?.imageUrl === 'string' && isSafeImageUrl(choice.imageUrl) ? choice.imageUrl.trim() : ''
+    h += '<button type="button" class="rd-thread-choice-option' + (imageUrl ? ' has-image' : '') + '" data-thread-scope="' + escapeHtmlAttribute(scope) + '" data-thread-container="' + escapeHtmlAttribute(containerKey) + '" data-thread-owner-id="' + escapeHtmlAttribute(String(item.id)) + '" data-thread-choice-index="' + choiceIndex + '" aria-label="' + escapeHtmlAttribute(label) + '">' + (imageUrl ? '<img src="' + escapeHtmlAttribute(imageUrl) + '" alt=""' + readerImageAttributes() + '><span class="rd-choice-label">' + esc(label) + '</span>' : esc(label)) + '</button>'
   })
   h += '</div>'
   return h
@@ -549,6 +561,7 @@ function resetReaderPhoneChoiceSession(work) {
     contactCardResponses: new Map(),
     contactFriendships: new Map(),
     contactRemarks: new Map(),
+    phoneChoiceSelections: new Map(),
   }
   return _readerPhoneChoiceSession
 }
@@ -570,7 +583,74 @@ function readerPhoneChoiceSession(work) {
   if (!(_readerPhoneChoiceSession.contactRemarks instanceof Map)) {
     _readerPhoneChoiceSession.contactRemarks = new Map()
   }
+  if (!(_readerPhoneChoiceSession.phoneChoiceSelections instanceof Map)) {
+    _readerPhoneChoiceSession.phoneChoiceSelections = new Map()
+  }
   return _readerPhoneChoiceSession
+}
+
+function readerPhoneStoryChoiceIds(work) {
+  return selectedPhoneStoryChoiceIds(readerPhoneChoiceSession(work).phoneChoiceSelections)
+}
+
+function readerPhoneStoryItemVisible(work, item, phoneData) {
+  var requiredChoiceId = typeof item?.visibleAfterChoiceId === 'string'
+    ? item.visibleAfterChoiceId.trim()
+    : ''
+  var storyData = phoneData || (work && work.type === 'phone' ? work.phoneData : null)
+  if (requiredChoiceId && !phoneStoryChoiceById(storyData, requiredChoiceId)) return false
+  return phoneStoryItemIsVisible(item, readerPhoneStoryChoiceIds(work))
+}
+
+function reconcileReaderPhoneStorySelections(work, phoneData) {
+  var session = readerPhoneChoiceSession(work)
+  var previousSelections = session.phoneChoiceSelections
+  var nextSelections = prunePhoneStoryChoiceSelections(phoneData, previousSelections)
+  var removedOwnerIds = new Set()
+  previousSelections.forEach(function(choiceId, ownerMessageId) {
+    if (nextSelections.get(ownerMessageId) !== choiceId) removedOwnerIds.add(String(ownerMessageId))
+  })
+  session.phoneChoiceSelections = nextSelections
+  if (removedOwnerIds.size === 0) return removedOwnerIds
+
+  session.chats.forEach(function(chatSession) {
+    if (!(chatSession?.choiceRuns instanceof Map) || !chatSession.chat) return
+    var orderedRuns = Array.from(chatSession.choiceRuns.entries()).reverse()
+    orderedRuns.forEach(function(runEntry) {
+      var runKey = runEntry[0]
+      var entry = runEntry[1]
+      var ownerMessageId = String(entry?.run?.ownerMessageId || entry?.run?.ownerItemId || '')
+      if (!removedOwnerIds.has(ownerMessageId)) return
+      var roundIndex = Number(entry?.roundIndex)
+      if (Number.isInteger(roundIndex) && Array.isArray(chatSession.chat.rounds?.[roundIndex]?.messages)) {
+        chatSession.chat.rounds[roundIndex] = rollbackChatChoice(chatSession.chat.rounds[roundIndex], entry.run)
+      }
+      ;(entry?.run?.generatedMessageIds || []).forEach(function(id) {
+        var messageId = String(id)
+        ;[
+          chatSession.flowTypedMessageIds,
+          chatSession.claimedMessageIds,
+          chatSession.endedCallIds,
+          chatSession.revealedEventIds,
+          chatSession.retriedEventIds,
+          chatSession.burnedEventIds,
+          chatSession.reactedEventIds,
+          chatSession.completedActionIds,
+        ].forEach(function(collection) { collection?.delete?.(messageId) })
+        ;[
+          chatSession.voicePlaybacks,
+          chatSession.eventResponses,
+        ].forEach(function(collection) { collection?.delete?.(messageId) })
+        ;['failed:' + messageId, 'recall:' + messageId].forEach(function(transientKey) {
+          chatSession.transientMessageStartedAt?.delete?.(transientKey)
+          chatSession.settledTransientMessageIds?.delete?.(transientKey)
+        })
+      })
+      if (chatSession.flowGeneratedPlayback?.runKey === runKey) chatSession.flowGeneratedPlayback = null
+      chatSession.choiceRuns.delete(runKey)
+    })
+  })
+  return removedOwnerIds
 }
 
 function readerContactRemark(contactId) {
@@ -760,6 +840,7 @@ function saveCurrentReaderProgress() {
       contactCardResponses:Object.fromEntries(readerPhoneChoiceSession(_work).contactCardResponses),
       contactFriendships:Object.fromEntries(readerPhoneChoiceSession(_work).contactFriendships),
       contactRemarks:Object.fromEntries(readerPhoneChoiceSession(_work).contactRemarks),
+      phoneChoiceSelections:Object.fromEntries(readerPhoneChoiceSession(_work).phoneChoiceSelections),
       readingPosition:readingPosition,
     }
     : {
@@ -4033,6 +4114,13 @@ function loadWork(work, options) {
     Object.entries(rememberedBook.progress.contactRemarks || {}).forEach(function(entry) {
       phoneChoices.contactRemarks.set(entry[0], entry[1])
     })
+    Object.entries(rememberedBook.progress.phoneChoiceSelections || {}).forEach(function(entry) {
+      phoneChoices.phoneChoiceSelections.set(entry[0], entry[1])
+    })
+    phoneChoices.phoneChoiceSelections = prunePhoneStoryChoiceSelections(
+      work.phoneData,
+      phoneChoices.phoneChoiceSelections,
+    )
     _readerPendingReadingPosition = rememberedBook.progress.readingPosition
   }
   if (rememberWork) {
@@ -4095,6 +4183,19 @@ function readerPhoneFlowSession(work) {
 function currentReaderPhoneFlowStep(work) {
   var session = readerPhoneFlowSession(work)
   if (!session.enabled) return null
+  while (session.index < session.sequence.length) {
+    var candidate = session.sequence[session.index]
+    var phoneData = work && work.type === 'phone' ? readerPhoneDataWithStoryState(work.phoneData) : null
+    var target = phoneData ? resolvePhoneReadingFlowStep(phoneData, candidate) : null
+    var blockedByEndedRound = target?.kind === 'message'
+      && phoneStoryMessageBlockedByEndedRound(
+        phoneData,
+        String(target.message?.id || ''),
+        readerPhoneChoiceSession(work).phoneChoiceSelections,
+      )
+    if (!target || (readerPhoneStoryItemVisible(work, target.item, phoneData) && !blockedByEndedRound)) break
+    session.index += 1
+  }
   return session.sequence[session.index] || null
 }
 
@@ -4102,6 +4203,7 @@ function advanceReaderPhoneFlow(work) {
   var session = readerPhoneFlowSession(work)
   if (!session.enabled) return null
   session.index = Math.min(session.sequence.length, session.index + 1)
+  currentReaderPhoneFlowStep(work)
   saveCurrentReaderProgress()
   setReaderWorkCompletion(work?.id, session.sequence.length > 0 && session.index >= session.sequence.length)
   return session.sequence[session.index] || null
@@ -6048,7 +6150,9 @@ function renderArticleReader() {
       
       var hasData = {}
       hasData.messages = !!(d.chats && d.chats.length)
-      hasData.forum = !!(d.forumPosts && d.forumPosts.length)
+      hasData.forum = !!(d.forumPosts && d.forumPosts.some(function(post) {
+        return readerPhoneStoryItemVisible(_work, post, d)
+      }))
       hasData.memo = !!(d.memos && d.memos.length)
       hasData.gallery = photos.length > 0 || albums.length > 0
       hasData.browser = !!(d.browserHistory && d.browserHistory.length)
@@ -6948,6 +7052,9 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
       if (shouldShowPhoneTimestamp(pd, comment.time)) h += '<time>' + esc(comment.time) + '</time>'
       h += '</div>'
       h += '<div class="rd-thread-comment-content">' + renderReaderMentionText(content, momentMentionNames) + '</div>'
+      if (typeof comment?.imageUrl === 'string' && isSafeImageUrl(comment.imageUrl)) {
+        h += '<img class="rd-thread-comment-image" src="' + escapeHtmlAttribute(comment.imageUrl.trim()) + '" alt=""' + readerImageAttributes() + '>'
+      }
       h += renderReaderThreadReselect(comment, 'moment', containerKey, momentChoiceRuns)
       h += renderReaderThreadChoiceControls(comment, 'moment', containerKey, momentChoiceRuns)
       h += '</div>'
@@ -7109,7 +7216,9 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
       renderMessagesHome('chats')
     }
   } else if (type === 'forum') {
-    var posts = orderedForumPosts(pd.forumPosts)
+    var posts = orderedForumPosts(pd.forumPosts).filter(function(post) {
+      return exportMode || readerPhoneStoryItemVisible(w, post, pd)
+    })
     var forumVisual = appStyle('forum')
     var h = ''
     if (posts.length === 0) h += '<div class="rd-app-empty">暂无帖子</div>'
@@ -7560,7 +7669,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
 
   function openInlineForumPost(postId, trigger) {
     var post = (pd.forumPosts || []).find(function(item) { return String(item.id) === String(postId) })
-    if (!post) return
+    if (!post || !readerPhoneStoryItemVisible(w, post, pd)) return
     var previous = frame.querySelector('.rd-inline-forum-pip')
     if (previous) previous.remove()
     var postIdentity = resolveReaderContactIdentity(pd, post.contactId, { surface:'forum', aliasId:post.aliasId, authoredName:post.contactName, authoredAvatar:post.contactAvatar, authoredIpLocation:post.contactIpLocation })
@@ -7756,12 +7865,17 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         ? unsequencedPlayback.ids.map(String)
         : []
       var unsequencedChoiceGateActive = false
+      var endedRoundGeneratedIds = null
       unsequencedMessageScan:
       for (var roundIndex = 0; roundIndex < (ch.rounds || []).length; roundIndex++) {
         var messages = Array.isArray(ch.rounds[roundIndex]?.messages) ? ch.rounds[roundIndex].messages : []
           for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
             var message = messages[messageIndex]
             if (message?.id == null) continue
+            if (endedRoundGeneratedIds && !endedRoundGeneratedIds.has(String(message.id))) {
+              break unsequencedMessageScan
+            }
+            if (!readerPhoneStoryItemVisible(w, message, pd)) continue
             var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
             if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) continue
             if (unsequencedChoiceGateActive) {
@@ -7780,6 +7894,12 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
             && !choiceRuns.has(choiceRunKey(roundIndex, message.id))
           ) {
             unsequencedChoiceGateActive = true
+          }
+          var completedChoiceRun = choiceRuns.get(choiceRunKey(roundIndex, message.id))
+          if (completedChoiceRun?.run?.endRound === true) {
+            endedRoundGeneratedIds = new Set(
+              (completedChoiceRun.run.generatedMessageIds || []).map(String),
+            )
           }
         }
       }
@@ -7811,7 +7931,47 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function isMessageVisible(message, visibleIds) {
-    return !visibleIds || visibleIds.has(String(message && message.id))
+    return (!visibleIds || visibleIds.has(String(message && message.id)))
+      && readerPhoneStoryItemVisible(w, message, pd)
+      && !phoneStoryMessageBlockedByEndedRound(
+        pd,
+        String(message?.id || ''),
+        phoneChoiceSession.phoneChoiceSelections,
+      )
+  }
+
+  function hydratePersistedChatChoices(rounds) {
+    if (chatSession.choiceSelectionsHydrated === true) return
+    chatSession.choiceSelectionsHydrated = true
+    var savedSelections = phoneChoiceSession.phoneChoiceSelections
+    rounds.forEach(function(round, roundIndex) {
+      var owners = (Array.isArray(round?.messages) ? round.messages : []).filter(function(message) {
+        return message?.id != null && Array.isArray(message.choices) && message.choices.length > 0
+      }).map(function(message) {
+        return { id:message.id, choices:message.choices.slice() }
+      })
+      owners.forEach(function(owner) {
+        var selectedChoiceId = savedSelections.get(String(owner.id))
+        if (!selectedChoiceId) return
+        var matches = owner.choices.reduce(function(indexes, choice, choiceIndex) {
+          if (String(choice?.id || '') === String(selectedChoiceId)) indexes.push(choiceIndex)
+          return indexes
+        }, [])
+        if (matches.length !== 1) {
+          savedSelections.delete(String(owner.id))
+          return
+        }
+        var result = applyChatChoice(rounds[roundIndex], owner.id, matches[0], {
+          idFactory:nextReaderChoiceMessageId,
+        })
+        if (!result.ok) {
+          savedSelections.delete(String(owner.id))
+          return
+        }
+        rounds[roundIndex] = result.round
+        choiceRuns.set(choiceRunKey(roundIndex, owner.id), { roundIndex:roundIndex, run:result.run })
+      })
+    })
   }
 
   function callWasCompletedInFlow(message) {
@@ -8181,6 +8341,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       return '<small class="chat-action-state' + (messageActionIsComplete(message) ? ' is-complete' : '') + '" data-message-action-state="' + escapeHtmlAttribute(message.id) + '">' + esc(label) + '</small>'
     }
     ensureReaderChatMessageIds(rounds)
+    hydratePersistedChatChoices(rounds)
     var visibleMessageIds = flowVisibleMessageIds()
     var storyState = createChatStoryState({ contacts:contacts }, ch)
     for (var storyRoundIndex = 0; storyRoundIndex < rounds.length; storyRoundIndex++) {
@@ -8249,6 +8410,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
                 ownerMessageId: lm.id,
                 choiceIdx: lci,
                 text: lm.choices[lci].text || lm.choices[lci].replyText || '',
+                imageUrl: lm.choices[lci].imageUrl || '',
               })
             }
             break choiceScan
@@ -8475,8 +8637,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
           : 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.otherBubbleBg + ';color:' + ast.otherBubbleText + ';border-radius:' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' ' + ast.otherBubbleRadius + ' 2px'
         if (msg.type === 'image') {
+          var chatImageUrl = typeof msg.image === 'string' && isSafeImageUrl(msg.image) ? msg.image.trim() : ''
           h += '<div class="chat-bubble' + bubbleSkinClass + '" style="' + bubbleStyle + '">'
-          h += '<img src="' + esc(msg.image || '') + '"' + readerImageAttributes() + ' style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
+          if (chatImageUrl) h += '<img src="' + escapeHtmlAttribute(chatImageUrl) + '" alt=""' + readerImageAttributes() + ' style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'">'
+          else h += '<span class="rd-chat-image-unavailable">图片不可用</span>'
           h += '</div>'
         } else if (msg.type === 'link') {
           var chatAppTarget = normalizeChatAppTarget(msg)
@@ -8485,12 +8649,14 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           })
           var linkActionState = messageActionLabel(msg, messageActionIsComplete(msg))
           var explicitAppTarget = Boolean(msg.targetApp)
-          var inlineForumPost = !explicitAppTarget && msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
+          var linkedInlineForumPost = !explicitAppTarget && msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
+          var inlineForumPost = linkedInlineForumPost && readerPhoneStoryItemVisible(w, linkedInlineForumPost, pd)
           if (explicitAppTarget && chatAppTargetEntry) {
             h += '<button type="button" class="chat-link-card rd-chat-deep-link" data-chat-deep-link="' + escapeHtmlAttribute(msg.id) + '" data-target-app="' + escapeHtmlAttribute(chatAppTarget.appType) + '" data-target-item="' + escapeHtmlAttribute(chatAppTarget.itemId) + '" data-target-contact="' + escapeHtmlAttribute(chatAppTarget.contactId) + '"><span class="chat-story-card-kicker">' + esc(chatAppTargetEntry.detail) + '</span><strong>' + esc(msg.linkTitle || chatAppTargetEntry.label) + '</strong><span>点击进入对应 App</span>' + (linkActionState ? '<small class="chat-action-state' + (messageActionIsComplete(msg) ? ' is-complete' : '') + '" data-message-action-state="' + escapeHtmlAttribute(msg.id) + '">' + esc(linkActionState) + '</small>' : '') + '</button>'
           } else if (explicitAppTarget) {
             h += '<div class="chat-link-card is-unavailable"><strong>' + esc(msg.linkTitle || '作品内内容') + '</strong><span>关联内容已不存在</span></div>'
           } else if (inlineForumPost) h += '<button type="button" class="chat-link-card rd-inline-forum-card" data-inline-forum-post-id="' + escapeHtmlAttribute(msg.forumPostId) + '"><strong>' + esc(msg.linkTitle || inlineForumPost.title || '帖子') + '</strong><span>论坛帖子 · 点击查看</span></button>'
+          else if (linkedInlineForumPost) h += '<div class="chat-link-card is-unavailable"><strong>' + esc(msg.linkTitle || linkedInlineForumPost.title || '帖子') + '</strong><span>帖子尚未出现</span></div>'
           else if (msg.forumPostId) h += '<div class="chat-link-card is-unavailable"><strong>' + esc(msg.linkTitle || '帖子') + '</strong><span>关联帖子已不存在</span></div>'
           else {
             var cardLinkUrl = safeMessageCardUrl(msg.linkUrl)
@@ -8604,7 +8770,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       h += '<div id="rdChoiceList" class="rd-chat-choice-list" role="listbox" aria-label="选择回复" hidden>'
       for (var ac = 0; ac < allChoices.length; ac++) {
         var acv = allChoices[ac]
-        h += '<button type="button" class="rd-reply-option" role="option" data-ri="' + acv.roundIdx + '" data-owner-id="' + escapeHtmlAttribute(acv.ownerMessageId) + '" data-ci="' + acv.choiceIdx + '">' + esc(readerPhoneText(acv.text)) + '</button>'
+        var choiceLabel = readerPhoneText(acv.text)
+        var choiceImageUrl = typeof acv.imageUrl === 'string' && isSafeImageUrl(acv.imageUrl) ? acv.imageUrl.trim() : ''
+        h += '<button type="button" class="rd-reply-option' + (choiceImageUrl ? ' has-image' : '') + '" role="option" aria-label="' + escapeHtmlAttribute(choiceLabel) + '" data-ri="' + acv.roundIdx + '" data-owner-id="' + escapeHtmlAttribute(acv.ownerMessageId) + '" data-ci="' + acv.choiceIdx + '">' + (choiceImageUrl ? '<img src="' + escapeHtmlAttribute(choiceImageUrl) + '" alt=""' + readerImageAttributes() + '><span class="rd-choice-label">' + esc(choiceLabel) + '</span>' : esc(choiceLabel)) + '</button>'
       }
       h += '</div>'
     }
@@ -8994,6 +9162,26 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       return null
     }
 
+    function unsequencedAuthoredContinuationIds(roundIndex, ownerMessageId, generatedIds, endRound) {
+      if (flowEnabled || endRound === true || !rounds[roundIndex]) return []
+      var messages = Array.isArray(rounds[roundIndex].messages) ? rounds[roundIndex].messages : []
+      var ownerIndex = messages.findIndex(function(message) {
+        return String(message?.id) === String(ownerMessageId)
+      })
+      if (ownerIndex < 0) return []
+      var generatedIdSet = new Set((generatedIds || []).map(String))
+      var continuationIds = []
+      for (var messageIndex = ownerIndex + 1; messageIndex < messages.length; messageIndex++) {
+        var message = messages[messageIndex]
+        if (message?.id == null || generatedIdSet.has(String(message.id))) continue
+        if (Array.isArray(message.choices) && message.choices.length > 0) break
+        if (!readerPhoneStoryItemVisible(w, message, pd)) continue
+        if (phoneStoryMessageBlockedByEndedRound(pd, String(message.id), phoneChoiceSession.phoneChoiceSelections)) break
+        continuationIds.push(String(message.id))
+      }
+      return continuationIds
+    }
+
     function nextChatFlowMessage() {
       var playback = chatSession.flowGeneratedPlayback
       if (playback && Array.isArray(playback.ids) && playback.index + 1 < playback.ids.length) {
@@ -9118,22 +9306,38 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         idFactory: nextReaderChoiceMessageId,
       })
       if (!result.ok) return
+      var ownerMessage = rounds[ri].messages.find(function(message) {
+        return String(message?.id) === String(ownerMessageId)
+      })
+      var selectedChoiceId = ownerMessage?.choices?.[ci]?.id
+      if (typeof selectedChoiceId === 'string' && selectedChoiceId) {
+        phoneChoiceSession.phoneChoiceSelections.set(String(ownerMessageId), selectedChoiceId)
+      }
       rounds[ri] = result.round
       choiceRuns.set(runKey, { roundIndex: ri, run: result.run })
+      reconcileReaderPhoneStorySelections(w, pd)
+      saveCurrentReaderProgress()
       var generatedIds = Array.isArray(result.run.generatedMessageIds) ? result.run.generatedMessageIds.slice() : []
+      var continuationIds = unsequencedAuthoredContinuationIds(
+        ri,
+        ownerMessageId,
+        generatedIds,
+        result.run.endRound,
+      )
+      var playbackIds = generatedIds.concat(continuationIds)
       var hasPacedReply = generatedIds.some(function(messageId) {
         return findFlowPlaybackMessage(messageId)?.transientTyping === true
       })
-      var hasAuthoredDelay = generatedIds.some(function(messageId) {
-        var generatedMessage = findFlowPlaybackMessage(messageId)
-        return generatedMessage && Object.hasOwn(generatedMessage, 'delayBeforeMs')
+      var hasAuthoredDelay = playbackIds.some(function(messageId) {
+        var playbackMessage = findFlowPlaybackMessage(messageId)
+        return playbackMessage && Object.hasOwn(playbackMessage, 'delayBeforeMs')
       })
-      var firstGeneratedMessage = generatedIds.length ? findFlowPlaybackMessage(generatedIds[0]) : null
-      var firstGeneratedDelay = firstGeneratedMessage && Object.hasOwn(firstGeneratedMessage, 'delayBeforeMs')
-        ? chatMessageDelayBeforeMs(firstGeneratedMessage, 0)
+      var firstPlaybackMessage = playbackIds.length ? findFlowPlaybackMessage(playbackIds[0]) : null
+      var firstPlaybackDelay = firstPlaybackMessage && Object.hasOwn(firstPlaybackMessage, 'delayBeforeMs')
+        ? chatMessageDelayBeforeMs(firstPlaybackMessage, 0)
         : 0
-      chatSession.flowGeneratedPlayback = generatedIds.length > 0 && (flowEnabled || hasPacedReply || hasAuthoredDelay)
-        ? { runKey: runKey, ids: generatedIds, index:firstGeneratedDelay > 0 ? -1 : 0 }
+      chatSession.flowGeneratedPlayback = playbackIds.length > 0 && (flowEnabled || hasPacedReply || hasAuthoredDelay)
+        ? { runKey: runKey, ids: playbackIds, index:firstPlaybackDelay > 0 ? -1 : 0 }
         : null
       setChoiceListOpen(false)
       renderChat()
@@ -9143,7 +9347,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           if (!chatSession.flowGeneratedPlayback) return
           chatSession.flowGeneratedPlayback.index = 0
           renderChat()
-        }, firstGeneratedDelay)
+        }, firstPlaybackDelay)
       }
     }
 
@@ -9193,10 +9397,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
             })
           })
           choiceRuns.delete(rollbackKey)
+          phoneChoiceSession.phoneChoiceSelections.delete(String(entry.run.ownerMessageId || entry.run.ownerItemId || ''))
         }
         if (chatSession.flowGeneratedPlayback && rollbackKeys.has(chatSession.flowGeneratedPlayback.runKey)) {
           chatSession.flowGeneratedPlayback = null
         }
+        reconcileReaderPhoneStorySelections(w, pd)
+        saveCurrentReaderProgress()
         renderChat()
         var reopenedList = frame.querySelector('#rdChoiceList')
         var reopenedInput = frame.querySelector('#chatInput')
@@ -9288,7 +9495,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
   var exportMode = navigationContext?.exportMode === true
   var posts = pd.forumPosts || []
   var sourcePost = posts.find(function(p) { return p.id === postId })
-  if (!sourcePost) return
+  if (!sourcePost || (!exportMode && !readerPhoneStoryItemVisible(w, sourcePost, pd))) return
   var phoneChoiceSession = readerPhoneChoiceSession(w)
   var forumSessionKey = String(postIndex) + '::' + String(postId)
   var forumSession = phoneChoiceSession.forumPosts.get(forumSessionKey)

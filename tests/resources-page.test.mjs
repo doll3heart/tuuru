@@ -382,7 +382,7 @@ test("the tutorial explains article message contact visibility without reviving 
 test("the phone feature list covers apps, conversations, calls, forums, and reading flow", () => {
   for (const feature of [
     "App 排列", "小手机 App 与详情返回", "单聊与群聊", "外部链接卡片", "作品内论坛链接", "红包、转账与亲属卡",
-    "外卖卡片", "消息编辑菜单", "消息多选与转发", "会话置顶与排序", "消息回复选项", "聊天轮次", "语音与视频通话",
+    "外卖卡片", "消息编辑菜单", "消息多选与转发", "会话置顶与排序", "消息回复选项", "小手机剧情显示条件", "聊天轮次", "语音与视频通话",
     "动态", "论坛", "楼中楼回复关系", "备忘录", "相册", "浏览记录", "购物", "角色接入", "阅读节奏控制",
   ]) {
     assert.match(source, new RegExp(feature))
@@ -416,15 +416,19 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /长按消息；电脑右键消息.*撤回.*发送失败/s)
   assert.match(source, /发送失败时[^。]*先看到消息发出[^。]*迅速消失/)
   assert.match(source, /撤回时[^。]*可点开查看原文的系统提示/)
-  assert.match(source, /多条消息都设置了选项时[^。]*按消息顺序逐组选择/)
-  assert.match(source, /当前一组还未选择时[^。]*后面的剧情消息[^。]*隐藏/)
+  assert.match(source, /多组选项[^。]*按消息顺序出现/)
+  assert.match(source, /当前选项组还未选择时[^。]*后面的剧情消息[^。]*隐藏/)
   assert.match(source, /同一段里的系统消息[^。]*正常显示/)
   assert.match(source, /重选前面的选项[^。]*清除[^。]*后续选择/)
-  assert.match(source, /选择接话的群成员/)
-  assert.match(source, /每条后续消息都会按所选群成员的身份显示/)
+  assert.match(source, /添加新选项组/)
+  assert.match(source, /图片与更多设置/)
+  assert.match(source, /选择图片[^。]*本地图片[^。]*自动压缩/)
+  assert.match(source, /图片选项[^。]*发送同一张图片/)
+  assert.match(source, /每条后续都会按所选角色的身份显示/)
   assert.match(source, /正常发送[^。]*发送失败[^。]*发送后撤回/)
   assert.match(source, /继承本组选项/)
-  assert.match(source, /每点一次【添加】就新增一个气泡/)
+  assert.match(source, /【角色后续】中每点一次【添加消息】就新增一个气泡/)
+  assert.match(source, /消息状态[^。]*单条节奏[^。]*发送间隔[^。]*【发送设置】/)
   assert.match(source, /换行不会自动拆成多个气泡/)
   assert.doesNotMatch(source, /每行文字会生成一个气泡/)
 })
@@ -510,6 +514,7 @@ test("every tutorial category keeps a searchable FAQ", () => {
     "为什么没有看到论坛回复选项",
     "论坛评论和楼中楼怎样排序",
     "论坛评论时间怎样修改或隐藏",
+    "怎样制作沉默、拒绝分支和剧情更新",
     "@ 提及没有高亮怎么办",
     "随机结果怎样在几个节点中保持一致",
     "完整备份适合发给读者吗",
@@ -637,8 +642,8 @@ test("the resources layout reflows form rows and keeps readable tutorial prose o
 })
 
 test("follow-up message controls stay grouped and reflow on narrow touch screens", () => {
-  assert.match(css, /\.thread-choice-followup-row\s*\{[^}]*padding\s*:\s*8px[^}]*border\s*:/s)
-  assert.match(css, /\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,minmax\(0,1fr\)\)/s)
-  assert.match(css, /@media\(max-width:420px\)[^}]*[\s\S]*\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,1fr\)/s)
+  assert.match(css, /\.thread-choice-followup-row\s*\{[^}]*padding\s*:\s*9px 0[^}]*border-bottom\s*:/s)
+  assert.match(css, /\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*repeat\(3,minmax\(0,1fr\)\)/s)
+  assert.match(css, /@media\(max-width:620px\)[^}]*[\s\S]*\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,1fr\)/s)
   assert.match(css, /@media\(pointer:coarse\)[\s\S]*?\.thread-choice-followup-row button\s*\{[^}]*width\s*:\s*44px[^}]*height\s*:\s*44px/s)
 })

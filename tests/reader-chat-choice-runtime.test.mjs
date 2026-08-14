@@ -146,6 +146,25 @@ test("reader-authored messages use the reader profile avatar", async t => {
   assert.equal(avatar.getAttribute("aria-label"), "读者昵称")
 })
 
+test("an image choice previews and sends the same image without an extra text bubble", async t => {
+  const work = choiceWork()
+  const imageUrl = "data:image/png;base64,Y2hvaWNlLWltYWdl"
+  work.phoneData.chats[0].rounds[0].messages[0].choices[0].imageUrl = imageUrl
+  await openSeededChat(t, work)
+
+  document.getElementById("chatInput").click()
+  const option = document.querySelector('.rd-reply-option[data-ci="0"]')
+  assert.ok(option.classList.contains("has-image"))
+  assert.equal(option.querySelector("img")?.getAttribute("src"), imageUrl)
+  assert.match(option.textContent, /好，我会准时到/)
+  option.click()
+
+  const selfMessages = [...document.querySelectorAll(".rd-chat-message.is-self")]
+  assert.equal(selfMessages.length, 1)
+  assert.equal(selfMessages[0].querySelector("img")?.getAttribute("src"), imageUrl)
+  assert.doesNotMatch(selfMessages[0].textContent, /好，我会准时到/)
+})
+
 test("saved reader chat background reaches the actual conversation screen", async t => {
   const imageUrl = `data:image/png;base64,${Buffer.from("\x89PNG\r\n\x1a\n", "binary").toString("base64")}`
   await openSeededChat(t, choiceWork(), {
@@ -204,15 +223,172 @@ test("a choice without reader text keeps reselection on its first generated foll
   assert.ok(document.querySelector(".rd-reply-option"))
 })
 
+test("a silent important choice records progress and ends the current topic", async t => {
+  const work = choiceWork()
+  const choice = work.phoneData.chats[0].rounds[0].messages[0].choices[0]
+  choice.replyText = ""
+  choice.silent = true
+  choice.endRound = true
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  const text = document.querySelector("#chatMsgArea").textContent
+  assert.match(text, /那我在老地方等你/)
+  assert.doesNotMatch(text, /这是作者原本排在后面的消息/)
+  assert.equal(document.querySelectorAll(".rd-chat-message.is-self").length, 0)
+  const library = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+  assert.equal(library.books[0].progress.phoneChoiceSelections["owner-message"], "choice-a")
+})
+
+test("a later message follows the selected stable choice condition", async t => {
+  const work = choiceWork()
+  work.phoneData.chats[0].rounds[0].messages[1].visibleAfterChoiceId = "choice-b"
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /这是作者原本排在后面的消息/)
+
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="1"]').click()
+  assert.match(document.querySelector("#chatMsgArea").textContent, /这是作者原本排在后面的消息/)
+})
+
+test("reselecting an earlier choice clears selections made in another hidden chat branch", async t => {
+  const work = choiceWork()
+  const sourceChoices = work.phoneData.chats[0].rounds[0].messages[0].choices
+  sourceChoices[0].id = "branch-open"
+  sourceChoices[1].id = "branch-close"
+  work.phoneData.chats.push({
+    id:"chat-2",
+    type:"single",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"round-2",
+      label:"分支聊天",
+      messages:[{
+        id:"dependent-owner",
+        senderId:"contact-1",
+        type:"text",
+        text:"只有打开分支后才出现。",
+        visibleAfterChoiceId:"branch-open",
+        choices:[{
+          id:"dependent-choice",
+          text:"继续这个分支",
+          replyText:"继续这个分支",
+          followUpMessages:[],
+        }],
+      }],
+    }],
+  })
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="1"]').click()
+
+  const library = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+  assert.deepEqual(library.books[0].progress.phoneChoiceSelections, {
+    "owner-message":"branch-close",
+  })
+})
+
+test("a forum post appears like an update after its message choice is selected", async t => {
+  const work = choiceWork()
+  work.phoneData.apps.push({
+    id:"forum-app",
+    type:"forum",
+    name:"论坛",
+    icon:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>',
+    desktopX:1,
+    desktopY:0,
+    enabled:true,
+  })
+  work.phoneData.forumPosts = [{
+    id:"unlocked-post",
+    contactId:"contact-1",
+    contactName:"林澈",
+    title:"刚刚发生的事",
+    content:"只有作出决定之后才看得到。",
+    time:"刚刚",
+    images:[],
+    comments:[],
+    visibleAfterChoiceId:"choice-a",
+  }]
+
+  await openSeededChat(t, work)
+  document.getElementById("chatBack").click()
+  document.querySelector(".rd-back-btn").click()
+  document.querySelector('[data-app-type="forum"]').click()
+  assert.equal(document.querySelector(".rd-post-card"), null)
+
+  document.querySelector(".rd-back-btn").click()
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector(".rd-back-btn").click()
+  document.querySelector('[data-app-type="forum"]').click()
+
+  assert.match(document.querySelector(".rd-post-card").textContent, /刚刚发生的事/)
+})
+
+test("a hidden forum update cannot be opened early from an authored chat link", async t => {
+  const work = choiceWork()
+  work.phoneData.forumPosts = [{
+    id:"hidden-linked-post",
+    contactId:"contact-1",
+    contactName:"林澈",
+    title:"分支更新",
+    content:"还不能提前看到。",
+    images:[],
+    comments:[],
+    visibleAfterChoiceId:"choice-a",
+  }]
+  work.phoneData.chats[0].rounds[0].messages.unshift({
+    id:"early-forum-link",
+    type:"link",
+    senderId:"contact-1",
+    linkTitle:"查看分支更新",
+    forumPostId:"hidden-linked-post",
+  })
+
+  await openSeededChat(t, work)
+  assert.equal(document.querySelector(".rd-inline-forum-card"), null)
+  assert.match(document.querySelector("#chatMsgArea").textContent, /帖子尚未出现/)
+
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  const link = document.querySelector(".rd-inline-forum-card")
+  assert.ok(link)
+  link.click()
+  assert.match(document.querySelector(".rd-inline-forum-pip").textContent, /还不能提前看到/)
+})
+
 test("reader chat delegates choice application and rollback to the shared immutable runtime", () => {
   const start = readerSource.indexOf("function openReaderChat")
   const end = readerSource.indexOf("// ---- Forum post viewer ----", start)
   const chatSource = readerSource.slice(start, end)
+  const visibilityStart = chatSource.indexOf("function isMessageVisible")
+  const visibilityEnd = chatSource.indexOf("function hydratePersistedChatChoices", visibilityStart)
+  const visibilitySource = chatSource.slice(visibilityStart, visibilityEnd)
 
   assert.match(readerSource, /import\s*\{[^}]*applyChatChoice[^}]*rollbackChatChoice[^}]*\}\s*from\s*['"]\.\.\/js\/chat-choice-runtime\.js['"]/s)
   assert.match(chatSource, /new Map\s*\(/)
   assert.match(chatSource, /applyChatChoice\s*\(/)
   assert.match(chatSource, /rollbackChatChoice\s*\(/)
+  assert.match(visibilitySource, /phoneStoryMessageBlockedByEndedRound\s*\(/)
   assert.doesNotMatch(chatSource, /\.messages\.push\s*\(/)
   assert.doesNotMatch(chatSource, /choice\.used|\.used\s*=/)
 })

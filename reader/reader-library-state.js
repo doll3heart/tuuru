@@ -145,6 +145,24 @@ function normalizedContactFriendships(value) {
   return normalizedContactCardResponses(value)
 }
 
+function normalizedPhoneChoiceSelections(value) {
+  if (!plainRecord(value)) return {}
+  const result = {}
+  for (const ownerMessageId of Object.keys(value)) {
+    if (
+      !exactId(ownerMessageId)
+      || ownerMessageId === "__proto__"
+      || ownerMessageId === "prototype"
+      || ownerMessageId === "constructor"
+    ) continue
+    const choiceId = ownData(value, ownerMessageId)
+    if (!exactId(choiceId)) continue
+    result[ownerMessageId] = choiceId
+    if (Object.keys(result).length >= 500) break
+  }
+  return result
+}
+
 function normalizedContactRemarks(value) {
   if (!plainRecord(value)) return {}
   const result = {}
@@ -296,6 +314,7 @@ function normalizedProgress(value) {
       friendRequestResponses:normalizedFriendRequestResponses(ownData(value, "friendRequestResponses")),
       contactCardResponses:normalizedContactCardResponses(ownData(value, "contactCardResponses")),
       contactFriendships:normalizedContactFriendships(ownData(value, "contactFriendships")),
+      phoneChoiceSelections:normalizedPhoneChoiceSelections(ownData(value, "phoneChoiceSelections")),
       contactRemarks:normalizedContactRemarks(ownData(value, "contactRemarks")),
       readingPosition:normalizedReadingPosition(ownData(value, "readingPosition"), "phone"),
       savedAt:timestamp(ownData(value, "savedAt")),

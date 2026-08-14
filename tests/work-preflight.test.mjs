@@ -160,6 +160,50 @@ test("phone inspection reports broken people, links, flow steps, and hidden App 
   )
 })
 
+test("phone story conditions reject deleted and self-referential choices", () => {
+  const work = {
+    id:"phone-story-condition",
+    type:"phone",
+    title:"剧情判定",
+    placeholders:[],
+    phoneData:{
+      contacts:[{ id:"contact-1", name:"林澈" }],
+      apps:[
+        { id:"messages-app", type:"messages", enabled:true },
+        { id:"forum-app", type:"forum", enabled:true },
+      ],
+      chats:[{
+        id:"chat-1",
+        contactIds:["contact-1"],
+        messages:[],
+        rounds:[{
+          id:"round-1",
+          messages:[{
+            id:"owner",
+            text:"选择",
+            visibleAfterChoiceId:"choice-a",
+            choices:[{ id:"choice-a", text:"同意", replyText:"同意", followUpMessages:[] }],
+          }],
+        }],
+      }],
+      moments:[], forumNpcs:[], memos:[], photos:[], albums:[], browserHistory:[], shoppingItems:[],
+      forumPosts:[{
+        id:"post-1",
+        contactId:"contact-1",
+        title:"更新",
+        content:"正文",
+        visibleAfterChoiceId:"deleted-choice",
+        images:[],
+        comments:[],
+      }],
+    },
+  }
+
+  const report = inspectWorkBeforePublish(work)
+  assert.ok(report.issues.some(issue => issue.code === "phone-story-condition-self-reference"))
+  assert.ok(report.issues.some(issue => issue.code === "phone-story-condition-choice-missing"))
+})
+
 test("missing type-specific content fails closed without throwing", () => {
   const article = inspectWorkBeforePublish({ type:"article", title:"空文章" })
   const phone = inspectWorkBeforePublish({ type:"phone", title:"空手机" })

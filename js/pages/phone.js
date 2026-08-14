@@ -1,7 +1,8 @@
 // Tuuru Works - Phone Editor
 import { uid, PH_PRESETS, PH_MODES, PHONE_APP_DEFS, PHONE_READER_OWNED_CONTROL_TYPES, DEFAULT_PHONE_APP_COLORS, DEFAULT_PHONE_SKIN, avatarColor, MOMO_AVATARS, USERXX_AVATARS, randomMomoName, randomUserXXName, randomAvatar } from "../data.js"
 import { getPhoneWork as getWork, updatePhoneWork as updateWork } from "../phone-work-access.js"
-import { escapeHtmlAttribute, sanitizeCssColor, sanitizeIconHtml } from "../sanitize.js"
+import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from "../sanitize.js"
+import { compressEditorImage } from "../image-compression.js"
 import { createPhoneModalCloseController } from "../phone-modal-lifecycle.js"
 import {
   PHONE_GRID_METRICS,
@@ -35,6 +36,7 @@ import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js
 import { phoneTimestampsHidden, shouldShowPhoneTimestamp } from "../phone-timestamps.js"
 import { renderPhoneShoppingList, renderPhoneShoppingTabs } from "../phone-shopping-view.js"
 import { renderPhoneForumComment, renderPhoneForumPost } from "../phone-forum-view.js"
+import { phoneStoryChoiceCatalog, phoneStoryChoiceById } from "../phone-story-state.js"
 import { mergeNpcPack, readNpcPacks, saveNpcPack } from "../npc-bundles.js"
 import { referencedMessageContactIds } from "../phone-module-draft.js"
 import { findWorkReferences } from "../work-references.js"
@@ -65,6 +67,18 @@ function esc(s) {
   var d = document.createElement("div")
   d.textContent = s
   return d.innerHTML
+}
+
+function authorChoiceImageUrl(choice) {
+  var value = typeof choice?.imageUrl === 'string' ? choice.imageUrl.trim() : ''
+  return value && isSafeImageUrl(value) ? value : ''
+}
+
+function renderAuthorChoiceContent(choice) {
+  var text = choice?.text || '选项'
+  var imageUrl = authorChoiceImageUrl(choice)
+  if (!imageUrl) return esc(text)
+  return '<img src="' + escapeHtmlAttribute(imageUrl) + '" alt=""><span class="chat-choice-label">' + esc(text) + '</span>'
 }
 
 function confirmPhoneReferencedDeletion({
@@ -136,6 +150,28 @@ function insertAtSelection(input, value) {
 }
 
 const PHONE_GROUP_WIDE_MENTION = '全体成员'
+
+function phoneStoryVisibilityOptionsHtml(phoneData, selectedChoiceId) {
+  var catalog = phoneStoryChoiceCatalog(phoneData)
+  var selected = String(selectedChoiceId || '')
+  var html = '<option value="">始终显示</option>'
+  catalog.forEach(function(choice) {
+    var label = '选过「' + choice.label + '」后显示 · ' + choice.detail
+    html += '<option value="' + escapeHtmlAttribute(choice.id) + '"'
+      + (choice.id === selected ? ' selected' : '')
+      + (choice.ambiguous ? ' disabled' : '') + '>' + esc(label) + '</option>'
+  })
+  if (selected && !phoneStoryChoiceById(phoneData, selected)) {
+    html += '<option value="' + escapeHtmlAttribute(selected) + '" selected disabled>原判定选项已删除，请重新选择</option>'
+  }
+  return html
+}
+
+function phoneStoryVisibilityFieldHtml(phoneData, selectedChoiceId, selectId) {
+  return '<div class="form-group phone-story-visibility-field"><label class="form-label" for="' + selectId + '">剧情显示条件</label>'
+    + '<select id="' + selectId + '" class="form-select">' + phoneStoryVisibilityOptionsHtml(phoneData, selectedChoiceId) + '</select>'
+    + '<div class="form-hint">可让这项内容在读者选过某个消息回复后才出现；适合模拟新消息或论坛更新。</div></div>'
+}
 
 function phoneMentionOptions(pd, placeholders, context) {
   var options = context?.includeGroupWide === true
@@ -225,6 +261,9 @@ function openThreadReplyChoiceEditor(owner, options) {
       id: choice.id || '',
       text: choice.text || '',
       replyText: choice.replyText || '',
+      imageUrl: typeof choice.imageUrl === 'string' ? choice.imageUrl : '',
+      silent: choice.silent === true,
+      endRound: choice.endRound === true,
       replyPace: normalizeChatReplyPace(choice.replyPace),
       replyLikes: nonnegativeCount(choice.replyLikes),
       followUps: Array.isArray(choice.followUpMessages)
@@ -247,7 +286,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         : []
     }
   })
-  if (!groups.length) groups.push({id: '', text: '', replyText: '', replyPace:'normal', replyLikes:0, followUps: []})
+  if (!groups.length) groups.push({id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
   var actors = Array.isArray(options.followUpActors) && options.followUpActors.length
     ? options.followUpActors
     : [{ id:options.defaultFollowUpSenderId || owner.contactId || 'self', aliasId:'', name:'角色' }]
@@ -267,9 +306,10 @@ function openThreadReplyChoiceEditor(owner, options) {
   }
 
   var body = '<div id="threadChoiceGroups"></div>'
-  body += '<button type="button" id="threadChoiceAdd" class="btn btn-sm btn-outline" style="width:100%">+ 添加完整句子</button>'
+  body += '<button type="button" id="threadChoiceAdd" class="btn btn-sm btn-outline" style="width:100%">+ 添加新选项组</button>'
   var overlay = modal(options.title || '编辑回复选项', body,
     '<button type="button" id="threadChoiceSave" class="btn btn-primary btn-sm">保存</button><button type="button" id="threadChoiceDeleteAll" class="btn btn-ghost btn-sm">删除选项组</button><button type="button" id="threadChoiceCancel" class="btn btn-ghost btn-sm">取消</button>')
+  overlay.classList.add('thread-choice-modal')
   var list = overlay.querySelector('#threadChoiceGroups')
 
   function collect() {
@@ -278,6 +318,9 @@ function openThreadReplyChoiceEditor(owner, options) {
       if (!groups[index]) return
       groups[index].text = row.querySelector('.thread-choice-text')?.value || ''
       groups[index].replyText = row.querySelector('.thread-choice-reply')?.value || ''
+      groups[index].imageUrl = row.querySelector('.thread-choice-image-url')?.value || ''
+      if (options.allowSilent === true) groups[index].silent = row.querySelector('.thread-choice-silent')?.checked === true
+      if (options.allowEndRound === true) groups[index].endRound = row.querySelector('.thread-choice-end-round')?.checked === true
       if (options.showReplyPace === true) {
         groups[index].replyPace = normalizeChatReplyPace(row.querySelector('.thread-choice-reply-pace')?.value)
       }
@@ -307,36 +350,49 @@ function openThreadReplyChoiceEditor(owner, options) {
   function render() {
     list.innerHTML = groups.map(function(group, index) {
       var mentionScopeAttr = options.allowGroupWideMention === true ? ' data-phone-group-mention="true"' : ''
-      var html = '<div class="thread-choice-row" data-thread-choice-index="' + index + '" style="position:relative;margin-bottom:8px;padding:9px;border:1px solid var(--c-border)">'
-      html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input"' + mentionScopeAttr + ' value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
-      html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input"' + mentionScopeAttr + ' value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
-      if (options.showReplyPace === true) {
-        html += '<label class="form-label thread-choice-pace-label">默认角色回复节奏</label><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的默认角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(group.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select><div class="form-hint">应用于本组全部角色消息；每条消息还可以单独覆盖。</div>'
-      }
-      if (options.showLikeCounts === true) {
-        html += '<label class="form-label thread-choice-like-label">读者回复初始点赞数</label><input class="thread-choice-reply-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(group.replyLikes) + '">'
-      }
-      html += '<div class="thread-choice-followup-head"><span>角色后续消息</span><button type="button" data-thread-followup-add="' + index + '">＋ 添加</button></div>'
+      var safeChoiceImage = isSafeImageUrl(group.imageUrl) ? group.imageUrl.trim() : ''
+      var defaultPace = normalizeChatReplyPace(group.replyPace)
+      var optionalSettingCount = (safeChoiceImage ? 1 : 0) + (group.silent ? 1 : 0) + (group.endRound ? 1 : 0) + (defaultPace !== 'instant' ? 1 : 0) + (nonnegativeCount(group.replyLikes) > 0 ? 1 : 0)
+      var html = '<section class="thread-choice-row" data-thread-choice-index="' + index + '">'
+      html += '<header class="thread-choice-row-head"><strong>选项 ' + (index + 1) + '</strong><button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除选项 ' + (index + 1) + '">删除</button></header>'
+      html += '<div class="thread-choice-primary"><label><span>选项文字</span><input class="thread-choice-text form-input"' + mentionScopeAttr + ' value="' + escAttr(group.text) + '" placeholder="读者在按钮上看到的内容"></label>'
+      var replyInputId = 'threadChoiceReply-' + index
+      html += '<label for="' + replyInputId + '"><span>发送内容</span><input id="' + replyInputId + '" class="thread-choice-reply form-input"' + mentionScopeAttr + ' value="' + escAttr(group.replyText) + '" placeholder="留空则与选项文字相同"' + (group.silent ? ' disabled' : '') + '></label></div>'
+      html += '<details class="thread-choice-more"' + (optionalSettingCount > 0 ? ' open' : '') + '><summary><span>图片与更多设置</span><small>' + (optionalSettingCount > 0 ? '已设置 ' + optionalSettingCount + ' 项' : '可选') + '</small></summary><div class="thread-choice-more-body">'
+      html += '<div class="thread-choice-image-field"><label class="form-label" for="threadChoiceImage-' + index + '">回复图片</label><div class="thread-choice-image-controls"><input id="threadChoiceImage-' + index + '" class="thread-choice-image-url form-input" value="' + escapeHtmlAttribute(group.imageUrl || '') + '" placeholder="粘贴图片链接"><label class="thread-choice-image-file-button btn btn-outline btn-sm">选择图片<input class="thread-choice-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden></label><button type="button" class="thread-choice-image-clear btn btn-ghost btn-sm">清除</button></div><div class="form-hint">有图片时，读者会发送图片；文字只作选项说明。</div><figure class="thread-choice-image-preview"' + (safeChoiceImage ? '' : ' hidden') + '><img' + (safeChoiceImage ? ' src="' + escapeHtmlAttribute(safeChoiceImage) + '"' : '') + ' alt="第 ' + (index + 1) + ' 个选项的图片预览"></figure></div>'
+      if (options.allowSilent === true || options.allowEndRound === true) html += '<div class="thread-choice-behavior-list">'
+      if (options.allowSilent === true) html += '<label class="thread-choice-behavior"><input type="checkbox" class="thread-choice-silent"' + (group.silent ? ' checked' : '') + '><span><strong>沉默</strong><small>不发送读者气泡，直接触发后续</small></span></label>'
+      if (options.allowEndRound === true) html += '<label class="thread-choice-behavior"><input type="checkbox" class="thread-choice-end-round"' + (group.endRound ? ' checked' : '') + '><span><strong>结束当前话题</strong><small>播完后续后，不再显示本轮普通消息</small></span></label>'
+      if (options.allowSilent === true || options.allowEndRound === true) html += '</div>'
+      if (options.showReplyPace === true || options.showLikeCounts === true) html += '<div class="thread-choice-option-fields">'
+      if (options.showReplyPace === true) html += '<label><span>默认回复节奏</span><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的默认角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === defaultPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
+      if (options.showLikeCounts === true) html += '<label><span>读者回复点赞数</span><input class="thread-choice-reply-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(group.replyLikes) + '"></label>'
+      if (options.showReplyPace === true || options.showLikeCounts === true) html += '</div>'
+      html += '</div></details>'
+      html += '<div class="thread-choice-followup-head"><span>角色后续 <small>' + (group.followUps || []).length + ' 条</small></span><button type="button" data-thread-followup-add="' + index + '">＋ 添加消息</button></div>'
       html += '<div class="thread-choice-followup-list">'
+      if (!(group.followUps || []).length) html += '<p class="thread-choice-followup-empty">还没有后续消息</p>'
       ;(group.followUps || []).forEach(function(followUp, followUpIndex) {
         html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><div class="thread-choice-followup-main"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input"' + mentionScopeAttr + ' value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
         if (options.showLikeCounts === true) html += '<label class="thread-choice-followup-like"><span>赞</span><input class="thread-choice-followup-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(followUp.likes) + '" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复初始点赞数"></label>'
         html += '<button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
         if (options.showReplyPace === true) {
-          html += '<div class="thread-choice-followup-settings"><label><span>消息状态</span><select class="thread-choice-followup-delivery" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复消息状态">' + CHAT_FOLLOW_UP_DELIVERY_STATES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatFollowUpDeliveryState(followUp.deliveryState) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
+          var hasCustomFollowUpSettings = normalizeChatFollowUpDeliveryState(followUp.deliveryState) !== 'normal' || (followUp.replyPace && followUp.replyPace !== 'inherit') || followUp.delayBeforeMs != null
+          html += '<details class="thread-choice-followup-more"' + (hasCustomFollowUpSettings ? ' open' : '') + '><summary>发送设置 <small>' + (hasCustomFollowUpSettings ? '已自定义' : '默认') + '</small></summary><div class="thread-choice-followup-settings"><label><span>消息状态</span><select class="thread-choice-followup-delivery" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复消息状态">' + CHAT_FOLLOW_UP_DELIVERY_STATES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatFollowUpDeliveryState(followUp.deliveryState) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
           html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>发送前等待（秒）</span><input class="thread-choice-followup-delay" type="number" min="0" max="60" step="0.1" value="' + (followUp.delayBeforeMs == null ? '' : escapeHtmlAttribute(formatChatMessageDelaySeconds(followUp.delayBeforeMs))) + '" placeholder="默认 0.8"></label></div>'
+          html += '</details>'
         }
         html += '</div>'
       })
       html += '</div>'
-      html += '<button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除这条回复" style="position:absolute;right:5px;top:5px;border:0;background:transparent;color:var(--c-text2);cursor:pointer">×</button></div>'
+      html += '</section>'
       return html
     }).join('')
     list.querySelectorAll('[data-thread-choice-remove]').forEach(function(button) {
       button.onclick = function() {
         collect()
         groups.splice(Number(button.dataset.threadChoiceRemove), 1)
-        if (!groups.length) groups.push({id: '', text: '', replyText: '', replyPace:'normal', replyLikes:0, followUps: []})
+        if (!groups.length) groups.push({id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
         render()
       }
     })
@@ -358,11 +414,61 @@ function openThreadReplyChoiceEditor(owner, options) {
         render()
       }
     })
+    list.querySelectorAll('.thread-choice-silent').forEach(function(input) {
+      input.onchange = function() {
+        collect()
+        var row = input.closest('.thread-choice-row')
+        var reply = row?.querySelector('.thread-choice-reply')
+        if (reply) reply.disabled = input.checked
+      }
+    })
+    list.querySelectorAll('.thread-choice-row').forEach(function(row) {
+      var groupIndex = Number(row.dataset.threadChoiceIndex)
+      var imageInput = row.querySelector('.thread-choice-image-url')
+      var imageFile = row.querySelector('.thread-choice-image-file')
+      var clearButton = row.querySelector('.thread-choice-image-clear')
+      var preview = row.querySelector('.thread-choice-image-preview')
+      var previewImage = preview?.querySelector('img')
+      function updateImagePreview(value) {
+        var safeValue = isSafeImageUrl(value) ? value.trim() : ''
+        if (previewImage && safeValue) previewImage.src = safeValue
+        else previewImage?.removeAttribute('src')
+        if (preview) preview.hidden = !safeValue
+      }
+      imageInput?.addEventListener('input', function() {
+        if (groups[groupIndex]) groups[groupIndex].imageUrl = imageInput.value
+        updateImagePreview(imageInput.value)
+      })
+      if (imageFile) imageFile.onchange = async function() {
+        var file = imageFile.files?.[0]
+        if (!file) return
+        var fileButton = row.querySelector('.thread-choice-image-file-button')
+        fileButton?.classList.add('is-loading')
+        try {
+          var result = await compressEditorImage(file)
+          if (!row.isConnected || !groups[groupIndex]) return
+          groups[groupIndex].imageUrl = result.dataUrl
+          imageInput.value = result.dataUrl
+          updateImagePreview(result.dataUrl)
+          showToast(result.compressed ? '图片已压缩并导入' : '图片已导入')
+        } catch (error) {
+          showToast(error?.message || '图片导入失败')
+        } finally {
+          fileButton?.classList.remove('is-loading')
+          imageFile.value = ''
+        }
+      }
+      if (clearButton) clearButton.onclick = function() {
+        if (groups[groupIndex]) groups[groupIndex].imageUrl = ''
+        if (imageInput) imageInput.value = ''
+        updateImagePreview('')
+      }
+    })
   }
 
   overlay.querySelector('#threadChoiceAdd').onclick = function() {
     collect()
-    groups.push({id: '', text: '', replyText: '', replyPace:'normal', replyLikes:0, followUps: []})
+    groups.push({id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
     render()
   }
   overlay.querySelector('#threadChoiceCancel').onclick = function() { overlay.remove() }
@@ -374,6 +480,15 @@ function openThreadReplyChoiceEditor(owner, options) {
   }
   overlay.querySelector('#threadChoiceSave').onclick = function() {
     collect()
+    var invalidImageIndex = groups.findIndex(function(group) {
+      var imageUrl = typeof group.imageUrl === 'string' ? group.imageUrl.trim() : ''
+      return imageUrl && !isSafeImageUrl(imageUrl)
+    })
+    if (invalidImageIndex >= 0) {
+      showToast('第 ' + (invalidImageIndex + 1) + ' 个选项的图片链接无效')
+      list.querySelectorAll('.thread-choice-image-url')[invalidImageIndex]?.focus()
+      return
+    }
     var nextChoices = []
     groups.forEach(function(group) {
       var text = group.text.trim()
@@ -417,7 +532,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         else nextMessage.delayBeforeMs = normalizeChatMessageDelayMs(followUp.delayBeforeMs)
         return nextMessage
       })
-      var replyText = group.replyText.trim()
+      var replyText = group.silent === true ? '' : group.replyText.trim()
       if (!replyText && options.preserveEmptyReplyText !== true) replyText = text
       var choicePatch = {
         id: previous?.id || uid(),
@@ -426,7 +541,20 @@ function openThreadReplyChoiceEditor(owner, options) {
         followUpMessages: followUpMessages
       }
       if (options.showLikeCounts === true) choicePatch.replyLikes = nonnegativeCount(group.replyLikes)
+      if (options.allowSilent === true) {
+        if (group.silent === true) choicePatch.silent = true
+        else delete choicePatch.silent
+      }
+      if (options.allowEndRound === true) {
+        if (group.endRound === true) choicePatch.endRound = true
+        else delete choicePatch.endRound
+      }
       var next = Object.assign({}, previous || {}, choicePatch)
+      var imageUrl = typeof group.imageUrl === 'string' ? group.imageUrl.trim() : ''
+      if (imageUrl) next.imageUrl = imageUrl
+      else delete next.imageUrl
+      if (options.allowSilent === true && group.silent !== true) delete next.silent
+      if (options.allowEndRound === true && group.endRound !== true) delete next.endRound
       if (options.showReplyPace === true) next.replyPace = normalizeChatReplyPace(group.replyPace)
       delete next.used
       nextChoices.push(next)
@@ -3633,15 +3761,16 @@ function openForumEditor(frame, wid, contact, pd) {
     ov.querySelector('#idOk').onclick = function() {
       var sel = list.querySelector('[name="forumId"]:checked')
       if (!sel) { ov.remove(); return }
-      callback({
+      var identity = {
         id: sel.dataset.identityReader || sel.dataset.identityContact || sel.dataset.identityNpc || '',
         aliasId: sel.dataset.identityAlias || '',
         name: sel.dataset.identityName || '',
         avatar: sel.dataset.identityAvatar || '',
         ipLocation: sel.dataset.identityIp || '',
         isReader: sel.dataset.identityReader === 'self'
-      })
+      }
       ov.remove()
+      callback(identity)
     }
 
     setTimeout(function() { if (search) search.focus() }, 100)
@@ -3838,8 +3967,11 @@ function openForumEditor(frame, wid, contact, pd) {
         '<div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
         '<div class="form-group"><label class="form-label">显示评论数（可选）</label><input id="fpCommentCount" class="form-input" type="number" min="0" inputmode="numeric" placeholder="留空则按实际评论数显示"></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fpImg" class="form-input" placeholder="https://..."></div>' +
+        phoneStoryVisibilityFieldHtml(pd, '', 'fpVisibilityChoice') +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">发帖身份：' + esc(identity.name) + '</span></div>',
-        '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>')
+        '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>',
+        undefined,
+        { initialFocus:'#fpTitle' })
 
       ov.querySelector('#fpSave').onclick = function() {
         var title = ov.querySelector('#fpTitle').value.trim()
@@ -3853,6 +3985,7 @@ function openForumEditor(frame, wid, contact, pd) {
           contactIpLocation: identity.ipLocation || '',
           time: time, pinned:false, featured:false, likes: 0, bookmarks: 0,
           displayCommentCount: ov.querySelector('#fpCommentCount').value === '' ? null : Math.max(0, parseInt(ov.querySelector('#fpCommentCount').value) || 0),
+          visibleAfterChoiceId: ov.querySelector('#fpVisibilityChoice').value || '',
           comments: []
         })
         saveData()
@@ -3871,7 +4004,8 @@ function openForumEditor(frame, wid, contact, pd) {
       '<div class="form-group"><label class="form-label" for="editPostContent">主楼内容</label><textarea id="editPostContent" class="form-textarea" style="min-height:140px" placeholder="可使用回车分段；输入 @ 可提及">' + esc(p.content || '') + '</textarea><div class="form-hint">回车分段会在作者预览和读者端原样保留。</div></div>' +
       '<div class="form-group"><label class="form-label" for="editPostTime">发帖时间（可选）</label><input id="editPostTime" class="form-input" value="' + escAttr(p.time || '') + '" placeholder="留空则不显示"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostCommentCount">显示评论数（可选）</label><input id="editPostCommentCount" class="form-input" type="number" min="0" inputmode="numeric" value="' + (p.displayCommentCount == null ? '' : escAttr(p.displayCommentCount)) + '" placeholder="留空则按实际评论数显示"></div>' +
-      '<div class="form-group"><label class="form-label" for="editPostImg">图片 URL（可选）</label><input id="editPostImg" class="form-input" value="' + escAttr(p.imageUrl || '') + '" placeholder="https://..."></div>',
+      '<div class="form-group"><label class="form-label" for="editPostImg">图片 URL（可选）</label><input id="editPostImg" class="form-input" value="' + escAttr(p.imageUrl || '') + '" placeholder="https://..."></div>' +
+      phoneStoryVisibilityFieldHtml(pd, p.visibleAfterChoiceId, 'editPostVisibilityChoice'),
       '<button id="editPostSave" class="btn btn-primary btn-sm">保存</button><button id="editPostCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#editPostSave').onclick = function() {
       var title = ov.querySelector('#editPostTitle').value.trim()
@@ -3881,6 +4015,9 @@ function openForumEditor(frame, wid, contact, pd) {
       p.time = ov.querySelector('#editPostTime').value.trim()
       p.displayCommentCount = ov.querySelector('#editPostCommentCount').value === '' ? null : Math.max(0, parseInt(ov.querySelector('#editPostCommentCount').value) || 0)
       p.imageUrl = ov.querySelector('#editPostImg').value.trim()
+      var visibleAfterChoiceId = ov.querySelector('#editPostVisibilityChoice').value
+      if (visibleAfterChoiceId) p.visibleAfterChoiceId = visibleAfterChoiceId
+      else delete p.visibleAfterChoiceId
       saveData()
       ov.remove()
       renderForum()
@@ -3933,7 +4070,7 @@ function openForumEditor(frame, wid, contact, pd) {
           : (followUpActors[0]?.id || 'self')
         var readerName = identity.name || pd.skin?.readerId || '读者'
         var ov = modal('设置读者回复',
-          '<div class="forum-reader-choice-intro"><strong>回复人：' + esc(readerName) + '</strong><span>设置读者可以选择的完整回复，并为每种回复添加角色后续回复。</span></div>' +
+          '<div class="forum-reader-choice-intro"><strong>回复人：' + esc(readerName) + '</strong><span>设置读者可以选择的文字或图片回复，并为每个选项安排角色后续。</span></div>' +
           '<button type="button" id="fcReaderChoices" class="btn btn-sm btn-outline" style="width:100%">编辑读者回复选项</button>' +
           '<div id="fcReaderChoiceStatus" class="form-hint">' + (Array.isArray(choiceOwner.choices) && choiceOwner.choices.length ? '已设置 ' + choiceOwner.choices.length + ' 个选项' : '尚未设置回复选项') + '</div>',
           '<button id="fcSave" class="btn btn-primary btn-sm">保存选项</button><button id="fcCancel" class="btn btn-ghost btn-sm">取消</button>')
@@ -4185,7 +4322,7 @@ function openForumEditor(frame, wid, contact, pd) {
         if (!Array.isArray(item.choices) || item.choices.length === 0) return ''
         var choices = '<div class="chat-choices forum-comment-choices">'
         item.choices.forEach(function(choice, choiceIndex) {
-          choices += '<button type="button" class="chat-choice-btn" data-forum-comment-id="' + escAttr(item.id) + '" data-forum-choice-index="' + choiceIndex + '" aria-label="编辑论坛回复选项：' + escAttr(choice.text || '选项') + '">' + esc(choice.text || '选项') + '</button>'
+          choices += '<button type="button" class="chat-choice-btn' + (authorChoiceImageUrl(choice) ? ' has-image' : '') + '" data-forum-comment-id="' + escAttr(item.id) + '" data-forum-choice-index="' + choiceIndex + '" aria-label="编辑论坛回复选项：' + escAttr(choice.text || '选项') + '">' + renderAuthorChoiceContent(choice) + '</button>'
         })
         return choices + '</div>'
       },
@@ -5216,7 +5353,7 @@ function openMessagesEditor(frame, wid, pd) {
             if (mc.choices && mc.choices.length > 0) {
               h += '<div class="chat-choices" style="margin-left:8px;margin-top:2px">'
               mc.choices.forEach(function(c, cidx) {
-                h += '<button type="button" class="chat-choice-btn" data-moment-cid="' + escAttr(m.id) + '" data-moment-ci="' + mci + '" data-moment-coi="' + cidx + '" aria-label="编辑动态回复选项：' + escAttr(c.text || '选项') + '">' + esc(c.text || '选项') + '</button>'
+                h += '<button type="button" class="chat-choice-btn' + (authorChoiceImageUrl(c) ? ' has-image' : '') + '" data-moment-cid="' + escAttr(m.id) + '" data-moment-ci="' + mci + '" data-moment-coi="' + cidx + '" aria-label="编辑动态回复选项：' + escAttr(c.text || '选项') + '">' + renderAuthorChoiceContent(c) + '</button>'
               })
               h += '</div>'
             }
@@ -6641,7 +6778,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (msg.choices && msg.choices.length > 0) {
       h += '<div class="chat-choices">'
       msg.choices.forEach(function(c, cidx) {
-        h += '<button type="button" class="chat-choice-btn" data-choice-ri="' + ri + '" data-choice-mi="' + mi + '" data-choice-ci="' + cidx + '" aria-label="编辑回复选项：' + escapeHtmlAttribute(c.text || '选项') + '">' + esc(c.text || '选项') + '</button>'
+        h += '<button type="button" class="chat-choice-btn' + (authorChoiceImageUrl(c) ? ' has-image' : '') + '" data-choice-ri="' + ri + '" data-choice-mi="' + mi + '" data-choice-ci="' + cidx + '" aria-label="编辑回复选项：' + escapeHtmlAttribute(c.text || '选项') + '">' + renderAuthorChoiceContent(c) + '</button>'
       })
       h += '</div>'
     }
@@ -6827,6 +6964,22 @@ function openChatEditor(frame, wid, chatId, pd) {
       input.focus()
     }
 
+    function showMessageVisibilityEditor(message) {
+      var body = phoneStoryVisibilityFieldHtml(pd, message.visibleAfterChoiceId, 'chatMessageVisibilityChoice')
+      var ov = modal('设置剧情显示条件', body, '<button id="chatMessageVisibilitySave" class="btn btn-primary btn-sm">保存</button><button id="chatMessageVisibilityCancel" class="btn btn-ghost btn-sm">取消</button>')
+      var select = ov.querySelector('#chatMessageVisibilityChoice')
+      ov.querySelector('#chatMessageVisibilitySave').onclick = function() {
+        var choiceId = select.value
+        if (choiceId) message.visibleAfterChoiceId = choiceId
+        else delete message.visibleAfterChoiceId
+        save()
+        ov.remove()
+        renderChat()
+      }
+      ov.querySelector('#chatMessageVisibilityCancel').onclick = function() { ov.remove() }
+      select.focus()
+    }
+
     // Context menu for messages (PC right-click / mobile long-press)
     var msgArea = frame.querySelector('#chatMsgArea')
     if (msgArea) {
@@ -6931,6 +7084,9 @@ function openChatEditor(frame, wid, chatId, pd) {
         var delayItem = addItem('发送间隔', function() { showMessageDelayEditor(msg) })
         delayItem.dataset.chatAction = 'message-delay'
 
+        var visibilityItem = addItem('剧情显示条件', function() { showMessageVisibilityEditor(msg) })
+        visibilityItem.dataset.chatAction = 'story-visibility'
+
         addItem('引用', function() {
           var qId = msg.id
           var qText = chatMessageQuoteSummary(msg)
@@ -7023,6 +7179,8 @@ function openChatEditor(frame, wid, chatId, pd) {
             followUpActors:followUpActors,
             showReplyPace:true,
             allowGroupWideMention:ch.type === 'group',
+            allowSilent:true,
+            allowEndRound:true,
             preserveEmptyReplyText:true,
             includeFollowUpIdentityFields:false,
             followUpTimeFactory:function() { return new Date().toLocaleString() },

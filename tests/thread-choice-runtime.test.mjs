@@ -167,6 +167,31 @@ test("an empty reply skips createReply and does not consume a reply id", () => {
   assert.equal(result.run.replyItemId, null)
 })
 
+test("an image choice creates a reply even when replyText is empty", () => {
+  const items = fixtureItems()
+  items[1].choices[1].imageUrl = "https://example.invalid/choice.png"
+  let ids = 0
+  let receivedChoice = null
+
+  const result = applyThreadChoice(items, "owner", 1, {
+    idFactory: () => `image-${++ids}`,
+    createReply({ id, choice }) {
+      receivedChoice = choice
+      return { id, kind: "reader-reply", imageUrl: choice.imageUrl }
+    },
+    createFollowUp: callbacks().createFollowUp,
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(receivedChoice.imageUrl, "https://example.invalid/choice.png")
+  assert.deepEqual(result.items[2], {
+    id: "image-1",
+    kind: "reader-reply",
+    imageUrl: "https://example.invalid/choice.png",
+  })
+  assert.equal(result.run.replyItemId, "image-1")
+})
+
 test("rollback removes only generated ids and keeps authored items", () => {
   const items = fixtureItems()
   let id = 0

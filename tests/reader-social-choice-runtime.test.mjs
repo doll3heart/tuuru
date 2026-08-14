@@ -214,6 +214,24 @@ test("a social choice without reader text keeps reselection on its first follow-
   assert.ok(document.querySelector('.rd-thread-choice-option[data-thread-scope="moment"]'))
 })
 
+test("a social image choice previews and sends the same image", async t => {
+  const work = socialChoiceWork()
+  const imageUrl = "data:image/png;base64,c29jaWFsLWNob2ljZQ=="
+  work.phoneData.moments[0].comments[0].choices[0].imageUrl = imageUrl
+
+  await openSeededPhone(t, work)
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('[data-message-section="moments"]').click()
+  const option = document.querySelector('.rd-thread-choice-option[data-thread-scope="moment"]')
+  assert.ok(option.classList.contains("has-image"))
+  assert.equal(option.querySelector("img")?.getAttribute("src"), imageUrl)
+  option.click()
+
+  const reply = document.querySelector(".rd-thread-comment.is-reader")
+  assert.equal(reply.querySelector("img")?.getAttribute("src"), imageUrl)
+  assert.equal(reply.querySelector(".rd-thread-comment-content").textContent, "")
+})
+
 test("reader social choices use the shared immutable runtime without a free-input path", () => {
   assert.match(readerSource, /import\s*\{[^}]*applyThreadChoice[^}]*rollbackThreadChoice[^}]*\}\s*from\s*['"]\.\.\/js\/thread-choice-runtime\.js['"]/s)
 

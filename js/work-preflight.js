@@ -5,6 +5,7 @@ import { articleInteractionMarkerIds } from "./article-interaction-group-model.j
 import { articlePlaceholderMarkerIds } from "./article-placeholder-marker.js"
 import { ARTICLE_RANDOM_GAME_KIND, normalizeArticleRandomGame } from "./article-random-game.js"
 import { isInteractiveExperienceWork } from "./interactive-experience.js"
+import { phoneStoryChoiceById } from "./phone-story-state.js"
 
 function items(value) {
   return Array.isArray(value) ? value : []
@@ -548,6 +549,47 @@ function inspectPhoneMessages(phoneData, issues) {
   }
 }
 
+function inspectPhoneStoryConditions(phoneData, issues) {
+  function inspectItem(item, location, ownerMessageId = "") {
+    const choiceId = typeof item?.visibleAfterChoiceId === "string"
+      ? item.visibleAfterChoiceId.trim()
+      : ""
+    if (!choiceId) return
+    const choice = phoneStoryChoiceById(phoneData, choiceId)
+    if (!choice) {
+      addIssue(
+        issues,
+        "phone-story-condition-choice-missing",
+        "warning",
+        "剧情显示条件引用的回复选项已不存在",
+        location,
+        "重新选择一个现有消息回复，或改为始终显示。",
+      )
+      return
+    }
+    if (ownerMessageId && choice.ownerMessageId === ownerMessageId) {
+      addIssue(
+        issues,
+        "phone-story-condition-self-reference",
+        "error",
+        "消息不能等待自己的回复选项后才显示",
+        location,
+        "改为引用更早消息里的回复选项。",
+      )
+    }
+  }
+
+  for (const chat of items(phoneData?.chats)) {
+    const chatLabel = plainText(chat?.groupName) || "会话"
+    chatMessages(chat).forEach(function(message, index) {
+      inspectItem(message, `小手机 · 消息 · ${chatLabel} · 第 ${index + 1} 条`, String(message?.id || ""))
+    })
+  }
+  items(phoneData?.forumPosts).forEach(function(post, index) {
+    inspectItem(post, `小手机 · 论坛 · 第 ${index + 1} 篇帖子`)
+  })
+}
+
 function inspectPhoneImages(phoneData, issues) {
   const imageGroups = [
     ["动态", items(phoneData?.moments).flatMap(moment => items(moment?.images))],
@@ -623,6 +665,7 @@ function inspectPhone(work, issues) {
   }
   inspectPhoneContacts(phoneData, issues)
   inspectPhoneMessages(phoneData, issues)
+  inspectPhoneStoryConditions(phoneData, issues)
   inspectPhoneImages(phoneData, issues)
   inspectPhoneReadingFlow(phoneData, issues)
   inspectHiddenPhoneApps(phoneData, issues)

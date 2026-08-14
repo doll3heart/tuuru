@@ -133,6 +133,54 @@ test("does not create a reply message or consume its id when replyText is empty"
   assert.equal(result.run.replyMessageId, null)
 })
 
+test("an image choice sends the selected image instead of an extra text reply", () => {
+  const round = fixtureRound()
+  round.messages[1].choices[0].imageUrl = "https://example.invalid/choice.png"
+  let sequence = 0
+
+  const result = callApply(round, "owner", 0, {
+    idFactory: () => `image-${++sequence}`,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.round.messages[2], {
+    id: "image-1",
+    senderId: "self",
+    image: "https://example.invalid/choice.png",
+    type: "image",
+  })
+  assert.equal(result.round.messages.some(message => message.text === "My answer"), false)
+  assert.equal(result.run.replyMessageId, "image-1")
+})
+
+test("an explicit silent choice suppresses stale saved reply text", () => {
+  const round = fixtureRound()
+  round.messages[1].choices[0].silent = true
+  let sequence = 0
+
+  const result = callApply(round, "owner", 0, {
+    idFactory: () => `silent-follow-up-${++sequence}`,
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.run.replyMessageId, null)
+  assert.deepEqual(result.run.generatedMessageIds, ["silent-follow-up-1", "silent-follow-up-2"])
+  assert.equal(result.round.messages[2].text, "First follow-up")
+})
+
+test("an important choice records that the current round must end", () => {
+  const round = fixtureRound()
+  round.messages[1].choices[1].endRound = true
+
+  const result = callApply(round, "owner", 1, {
+    idFactory: () => "ending-follow-up",
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.run.endRound, true)
+  assert.equal(result.round.messages.at(-1).id, "suffix")
+})
+
 test("a paced character reply inserts a temporary typing event before follow-ups", () => {
   const round = fixtureRound()
   round.messages[1].choices[0].replyPace = "quick"

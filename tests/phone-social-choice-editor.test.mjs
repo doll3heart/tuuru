@@ -128,11 +128,11 @@ function makePhoneData() {
   }
 }
 
-async function openApp(id, type) {
+async function openApp(id, type, phoneData = makePhoneData()) {
   const dom = installDom()
   const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
   const { openPhoneAppModal } = await import("../js/pages/phone.js")
-  const draft = createPhoneWorkDraft({ id, type: "article", phoneData: makePhoneData() })
+  const draft = createPhoneWorkDraft({ id, type: "article", phoneData })
   const overlay = openPhoneAppModal(draft.id, type)
   return { dom, draft, overlay }
 }
@@ -354,6 +354,7 @@ test("forum post time starts empty and remains directly editable", async () => {
     overlay.querySelector("#fbAddPost").click()
     document.querySelector("#idOk").click()
     const createModal = document.querySelector("#fpSave").closest(".modal-overlay")
+    assert.equal(document.activeElement, createModal.querySelector("#fpTitle"))
     assert.equal(createModal.querySelector("#fpTime").value, "")
     createModal.querySelector("#fpTitle").value = "没有默认时间"
     createModal.querySelector("#fpSave").click()
@@ -408,6 +409,40 @@ test("forum post detail exposes a complete editor and preserves paragraph breaks
     assert.match(sharedForumCss, /\.phone-frame \.forum-post-content\s*\{[^}]*white-space:\s*pre-wrap/s)
     assert.doesNotMatch(authorCss, /^\.forum-post-content\s*\{/m)
     assert.doesNotMatch(readerCss, /\.rd-forum-post-content\s*\{/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("forum posts can unlock after a stable message choice", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats = [{
+    id:"story-chat",
+    type:"single",
+    contactIds:["contact-1"],
+    rounds:[{
+      id:"story-round",
+      messages:[{
+        id:"story-owner",
+        senderId:"contact-1",
+        type:"text",
+        text:"要拒绝吗？",
+        choices:[{ id:"story-refuse", text:"拒绝", replyText:"拒绝", followUpMessages:[] }],
+      }],
+    }],
+  }]
+  const fixture = await openApp("forum-story-unlock", "forum", phoneData)
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
+    overlay.querySelector("#fbEditPost").click()
+    const select = document.querySelector("#editPostVisibilityChoice")
+    select.value = "story-refuse"
+    document.querySelector("#editPostSave").click()
+    assert.equal(
+      draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-a").visibleAfterChoiceId,
+      "story-refuse",
+    )
   } finally {
     closeFixture(fixture)
   }

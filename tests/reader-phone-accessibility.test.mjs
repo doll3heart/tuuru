@@ -83,6 +83,19 @@ test("reader App controls keep a visible bounded focus treatment", () => {
   assert.match(label, /display\s*:\s*block/)
 })
 
+test("reader desktop page dots keep a compact mark inside a practical touch target", () => {
+  const dot = ruleBodiesFor(cssWithoutComments, ".phone-home-page-dot")
+  const dotMark = ruleBodiesFor(cssWithoutComments, ".phone-home-page-dot::before")
+  const activeMark = ruleBodiesFor(cssWithoutComments, ".phone-home-page-dot.is-active::before")
+
+  assert.match(dot, /width\s*:\s*36px/)
+  assert.match(dot, /height\s*:\s*36px/)
+  assert.match(dot, /background\s*:\s*transparent/)
+  assert.match(dotMark, /width\s*:\s*8px/)
+  assert.match(dotMark, /height\s*:\s*8px/)
+  assert.match(activeMark, /width\s*:\s*18px/)
+})
+
 test("reader calls expose native focusable controls without a dotted call surface", () => {
   const scene = ruleBodiesFor(cssWithoutComments, ".rd-call-scene")
   const advance = ruleBodiesFor(cssWithoutComments, ".rd-call-advance")

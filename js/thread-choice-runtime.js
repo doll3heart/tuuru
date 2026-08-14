@@ -69,7 +69,9 @@ export function applyThreadChoice(items, ownerItemId, choiceIndex, options) {
   }
 
   const choice = owner.choices[choiceIndex]
-  const hasReply = typeof choice.replyText === "string" && choice.replyText.length > 0
+  const hasImageReply = typeof choice.imageUrl === "string" && choice.imageUrl.trim().length > 0
+  const hasTextReply = typeof choice.replyText === "string" && choice.replyText.length > 0
+  const hasReply = choice.silent !== true && (hasImageReply || hasTextReply)
   const followUps = Array.isArray(choice.followUpMessages)
     ? choice.followUpMessages
     : []

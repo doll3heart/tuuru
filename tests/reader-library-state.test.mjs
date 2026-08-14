@@ -253,6 +253,12 @@ test("phone reading positions are bounded and legacy progress remains compatible
       "contact-c":"pending",
       "contact-invalid":"later",
     },
+    phoneChoiceSelections:{
+      "message-a":"choice-yes",
+      "message-b":"choice-no",
+      "message-invalid":"",
+      "constructor":"choice-bad",
+    },
     contactRemarks:{
       "contact-a":"  阿澈  ",
       "contact-b":"",
@@ -293,6 +299,10 @@ test("phone reading positions are bounded and legacy progress remains compatible
     "contact-b":"declined",
     "contact-c":"pending",
   })
+  assert.deepEqual(readerBook(library, "work-a").progress.phoneChoiceSelections, {
+    "message-a":"choice-yes",
+    "message-b":"choice-no",
+  })
   assert.deepEqual(readerBook(library, "work-a").progress.contactRemarks, {
     "contact-a":"阿澈",
   })
@@ -305,6 +315,7 @@ test("phone reading positions are bounded and legacy progress remains compatible
   assert.deepEqual(readerBook(legacy, "work-a").progress.friendRequestResponses, {})
   assert.deepEqual(readerBook(legacy, "work-a").progress.contactCardResponses, {})
   assert.deepEqual(readerBook(legacy, "work-a").progress.contactFriendships, {})
+  assert.deepEqual(readerBook(legacy, "work-a").progress.phoneChoiceSelections, {})
   assert.deepEqual(readerBook(legacy, "work-a").progress.contactRemarks, {})
 
   const invalid = saveReaderProgress(library, "work-a", {

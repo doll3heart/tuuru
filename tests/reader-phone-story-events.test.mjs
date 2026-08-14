@@ -340,6 +340,53 @@ test("the next authored bubble uses its own exact delay instead of the fixed cha
   assert.ok(document.querySelector('[data-message-id="delay-second"]'))
 })
 
+test("unsequenced authored bubbles after a choice honor their individual delays", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-unsequenced-authored-delay"
+  work.phoneData.chats[0].rounds[0].messages = [
+    {
+      id:"authored-delay-choice-owner",
+      type:"text",
+      senderId:"contact-1",
+      text:"Ready?",
+      choices:[{
+        id:"authored-delay-choice",
+        text:"Ready",
+        replyText:"",
+        silent:true,
+      }],
+    },
+    { id:"authored-delay-text", type:"text", senderId:"contact-1", text:"First", delayBeforeMs:120 },
+    { id:"authored-delay-image-one", type:"image", senderId:"contact-1", image:"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", delayBeforeMs:120 },
+    { id:"authored-delay-image-two", type:"image", senderId:"contact-2", image:"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", delayBeforeMs:120 },
+  ]
+  delete work.phoneData.readingFlow
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?unsequenced-authored-delay=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector("#chatSendBtn").click()
+  document.querySelector(".rd-reply-option").click()
+
+  assert.equal(document.querySelector('[data-message-id="authored-delay-text"]'), null)
+  assert.equal(document.querySelector('[data-message-id="authored-delay-image-one"]'), null)
+  assert.equal(document.querySelector('[data-message-id="authored-delay-image-two"]'), null)
+  await new Promise(resolve => setTimeout(resolve, 70))
+  assert.equal(document.querySelector('[data-message-id="authored-delay-text"]'), null)
+  await new Promise(resolve => setTimeout(resolve, 90))
+  assert.ok(document.querySelector('[data-message-id="authored-delay-text"]'))
+  assert.equal(document.querySelector('[data-message-id="authored-delay-image-one"]'), null)
+  await new Promise(resolve => setTimeout(resolve, 140))
+  assert.ok(document.querySelector('[data-message-id="authored-delay-image-one"]'))
+  assert.equal(document.querySelector('[data-message-id="authored-delay-image-two"]'), null)
+  await new Promise(resolve => setTimeout(resolve, 140))
+  assert.ok(document.querySelector('[data-message-id="authored-delay-image-two"]'))
+})
+
 test("an unsequenced reply branch also honors the first follow-up bubble delay", async t => {
   installDom(t)
   const work = storyWork()
