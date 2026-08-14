@@ -4,6 +4,7 @@ import fs from "node:fs"
 
 const css = fs.readFileSync(new URL("../css/styles.css", import.meta.url), "utf8")
 const phoneChatCss = fs.readFileSync(new URL("../css/phone-chat.css", import.meta.url), "utf8")
+const readerCss = fs.readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 const phone = fs.readFileSync(new URL("../js/pages/phone.js", import.meta.url), "utf8")
 
 function rule(selector) {
@@ -73,6 +74,12 @@ test("story events and rich cards share centered, touchable, reduced-motion phon
   assert.doesNotMatch(phoneChatCss, /\.rd-chat-story-event[^,{]*\{[^}]*border-(?:left|right)\s*:\s*(?:[2-9]|[1-9]\d)px/s)
   assert.match(phoneChatCss, /@media\s*\(pointer:\s*coarse\)[\s\S]*?\.rd-story-event-action[\s\S]*?min-height\s*:\s*44px/)
   assert.match(phoneChatCss, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.rd-chat-typing-dots i\s*\{[^}]*animation\s*:\s*none/)
+})
+
+test("reader story details escape the generic panel-child positioning rule", () => {
+  const combined = `${readerCss}\n${phoneChatCss}`
+  assert.match(combined, /\.phone-frame\s+\.rd-phone-app-panel\s*>\s*\.rd-chat-story-pip\s*\{[^}]*position\s*:\s*absolute[^}]*inset\s*:/s)
+  assert.match(phoneChatCss, /\.rd-chat-story-pip-scroll\s*\{[^}]*overflow-y\s*:\s*auto/s)
 })
 
 test("cross-App actions and quotes keep compact focus and reduced-motion feedback", () => {

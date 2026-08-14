@@ -574,12 +574,14 @@
   color: inherit;
   font-size: 8px;
 }
-.phone-frame .rd-chat-story-pip {
+.phone-frame .rd-phone-app-panel > .rd-chat-story-pip {
   position: absolute;
   inset: 58px 10px 54px;
   z-index: 24;
   display: flex;
+  min-width: 0;
   min-height: 0;
+  max-height: calc(100% - 112px);
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--chat-editor-line, #8f7b81);
@@ -643,6 +645,33 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.phone-frame .rd-contact-card-action-zone {
+  display: flex;
+  margin-top: 16px;
+  padding-top: 12px;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+.phone-frame .rd-contact-card-action {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--chat-editor-line, #8f7b81);
+  border-radius: 5px;
+  background: var(--chat-editor-pink, #c79ba6);
+  color: var(--chat-editor-ink, #40383b);
+  font: 700 10px/1.2 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  cursor: pointer;
+}
+.phone-frame .rd-contact-card-action:disabled {
+  cursor: default;
+  opacity: .7;
+}
+.phone-frame .rd-contact-card-reaction {
+  color: color-mix(in srgb, var(--chat-editor-ink, #40383b) 78%, transparent);
+  font-size: 9px;
+  line-height: 1.55;
 }
 .phone-frame .rd-chat-story-contact-detail > img,
 .phone-frame .rd-chat-story-contact-detail > span {

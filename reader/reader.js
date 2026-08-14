@@ -43,6 +43,7 @@ import {
   normalizeChatAppTarget,
 } from '../js/chat-message-actions.js'
 import { applyChatChoice, rollbackChatChoice } from '../js/chat-choice-runtime.js'
+import { chatMessageDelayBeforeMs } from '../js/chat-message-delay.js'
 import { applyThreadChoice, rollbackThreadChoice } from '../js/thread-choice-runtime.js'
 import { resolveArticleChoiceTarget } from '../js/article-reader-navigation.js'
 import {
@@ -545,6 +546,8 @@ function resetReaderPhoneChoiceSession(work) {
     storyContactOverrides: new Map(),
     storyGroupOverrides: new Map(),
     friendRequestResponses: new Map(),
+    contactCardResponses: new Map(),
+    contactFriendships: new Map(),
     contactRemarks: new Map(),
   }
   return _readerPhoneChoiceSession
@@ -557,6 +560,12 @@ function readerPhoneChoiceSession(work) {
   }
   if (!(_readerPhoneChoiceSession.friendRequestResponses instanceof Map)) {
     _readerPhoneChoiceSession.friendRequestResponses = new Map()
+  }
+  if (!(_readerPhoneChoiceSession.contactCardResponses instanceof Map)) {
+    _readerPhoneChoiceSession.contactCardResponses = new Map()
+  }
+  if (!(_readerPhoneChoiceSession.contactFriendships instanceof Map)) {
+    _readerPhoneChoiceSession.contactFriendships = new Map()
   }
   if (!(_readerPhoneChoiceSession.contactRemarks instanceof Map)) {
     _readerPhoneChoiceSession.contactRemarks = new Map()
@@ -572,6 +581,27 @@ function readerContactRemark(contactId) {
 function readerContactDisplayName(contact, surface, fallback) {
   var remark = contact && surface !== 'forum' ? readerContactRemark(contact.id) : ''
   return remark || contactDisplayName(contact, surface, fallback)
+}
+
+function readerContactAddMode(contact) {
+  var mode = String(contact?.readerAddMode || '').trim()
+  return ['existing', 'hidden', 'direct', 'request'].includes(mode) ? mode : 'existing'
+}
+
+function readerContactAddOutcome(contact) {
+  var outcome = String(contact?.readerAddOutcome || '').trim()
+  return ['accepted', 'declined', 'pending'].includes(outcome) ? outcome : 'accepted'
+}
+
+function readerContactFriendshipText(contact, status) {
+  var name = String(contact?.name || '').trim() || '对方'
+  var authored = status === 'accepted'
+    ? contact?.readerAddAcceptedText
+    : (status === 'declined' ? contact?.readerAddDeclinedText : contact?.readerAddPendingText)
+  var fallback = status === 'accepted'
+    ? name + ' 已加入联系人。'
+    : (status === 'declined' ? name + ' 暂时没有同意好友申请。' : '好友申请已发送，等待 ' + name + ' 回复。')
+  return readerPhoneText(String(authored || '').trim() || fallback)
 }
 
 function resolveReaderContactIdentity(phoneData, contactId, options) {
@@ -727,6 +757,8 @@ function saveCurrentReaderProgress() {
       kind:'phone',
       flowIndex:readerPhoneFlowSession(_work).index,
       friendRequestResponses:Object.fromEntries(readerPhoneChoiceSession(_work).friendRequestResponses),
+      contactCardResponses:Object.fromEntries(readerPhoneChoiceSession(_work).contactCardResponses),
+      contactFriendships:Object.fromEntries(readerPhoneChoiceSession(_work).contactFriendships),
       contactRemarks:Object.fromEntries(readerPhoneChoiceSession(_work).contactRemarks),
       readingPosition:readingPosition,
     }
@@ -3992,6 +4024,12 @@ function loadWork(work, options) {
     Object.entries(rememberedBook.progress.friendRequestResponses || {}).forEach(function(entry) {
       phoneChoices.friendRequestResponses.set(entry[0], entry[1])
     })
+    Object.entries(rememberedBook.progress.contactCardResponses || {}).forEach(function(entry) {
+      phoneChoices.contactCardResponses.set(entry[0], entry[1])
+    })
+    Object.entries(rememberedBook.progress.contactFriendships || {}).forEach(function(entry) {
+      phoneChoices.contactFriendships.set(entry[0], entry[1])
+    })
     Object.entries(rememberedBook.progress.contactRemarks || {}).forEach(function(entry) {
       phoneChoices.contactRemarks.set(entry[0], entry[1])
     })
@@ -6705,14 +6743,14 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
     if (typeof targetElement.focus === 'function') targetElement.focus({preventScroll:true})
   }
 
-  function wrapPanel(title, bodyHtml) {
+  function wrapPanel(title, bodyHtml, headerActionHtml) {
     var panelType = String(type || '').replace(/[^a-z0-9_-]/gi, '')
     var h = '<div class="cu-panel cu-panel-embedded rd-phone-app-panel rd-phone-app-' + panelType + '" style="z-index:10">'
     h += renderWorkWatermark(_work && _work.watermark, 'phone')
     h += '<div class="cu-header rd-phone-app-header">'
     h += '<button type="button" class="rd-back-btn" aria-label="返回手机桌面" style="color:var(--c-text2)">←</button>'
     h += '<span class="cu-title" style="flex:1;text-align:center">' + esc(title) + '</span>'
-    h += '<span class="rd-back-spacer" aria-hidden="true"></span>'
+    h += headerActionHtml || '<span class="rd-back-spacer" aria-hidden="true"></span>'
     h += '</div>'
     h += '<div class="cu-body rd-phone-app-body">' + (exportMode ? '' : readerPhoneFlowCueHtml(w, flowStep)) + bodyHtml + '</div>'
     h += '</div>'
@@ -7340,10 +7378,18 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
   } else if (type === 'contacts') {
     var contactSettings = getAppSettings('contacts')
     var contactVisual = appStyle('contacts')
+    var contactChoiceSession = readerPhoneChoiceSession(w)
+    var discoverableContacts = contacts.filter(function(contact) {
+      return readerContactAddMode(contact) === 'direct' || readerContactAddMode(contact) === 'request'
+    })
+    var visibleContacts = contacts.filter(function(contact) {
+      var mode = readerContactAddMode(contact)
+      return mode === 'existing' || contactChoiceSession.contactFriendships.get(String(contact.id)) === 'accepted'
+    })
     var contactVars = '--rd-contact-radius:' + contactVisual.avatarRadius + ';--rd-contact-name:' + sanitizeCssColor(contactVisual.nameColor) + ';--rd-contact-name-size:' + boundedReaderSetting(contactSettings.nameSize, 13, 10, 18) + 'px;--rd-contact-name-weight:' + (contactVisual.nameWeight === '600' || contactVisual.nameWeight === '700' ? contactVisual.nameWeight : '500')
     var h = '<div class="rd-contact-book" style="' + contactVars + '">'
-    if (contacts.length === 0) h += '<div class="rd-app-empty">暂无联系人</div>'
-    contacts.forEach(function(c) {
+    if (visibleContacts.length === 0) h += '<div class="rd-app-empty">' + (discoverableContacts.length ? '还没有联系人，点右上角＋搜索添加' : '暂无联系人') + '</div>'
+    visibleContacts.forEach(function(c) {
       var originalName = String(c.name || '').trim() || contactDisplayName(c, 'messages', '未命名') || '未命名'
       var contactRemark = readerContactRemark(c.id)
       var displayName = contactRemark || originalName
@@ -7358,10 +7404,84 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
       h += '</span><span class="rd-contact-chevron" aria-hidden="true">›</span></button>'
     })
     h += '</div>'
-    wrapPanel('联系人', h)
+    h += '<section class="rd-contact-discovery" data-reader-contact-discovery hidden>'
+    h += '<div class="rd-contact-discovery-head"><button type="button" data-reader-contact-search-close aria-label="返回联系人列表">←</button><span><strong>添加联系人</strong><small>只会显示作者开放搜索的联系人</small></span></div>'
+    h += '<label class="rd-contact-search"><span class="sr-only">搜索联系人姓名</span><input type="search" data-reader-contact-search autocomplete="off" placeholder="搜索联系人姓名或昵称"><span aria-hidden="true">⌕</span></label>'
+    h += '<div class="rd-contact-search-results" data-reader-contact-results>'
+    discoverableContacts.forEach(function(contact) {
+      var status = contactChoiceSession.contactFriendships.get(String(contact.id)) || ''
+      var name = String(contact.name || '').trim() || '未命名'
+      var aliases = Array.isArray(contact.aliases) ? contact.aliases : []
+      var searchKey = [name, contact.alias, contact.msgId].concat(aliases.map(function(alias) { return alias?.name })).filter(Boolean).join(' ').toLocaleLowerCase()
+      var statusLabels = { accepted:'已添加', declined:'已拒绝', pending:'申请中' }
+      h += '<article class="rd-contact-search-result" data-contact-search-result-id="' + escapeHtmlAttribute(contact.id) + '" data-contact-search-key="' + escapeHtmlAttribute(searchKey) + '">'
+      h += '<div class="rd-contact-search-profile"><span class="rd-contact-avatar" style="--rd-avatar-bg:' + sanitizeCssColor(avatarColor(contact.id)) + '">'
+      if (contact.avatarUrl) h += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
+      else h += esc(name.charAt(0))
+      h += '</span><span><strong>' + esc(name) + '</strong><small>' + esc(contact.note || contact.alias || '作者未填写联系人说明') + '</small></span></div>'
+      h += '<button type="button" class="rd-contact-search-submit" data-reader-contact-submit="' + escapeHtmlAttribute(contact.id) + '"' + (status ? ' disabled' : '') + '>' + esc(status ? statusLabels[status] : (readerContactAddMode(contact) === 'direct' ? '添加联系人' : '发送好友申请')) + '</button>'
+      if (status) h += '<p class="rd-contact-search-reaction" data-reader-contact-reaction>' + esc(readerContactFriendshipText(contact, status)) + '</p>'
+      h += '</article>'
+    })
+    h += '<div class="rd-contact-search-empty" data-reader-contact-search-empty hidden>没有找到匹配的联系人</div></div></section>'
+    var contactHeaderAction = !exportMode && discoverableContacts.length
+      ? '<button type="button" class="rd-phone-app-header-action" data-reader-contact-add aria-label="搜索并添加联系人">＋</button>'
+      : ''
+    wrapPanel('联系人', h, contactHeaderAction)
+    var contactBook = phoneFrame.querySelector('.rd-contact-book')
+    var contactDiscovery = phoneFrame.querySelector('[data-reader-contact-discovery]')
+    var openContactDiscovery = function() {
+      if (!contactDiscovery) return
+      if (contactBook) contactBook.hidden = true
+      contactDiscovery.hidden = false
+      var input = contactDiscovery.querySelector('[data-reader-contact-search]')
+      input?.focus()
+    }
+    var closeContactDiscovery = function() {
+      if (!contactDiscovery) return
+      contactDiscovery.hidden = true
+      if (contactBook) contactBook.hidden = false
+      phoneFrame.querySelector('[data-reader-contact-add]')?.focus()
+    }
+    var contactAddButton = phoneFrame.querySelector('[data-reader-contact-add]')
+    if (contactAddButton) contactAddButton.onclick = openContactDiscovery
+    var contactSearchClose = phoneFrame.querySelector('[data-reader-contact-search-close]')
+    if (contactSearchClose) contactSearchClose.onclick = closeContactDiscovery
+    var contactSearch = phoneFrame.querySelector('[data-reader-contact-search]')
+    if (contactSearch) contactSearch.oninput = function() {
+      var query = contactSearch.value.trim().toLocaleLowerCase()
+      var visibleResultCount = 0
+      phoneFrame.querySelectorAll('.rd-contact-search-result[data-contact-search-key]').forEach(function(result) {
+        result.hidden = Boolean(query) && !String(result.dataset.contactSearchKey || '').includes(query)
+        if (!result.hidden) visibleResultCount += 1
+      })
+      var empty = phoneFrame.querySelector('[data-reader-contact-search-empty]')
+      if (empty) empty.hidden = visibleResultCount !== 0
+    }
+    phoneFrame.querySelectorAll('[data-reader-contact-submit]').forEach(function(button) {
+      button.onclick = function() {
+        var contact = discoverableContacts.find(function(candidate) { return String(candidate.id) === String(button.dataset.readerContactSubmit) })
+        if (!contact) return
+        var nextStatus = readerContactAddMode(contact) === 'direct' ? 'accepted' : readerContactAddOutcome(contact)
+        contactChoiceSession.contactFriendships.set(String(contact.id), nextStatus)
+        saveCurrentReaderProgress()
+        if (nextStatus === 'accepted') {
+          openReaderApp('contacts')
+          return
+        }
+        button.disabled = true
+        button.textContent = nextStatus === 'declined' ? '已拒绝' : '申请中'
+        var result = button.closest('.rd-contact-search-result')
+        var reaction = result?.querySelector('[data-reader-contact-reaction]') || document.createElement('p')
+        reaction.className = 'rd-contact-search-reaction'
+        reaction.dataset.readerContactReaction = ''
+        reaction.textContent = readerContactFriendshipText(contact, nextStatus)
+        if (!reaction.isConnected) result?.appendChild(reaction)
+      }
+    })
     phoneFrame.querySelectorAll('.rd-contact-entry[data-contact-id]').forEach(function(entry) {
       entry.onclick = function() {
-        var contact = contacts.find(function(candidate) { return String(candidate.id) === String(entry.dataset.contactId) })
+        var contact = visibleContacts.find(function(candidate) { return String(candidate.id) === String(entry.dataset.contactId) })
         openReaderContactRemarkEditor(contact, entry, function(contactId) {
           openReaderApp('contacts')
           requestAnimationFrame(function() {
@@ -7507,6 +7627,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     readerLayerHistory.open('phone-pip', closeDetail)
     close.onclick = requestClose
     close.focus()
+    return pip
   }
 
   function isFlowTargetMessage(message, round) {
@@ -7606,6 +7727,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function currentFlowPlaybackMessageId() {
+    var playback = chatSession.flowGeneratedPlayback
+    if (playback && playback.index < 0) return ''
     return activeGeneratedPlaybackId() || (flowStep && flowStep.itemId != null ? String(flowStep.itemId) : '')
   }
 
@@ -7629,14 +7752,19 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       var activeUnsequencedId = unsequencedPlayback && Array.isArray(unsequencedPlayback.ids)
         ? unsequencedPlayback.ids[unsequencedPlayback.index]
         : null
+      var unsequencedPlaybackIds = unsequencedPlayback && Array.isArray(unsequencedPlayback.ids)
+        ? unsequencedPlayback.ids.map(String)
+        : []
       var unsequencedChoiceGateActive = false
       unsequencedMessageScan:
       for (var roundIndex = 0; roundIndex < (ch.rounds || []).length; roundIndex++) {
         var messages = Array.isArray(ch.rounds[roundIndex]?.messages) ? ch.rounds[roundIndex].messages : []
-        for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-          var message = messages[messageIndex]
-          if (message?.id == null) continue
-          if (unsequencedChoiceGateActive) {
+          for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+            var message = messages[messageIndex]
+            if (message?.id == null) continue
+            var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
+            if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) continue
+            if (unsequencedChoiceGateActive) {
             if (Array.isArray(message.choices) && message.choices.length > 0) {
               break unsequencedMessageScan
             }
@@ -8037,6 +8165,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       if (chatSession.completedActionIds.has(messageId)) return true
       if (chatSession.claimedMessageIds.has(messageId)) return true
       if (message?.type === 'schedule' && chatSession.eventResponses.has(messageId)) return true
+      if (
+        message?.type === 'contact-card'
+        && (
+          phoneChoiceSession.contactCardResponses.has(messageId)
+          || phoneChoiceSession.contactFriendships.has(String(message?.targetContactId || ''))
+        )
+      ) return true
       return false
     }
 
@@ -8088,7 +8223,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       })
     }
     chatMentionNames = ch.type === 'group'
-      ? [readerChatName].concat((ch.contactIds || []).map(function(contactId) {
+      ? ['全体成员'].concat([readerChatName]).concat((ch.contactIds || []).map(function(contactId) {
           var mentionContact = contacts.find(function(candidate) { return candidate.id === contactId })
           return readerContactDisplayName(mentionContact, 'messages', mentionContact?.name || '')
         })).concat(readerPlaceholderMentionNames()).filter(Boolean)
@@ -8749,7 +8884,12 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         var message = storyMessageById(card.dataset.storyMessageId)
         if (!message) return
         var kind = card.dataset.storyCard
-        completeMessageAction(message.id)
+        var normalizedStoryCard = normalizeChatStoryMessage(message)
+        var pendingContactAction = kind === 'contact-card'
+          && normalizedStoryCard.contactAction !== 'view'
+          && !phoneChoiceSession.contactCardResponses.has(String(message.id))
+          && !phoneChoiceSession.contactFriendships.has(String(normalizedStoryCard.targetContactId || ''))
+        if (!pendingContactAction) completeMessageAction(message.id)
         if (kind === 'location') {
           var locationHtml = ''
           if (message.locationImage) locationHtml += '<img class="rd-chat-story-detail-image" src="' + escapeHtmlAttribute(message.locationImage) + '" alt="">'
@@ -8762,7 +8902,40 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           if (contact && contact.avatarUrl) contactHtml += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
           else contactHtml += '<span>' + esc(contactName.charAt(0)) + '</span>'
           contactHtml += '<div><h3>' + esc(contactName) + '</h3><p>' + esc(message.contactNote || (contact && contact.note) || '暂无附言') + '</p></div></div>'
-          openChatStoryDetail('联系人名片', contactHtml, card)
+          var contactCardStatus = phoneChoiceSession.contactCardResponses.get(String(message.id))
+            || phoneChoiceSession.contactFriendships.get(String(normalizedStoryCard.targetContactId || ''))
+            || ''
+          var contactStatusLabels = { accepted:'已添加', declined:'已拒绝', pending:'申请中' }
+          var contactReaction = contactCardStatus === 'accepted'
+            ? normalizedStoryCard.contactAcceptedText
+            : (contactCardStatus === 'declined' ? normalizedStoryCard.contactDeclinedText : normalizedStoryCard.contactPendingText)
+          if (normalizedStoryCard.contactAction !== 'view' && normalizedStoryCard.targetContactId) {
+            contactHtml += '<div class="rd-contact-card-action-zone">'
+            contactHtml += '<button type="button" class="rd-contact-card-action" data-contact-card-action="' + escapeHtmlAttribute(message.id) + '"' + (contactCardStatus ? ' disabled' : '') + '>' + esc(contactCardStatus ? contactStatusLabels[contactCardStatus] : (normalizedStoryCard.contactAction === 'direct' ? '添加好友' : '发送好友申请')) + '</button>'
+            if (contactReaction) contactHtml += '<p class="rd-contact-card-reaction" data-contact-card-reaction>' + esc(readerPhoneText(contactReaction)) + '</p>'
+            contactHtml += '</div>'
+          }
+          var contactPip = openChatStoryDetail('联系人名片', contactHtml, card)
+          var contactActionButton = contactPip.querySelector('[data-contact-card-action]')
+          if (contactActionButton && !contactCardStatus) contactActionButton.onclick = function() {
+            var nextStatus = normalizedStoryCard.contactAction === 'direct' ? 'accepted' : normalizedStoryCard.contactRequestOutcome
+            phoneChoiceSession.contactCardResponses.set(String(message.id), nextStatus)
+            phoneChoiceSession.contactFriendships.set(String(normalizedStoryCard.targetContactId), nextStatus)
+            contactActionButton.disabled = true
+            contactActionButton.textContent = contactStatusLabels[nextStatus]
+            var nextReaction = nextStatus === 'accepted'
+              ? normalizedStoryCard.contactAcceptedText
+              : (nextStatus === 'declined' ? normalizedStoryCard.contactDeclinedText : normalizedStoryCard.contactPendingText)
+            if (nextReaction) {
+              var reaction = document.createElement('p')
+              reaction.className = 'rd-contact-card-reaction'
+              reaction.dataset.contactCardReaction = ''
+              reaction.textContent = readerPhoneText(nextReaction)
+              contactActionButton.insertAdjacentElement('afterend', reaction)
+            }
+            completeMessageAction(message.id)
+            saveCurrentReaderProgress()
+          }
         } else if (kind === 'file') {
           var fileHtml = '<div class="rd-chat-story-file-meta"><strong>' + esc(message.fileName || '未命名文件') + '</strong><span>' + esc([message.fileType, message.fileSize].filter(Boolean).join(' · ')) + '</span></div><pre class="rd-chat-story-file-content">' + esc(readerPhoneText(message.fileContent || '文件没有可预览的正文。')) + '</pre>'
           openChatStoryDetail('文件预览', fileHtml, card)
@@ -8821,6 +8994,22 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       return null
     }
 
+    function nextChatFlowMessage() {
+      var playback = chatSession.flowGeneratedPlayback
+      if (playback && Array.isArray(playback.ids) && playback.index + 1 < playback.ids.length) {
+        return findFlowPlaybackMessage(playback.ids[playback.index + 1])
+      }
+      if (!flowStep) return null
+      var nextStep = flowSession.sequence[flowSession.index + 1]
+      if (!nextStep || nextStep.type !== 'messages') return null
+      var nextTarget = resolvePhoneReadingFlowStep(pd, nextStep)
+      return targetBelongsToChat(nextTarget) && nextTarget.kind === 'message' ? nextTarget.message : null
+    }
+
+    function nextChatFlowDelay() {
+      return chatMessageDelayBeforeMs(nextChatFlowMessage(), CHAT_FLOW_MESSAGE_GAP)
+    }
+
     function renderedChatFlowIsCurrent() {
       return chatFlowRenderToken === renderToken && frame.isConnected
     }
@@ -8841,7 +9030,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         }
         if (flowStep) finishChatFlowStep()
         else renderChat()
-      }, Number.isFinite(delayMs) ? Math.max(0, delayMs) : CHAT_FLOW_MESSAGE_GAP)
+      }, Number.isFinite(delayMs) ? Math.max(0, delayMs) : nextChatFlowDelay())
     }
 
     function finishCurrentChatFlowMessage(messageId) {
@@ -8890,8 +9079,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           return
         }
         var eventDelay = message.type === 'system-event' && message.eventKind === 'typing'
-          ? Math.max(300, Math.min(30000, Number(message.durationMs) || 1800))
-          : CHAT_FLOW_MESSAGE_GAP
+          ? Math.max(300, Math.min(30000, Number(message.durationMs) || 1800)) + nextChatFlowDelay()
+          : undefined
         scheduleNextChatFlowMessage(eventDelay)
         return
       }
@@ -8935,11 +9124,27 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       var hasPacedReply = generatedIds.some(function(messageId) {
         return findFlowPlaybackMessage(messageId)?.transientTyping === true
       })
-      chatSession.flowGeneratedPlayback = generatedIds.length > 0 && (flowEnabled || hasPacedReply)
-        ? { runKey: runKey, ids: generatedIds, index: 0 }
+      var hasAuthoredDelay = generatedIds.some(function(messageId) {
+        var generatedMessage = findFlowPlaybackMessage(messageId)
+        return generatedMessage && Object.hasOwn(generatedMessage, 'delayBeforeMs')
+      })
+      var firstGeneratedMessage = generatedIds.length ? findFlowPlaybackMessage(generatedIds[0]) : null
+      var firstGeneratedDelay = firstGeneratedMessage && Object.hasOwn(firstGeneratedMessage, 'delayBeforeMs')
+        ? chatMessageDelayBeforeMs(firstGeneratedMessage, 0)
+        : 0
+      chatSession.flowGeneratedPlayback = generatedIds.length > 0 && (flowEnabled || hasPacedReply || hasAuthoredDelay)
+        ? { runKey: runKey, ids: generatedIds, index:firstGeneratedDelay > 0 ? -1 : 0 }
         : null
       setChoiceListOpen(false)
       renderChat()
+      if (chatSession.flowGeneratedPlayback && chatSession.flowGeneratedPlayback.index < 0) {
+        chatFlowAdvanceTimer = setTimeout(function() {
+          chatFlowAdvanceTimer = null
+          if (!chatSession.flowGeneratedPlayback) return
+          chatSession.flowGeneratedPlayback.index = 0
+          renderChat()
+        }, firstGeneratedDelay)
+      }
     }
 
     // Input bar toggle

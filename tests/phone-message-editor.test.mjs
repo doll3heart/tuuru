@@ -204,6 +204,35 @@ test("rich story cards share the paged plus sheet and save structured content", 
   }
 })
 
+test("contact cards can author a reader friend request and its deterministic reaction", async () => {
+  const fixture = await openSingleChat("message-editor-contact-request")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector("#chatPlusBtn").click()
+    overlay.querySelector("#chatToolNext").click()
+    overlay.querySelector('[data-chat-tool="contact-card"]').click()
+    document.querySelector("#amContactTarget").value = "contact-1"
+    document.querySelector("#amContactAction").value = "direct"
+    document.querySelector("#amContactAction").dispatchEvent(new window.Event("change", { bubbles:true }))
+    assert.equal(document.querySelector("#amContactRequestSettings").hidden, false)
+    assert.equal(document.querySelector("#amContactOutcomeSettings").hidden, true)
+    document.querySelector("#amContactAction").value = "request"
+    document.querySelector("#amContactAction").dispatchEvent(new window.Event("change", { bubbles:true }))
+    assert.equal(document.querySelector("#amContactRequestSettings").hidden, false)
+    assert.equal(document.querySelector("#amContactOutcomeSettings").hidden, false)
+    document.querySelector("#amContactOutcome").value = "pending"
+    document.querySelector("#amContactPendingText").value = "申请已经送达。"
+    document.querySelector("#amSave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.contactAction, "request")
+    assert.equal(saved.contactRequestOutcome, "pending")
+    assert.equal(saved.contactPendingText, "申请已经送达。")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("call outcomes can be authored without inventing call dialogue", async () => {
   const fixture = await openSingleChat("message-editor-call-outcome")
   const { draft, overlay } = fixture
@@ -512,6 +541,7 @@ test("group composer inserts a selected @ mention and saves readable text", asyn
     input.value += '@'
     input.setSelectionRange(input.value.length, input.value.length)
     input.dispatchEvent(new window.InputEvent('input', { bubbles:true, data:'@', inputType:'insertText' }))
+    assert.ok(Array.from(document.querySelectorAll('.phone-mention-picker-option')).some(button => button.querySelector('span')?.textContent === '全体成员'))
     Array.from(document.querySelectorAll('.phone-mention-picker-option')).find(button => button.querySelector('span')?.textContent === '遥遥').click()
     input.value += "看看"
     overlay.querySelector('#chatSendBtn').click()
@@ -520,6 +550,21 @@ test("group composer inserts a selected @ mention and saves readable text", asyn
     assert.equal(overlay.querySelector('.mention-token').textContent, "@遥遥")
     assert.equal(overlay.querySelector('#chatMentionBtn'), null)
   } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("single-chat composer does not offer the group-wide mention", async () => {
+  const fixture = await openSingleChat("single-chat-no-everyone-mention")
+  const { overlay } = fixture
+  try {
+    const input = overlay.querySelector('#chatInput')
+    input.value = '@'
+    input.setSelectionRange(1, 1)
+    input.dispatchEvent(new window.InputEvent('input', { bubbles:true, data:'@', inputType:'insertText' }))
+    assert.equal(Array.from(document.querySelectorAll('.phone-mention-picker-option')).some(button => button.querySelector('span')?.textContent === '全体成员'), false)
+  } finally {
+    document.querySelector('.phone-mention-picker-overlay')?.remove()
     closeFixture(fixture)
   }
 })
@@ -1156,7 +1201,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       replyText:"",
       replyPace:"quick",
       followUpMessages:[
-        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。", deliveryState:"failed", replyPace:"delayed" },
+        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。", deliveryState:"failed", replyPace:"delayed", delayBeforeMs:1250 },
         { id:"group-follow-2", senderId:"contact-2", type:"text", text:"沈岚也接话。" },
       ],
     }],
@@ -1185,6 +1230,10 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       [...editor.querySelectorAll(".thread-choice-followup-pace")].map(select => select.value),
       ["delayed", "inherit"],
     )
+    assert.deepEqual(
+      [...editor.querySelectorAll(".thread-choice-followup-delay")].map(input => input.value),
+      ["1.25", ""],
+    )
 
     editor.querySelector('[data-thread-followup-add="0"]').click()
     const updatedSenders = [...editor.querySelectorAll(".thread-choice-followup-sender")]
@@ -1198,6 +1247,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
     editor.querySelectorAll(".thread-choice-followup-pace")[0].value = "instant"
     editor.querySelectorAll(".thread-choice-followup-delivery")[2].value = "failed"
     editor.querySelectorAll(".thread-choice-followup-pace")[2].value = "quick"
+    editor.querySelectorAll(".thread-choice-followup-delay")[2].value = "2.4"
     document.querySelector("#threadChoiceSave").click()
 
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0].choices[0]
@@ -1213,6 +1263,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       ["instant", undefined, "quick"],
     )
     assert.deepEqual(saved.followUpMessages.map(message => message.type), ["text", "text", "text"])
+    assert.deepEqual(saved.followUpMessages.map(message => message.delayBeforeMs), [1250, undefined, 2400])
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "failed"), false)
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "eventKind"), false)
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "contactId"), false)
@@ -1265,6 +1316,32 @@ test("message context menus expose a dedicated per-choice reply pace editor", as
     assert.equal(savedChoices[0].id, "pace-a")
     assert.equal(savedChoices[0].replyPace, "quick")
     assert.equal(savedChoices[1].replyPace, "delayed")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("every authored message can set an exact pre-send delay from its context menu", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({ id:"delay-message", senderId:"contact-1", type:"text", text:"稍等一下。" })
+  const fixture = await openSingleChat("message-editor-exact-delay", phoneData)
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('[data-message-id="delay-message"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:30,
+      clientY:30,
+    }))
+    const delayAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item")).find(button => button.textContent === "发送间隔")
+    assert.ok(delayAction)
+    delayAction.click()
+    document.querySelector("#chatMessageDelaySeconds").value = "2.5"
+    document.querySelector("#chatMessageDelaySave").click()
+
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
+    assert.equal(saved.delayBeforeMs, 2500)
+    assert.match(overlay.querySelector('[data-message-id="delay-message"] .chat-message-delay-badge').textContent, /\+2\.5s/)
   } finally {
     closeFixture(fixture)
   }

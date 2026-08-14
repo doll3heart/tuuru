@@ -16,6 +16,7 @@ import { contactAvatar, contactDisplayName, listForumIdentities, resolveContactI
 import { normalizeContactSortMode, orderedContacts, reorderContacts } from "../contact-order.js"
 import { createContactFriendRequest } from "../contact-friend-request.js"
 import { CHAT_REPLY_PACES, normalizeChatReplyPace } from "../chat-reply-pace.js"
+import { formatChatMessageDelaySeconds, normalizeChatMessageDelayMs } from "../chat-message-delay.js"
 import { CHAT_FOLLOW_UP_DELIVERY_STATES, normalizeChatFollowUpDeliveryState } from "../chat-follow-up.js"
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from "../message-card-links.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
@@ -134,8 +135,12 @@ function insertAtSelection(input, value) {
   input.focus()
 }
 
-function phoneMentionOptions(pd, placeholders) {
-  var options = []
+const PHONE_GROUP_WIDE_MENTION = '全体成员'
+
+function phoneMentionOptions(pd, placeholders, context) {
+  var options = context?.includeGroupWide === true
+    ? [{ token:PHONE_GROUP_WIDE_MENTION, label:PHONE_GROUP_WIDE_MENTION, detail:'群聊' }]
+    : []
   orderedContacts(pd.contacts || [], pd.contactSortMode).forEach(function(contact) {
     var messageName = contactDisplayName(contact, 'messages')
     if (messageName) options.push({ token:messageName, label:messageName, detail:'联系人（消息）' })
@@ -161,7 +166,9 @@ function phoneMentionOptions(pd, placeholders) {
 }
 
 function openPhoneMentionPicker(input, pd, placeholders) {
-  var choices = phoneMentionOptions(pd, placeholders)
+  var choices = phoneMentionOptions(pd, placeholders, {
+    includeGroupWide:input?.dataset?.phoneGroupMention === 'true'
+  })
   if (choices.length === 0) { showToast('请先添加联系人'); return }
   var h = '<div class="phone-mention-picker"><label class="form-label" for="phoneMentionSearch">选择要提及的人</label><input id="phoneMentionSearch" class="form-input" type="search" placeholder="搜索联系人、NPC 或占位符"><div id="phoneMentionList" class="phone-mention-picker-list"></div></div>'
   var ov = modal('插入 @ 提及', h, '<button type="button" id="phoneMentionCancel" class="btn btn-ghost btn-sm">取消</button>')
@@ -233,7 +240,8 @@ function openThreadReplyChoiceEditor(owner, options) {
               text:recalledMessage?.text || message.originalText || message.text || message.content || '',
               likes:nonnegativeCount(recalledMessage?.likes ?? message.likes),
               deliveryState:normalizeChatFollowUpDeliveryState(legacyDeliveryState),
-              replyPace:message.replyPace || 'inherit'
+              replyPace:message.replyPace || 'inherit',
+              delayBeforeMs:Object.hasOwn(message, 'delayBeforeMs') ? normalizeChatMessageDelayMs(message.delayBeforeMs) : null
             }
           })
         : []
@@ -283,6 +291,10 @@ function openThreadReplyChoiceEditor(owner, options) {
           text:followUpRow.querySelector('.thread-choice-followups')?.value || '',
           likes:options.showLikeCounts === true ? nonnegativeCount(followUpRow.querySelector('.thread-choice-followup-likes')?.value) : 0
         }
+        var delayInput = followUpRow.querySelector('.thread-choice-followup-delay')
+        followUp.delayBeforeMs = delayInput && delayInput.value.trim() !== ''
+          ? normalizeChatMessageDelayMs(Number(delayInput.value) * 1000)
+          : null
         if (options.showReplyPace === true) {
           followUp.deliveryState = normalizeChatFollowUpDeliveryState(followUpRow.querySelector('.thread-choice-followup-delivery')?.value)
           followUp.replyPace = followUpRow.querySelector('.thread-choice-followup-pace')?.value || 'inherit'
@@ -294,9 +306,10 @@ function openThreadReplyChoiceEditor(owner, options) {
 
   function render() {
     list.innerHTML = groups.map(function(group, index) {
+      var mentionScopeAttr = options.allowGroupWideMention === true ? ' data-phone-group-mention="true"' : ''
       var html = '<div class="thread-choice-row" data-thread-choice-index="' + index + '" style="position:relative;margin-bottom:8px;padding:9px;border:1px solid var(--c-border)">'
-      html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input" value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
-      html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input" value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
+      html += '<label class="form-label">读者看到的完整句子</label><input class="thread-choice-text form-input"' + mentionScopeAttr + ' value="' + escAttr(group.text) + '" placeholder="例如：我知道了。">'
+      html += '<label class="form-label" style="margin-top:6px">读者发出的回复</label><input class="thread-choice-reply form-input"' + mentionScopeAttr + ' value="' + escAttr(group.replyText) + '" placeholder="通常与上面相同">'
       if (options.showReplyPace === true) {
         html += '<label class="form-label thread-choice-pace-label">默认角色回复节奏</label><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的默认角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(group.replyPace) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select><div class="form-hint">应用于本组全部角色消息；每条消息还可以单独覆盖。</div>'
       }
@@ -306,12 +319,12 @@ function openThreadReplyChoiceEditor(owner, options) {
       html += '<div class="thread-choice-followup-head"><span>角色后续消息</span><button type="button" data-thread-followup-add="' + index + '">＋ 添加</button></div>'
       html += '<div class="thread-choice-followup-list">'
       ;(group.followUps || []).forEach(function(followUp, followUpIndex) {
-        html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><div class="thread-choice-followup-main"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input" value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
+        html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><div class="thread-choice-followup-main"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input"' + mentionScopeAttr + ' value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
         if (options.showLikeCounts === true) html += '<label class="thread-choice-followup-like"><span>赞</span><input class="thread-choice-followup-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(followUp.likes) + '" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复初始点赞数"></label>'
         html += '<button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
         if (options.showReplyPace === true) {
           html += '<div class="thread-choice-followup-settings"><label><span>消息状态</span><select class="thread-choice-followup-delivery" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复消息状态">' + CHAT_FOLLOW_UP_DELIVERY_STATES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatFollowUpDeliveryState(followUp.deliveryState) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
-          html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label></div>'
+          html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>发送前等待（秒）</span><input class="thread-choice-followup-delay" type="number" min="0" max="60" step="0.1" value="' + (followUp.delayBeforeMs == null ? '' : escapeHtmlAttribute(formatChatMessageDelaySeconds(followUp.delayBeforeMs))) + '" placeholder="默认 0.8"></label></div>'
         }
         html += '</div>'
       })
@@ -332,7 +345,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         collect()
         var group = groups[Number(button.dataset.threadFollowupAdd)]
         if (!group) return
-        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit' })
+        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit', delayBeforeMs:null })
         render()
       }
     })
@@ -400,6 +413,8 @@ function openThreadReplyChoiceEditor(owner, options) {
           if (followUp.replyPace === 'inherit') delete nextMessage.replyPace
           else nextMessage.replyPace = normalizeChatReplyPace(followUp.replyPace)
         }
+        if (followUp.delayBeforeMs == null) delete nextMessage.delayBeforeMs
+        else nextMessage.delayBeforeMs = normalizeChatMessageDelayMs(followUp.delayBeforeMs)
         return nextMessage
       })
       var replyText = group.replyText.trim()
@@ -761,6 +776,11 @@ function renderContactsModal(frame, wid, pd) {
     collectField('forum-avatar', 'forumAvatarUrl')
     collectField('forum-ip', 'forumIpLocation')
     collectField('face', 'faceUrl')
+    collectField('reader-add-mode', 'readerAddMode')
+    collectField('reader-add-outcome', 'readerAddOutcome')
+    collectField('reader-add-accepted', 'readerAddAcceptedText')
+    collectField('reader-add-declined', 'readerAddDeclinedText')
+    collectField('reader-add-pending', 'readerAddPendingText')
     frame.querySelectorAll('[data-ct-account-row]').forEach(function(row) {
       var contactIndex = parseInt(row.dataset.ctIdx)
       var accountIndex = parseInt(row.dataset.accountIdx)
@@ -808,7 +828,7 @@ function renderContactsModal(frame, wid, pd) {
           okBtn.onclick = function() {
             var name = inputEl.value.trim()
             if (!name) return
-            var contact = { id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', note: '', faceUrl: '', msgId: '', forumId: '', pinned:false }
+            var contact = { id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', note: '', faceUrl: '', msgId: '', forumId: '', pinned:false, readerAddMode:'existing', readerAddOutcome:'accepted' }
             contacts.push(contact)
             saveAndRefresh()
             ov.remove()
@@ -826,14 +846,18 @@ function renderContactsModal(frame, wid, pd) {
       }
     }
 
-    var cardInputs = frame.querySelectorAll('[data-ct-name], [data-ct-alias], [data-ct-note], [data-ct-msgid], [data-ct-forum], [data-ct-message-avatar], [data-ct-forum-avatar], [data-ct-forum-ip], [data-ct-face], [data-ct-account-name], [data-ct-account-forum], [data-ct-account-avatar], [data-ct-account-ip]')
+    var cardInputs = frame.querySelectorAll('[data-ct-name], [data-ct-alias], [data-ct-note], [data-ct-msgid], [data-ct-forum], [data-ct-message-avatar], [data-ct-forum-avatar], [data-ct-forum-ip], [data-ct-face], [data-ct-reader-add-mode], [data-ct-reader-add-outcome], [data-ct-reader-add-accepted], [data-ct-reader-add-declined], [data-ct-reader-add-pending], [data-ct-account-name], [data-ct-account-forum], [data-ct-account-avatar], [data-ct-account-ip]')
     cardInputs.forEach(function(input) {
-      input.addEventListener('change', flushFields)
+      input.addEventListener('change', function() {
+        syncContactReaderAddSettings(frame)
+        flushFields()
+      })
       input.addEventListener('blur', flushFields)
       input.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') { e.preventDefault(); input.blur() }
       })
     })
+    syncContactReaderAddSettings(frame)
 
     var delBtns = frame.querySelectorAll('[data-ct-del]')
     delBtns.forEach(function(btn) {
@@ -2216,6 +2240,16 @@ function renderPfContacts(contacts, sortMode) {
     h += '<span class="ct-field-hint">用于该角色发起视频通话时的画面背景；语音通话不会使用。</span>'
     h += '</div>'
     h += '<div class="ct-sub-row ct-channel-row"><label><span class="ct-sub-label">消息头像</span><input class="ct-sub-input" data-ct-message-avatar data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.messageAvatarUrl || '') + '" placeholder="留空沿用名片头像"></label><label><span class="ct-sub-label">论坛头像</span><input class="ct-sub-input" data-ct-forum-avatar data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.forumAvatarUrl || '') + '" placeholder="留空沿用名片头像"></label><label><span class="ct-sub-label">论坛 IP 属地</span><input class="ct-sub-input" data-ct-forum-ip data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.forumIpLocation || '') + '" placeholder="例如：上海"></label></div>'
+    var readerAddMode = ['hidden', 'direct', 'request'].includes(c.readerAddMode) ? c.readerAddMode : 'existing'
+    var readerAddOutcome = ['accepted', 'declined', 'pending'].includes(c.readerAddOutcome) ? c.readerAddOutcome : 'accepted'
+    h += '<section class="ct-reader-add-section" data-ct-reader-add data-ct-idx="' + i + '" data-reader-add-mode="' + readerAddMode + '" data-reader-add-outcome="' + readerAddOutcome + '">'
+    h += '<div class="ct-reader-add-head"><span><strong>读者主动添加</strong><small>控制联系人 App 中的搜索与好友申请</small></span><label><span class="sr-only">读者添加方式</span><select data-ct-reader-add-mode data-ct-idx="' + i + '"><option value="existing"' + (readerAddMode === 'existing' ? ' selected' : '') + '>已在联系人中</option><option value="direct"' + (readerAddMode === 'direct' ? ' selected' : '') + '>搜索后直接添加</option><option value="request"' + (readerAddMode === 'request' ? ' selected' : '') + '>搜索后发送申请</option><option value="hidden"' + (readerAddMode === 'hidden' ? ' selected' : '') + '>不在联系人 App 出现</option></select></label></div>'
+    h += '<p class="ct-reader-add-guide" data-reader-add-guide></p>'
+    h += '<div class="ct-reader-add-outcome" data-reader-add-outcome-settings><label><span>申请结果</span><select data-ct-reader-add-outcome data-ct-idx="' + i + '"><option value="accepted"' + (readerAddOutcome === 'accepted' ? ' selected' : '') + '>对方接受</option><option value="declined"' + (readerAddOutcome === 'declined' ? ' selected' : '') + '>对方拒绝</option><option value="pending"' + (readerAddOutcome === 'pending' ? ' selected' : '') + '>保持申请中</option></select></label></div>'
+    h += '<label class="ct-reader-add-copy" data-reader-add-copy="accepted"><span>添加成功提示</span><input data-ct-reader-add-accepted data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.readerAddAcceptedText || '') + '" placeholder="例如：对方通过了你的好友申请。"></label>'
+    h += '<label class="ct-reader-add-copy" data-reader-add-copy="declined"><span>拒绝提示</span><input data-ct-reader-add-declined data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.readerAddDeclinedText || '') + '" placeholder="例如：对方暂时没有同意。"></label>'
+    h += '<label class="ct-reader-add-copy" data-reader-add-copy="pending"><span>申请中提示</span><input data-ct-reader-add-pending data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.readerAddPendingText || '') + '" placeholder="例如：好友申请已发送，请等待回复。"></label>'
+    h += '</section>'
     h += '<section class="ct-account-section"><div class="ct-account-head"><span class="ct-account-title">论坛身份 <small>' + aliases.length + ' 个小号</small></span><button type="button" class="btn btn-sm btn-outline ct-account-add" data-ct-account-add data-ct-idx="' + i + '">＋ 添加小号</button></div><p class="ct-account-guide">小号只用于论坛身份；论坛发帖与评论时可以选择主号或这里的小号。</p>'
     aliases.forEach(function(account, accountIndex) {
       var accountName = account.name || account.forumId || '小号'
@@ -2231,6 +2265,31 @@ function renderPfContacts(contacts, sortMode) {
   h += '<div class="ct-search-empty" data-contact-search-empty hidden>没有匹配的联系人</div>'
   h += '</div>'
   return h
+}
+
+function syncContactReaderAddSettings(root) {
+  root?.querySelectorAll('[data-ct-reader-add]').forEach(function(section) {
+    var mode = section.querySelector('[data-ct-reader-add-mode]')?.value || 'existing'
+    var outcome = section.querySelector('[data-ct-reader-add-outcome]')?.value || 'accepted'
+    section.dataset.readerAddMode = mode
+    section.dataset.readerAddOutcome = outcome
+    var outcomeSettings = section.querySelector('[data-reader-add-outcome-settings]')
+    if (outcomeSettings) outcomeSettings.hidden = mode !== 'request'
+    var guide = section.querySelector('[data-reader-add-guide]')
+    if (guide) {
+      guide.textContent = mode === 'direct'
+        ? '读者可搜索到这位联系人，确认后立即加入通讯录。'
+        : (mode === 'request'
+          ? '读者可搜索并发送好友申请，结果与提示由下方设置。'
+          : (mode === 'hidden' ? '这位联系人不会显示，也无法通过搜索找到。' : '这位联系人会像旧作品一样直接显示在通讯录中。'))
+    }
+    section.querySelectorAll('[data-reader-add-copy]').forEach(function(field) {
+      var visible = mode === 'direct'
+        ? field.dataset.readerAddCopy === 'accepted'
+        : mode === 'request' && field.dataset.readerAddCopy === outcome
+      field.hidden = !visible
+    })
+  })
 }
 
 function bindContactListSearch(root) {
@@ -2391,6 +2450,11 @@ function bindCtEvents(desktop, wid, contacts) {
     collectField('forum-avatar', 'forumAvatarUrl')
     collectField('forum-ip', 'forumIpLocation')
     collectField('face', 'faceUrl')
+    collectField('reader-add-mode', 'readerAddMode')
+    collectField('reader-add-outcome', 'readerAddOutcome')
+    collectField('reader-add-accepted', 'readerAddAcceptedText')
+    collectField('reader-add-declined', 'readerAddDeclinedText')
+    collectField('reader-add-pending', 'readerAddPendingText')
     panel.querySelectorAll('[data-ct-account-row]').forEach(function(row) {
       var contactIndex = parseInt(row.dataset.ctIdx)
       var accountIndex = parseInt(row.dataset.accountIdx)
@@ -2474,6 +2538,14 @@ function bindCtEvents(desktop, wid, contacts) {
       }
     }
   }
+  syncContactReaderAddSettings(panel)
+  panel.querySelectorAll('[data-ct-reader-add-mode], [data-ct-reader-add-outcome]').forEach(function(select) {
+    select.onchange = function() {
+      flushNames()
+      setCtAt(contacts)
+      syncContactReaderAddSettings(panel)
+    }
+  })
 
   panel.querySelectorAll('[data-ct-account-add]').forEach(function(button) {
     button.onclick = function() {
@@ -2608,7 +2680,7 @@ function bindCtEvents(desktop, wid, contacts) {
         okBtn.onclick = function() {
           var name = inputEl.value.trim()
           if (!name) return
-          var contact = { id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', pinned:false, note: '', faceUrl:'', msgId:'', forumId: '' }
+          var contact = { id: uid(), name: name, alias: '', aliases: [], avatarUrl: '', messageAvatarUrl:'', forumAvatarUrl:'', forumIpLocation:'', pinned:false, note: '', faceUrl:'', msgId:'', forumId:'', readerAddMode:'existing', readerAddOutcome:'accepted' }
           contacts.push(contact)
           setCtAt(contacts)
           reloadCt()
@@ -5611,7 +5683,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     else if (type === 'familycard') extraHtml = '<div class="form-group"><label class="form-label">亲属关系</label><input id="amFcRel" class="form-input" placeholder="例如：爸爸/妈妈/姐姐"><label class="form-label">金额</label><input id="amFcAmt" class="form-input" type="number" step="0.01" placeholder="0.00"></div>'
     else if (type === 'takeaway') extraHtml = '<div class="form-group"><label class="form-label">商家</label><input id="amTkShop" class="form-input" placeholder="例如：春风小馆"><label class="form-label">订单内容</label><textarea id="amTkOrder" class="form-textarea" placeholder="例如：番茄牛腩饭 × 1，少辣"></textarea><label class="form-label">金额</label><input id="amTkAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">状态</label><input id="amTkStatus" class="form-input" placeholder="例如：骑手正在配送"></div>'
     else if (type === 'location') extraHtml = '<div class="form-group"><label class="form-label">地点名称</label><input id="amLocationName" class="form-input" placeholder="例如：旧城区车站"><label class="form-label">详细地址</label><input id="amLocationAddress" class="form-input" placeholder="例如：白石街 17 号"><label class="form-label">地图预览图（可选）</label><input id="amLocationImage" class="form-input" placeholder="图片 URL"></div>'
-    else if (type === 'contact-card') extraHtml = '<div class="form-group"><label class="form-label">联系人</label><select id="amContactTarget" class="form-select"><option value="">自定义名片</option>' + contactOptionsHtml + '</select><label class="form-label">显示名称</label><input id="amContactName" class="form-input" placeholder="选择联系人后可留空"><label class="form-label">名片附言</label><input id="amContactNote" class="form-input" placeholder="例如：这是负责接应的人"></div>'
+    else if (type === 'contact-card') extraHtml = '<div class="form-group"><label class="form-label">联系人</label><select id="amContactTarget" class="form-select"><option value="">自定义名片</option>' + contactOptionsHtml + '</select><label class="form-label">显示名称</label><input id="amContactName" class="form-input" placeholder="选择联系人后可留空"><label class="form-label">名片附言</label><input id="amContactNote" class="form-input" placeholder="例如：这是负责接应的人"><label class="form-label">读者互动</label><select id="amContactAction" class="form-select"><option value="view">仅查看名片</option><option value="direct">读者直接添加好友</option><option value="request">读者发送好友申请</option></select><div class="form-hint">添加好友需要选择上方已有联系人；旧作品默认仅查看。</div><div id="amContactRequestSettings" class="contact-card-request-settings" hidden><div id="amContactOutcomeSettings"><label class="form-label">申请结果</label><select id="amContactOutcome" class="form-select"><option value="accepted">角色同意</option><option value="declined">角色拒绝</option><option value="pending">暂不回应</option></select><label class="form-label">拒绝后的角色反应</label><input id="amContactDeclinedText" class="form-input" placeholder="例如：对方拒绝了你的好友申请。"><label class="form-label">暂不回应时的提示</label><input id="amContactPendingText" class="form-input" placeholder="例如：申请已经送达。"></div><label class="form-label">添加成功后的角色反应</label><input id="amContactAcceptedText" class="form-input" placeholder="例如：对方通过了你的好友申请。"></div></div>'
     else if (type === 'file') extraHtml = '<div class="form-group"><label class="form-label">文件名</label><input id="amFileName" class="form-input" placeholder="例如：夜巡值班表.pdf"><label class="form-label">类型与大小</label><div class="form-row"><input id="amFileType" class="form-input" placeholder="PDF"><input id="amFileSize" class="form-input" placeholder="1.2 MB"></div><label class="form-label">打开后显示的正文</label><textarea id="amFileContent" class="form-textarea" placeholder="文件内容会在小手机画中画里显示"></textarea></div>'
     else if (type === 'music') extraHtml = '<div class="form-group"><label class="form-label">歌曲名</label><input id="amMusicTitle" class="form-input" placeholder="例如：失眠航线"><label class="form-label">歌手</label><input id="amMusicArtist" class="form-input" placeholder="歌手名"><label class="form-label">封面（可选）</label><input id="amMusicCover" class="form-input" placeholder="图片 URL"><label class="form-label">外部链接（可选）</label><input id="amMusicUrl" class="form-input" placeholder="https://..."></div>'
     else if (type === 'forward') extraHtml = '<div class="form-group"><label class="form-label">转发标题</label><input id="amForwardTitle" class="form-input" placeholder="例如：与林晚的聊天记录"><label class="form-label">聊天记录</label><textarea id="amForwardItems" class="form-textarea" placeholder="每行一条：&#10;林晚：你到哪里了？&#10;我：马上到。"></textarea><div class="form-hint">使用“发送者：内容”的格式，每行一条。</div></div>'
@@ -5667,6 +5739,11 @@ function openChatEditor(frame, wid, chatId, pd) {
         ov.querySelector('#amContactTarget').value = editingMessage.targetContactId || ''
         ov.querySelector('#amContactName').value = editingMessage.contactName || ''
         ov.querySelector('#amContactNote').value = editingMessage.contactNote || ''
+        ov.querySelector('#amContactAction').value = ['direct', 'request'].includes(editingMessage.contactAction) ? editingMessage.contactAction : 'view'
+        ov.querySelector('#amContactOutcome').value = ['declined', 'pending'].includes(editingMessage.contactRequestOutcome) ? editingMessage.contactRequestOutcome : 'accepted'
+        ov.querySelector('#amContactAcceptedText').value = editingMessage.contactAcceptedText || ''
+        ov.querySelector('#amContactDeclinedText').value = editingMessage.contactDeclinedText || ''
+        ov.querySelector('#amContactPendingText').value = editingMessage.contactPendingText || ''
       }
       if (type === 'file') {
         ov.querySelector('#amFileName').value = editingMessage.fileName || ''
@@ -5721,6 +5798,19 @@ function openChatEditor(frame, wid, chatId, pd) {
       syncLinkTargetFields()
     }
 
+    var contactActionSelect = ov.querySelector('#amContactAction')
+    function syncContactRequestSettings() {
+      if (!contactActionSelect) return
+      var requestSettings = ov.querySelector('#amContactRequestSettings')
+      if (requestSettings) requestSettings.hidden = contactActionSelect.value === 'view'
+      var outcomeSettings = ov.querySelector('#amContactOutcomeSettings')
+      if (outcomeSettings) outcomeSettings.hidden = contactActionSelect.value !== 'request'
+    }
+    if (contactActionSelect) {
+      contactActionSelect.onchange = syncContactRequestSettings
+      syncContactRequestSettings()
+    }
+
     ov.querySelector('#amSave').onclick = function() {
       var msg = editingMessage || { id: uid(), time: new Date().toLocaleString() }
       msg.senderId = ov.querySelector('#amSender').value
@@ -5767,6 +5857,16 @@ function openChatEditor(frame, wid, chatId, pd) {
         msg.targetContactId = contactTargetId
         msg.contactName = ov.querySelector('#amContactName').value.trim() || (contactTarget && contactDisplayName(contactTarget, 'messages')) || '联系人'
         msg.contactNote = ov.querySelector('#amContactNote').value.trim()
+        msg.contactAction = ov.querySelector('#amContactAction').value
+        msg.contactRequestOutcome = ov.querySelector('#amContactOutcome').value
+        msg.contactAcceptedText = ov.querySelector('#amContactAcceptedText').value.trim()
+        msg.contactDeclinedText = ov.querySelector('#amContactDeclinedText').value.trim()
+        msg.contactPendingText = ov.querySelector('#amContactPendingText').value.trim()
+        if (msg.contactAction !== 'view' && !contactTargetId) {
+          showToast('请选择一个已有联系人，才能设置添加好友')
+          ov.querySelector('#amContactTarget').focus()
+          return
+        }
       }
       if (type === 'file') {
         msg.fileName = ov.querySelector('#amFileName').value.trim()
@@ -6390,7 +6490,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += '</div>'
       h += '<div class="chat-input-bar chat-composer">'
       h += '<button class="chat-btn-icon" id="chatPlusBtn" type="button" aria-label="添加剧情内容">＋</button>'
-      h += '<input id="chatInput" aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
+      h += '<input id="chatInput"' + (ch.type === 'group' ? ' data-phone-group-mention="true"' : '') + ' aria-label="消息内容" placeholder="' + escapeHtmlAttribute('以「' + getSpeakerName(activeSpeakerId) + '」添加消息…') + '">'
       h += '<button class="chat-send-btn" id="chatSendBtn" type="button">添加</button>'
       h += '</div>'
       h += '</div>'
@@ -6411,11 +6511,16 @@ function openChatEditor(frame, wid, chatId, pd) {
     var selectionClass = multiSelectActive
       ? ' is-selectable' + (selectedMessageIds.has(selectionId) ? ' is-selected' : '')
       : ''
+    function delayBadge() {
+      return Object.hasOwn(msg, 'delayBeforeMs')
+        ? '<small class="chat-message-delay-badge">+' + esc(formatChatMessageDelaySeconds(msg.delayBeforeMs)) + 's</small>'
+        : ''
+    }
     if (msg.type === 'time') {
-      return '<div class="chat-time-stamp' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '">' + esc(msg.time || '') + '</div>'
+      return '<div class="chat-time-stamp' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '">' + esc(msg.time || '') + delayBadge() + '</div>'
     }
     if (msg.type === 'system') {
-      return '<div class="chat-msg chat-story-system-row' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '"><span>' + esc(msg.text || '') + '</span></div>'
+      return '<div class="chat-msg chat-story-system-row' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '"><span>' + esc(msg.text || '') + delayBadge() + '</span></div>'
     }
     if (msg.type === 'system-event' || msg.type === 'contact-event') {
       var eventActor = contacts.find(function(contact) { return String(contact.id) === String(msg.actorContactId || msg.targetContactId) })
@@ -6429,7 +6534,7 @@ function openChatEditor(frame, wid, chatId, pd) {
         : (msg.eventKind === 'burn' && msg.originalText)
           ? '<small>阅后 ' + Math.max(1, parseInt(msg.burnSeconds, 10) || 5) + ' 秒隐藏</small>'
           : ''
-      return '<div class="chat-msg chat-story-system-row' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '"><span>' + esc(eventCopy) + eventDetail + '</span></div>'
+      return '<div class="chat-msg chat-story-system-row' + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '"><span>' + esc(eventCopy) + eventDetail + delayBadge() + '</span></div>'
     }
     var isSelf = msg.senderId === 'self'
     var showAsSelf = isSelf
@@ -6482,6 +6587,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       var cardContact = contacts.find(function(contact) { return String(contact.id) === String(msg.targetContactId) })
       var cardContactName = msg.contactName || (cardContact && contactDisplayName(cardContact, 'messages')) || '联系人'
       h += '<div class="chat-story-card chat-contact-card"><span class="chat-story-card-mark">人</span><span><span class="chat-story-card-kicker">联系人名片</span><strong>' + esc(cardContactName) + '</strong><small>' + esc(msg.contactNote || '点击查看联系人') + '</small></span></div>'
+      if (msg.contactAction === 'direct' || msg.contactAction === 'request') h += '<small class="chat-author-card-mode">' + (msg.contactAction === 'direct' ? '读者可直接添加' : '读者可发送好友申请') + '</small>'
     } else if (msg.type === 'file') {
       h += '<div class="chat-story-card chat-file-card"><span class="chat-story-card-mark">文</span><span><span class="chat-story-card-kicker">文件</span><strong>' + esc(msg.fileName || '未命名文件') + '</strong><small>' + esc([msg.fileType, msg.fileSize].filter(Boolean).join(' · ') || '点击查看内容') + '</small></span></div>'
     } else if (msg.type === 'music') {
@@ -6527,9 +6633,10 @@ function openChatEditor(frame, wid, chatId, pd) {
       if (msg.quoteId && msg.quoteText) {
         h += '<button type="button" class="chat-quote-preview" data-quote-target="' + escapeHtmlAttribute(msg.quoteId) + '"><span>' + esc(msg.quoteSenderName || '引用消息') + '</span><strong>' + esc(msg.quoteText.substring(0, 54)) + '</strong></button>'
       }
-      var groupMentionNames = ch.type === 'group' ? ['读者'].concat((ch.contactIds || []).map(getSpeakerName)) : []
+      var groupMentionNames = ch.type === 'group' ? ['全体成员', '读者'].concat((ch.contactIds || []).map(getSpeakerName)) : []
       h += renderAuthorMentionText(msg.text || '', groupMentionNames) + '</div>'
     }
+    h += delayBadge()
     h += '</div>'
     if (msg.choices && msg.choices.length > 0) {
       h += '<div class="chat-choices">'
@@ -6703,6 +6810,23 @@ function openChatEditor(frame, wid, chatId, pd) {
       ov.querySelector('.chat-reply-pace-select')?.focus()
     }
 
+    function showMessageDelayEditor(message) {
+      var authoredValue = Object.hasOwn(message, 'delayBeforeMs') ? formatChatMessageDelaySeconds(message.delayBeforeMs) : ''
+      var body = '<div class="form-group chat-message-delay-editor"><label class="form-label" for="chatMessageDelaySeconds">这条消息发送前等待</label><div class="chat-message-delay-input"><input id="chatMessageDelaySeconds" class="form-input" type="number" min="0" max="60" step="0.1" inputmode="decimal" value="' + escapeHtmlAttribute(authoredValue) + '" placeholder="0.8"><span>秒</span></div><p class="form-hint">从上一条消息出现后开始计算。留空沿用默认 0.8 秒；不会改变“正在输入”的时长。</p></div>'
+      var ov = modal('设置发送间隔', body, '<button id="chatMessageDelaySave" class="btn btn-primary btn-sm">保存</button><button id="chatMessageDelayCancel" class="btn btn-ghost btn-sm">取消</button>')
+      var input = ov.querySelector('#chatMessageDelaySeconds')
+      ov.querySelector('#chatMessageDelaySave').onclick = function() {
+        var value = input.value.trim()
+        if (value === '') delete message.delayBeforeMs
+        else message.delayBeforeMs = normalizeChatMessageDelayMs(Number(value) * 1000)
+        save()
+        ov.remove()
+        renderChat()
+      }
+      ov.querySelector('#chatMessageDelayCancel').onclick = function() { ov.remove() }
+      input.focus()
+    }
+
     // Context menu for messages (PC right-click / mobile long-press)
     var msgArea = frame.querySelector('#chatMsgArea')
     if (msgArea) {
@@ -6804,6 +6928,9 @@ function openChatEditor(frame, wid, chatId, pd) {
           paceItem.dataset.chatAction = 'reply-pace'
         }
 
+        var delayItem = addItem('发送间隔', function() { showMessageDelayEditor(msg) })
+        delayItem.dataset.chatAction = 'message-delay'
+
         addItem('引用', function() {
           var qId = msg.id
           var qText = chatMessageQuoteSummary(msg)
@@ -6895,6 +7022,7 @@ function openChatEditor(frame, wid, chatId, pd) {
             defaultFollowUpSenderId:defaultFollowUpSenderId,
             followUpActors:followUpActors,
             showReplyPace:true,
+            allowGroupWideMention:ch.type === 'group',
             preserveEmptyReplyText:true,
             includeFollowUpIdentityFields:false,
             followUpTimeFactory:function() { return new Date().toLocaleString() },

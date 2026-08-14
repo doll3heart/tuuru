@@ -77,6 +77,24 @@ test("message normalization bounds timers and preserves old location data", () =
   const location = normalizeChatStoryMessage({ type:"location", locationName:"旧城区", text:"旧城区" })
   assert.equal(location.locationName, "旧城区")
   assert.equal(location.locationAddress, "")
+
+  const contactCard = normalizeChatStoryMessage({
+    type:"contact-card",
+    contactAction:"request",
+    contactRequestOutcome:"pending",
+    contactAcceptedText:"欢迎你。",
+    contactDeclinedText:"暂时不方便。",
+    contactPendingText:"申请已经送达。",
+  })
+  assert.equal(contactCard.contactAction, "request")
+  assert.equal(contactCard.contactRequestOutcome, "pending")
+  assert.equal(contactCard.contactAcceptedText, "欢迎你。")
+  assert.equal(contactCard.contactDeclinedText, "暂时不方便。")
+  assert.equal(contactCard.contactPendingText, "申请已经送达。")
+
+  const legacyContactCard = normalizeChatStoryMessage({ type:"contact-card" })
+  assert.equal(legacyContactCard.contactAction, "view")
+  assert.equal(legacyContactCard.contactRequestOutcome, "accepted")
 })
 
 test("contact and group events apply to detached runtime state", () => {

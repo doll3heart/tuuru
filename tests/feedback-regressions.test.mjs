@@ -15,6 +15,7 @@ test("reader phone messages resolve author placeholders for bubbles and streamed
   assert.match(source, /function readerPhoneText\(value\)/)
   assert.match(source, /renderReaderMentionText\(readerPhoneText\(msg\.text\),\s*chatMentionNames\)/)
   assert.match(source, /Array\.from\(readerPhoneText\(message\.text\)\)/)
+  assert.match(source, /\['全体成员'\]\.concat\(/)
 })
 
 test("format buttons preserve the text selection before applying visibly active state", async () => {

@@ -54,6 +54,18 @@ test("author contact identity cards use compact non-circular geometry", () => {
   const avatar = ruleBodiesFor(editorCss, ".ct-avatar")
   assert.match(avatar, /border-radius\s*:\s*var\(--phone-system-radius-/)
   assert.doesNotMatch(avatar, /border-radius\s*:\s*50%/)
+  assert.match(editorSource, /data-ct-reader-add-mode/)
+  assert.match(editorSource, /读者主动添加/)
+  assert.match(editorSource, /搜索后直接添加/)
+  assert.match(editorSource, /搜索后发送申请/)
+})
+
+test("reader Contacts uses the shared header action and a compact searchable add surface", () => {
+  assert.match(readerSource, /data-reader-contact-add/)
+  assert.match(readerSource, /data-reader-contact-search/)
+  assert.match(readerSource, /data-reader-contact-submit/)
+  assert.match(ruleBodiesFor(readerCss, ".rd-phone-app-header-action"), /44px|min-height\s*:\s*44px/)
+  assert.match(ruleBodiesFor(readerCss, ".rd-contact-discovery"), /var\(--phone-system-(?:surface|border|radius|shadow)/)
 })
 
 test("reader simple apps expose semantic cards backed by phone-system tokens", () => {

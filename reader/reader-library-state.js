@@ -123,6 +123,28 @@ function normalizedFriendRequestResponses(value) {
   return result
 }
 
+function normalizedContactCardResponses(value) {
+  if (!plainRecord(value)) return {}
+  const result = {}
+  for (const id of Object.keys(value)) {
+    if (
+      !exactId(id)
+      || id === "__proto__"
+      || id === "prototype"
+      || id === "constructor"
+    ) continue
+    const response = ownData(value, id)
+    if (response !== "accepted" && response !== "declined" && response !== "pending") continue
+    result[id] = response
+    if (Object.keys(result).length >= 200) break
+  }
+  return result
+}
+
+function normalizedContactFriendships(value) {
+  return normalizedContactCardResponses(value)
+}
+
 function normalizedContactRemarks(value) {
   if (!plainRecord(value)) return {}
   const result = {}
@@ -272,6 +294,8 @@ function normalizedProgress(value) {
       kind:"phone",
       flowIndex:Number.isInteger(flowIndex) && flowIndex >= 0 ? Math.min(flowIndex, 10_000) : 0,
       friendRequestResponses:normalizedFriendRequestResponses(ownData(value, "friendRequestResponses")),
+      contactCardResponses:normalizedContactCardResponses(ownData(value, "contactCardResponses")),
+      contactFriendships:normalizedContactFriendships(ownData(value, "contactFriendships")),
       contactRemarks:normalizedContactRemarks(ownData(value, "contactRemarks")),
       readingPosition:normalizedReadingPosition(ownData(value, "readingPosition"), "phone"),
       savedAt:timestamp(ownData(value, "savedAt")),

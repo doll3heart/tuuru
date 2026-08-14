@@ -1,3 +1,5 @@
+import { normalizeChatMessageDelayMs } from "./chat-message-delay.js"
+
 const EVENT_KINDS = [
   "notice",
   "typing",
@@ -28,6 +30,8 @@ const EVENT_KINDS = [
 
 const CARD_TYPES = ["location", "contact-card", "file", "music", "forward", "schedule"]
 const CALL_STATUSES = ["pending", "completed", "cancelled", "rejected", "missed", "busy", "interrupted", "video-switch"]
+const CONTACT_CARD_ACTIONS = new Set(["view", "direct", "request"])
+const CONTACT_CARD_OUTCOMES = new Set(["accepted", "declined", "pending"])
 
 export const CHAT_STORY_EVENT_KINDS = Object.freeze(EVENT_KINDS.slice())
 export const CHAT_STORY_CARD_TYPES = Object.freeze(CARD_TYPES.slice())
@@ -74,6 +78,7 @@ export function normalizeChatStoryMessage(message) {
   if (!message || typeof message !== "object") return { type:"text", text:"" }
   if (message.type === "system-event" || message.type === "contact-event") return normalizedEvent(message)
   const next = { ...message, type:text(message.type) || "text" }
+  if (Object.hasOwn(message, "delayBeforeMs")) next.delayBeforeMs = normalizeChatMessageDelayMs(message.delayBeforeMs)
   if (next.type === "call") {
     next.callStatus = CALL_STATUSES.includes(next.callStatus) ? next.callStatus : "pending"
   }
@@ -86,6 +91,11 @@ export function normalizeChatStoryMessage(message) {
     next.targetContactId = text(next.targetContactId)
     next.contactName = text(next.contactName)
     next.contactNote = text(next.contactNote)
+    next.contactAction = CONTACT_CARD_ACTIONS.has(next.contactAction) ? next.contactAction : "view"
+    next.contactRequestOutcome = CONTACT_CARD_OUTCOMES.has(next.contactRequestOutcome) ? next.contactRequestOutcome : "accepted"
+    next.contactAcceptedText = text(next.contactAcceptedText)
+    next.contactDeclinedText = text(next.contactDeclinedText)
+    next.contactPendingText = text(next.contactPendingText)
   }
   if (next.type === "file") {
     next.fileName = text(next.fileName) || "未命名文件"

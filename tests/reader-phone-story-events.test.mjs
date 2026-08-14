@@ -68,6 +68,7 @@ function storyWork() {
             { id:"burn-1", type:"system-event", eventKind:"burn", actorContactId:"contact-1", originalText:"钥匙在花盆下面。", burnSeconds:1 },
             { id:"location-1", type:"location", senderId:"contact-1", locationName:"白石街", locationAddress:"旧城区 17 号" },
             { id:"contact-card-1", type:"contact-card", senderId:"contact-1", targetContactId:"contact-2", contactNote:"接应人" },
+            { id:"contact-card-request", type:"contact-card", senderId:"contact-1", targetContactId:"contact-2", contactNote:"添加后可以私聊", contactAction:"request", contactRequestOutcome:"accepted", contactAcceptedText:"周周通过了你的好友申请。" },
             { id:"file-1", type:"file", senderId:"contact-1", fileName:"夜巡表.pdf", fileType:"PDF", fileSize:"1.2 MB", fileContent:"23:00 北门交接" },
             { id:"forward-1", type:"forward", senderId:"contact-1", forwardTitle:"旧群记录", forwardItems:[{ sender:"林晚", text:"不要开灯。" }, { sender:"周周", text:"收到。" }] },
             { id:"music-1", type:"music", senderId:"contact-1", musicTitle:"失眠航线", musicArtist:"匿名", musicUrl:"javascript:alert(1)" },
@@ -231,6 +232,74 @@ test("reader rich cards open safe in-phone details and keep schedule response st
   assert.match(document.querySelector('[data-story-message-id="schedule-1"]').textContent, /已参加/)
 })
 
+test("reader contact-card friendship actions persist and cannot be submitted twice", async t => {
+  const work = await openStoryChat(t, "reader-contact-card-request")
+
+  document.querySelector('[data-story-message-id="contact-card-request"]').click()
+  const action = document.querySelector('[data-contact-card-action="contact-card-request"]')
+  assert.ok(action)
+  assert.match(action.textContent, /发送好友申请/)
+  action.click()
+
+  const settledAction = document.querySelector('[data-contact-card-action="contact-card-request"]')
+  assert.equal(settledAction.disabled, true)
+  assert.match(document.querySelector(".rd-chat-story-pip").textContent, /已添加/)
+  assert.match(document.querySelector(".rd-chat-story-pip").textContent, /周周通过了你的好友申请/)
+  settledAction.click()
+
+  const saved = JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.find(book => book.id === work.id)
+  assert.equal(saved.progress.contactCardResponses["contact-card-request"], "accepted")
+  assert.equal(saved.progress.contactFriendships["contact-2"], "accepted")
+})
+
+test("reader Contacts can search authored contacts and direct-add or send a friend request", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-contact-search-add"
+  work.phoneData.contacts = [
+    { id:"contact-existing", name:"林晚", avatarUrl:"", readerAddMode:"existing" },
+    { id:"contact-direct", name:"周周", alias:"小周", avatarUrl:"", note:"旧城区接应人", readerAddMode:"direct", readerAddAcceptedText:"周周已加入联系人。" },
+    { id:"contact-request", name:"白榆", avatarUrl:"", note:"需要验证", readerAddMode:"request", readerAddOutcome:"pending", readerAddPendingText:"白榆还没有回复。" },
+  ]
+  work.phoneData.chats = []
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?contact-search-add=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="contacts"]').click()
+
+  assert.match(document.querySelector(".rd-contact-book").textContent, /林晚/)
+  assert.doesNotMatch(document.querySelector(".rd-contact-book").textContent, /周周|白榆/)
+  const addButton = document.querySelector("[data-reader-contact-add]")
+  assert.ok(addButton)
+  assert.equal(addButton.getAttribute("aria-label"), "搜索并添加联系人")
+
+  addButton.click()
+  const search = document.querySelector("[data-reader-contact-search]")
+  assert.ok(search)
+  search.value = "小周"
+  search.dispatchEvent(new window.Event("input", { bubbles:true }))
+  assert.equal(document.querySelectorAll(".rd-contact-search-result:not([hidden])").length, 1)
+  assert.match(document.querySelector(".rd-contact-search-result:not([hidden])").textContent, /周周/)
+  document.querySelector('[data-reader-contact-submit="contact-direct"]').click()
+
+  assert.match(document.querySelector(".rd-contact-book").textContent, /周周/)
+  document.querySelector("[data-reader-contact-add]").click()
+  const requestSearch = document.querySelector("[data-reader-contact-search]")
+  requestSearch.value = "白榆"
+  requestSearch.dispatchEvent(new window.Event("input", { bubbles:true }))
+  const requestButton = document.querySelector('[data-reader-contact-submit="contact-request"]')
+  assert.match(requestButton.textContent, /发送好友申请/)
+  requestButton.click()
+  assert.match(document.querySelector('[data-contact-search-result-id="contact-request"]').textContent, /申请中/)
+  assert.match(document.querySelector('[data-contact-search-result-id="contact-request"]').textContent, /白榆还没有回复/)
+
+  const saved = JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.find(book => book.id === work.id)
+  assert.equal(saved.progress.contactFriendships["contact-direct"], "accepted")
+  assert.equal(saved.progress.contactFriendships["contact-request"], "pending")
+})
+
 test("authored unsuccessful calls render as compact outcomes and never auto-open a call scene", async t => {
   await openStoryChat(t, "reader-story-calls")
 
@@ -239,4 +308,69 @@ test("authored unsuccessful calls render as compact outcomes and never auto-open
   assert.match(outcome.textContent, /无人接听/)
   assert.equal(document.querySelector(".rd-call-scene"), null)
   assert.equal(outcome.tagName, "DIV")
+})
+
+test("the next authored bubble uses its own exact delay instead of the fixed chat gap", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-exact-message-delay"
+  work.phoneData.chats[0].rounds[0].messages = [
+    { id:"delay-first", type:"system", senderId:"system", text:"第一条" },
+    { id:"delay-second", type:"system", senderId:"system", text:"第二条", delayBeforeMs:120 },
+  ]
+  work.phoneData.readingFlow = {
+    enabled:true,
+    sequence:[
+      { type:"messages", itemId:"delay-first", chatId:"chat-1", roundId:"round-1", contactId:"contact-1", label:"第一条" },
+      { type:"messages", itemId:"delay-second", chatId:"chat-1", roundId:"round-1", contactId:"contact-1", label:"第二条" },
+    ],
+  }
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?exact-message-delay=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('.phone-flow-notification[data-flow-notification-app="messages"]').click()
+
+  assert.ok(document.querySelector('[data-message-id="delay-first"]'))
+  assert.equal(document.querySelector('[data-message-id="delay-second"]'), null)
+  await new Promise(resolve => setTimeout(resolve, 70))
+  assert.equal(document.querySelector('[data-message-id="delay-second"]'), null)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.ok(document.querySelector('[data-message-id="delay-second"]'))
+})
+
+test("an unsequenced reply branch also honors the first follow-up bubble delay", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-reply-branch-delay"
+  work.phoneData.chats[0].rounds[0].messages = [{
+    id:"delay-choice-owner",
+    type:"text",
+    senderId:"contact-1",
+    text:"要现在说吗？",
+    choices:[{
+      id:"delay-choice",
+      text:"点头",
+      replyText:"",
+      replyPace:"instant",
+      followUpMessages:[{ id:"authored-follow-up", type:"text", senderId:"contact-1", text:"那我说了。", delayBeforeMs:120 }],
+    }],
+  }]
+  delete work.phoneData.readingFlow
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?reply-branch-delay=${Date.now()}-${Math.random()}`)
+  document.querySelector(".rd-recent-item").click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector("#chatSendBtn").click()
+  document.querySelector(".rd-reply-option").click()
+
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /那我说了/)
+  await new Promise(resolve => setTimeout(resolve, 70))
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /那我说了/)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.match(document.querySelector("#chatMsgArea").textContent, /那我说了/)
 })

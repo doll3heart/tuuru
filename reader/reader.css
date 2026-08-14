@@ -1337,6 +1337,21 @@ body.rd-reading-active .article-meta {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rd-phone-app-header-action {
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--phone-system-radius-control);
+  background: transparent;
+  color: var(--phone-system-text);
+  font: 700 1.2rem/1 var(--font-sans);
+  cursor: pointer;
+}
+.rd-phone-app-header-action:hover { background: var(--phone-system-surface-soft); }
+.rd-phone-app-header-action:focus-visible { outline: 2px solid var(--phone-system-accent); outline-offset: -3px; }
 .phone-frame > .rd-phone-app-panel > .rd-phone-app-body {
   padding: 12px 12px 18px;
   background: color-mix(in srgb, var(--phone-system-bg) 86%, white);
@@ -3165,6 +3180,91 @@ div.phone-story-widget-v7 { cursor: default; }
   color: var(--phone-system-muted);
   font-size: 20px;
   line-height: 1;
+}
+
+.rd-contact-discovery {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--phone-system-border);
+  background: var(--phone-system-surface);
+  box-shadow: 3px 3px 0 rgba(112, 78, 88, .13);
+}
+.rd-contact-discovery[hidden] { display: none; }
+.rd-contact-discovery-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rd-contact-discovery-head button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--phone-system-border);
+  border-radius: var(--phone-system-radius-control);
+  background: var(--phone-system-surface-soft);
+  color: var(--phone-system-text);
+  font: 700 1rem/1 var(--font-sans);
+  cursor: pointer;
+}
+.rd-contact-discovery-head > span { display: grid; min-width: 0; gap: 2px; }
+.rd-contact-discovery-head strong { color: var(--phone-system-text); font-size: .78rem; }
+.rd-contact-discovery-head small { color: var(--phone-system-muted); font-size: .61rem; line-height: 1.35; }
+.rd-contact-search { position: relative; display: block; min-width: 0; }
+.rd-contact-search input {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 8px 38px 8px 10px;
+  border: 1px solid var(--phone-system-border);
+  border-radius: var(--phone-system-radius-control);
+  background: var(--phone-system-surface-soft);
+  color: var(--phone-system-text);
+  font: 500 .72rem/1.3 var(--font-sans);
+}
+.rd-contact-search > span:last-child { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--phone-system-muted); }
+.rd-contact-search-results { display: grid; gap: 8px; margin-top: 10px; }
+.rd-contact-search-result {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--phone-system-border);
+  background: var(--phone-system-surface-soft);
+}
+.rd-contact-search-result[hidden] { display: none; }
+.rd-contact-search-profile { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.rd-contact-search-profile .rd-contact-avatar { width: 36px; height: 36px; flex-basis: 36px; }
+.rd-contact-search-profile > span:last-child { display: grid; min-width: 0; gap: 2px; }
+.rd-contact-search-profile strong,
+.rd-contact-search-profile small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-contact-search-profile strong { color: var(--phone-system-text); font-size: .72rem; }
+.rd-contact-search-profile small { color: var(--phone-system-muted); font-size: .58rem; }
+.rd-contact-search-submit {
+  min-height: 36px;
+  max-width: 94px;
+  padding: 6px 8px;
+  border: 1px solid var(--phone-system-accent);
+  border-radius: var(--phone-system-radius-control);
+  background: var(--phone-system-accent);
+  color: var(--phone-system-surface);
+  font: 700 .61rem/1.3 var(--font-sans);
+  cursor: pointer;
+}
+.rd-contact-search-submit:disabled { border-color: var(--phone-system-border); background: var(--phone-system-surface); color: var(--phone-system-muted); cursor: default; }
+.rd-contact-search-reaction { grid-column: 1 / -1; margin: 0; padding-top: 6px; border-top: 1px solid var(--phone-system-border); color: var(--phone-system-muted); font-size: .61rem; line-height: 1.5; }
+.rd-contact-search-empty { padding: 16px 8px; color: var(--phone-system-muted); font-size: .68rem; text-align: center; }
+.rd-contact-search-empty[hidden] { display: none; }
+
+@media (max-width: 350px) {
+  .rd-contact-search-result { grid-template-columns: minmax(0, 1fr); }
+  .rd-contact-search-submit { width: 100%; max-width: none; }
 }
 
 .rd-contact-remark-form { min-width: 0; }

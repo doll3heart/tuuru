@@ -126,7 +126,10 @@ test("the author tutorial covers current writing, safety, and phone interaction 
     "批量顺延时间",
     "阅读密码与作品水印",
     "好友申请",
+    "联系人名片与读者加好友",
+    "单条消息发送间隔",
     "回复节奏",
+    "群聊 @ 全体成员",
   ]) {
     assert.match(tutorialCopy, new RegExp(feature))
   }
@@ -139,6 +142,9 @@ test("the author tutorial covers current writing, safety, and phone interaction 
     "正在输入后回复",
     "稍后回复",
     "读者需要选择同意或拒绝",
+    "发送好友申请",
+    "留空沿用默认 0.8 秒",
+    "只在群聊出现",
     "字距",
     "段首缩进",
     "页边距",
@@ -421,6 +427,22 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /每点一次【添加】就新增一个气泡/)
   assert.match(source, /换行不会自动拆成多个气泡/)
   assert.doesNotMatch(source, /每行文字会生成一个气泡/)
+})
+
+test("the phone tutorial covers group-wide mentions, contact-card friendship, and exact bubble delays", () => {
+  assert.match(source, /群聊 @ 全体成员/)
+  assert.match(source, /候选项只在群聊出现[^。]*单聊和论坛不会混入/)
+  assert.match(source, /联系人名片与读者加好友/)
+  assert.match(source, /仅查看名片[^。]*直接添加好友[^。]*发送好友申请/)
+  assert.match(source, /接受、拒绝或申请中/)
+  assert.match(source, /结果会保存在当前阅读档案中/)
+  assert.match(source, /联系人[^。]*读者主动添加/)
+  assert.match(source, /联系人 App 右上角[^。]*＋/)
+  assert.match(source, /搜索联系人姓名[^。]*直接添加[^。]*发送好友申请/)
+  assert.match(source, /单条消息发送间隔/)
+  assert.match(source, /0 到 60 秒[^。]*0\.1 秒/)
+  assert.match(source, /当前消息发送前的等待时间/)
+  assert.match(source, /发送间隔只决定气泡何时出现[^。]*不会自动显示“正在输入”/)
 })
 
 test("the shopping tutorial explains how to edit an existing product card", () => {
