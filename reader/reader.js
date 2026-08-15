@@ -7632,6 +7632,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   var chatFlowTypingTimer = null
   var chatFlowAdvanceTimer = null
   var chatFlowRenderToken = 0
+  var chatBottomResizeObserver = null
   var CHAT_FLOW_CHARACTER_DELAY = 110
   var CHAT_FLOW_MESSAGE_GAP = 800
   var CHAT_TRANSIENT_HOLD_MS = 520
@@ -7642,6 +7643,20 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     if (chatFlowAdvanceTimer !== null) clearTimeout(chatFlowAdvanceTimer)
     chatFlowTypingTimer = null
     chatFlowAdvanceTimer = null
+  }
+
+  function clearChatBottomTracking() {
+    if (!chatBottomResizeObserver) return
+    chatBottomResizeObserver.disconnect()
+    chatBottomResizeObserver = null
+  }
+
+  function chatAreaIsNearBottom(area) {
+    if (!area) return true
+    var distance = Number(area.scrollHeight || 0)
+      - Number(area.clientHeight || 0)
+      - Number(area.scrollTop || 0)
+    return distance <= 48
   }
 
   function targetBelongsToChat(target) {
@@ -8171,6 +8186,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     stopVoicePlayback(true)
     clearStoryEventTimers(true)
     clearChatFlowTimers()
+    clearChatBottomTracking()
     openReaderApp('messages')
     focusReaderControl(frame, '.rd-chat-card[data-chat-index="' + chatIndex + '"]')
   }
@@ -8294,9 +8310,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function renderChat() {
+    var previousChatMessageArea = frame.querySelector('#chatMsgArea')
+    var followChatBottomAfterRender = !previousChatMessageArea || chatAreaIsNearBottom(previousChatMessageArea)
+    var previousChatScrollTop = Number(previousChatMessageArea?.scrollTop || 0)
     stopVoicePlayback(true)
     clearStoryEventTimers(true)
     clearChatFlowTimers()
+    clearChatBottomTracking()
     transientMessageTimers.forEach(function(timer) { clearTimeout(timer) })
     transientMessageTimers.clear()
     chatFlowRenderToken += 1
@@ -8821,7 +8841,43 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     })
 
     var chatMessageArea = frame.querySelector('#chatMsgArea')
-    if (chatMessageArea) chatMessageArea.scrollTop = chatMessageArea.scrollHeight
+    var followChatBottom = followChatBottomAfterRender
+    var chatBottomFramePending = false
+    function placeChatAtBottom() {
+      if (!followChatBottom || !chatMessageArea?.isConnected) return
+      chatMessageArea.scrollTop = chatMessageArea.scrollHeight
+    }
+    function scheduleChatBottom() {
+      if (!followChatBottom || chatBottomFramePending || !chatMessageArea?.isConnected) return
+      chatBottomFramePending = true
+      var settle = function() {
+        chatBottomFramePending = false
+        placeChatAtBottom()
+      }
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(settle)
+      else setTimeout(settle, 0)
+    }
+    if (chatMessageArea) {
+      if (followChatBottom) placeChatAtBottom()
+      else chatMessageArea.scrollTop = Math.max(0, previousChatScrollTop)
+      chatMessageArea.addEventListener('scroll', function() {
+        followChatBottom = chatAreaIsNearBottom(chatMessageArea)
+      }, {passive:true})
+      var settleChatMedia = function(event) {
+        if (event.target?.tagName === 'IMG') scheduleChatBottom()
+      }
+      chatMessageArea.addEventListener('load', settleChatMedia, true)
+      chatMessageArea.addEventListener('error', settleChatMedia, true)
+      if (typeof globalThis.ResizeObserver === 'function') {
+        chatBottomResizeObserver = new globalThis.ResizeObserver(function() {
+          scheduleChatBottom()
+        })
+        chatMessageArea.querySelectorAll('.rd-chat-message, .rd-chat-time, .chat-round-divider').forEach(function(row) {
+          chatBottomResizeObserver.observe(row)
+        })
+      }
+      scheduleChatBottom()
+    }
     if (!exportMode) bindPhoneReadingPosition(chatMessageArea)
     var pendingChatReturnPosition = _readerPendingReadingPosition
     if (
@@ -9277,6 +9333,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       if (!shouldUseMotion(true) || characters.length === 0) {
         stream.textContent = characters.join('')
         stream.classList.add('is-complete')
+        scheduleChatBottom()
         finishCurrentChatFlowMessage(messageId)
         return
       }
@@ -9286,7 +9343,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         if (!renderedChatFlowIsCurrent()) return
         stream.textContent += characters[characterIndex]
         characterIndex += 1
-        if (chatMessageArea) chatMessageArea.scrollTop = chatMessageArea.scrollHeight
+        scheduleChatBottom()
         if (characterIndex >= characters.length) {
           stream.classList.add('is-complete')
           finishCurrentChatFlowMessage(messageId)

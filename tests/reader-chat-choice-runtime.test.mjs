@@ -165,6 +165,49 @@ test("an image choice previews and sends the same image without an extra text bu
   assert.doesNotMatch(selfMessages[0].textContent, /好，我会准时到/)
 })
 
+test("a newly loaded reply image keeps a followed chat pinned to its new bottom", async t => {
+  const work = choiceWork()
+  const imageUrl = "data:image/png;base64,Y2hvaWNlLWltYWdl"
+  work.phoneData.chats[0].rounds[0].messages[0].choices[0].imageUrl = imageUrl
+  await openSeededChat(t, work)
+
+  let chatScrollHeight = 800
+  const prototype = globalThis.HTMLElement.prototype
+  const previousScrollHeight = Object.getOwnPropertyDescriptor(prototype, "scrollHeight")
+  const previousClientHeight = Object.getOwnPropertyDescriptor(prototype, "clientHeight")
+  Object.defineProperty(prototype, "scrollHeight", {
+    configurable: true,
+    get() { return this.id === "chatMsgArea" ? chatScrollHeight : 0 },
+  })
+  Object.defineProperty(prototype, "clientHeight", {
+    configurable: true,
+    get() { return this.id === "chatMsgArea" ? 200 : 0 },
+  })
+  t.after(() => {
+    if (previousScrollHeight) Object.defineProperty(prototype, "scrollHeight", previousScrollHeight)
+    else delete prototype.scrollHeight
+    if (previousClientHeight) Object.defineProperty(prototype, "clientHeight", previousClientHeight)
+    else delete prototype.clientHeight
+  })
+
+  const initialArea = document.getElementById("chatMsgArea")
+  initialArea.scrollTop = 600
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  const renderedArea = document.getElementById("chatMsgArea")
+  assert.equal(renderedArea.scrollTop, 800)
+  chatScrollHeight = 1200
+  renderedArea.querySelector('.rd-chat-message.is-self img').dispatchEvent(new window.Event("load"))
+  assert.equal(renderedArea.scrollTop, 1200)
+
+  renderedArea.scrollTop = 240
+  renderedArea.dispatchEvent(new window.Event("scroll"))
+  chatScrollHeight = 1400
+  renderedArea.querySelector('.rd-chat-message.is-self img').dispatchEvent(new window.Event("load"))
+  assert.equal(renderedArea.scrollTop, 240, "image growth must not pull a reader away from older messages")
+})
+
 test("saved reader chat background reaches the actual conversation screen", async t => {
   const imageUrl = `data:image/png;base64,${Buffer.from("\x89PNG\r\n\x1a\n", "binary").toString("base64")}`
   await openSeededChat(t, choiceWork(), {
