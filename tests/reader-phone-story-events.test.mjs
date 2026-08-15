@@ -100,6 +100,16 @@ async function openStoryChat(t, key) {
   return work
 }
 
+async function waitFor(check, timeoutMs = 3500) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = check()
+    if (value) return value
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.fail("timed out waiting for reader story state")
+}
+
 test("reader story events expose recall, retry, reaction, friend request, and burn interactions", async t => {
   await openStoryChat(t, "reader-story-interactions")
 
@@ -380,11 +390,10 @@ test("unsequenced authored bubbles after a choice honor their individual delays"
   await new Promise(resolve => setTimeout(resolve, 90))
   assert.ok(document.querySelector('[data-message-id="authored-delay-text"]'))
   assert.equal(document.querySelector('[data-message-id="authored-delay-image-one"]'), null)
-  await new Promise(resolve => setTimeout(resolve, 140))
-  assert.ok(document.querySelector('[data-message-id="authored-delay-image-one"]'))
+  await waitFor(() => document.querySelector('[data-message-id="authored-delay-text"]')?.textContent.includes("First"))
+  await waitFor(() => document.querySelector('[data-message-id="authored-delay-image-one"]'))
   assert.equal(document.querySelector('[data-message-id="authored-delay-image-two"]'), null)
-  await new Promise(resolve => setTimeout(resolve, 140))
-  assert.ok(document.querySelector('[data-message-id="authored-delay-image-two"]'))
+  await waitFor(() => document.querySelector('[data-message-id="authored-delay-image-two"]'))
 })
 
 test("an unsequenced reply branch also honors the first follow-up bubble delay", async t => {
@@ -418,6 +427,5 @@ test("an unsequenced reply branch also honors the first follow-up bubble delay",
   assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /那我说了/)
   await new Promise(resolve => setTimeout(resolve, 70))
   assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /那我说了/)
-  await new Promise(resolve => setTimeout(resolve, 100))
-  assert.match(document.querySelector("#chatMsgArea").textContent, /那我说了/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("那我说了"))
 })

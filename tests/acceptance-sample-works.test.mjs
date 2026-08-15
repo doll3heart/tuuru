@@ -299,7 +299,7 @@ test("phone runtime fixture opens every App and its authored secondary navigatio
   await waitFor(() => document.querySelector(".rd-reply-option:not([disabled])"))
   assert.equal(document.querySelectorAll(".rd-reply-option").length, 3)
   document.querySelector(".rd-reply-option").click()
-  await waitFor(() => document.querySelector(".rd-call-scene"), 8000)
+  await waitFor(() => document.querySelector(".rd-call-scene"), 15000)
   assert.ok(document.querySelector(".rd-call-scene"), "the authored call opens only after earlier bubbles and the choice")
   document.querySelector(".rd-call-hangup").click()
   assert.ok(document.getElementById("phoneDesktopReader"))

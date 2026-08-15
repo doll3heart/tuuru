@@ -7755,9 +7755,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function isFlowTargetMessage(message, round) {
-    if (!flowStep) return false
     var playbackId = currentFlowPlaybackMessageId()
     if (playbackId) return String(message && message.id) === playbackId
+    if (!flowStep) return false
     return String(round && round.id) === String(flowStep.itemId)
   }
 
@@ -7880,20 +7880,21 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         ? unsequencedPlayback.ids.map(String)
         : []
       var unsequencedChoiceGateActive = false
+      var unsequencedPlaybackGateActive = false
       var endedRoundGeneratedIds = null
       unsequencedMessageScan:
       for (var roundIndex = 0; roundIndex < (ch.rounds || []).length; roundIndex++) {
         var messages = Array.isArray(ch.rounds[roundIndex]?.messages) ? ch.rounds[roundIndex].messages : []
-          for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
-            var message = messages[messageIndex]
-            if (message?.id == null) continue
-            if (endedRoundGeneratedIds && !endedRoundGeneratedIds.has(String(message.id))) {
-              break unsequencedMessageScan
-            }
-            if (!readerPhoneStoryItemVisible(w, message, pd)) continue
-            var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
-            if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) continue
-            if (unsequencedChoiceGateActive) {
+        for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+          var message = messages[messageIndex]
+          if (message?.id == null) continue
+          if (endedRoundGeneratedIds && !endedRoundGeneratedIds.has(String(message.id))) {
+            break unsequencedMessageScan
+          }
+          if (!readerPhoneStoryItemVisible(w, message, pd)) continue
+          var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
+          if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) continue
+          if (unsequencedChoiceGateActive || unsequencedPlaybackGateActive) {
             if (Array.isArray(message.choices) && message.choices.length > 0) {
               break unsequencedMessageScan
             }
@@ -7901,7 +7902,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           }
           unsequencedVisible.add(String(message.id))
           if (activeUnsequencedId != null && String(message.id) === String(activeUnsequencedId)) {
-            break unsequencedMessageScan
+            unsequencedPlaybackGateActive = true
+            continue
           }
           if (
             Array.isArray(message.choices)
@@ -9233,6 +9235,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         if (Array.isArray(message.choices) && message.choices.length > 0) break
         if (!readerPhoneStoryItemVisible(w, message, pd)) continue
         if (phoneStoryMessageBlockedByEndedRound(pd, String(message.id), phoneChoiceSession.phoneChoiceSelections)) break
+        if (message.type === 'system') continue
         continuationIds.push(String(message.id))
       }
       return continuationIds
@@ -9382,18 +9385,11 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         result.run.endRound,
       )
       var playbackIds = generatedIds.concat(continuationIds)
-      var hasPacedReply = generatedIds.some(function(messageId) {
-        return findFlowPlaybackMessage(messageId)?.transientTyping === true
-      })
-      var hasAuthoredDelay = playbackIds.some(function(messageId) {
-        var playbackMessage = findFlowPlaybackMessage(messageId)
-        return playbackMessage && Object.hasOwn(playbackMessage, 'delayBeforeMs')
-      })
       var firstPlaybackMessage = playbackIds.length ? findFlowPlaybackMessage(playbackIds[0]) : null
       var firstPlaybackDelay = firstPlaybackMessage && Object.hasOwn(firstPlaybackMessage, 'delayBeforeMs')
         ? chatMessageDelayBeforeMs(firstPlaybackMessage, 0)
         : 0
-      chatSession.flowGeneratedPlayback = playbackIds.length > 0 && (flowEnabled || hasPacedReply || hasAuthoredDelay)
+      chatSession.flowGeneratedPlayback = playbackIds.length > 0
         ? { runKey: runKey, ids: playbackIds, index:firstPlaybackDelay > 0 ? -1 : 0 }
         : null
       setChoiceListOpen(false)

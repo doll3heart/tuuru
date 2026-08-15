@@ -128,6 +128,16 @@ async function openSeededChat(t, work = choiceWork(), phoneCustom) {
   document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
 }
 
+async function waitFor(check, timeoutMs = 3500) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = check()
+    if (value) return value
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.fail("timed out waiting for reader chat state")
+}
+
 test("reader-authored messages use the reader profile avatar", async t => {
   const readerAvatar = "data:image/png;base64,cmVhZGVyLWF2YXRhcg=="
   await openSeededChat(t, choiceWork(), {
@@ -163,6 +173,102 @@ test("an image choice previews and sends the same image without an extra text bu
   assert.equal(selfMessages.length, 1)
   assert.equal(selfMessages[0].querySelector("img")?.getAttribute("src"), imageUrl)
   assert.doesNotMatch(selfMessages[0].textContent, /好，我会准时到/)
+})
+
+test("an instant silent choice still streams every follow-up one bubble at a time", async t => {
+  const work = choiceWork()
+  const choice = work.phoneData.chats[0].rounds[0].messages[0].choices[0]
+  choice.silent = true
+  choice.replyText = ""
+  choice.replyPace = "instant"
+  choice.followUpMessages = [
+    { id:"silent-stream-a", type:"text", senderId:"contact-1", text:"甲乙" },
+    { id:"silent-stream-b", type:"text", senderId:"contact-1", text:"丙丁" },
+  ]
+  work.phoneData.chats[0].rounds[0].messages = [work.phoneData.chats[0].rounds[0].messages[0]]
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  assert.equal(document.querySelectorAll(".rd-chat-message.is-self").length, 0)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /甲乙/)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /丙丁/)
+
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("甲乙"))
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /丙丁/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("丙丁"))
+})
+
+test("a system notice already shown beside a choice does not disappear while its branch streams", async t => {
+  const work = choiceWork()
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices[0].silent = true
+  owner.choices[0].replyText = ""
+  owner.choices[0].replyPace = "instant"
+  owner.choices[0].followUpMessages = [
+    { id:"notice-follow-up", type:"text", senderId:"contact-1", text:"甲乙" },
+  ]
+  work.phoneData.chats[0].rounds[0].messages = [owner, {
+    id:"choice-system-notice",
+    type:"system",
+    senderId:"system",
+    text:"群聊系统提示",
+  }, {
+    id:"notice-later-owner",
+    type:"text",
+    senderId:"contact-1",
+    text:"下一题",
+    choices:[{ id:"notice-later-choice", text:"继续", replyText:"继续", followUpMessages:[] }],
+  }]
+
+  await openSeededChat(t, work)
+  assert.match(document.querySelector("#chatMsgArea").textContent, /群聊系统提示/)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  assert.match(document.querySelector("#chatMsgArea").textContent, /群聊系统提示/)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /下一题/)
+})
+
+test("an instant image choice finishes its streamed branch before revealing the next option group", async t => {
+  const work = choiceWork()
+  const firstOwner = work.phoneData.chats[0].rounds[0].messages[0]
+  firstOwner.choices = [{
+    id:"image-first-choice",
+    text:"发送图片",
+    replyText:"发送图片",
+    imageUrl:"data:image/png;base64,Y2hvaWNlLWltYWdl",
+    replyPace:"instant",
+    followUpMessages:[{ id:"image-follow-up", type:"text", senderId:"contact-1", text:"收到" }],
+  }]
+  work.phoneData.chats[0].rounds[0].messages = [firstOwner, {
+    id:"later-choice-owner",
+    type:"text",
+    senderId:"contact-1",
+    text:"现在继续吗？",
+    choices:[{
+      id:"later-choice",
+      text:"继续",
+      replyText:"继续",
+      replyPace:"instant",
+      followUpMessages:[],
+    }],
+  }]
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  assert.ok(document.querySelector(".rd-chat-message.is-self img"))
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /收到/)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /现在继续吗/)
+  assert.equal(document.querySelector(".rd-reply-option"), null)
+
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("收到"))
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /现在继续吗/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("现在继续吗"))
+  assert.match(document.querySelector(".rd-reply-option")?.textContent || "", /继续/)
 })
 
 test("a newly loaded reply image keeps a followed chat pinned to its new bottom", async t => {
@@ -254,6 +360,7 @@ test("a choice without reader text keeps reselection on its first generated foll
   document.getElementById("chatInput").click()
   document.querySelector(".rd-reply-option").click()
 
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("Then just listen to me."), 5000)
   assert.match(document.querySelector("#chatMsgArea").textContent, /Then just listen to me\./)
   document.getElementById("chatBack").click()
   document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
@@ -277,6 +384,7 @@ test("a silent important choice records progress and ends the current topic", as
   document.getElementById("chatInput").click()
   document.querySelector('.rd-reply-option[data-ci="0"]').click()
 
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("那我在老地方等你"), 5000)
   const text = document.querySelector("#chatMsgArea").textContent
   assert.match(text, /那我在老地方等你/)
   assert.doesNotMatch(text, /这是作者原本排在后面的消息/)
@@ -296,6 +404,7 @@ test("a later message follows the selected stable choice condition", async t => 
 
   document.querySelector(".rd-chat-choice-reselect").click()
   document.querySelector('.rd-reply-option[data-ci="1"]').click()
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("这是作者原本排在后面的消息"), 10000)
   assert.match(document.querySelector("#chatMsgArea").textContent, /这是作者原本排在后面的消息/)
 })
 
@@ -465,6 +574,7 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
   assert.equal(options[0].textContent.trim(), "好，我会准时到。")
   options[0].click()
 
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("这是作者原本排在后面的消息"), 10000)
   let messages = [...document.querySelectorAll(".rd-chat-message")]
   let visibleText = messages.map(message => message.textContent)
   assert.match(visibleText[0], /今晚要不要见面/)
@@ -494,6 +604,7 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
   options = [...choiceList.querySelectorAll(".rd-reply-option")]
   options[1].click()
 
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("这是作者原本排在后面的消息"), 10000)
   messages = [...document.querySelectorAll(".rd-chat-message")]
   visibleText = messages.map(message => message.textContent)
   assert.match(visibleText[1], /今晚不太方便，改天好吗/)
@@ -557,6 +668,9 @@ test("separate message choice groups become available in conversation order", as
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
   options[0].click()
 
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /This is the second question/)
+  assert.match(document.querySelector("#chatMsgArea").textContent, /A second group system message/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("This is the second question"), 10000)
   assert.match(document.querySelector("#chatMsgArea").textContent, /First reader reply/)
   assert.match(document.querySelector("#chatMsgArea").textContent, /First character follow-up/)
   assert.match(document.querySelector("#chatMsgArea").textContent, /This is the second question/)
@@ -564,6 +678,7 @@ test("separate message choice groups become available in conversation order", as
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the second message"])
   options[0].click()
 
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("Second character follow-up"), 10000)
   const renderedText = document.querySelector("#chatMsgArea").textContent
   assert.match(renderedText, /First reader reply/)
   assert.match(renderedText, /Second reader reply/)
