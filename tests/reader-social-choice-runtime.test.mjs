@@ -503,14 +503,20 @@ test("reader forum defaults to hot comments, keeps authored floors, and stores l
   assert.equal(comments[0].dataset.threadItemId, 'comment-latest')
   assert.equal(comments[0].querySelector('.forum-comment-floor').textContent, '3楼')
 
-  const like = comments[0].querySelector('[data-forum-comment-like="comment-latest"]')
+  document.querySelector('[data-forum-sort="floor"]').click()
+  comments = [...document.querySelectorAll('.rd-forum-thread > .forum-comment')]
+  assert.equal(document.querySelector('[data-forum-sort="floor"]').getAttribute('aria-pressed'), 'true')
+  assert.deepEqual(comments.map(comment => comment.dataset.threadItemId), ['comment-old', 'comment-hot', 'comment-latest'])
+  assert.deepEqual(comments.map(comment => comment.querySelector('.forum-comment-floor').textContent), ['1楼', '520楼', '3楼'])
+
+  const like = comments[2].querySelector('[data-forum-comment-like="comment-latest"]')
   like.click()
   assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '♡1')
   assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').getAttribute('aria-pressed'), 'true')
 
   document.querySelector('.rd-forum-detail .rd-back-btn').click()
   document.querySelector('.rd-post-card[data-post-index="0"]').click()
-  assert.equal(document.querySelector('[data-forum-sort="latest"]').getAttribute('aria-pressed'), 'true')
+  assert.equal(document.querySelector('[data-forum-sort="floor"]').getAttribute('aria-pressed'), 'true')
   assert.equal(document.querySelector('[data-forum-comment-like="comment-latest"]').textContent.trim(), '♡1')
   assert.deepEqual(JSON.parse(localStorage.getItem(`moirain_work_${work.id}`)).phoneData.forumPosts[0].comments, authoredComments)
 })
@@ -530,4 +536,52 @@ test("reader forum resolves contact aliases for posts and comments", async t => 
   assert.equal(document.querySelector('.forum-post-author').childNodes[0].textContent.trim(), "雨夜路人")
   assert.equal(document.querySelector('.forum-comment-name').textContent, "雨夜路人")
   assert.match(document.querySelector('.forum-comment-avatar img').src, /^data:image\/png/)
+})
+
+test("reader forum hides conditional comments with their descendants until every condition group matches", async t => {
+  const work = socialChoiceWork()
+  work.id = "reader-forum-comment-conditions"
+  work.phoneData.chats[0].rounds = [{ id:"condition-round", messages:[
+    { id:"condition-owner-a", senderId:"contact-1", type:"text", text:"第一组", choices:[
+      { id:"choice-a", text:"A", replyText:"A", followUpMessages:[] },
+      { id:"choice-b", text:"B", replyText:"B", followUpMessages:[] },
+    ] },
+    { id:"condition-owner-extra", senderId:"contact-1", type:"text", text:"第二组", choices:[
+      { id:"choice-extra", text:"额外条件", replyText:"额外条件", followUpMessages:[] },
+    ] },
+  ] }]
+  work.phoneData.forumPosts[0].comments = [
+    {
+      id:"always-comment",
+      contactId:"contact-1",
+      contactName:"沈岚",
+      content:"始终显示",
+      replies:[],
+    },
+    {
+      id:"conditional-comment",
+      contactId:"contact-1",
+      contactName:"沈岚",
+      content:"条件评论",
+      displayCondition:{ all:[
+        { anyChoiceIds:["choice-a", "choice-b"] },
+        { anyChoiceIds:["choice-extra"] },
+      ] },
+      replies:[{
+        id:"conditional-child",
+        contactId:"contact-1",
+        contactName:"沈岚",
+        content:"不能脱离上一级评论出现",
+        replies:[],
+      }],
+    },
+  ]
+  await openSeededPhone(t, work)
+  document.querySelector('[data-app-type="forum"]').click()
+  document.querySelector('.rd-post-card[data-post-index="0"]').click()
+
+  assert.match(document.querySelector('.rd-forum-thread').textContent, /始终显示/)
+  assert.doesNotMatch(document.querySelector('.rd-forum-thread').textContent, /条件评论/)
+  assert.doesNotMatch(document.querySelector('.rd-forum-thread').textContent, /不能脱离上一级评论出现/)
+  assert.equal(document.querySelector('.rd-forum-thread-head h4 span').textContent, "1")
 })

@@ -58,6 +58,12 @@ test("conversation action control stays visually tiny without losing its touch t
   assert.match(icon, /letter-spacing\s*:\s*0/)
 })
 
+test("long group chats keep sender identity compact, readable, and truncatable", () => {
+  assert.match(phoneChatCss, /\.phone-frame \.chat-group-sender-meta\s*\{[^}]*display:\s*flex[^}]*min-width:\s*0[^}]*max-width:\s*190px/s)
+  assert.match(phoneChatCss, /\.phone-frame \.chat-group-sender-name\s*\{[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s)
+  assert.match(css, /\.character-app-switch\s*\{[^}]*min-width:\s*44px/s)
+})
+
 test("voice playback has shared progress, focus, touch, and reduced-motion states", () => {
   assert.match(phoneChatCss, /\.rd-voice-playback\s*\{[^}]*display\s*:\s*flex/s)
   assert.match(phoneChatCss, /\.rd-voice-bar\.is-active\s*\{/)

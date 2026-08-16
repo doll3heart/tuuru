@@ -64,7 +64,8 @@ test("shopping orders let authors edit or clear the displayed time", async t => 
   })
 
   const overlay = openPhoneAppModal(draft.id, "shopping")
-  overlay.querySelector("#characterAccessContinue").click()
+  assert.equal(overlay.querySelector("#characterAccessContinue"), null)
+  assert.ok(overlay.querySelector("[data-character-app-switch]"))
   overlay.querySelectorAll(".shop-tab")[1].click()
 
   const card = overlay.querySelector('[data-item-id="order-1"]')

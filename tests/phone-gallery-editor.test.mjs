@@ -61,9 +61,8 @@ async function openGallery(id) {
   const { openPhoneAppModal } = await import("../js/pages/phone.js")
   const draft = createPhoneWorkDraft({ id, type: "article", phoneData: makePhoneData() })
   const overlay = openPhoneAppModal(draft.id, "gallery")
-  const continueButton = overlay.querySelector("#characterAccessContinue")
-  assert.ok(continueButton)
-  continueButton.click()
+  assert.equal(overlay.querySelector("#characterAccessContinue"), null)
+  assert.ok(overlay.querySelector("[data-character-app-switch]"))
   return { dom, draft, overlay }
 }
 

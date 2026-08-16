@@ -86,6 +86,7 @@ function replyTargetName(item, parent, options) {
 }
 
 function renderReply(reply, context, options) {
+  if (typeof options.isVisible === "function" && !options.isVisible(reply)) return ""
   var identity = identityFor(reply, options)
   var targetName = replyTargetName(reply, context.parentComment, options)
   var classes = "forum-reply-item"
@@ -120,6 +121,7 @@ function renderReply(reply, context, options) {
 }
 
 export function renderPhoneForumComment(comment, context = {}, options = {}) {
+  if (typeof options.isVisible === "function" && !options.isVisible(comment)) return ""
   var identity = identityFor(comment, options)
   var floor = Number(context.floor) || 1
   var containerKey = context.containerKey || "root"

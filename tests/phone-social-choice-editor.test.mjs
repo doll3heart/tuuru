@@ -414,7 +414,7 @@ test("forum post detail exposes a complete editor and preserves paragraph breaks
   }
 })
 
-test("forum posts can unlock after a stable message choice", async () => {
+test("forum posts and nested comments can save compound message-choice conditions", async () => {
   const phoneData = makePhoneData()
   phoneData.chats = [{
     id:"story-chat",
@@ -436,13 +436,22 @@ test("forum posts can unlock after a stable message choice", async () => {
   try {
     overlay.querySelector('.forum-list-card[data-post-id="post-a"]').click()
     overlay.querySelector("#fbEditPost").click()
-    const select = document.querySelector("#editPostVisibilityChoice")
-    select.value = "story-refuse"
+    document.querySelector('[data-phone-story-condition-open="edit-post-condition"]').click()
+    document.querySelector('[data-phone-condition-add-choice="story-refuse"]').click()
+    document.querySelector("#phoneStoryConditionSave").click()
     document.querySelector("#editPostSave").click()
-    assert.equal(
-      draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-a").visibleAfterChoiceId,
-      "story-refuse",
-    )
+    let savedPost = draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-a")
+    assert.deepEqual(savedPost.displayCondition, { all:[{ anyChoiceIds:["story-refuse"] }] })
+    assert.equal(Object.hasOwn(savedPost, "visibleAfterChoiceId"), false)
+
+    overlay.querySelector('[data-forum-comment-action="forum-comment-a"]').click()
+    document.querySelector('[data-forum-comment-menu-action="edit"]').click()
+    document.querySelector('[data-phone-story-condition-open="edit-comment-condition"]').click()
+    document.querySelector('[data-phone-condition-add-choice="story-refuse"]').click()
+    document.querySelector("#phoneStoryConditionSave").click()
+    document.querySelector("#ecSave").click()
+    savedPost = draft.snapshot().phoneData.forumPosts.find(post => post.id === "post-a")
+    assert.deepEqual(savedPost.comments[0].displayCondition, { all:[{ anyChoiceIds:["story-refuse"] }] })
   } finally {
     closeFixture(fixture)
   }

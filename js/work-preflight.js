@@ -5,7 +5,11 @@ import { articleInteractionMarkerIds } from "./article-interaction-group-model.j
 import { articlePlaceholderMarkerIds } from "./article-placeholder-marker.js"
 import { ARTICLE_RANDOM_GAME_KIND, normalizeArticleRandomGame } from "./article-random-game.js"
 import { isInteractiveExperienceWork } from "./interactive-experience.js"
-import { phoneStoryChoiceById } from "./phone-story-state.js"
+import {
+  normalizePhoneStoryDisplayCondition,
+  phoneStoryChoiceById,
+  phoneStoryItemHasValidConditionReferences,
+} from "./phone-story-state.js"
 
 function items(value) {
   return Array.isArray(value) ? value : []
@@ -551,23 +555,24 @@ function inspectPhoneMessages(phoneData, issues) {
 
 function inspectPhoneStoryConditions(phoneData, issues) {
   function inspectItem(item, location, ownerMessageId = "") {
-    const choiceId = typeof item?.visibleAfterChoiceId === "string"
-      ? item.visibleAfterChoiceId.trim()
-      : ""
-    if (!choiceId) return
-    const choice = phoneStoryChoiceById(phoneData, choiceId)
-    if (!choice) {
+    const condition = normalizePhoneStoryDisplayCondition(item)
+    const choiceIds = condition.all.flatMap(group => group.anyChoiceIds)
+    const hasAuthoredCondition = Object.prototype.hasOwnProperty.call(item || {}, "displayCondition")
+      || (typeof item?.visibleAfterChoiceId === "string" && item.visibleAfterChoiceId.trim())
+    if (!hasAuthoredCondition) return
+    if (!phoneStoryItemHasValidConditionReferences(phoneData, item)) {
       addIssue(
         issues,
         "phone-story-condition-choice-missing",
         "warning",
-        "剧情显示条件引用的回复选项已不存在",
+        "剧情显示条件包含失效的回复选项",
         location,
-        "重新选择一个现有消息回复，或改为始终显示。",
+        "移除失效条件、重新选择现有消息回复，或改为始终显示。",
       )
-      return
     }
-    if (ownerMessageId && choice.ownerMessageId === ownerMessageId) {
+    if (ownerMessageId && choiceIds.some(function(choiceId) {
+      return phoneStoryChoiceById(phoneData, choiceId)?.ownerMessageId === ownerMessageId
+    })) {
       addIssue(
         issues,
         "phone-story-condition-self-reference",
@@ -587,6 +592,14 @@ function inspectPhoneStoryConditions(phoneData, issues) {
   }
   items(phoneData?.forumPosts).forEach(function(post, index) {
     inspectItem(post, `小手机 · 论坛 · 第 ${index + 1} 篇帖子`)
+    function inspectComments(comments, trail) {
+      items(comments).forEach(function(comment, commentIndex) {
+        const nextTrail = `${trail} · ${commentIndex + 1}`
+        inspectItem(comment, `小手机 · 论坛 · 第 ${index + 1} 篇帖子 · 评论 ${nextTrail}`)
+        inspectComments(comment?.replies, nextTrail)
+      })
+    }
+    inspectComments(post?.comments, "")
   })
 }
 

@@ -259,6 +259,37 @@ test("a system notice after a choice waits for the streamed branch to finish", a
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("然后显示系统消息"))
 })
 
+test("whole-message text, system notices, and streamed text still play in one authored queue", async t => {
+  const work = choiceWork()
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices[0].silent = true
+  owner.choices[0].replyText = ""
+  owner.choices[0].replyPace = "instant"
+  owner.choices[0].followUpMessages = [
+    { id:"whole-follow-up", type:"text", senderId:"contact-1", text:"整条出现", revealMode:"instant", delayBeforeMs:0 },
+    { id:"queued-system", type:"system", senderId:"system", text:"系统随后", delayBeforeMs:0 },
+    { id:"stream-follow-up", type:"text", senderId:"contact-1", text:"逐字随后", revealMode:"stream", delayBeforeMs:0 },
+  ]
+  work.phoneData.chats[0].rounds[0].messages = [owner]
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  const whole = await waitFor(() => document.querySelector('[data-message-id][data-message-id*="whole-follow-up"]') ||
+    [...document.querySelectorAll('[data-message-id]')].find(element => element.textContent.includes("整条出现")), 5000)
+  assert.match(whole.textContent, /整条出现/)
+  assert.equal(whole.querySelector(".rd-flow-stream-text"), null)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /系统随后/)
+
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("系统随后"), 5000)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /逐字随后/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("逐字随后"), 5000)
+  const text = document.querySelector("#chatMsgArea").textContent
+  assert.ok(text.indexOf("整条出现") < text.indexOf("系统随后"))
+  assert.ok(text.indexOf("系统随后") < text.indexOf("逐字随后"))
+})
+
 test("an instant image choice finishes its streamed branch before revealing the next option group", async t => {
   const work = choiceWork()
   const firstOwner = work.phoneData.chats[0].rounds[0].messages[0]

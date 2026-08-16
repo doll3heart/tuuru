@@ -136,6 +136,29 @@
   height: 100%;
   object-fit: cover;
 }
+.phone-frame .chat-group-sender-meta {
+  display: flex;
+  min-width: 0;
+  max-width: 190px;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 3px 2px;
+  line-height: 1.2;
+}
+.phone-frame .chat-group-sender-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #66575c;
+  font-size: .6rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.phone-frame .chat-group-sender-meta .chat-group-role,
+.phone-frame .chat-group-sender-meta .rd-chat-group-role {
+  flex: 0 0 auto;
+  margin: 0;
+}
 .phone-frame .chat-bubble {
   max-width: 190px;
   min-height: 0;

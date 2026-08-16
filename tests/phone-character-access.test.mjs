@@ -112,7 +112,7 @@ test("the standalone phone icon opens the same character connection setup", asyn
   assert.equal(document.activeElement, restoredMemoIcon)
 })
 
-test("an existing author connection is selected when its App is reopened", async t => {
+test("an existing author connection opens directly and keeps an explicit role switch", async t => {
   installDom(t)
   const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
   const { openPhoneAppModal } = await import("../js/pages/phone.js")
@@ -128,8 +128,40 @@ test("an existing author connection is selected when its App is reopened", async
   t.after(() => draft.dispose())
 
   const overlay = openPhoneAppModal(draft.id, "memo")
+  assert.ok(overlay.querySelector("#memoPanel"))
+  assert.equal(overlay.querySelector(".character-access-panel"), null)
+  assert.match(overlay.textContent, /阿满的备忘录/)
+
+  const switchButton = overlay.querySelector("[data-character-app-switch]")
+  assert.ok(switchButton)
+  assert.equal(switchButton.getAttribute("aria-label"), "切换接入角色")
+  switchButton.click()
+
   const selected = overlay.querySelector('.character-access-option[aria-pressed="true"]')
   assert.ok(selected)
   assert.equal(selected.dataset.contactId, "contact-b")
   assert.equal(overlay.querySelector("#characterAccessPrompt").value, "上次保存的提示。")
+})
+
+test("every connected character App opens directly with the same switch affordance", async t => {
+  installDom(t)
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const phoneData = makePhoneData()
+  phoneData.appConnections = Object.fromEntries(
+    ["memo", "gallery", "browser", "shopping"].map(type => [type, { contactId:"contact-a", prompt:"已保存" }]),
+  )
+  const draft = createPhoneWorkDraft({ id:"character-access-all-connected", type:"article", phoneData })
+  t.after(() => draft.dispose())
+
+  const panelIds = { memo:"memoPanel", gallery:"galleryPanel", browser:"browserPanel", shopping:"shopPanel" }
+  for (const type of Object.keys(panelIds)) {
+    const overlay = openPhoneAppModal(draft.id, type)
+    assert.ok(overlay.querySelector(`#${panelIds[type]}`), `${type} should open its content directly`)
+    assert.equal(overlay.querySelector(".character-access-panel"), null)
+    const switchButton = overlay.querySelector("[data-character-app-switch]")
+    assert.ok(switchButton, `${type} should keep a role switch`)
+    assert.equal(switchButton.getAttribute("aria-label"), "切换接入角色")
+    overlay.remove()
+  }
 })

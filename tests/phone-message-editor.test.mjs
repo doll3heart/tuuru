@@ -580,6 +580,31 @@ test("group chats can update identity, membership, roles, and titles", async () 
   }
 })
 
+test("author group bubbles always identify their NPC sender", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts.push({ id:"contact-2", name:"阿满", avatarUrl:"" })
+  Object.assign(phoneData.chats[0], {
+    type:"group",
+    groupName:"夜谈组",
+    contactIds:["contact-1", "contact-2"],
+  })
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"group-sender-name",
+    type:"text",
+    senderId:"contact-2",
+    text:"轮到我说话。",
+  })
+  const fixture = await openSingleChat("message-group-sender-name", phoneData)
+  const { overlay } = fixture
+  try {
+    const row = overlay.querySelector('[data-message-id="group-sender-name"]')
+    assert.equal(row.querySelector(".chat-group-sender-name")?.textContent.trim(), "阿满")
+    assert.equal(row.querySelector(".chat-avatar")?.getAttribute("aria-label"), "阿满")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("group composer inserts a selected @ mention and saves readable text", async () => {
   const phoneData = makePhoneData()
   phoneData.contacts.push({ id:"contact-2", name:"周遥", msgId:"遥遥", avatarUrl:"" })
@@ -1315,7 +1340,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       replyText:"",
       replyPace:"quick",
       followUpMessages:[
-        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。", deliveryState:"failed", replyPace:"delayed", delayBeforeMs:1250 },
+        { id:"group-follow-1", senderId:"contact-1", type:"text", text:"林澈接话。", deliveryState:"failed", replyPace:"delayed", revealMode:"instant", delayBeforeMs:1250 },
         { id:"group-follow-2", senderId:"contact-2", type:"text", text:"沈岚也接话。" },
       ],
     }],
@@ -1345,6 +1370,10 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       ["delayed", "inherit"],
     )
     assert.deepEqual(
+      [...editor.querySelectorAll(".thread-choice-followup-reveal")].map(select => select.value),
+      ["instant", "stream"],
+    )
+    assert.deepEqual(
       [...editor.querySelectorAll(".thread-choice-followup-delay")].map(input => input.value),
       ["1.25", ""],
     )
@@ -1372,8 +1401,10 @@ test("group chat reply branches let every follow-up choose its sender", async ()
     editor.querySelectorAll(".thread-choice-followups")[2].value = "沈岚补充一句。"
     editor.querySelectorAll(".thread-choice-followup-delivery")[0].value = "recalled"
     editor.querySelectorAll(".thread-choice-followup-pace")[0].value = "instant"
+    editor.querySelectorAll(".thread-choice-followup-reveal")[0].value = "stream"
     editor.querySelectorAll(".thread-choice-followup-delivery")[2].value = "failed"
     editor.querySelectorAll(".thread-choice-followup-pace")[2].value = "quick"
+    editor.querySelectorAll(".thread-choice-followup-reveal")[2].value = "instant"
     editor.querySelectorAll(".thread-choice-followup-delay")[2].value = "2.4"
     document.querySelector("#threadChoiceSave").click()
 
@@ -1391,6 +1422,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       saved.followUpMessages.map(message => message.replyPace),
       ["instant", undefined, "quick"],
     )
+    assert.deepEqual(saved.followUpMessages.map(message => message.revealMode), [undefined, undefined, "instant"])
     assert.deepEqual(saved.followUpMessages.map(message => message.type), ["text", "text", "text"])
     assert.deepEqual(saved.followUpMessages.map(message => message.delayBeforeMs), [1250, undefined, 2400])
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "failed"), false)
@@ -1457,6 +1489,74 @@ test("message context menus expose a dedicated per-choice reply pace editor", as
   }
 })
 
+test("editing a message preserves the author chat scroll position in private and group chats", async t => {
+  for (const type of ["single", "group"]) {
+    await t.test(type, async () => {
+      const phoneData = makePhoneData()
+      phoneData.chats[0].type = type
+      if (type === "group") phoneData.chats[0].groupName = "夜谈组"
+      phoneData.chats[0].rounds[0].messages.push({
+        id:`scroll-edit-${type}`,
+        type:"text",
+        senderId:"contact-1",
+        text:"修改前",
+      })
+      const fixture = await openSingleChat(`message-scroll-${type}`, phoneData)
+      const { overlay } = fixture
+      try {
+        overlay.querySelector("#chatMsgArea").scrollTop = 360
+        overlay.querySelector(`[data-message-id="scroll-edit-${type}"]`).dispatchEvent(new window.MouseEvent("contextmenu", {
+          bubbles:true,
+          cancelable:true,
+          clientX:30,
+          clientY:30,
+        }))
+        Array.from(document.querySelectorAll(".chat-ctx-menu-item")).find(button => button.textContent === "编辑").click()
+        document.querySelector("#editMsgText").value = "修改后"
+        document.querySelector("#editMsgSave").click()
+
+        assert.equal(overlay.querySelector("#chatMsgArea").scrollTop, 360)
+        assert.match(overlay.querySelector("#chatMsgArea").textContent, /修改后/)
+      } finally {
+        closeFixture(fixture)
+      }
+    })
+  }
+})
+
+test("ordinary text messages can switch between streamed and whole-message appearance", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"reveal-mode-message",
+    type:"text",
+    senderId:"contact-1",
+    text:"整条显示",
+  })
+  const fixture = await openSingleChat("message-reveal-mode", phoneData)
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector('[data-message-id="reveal-mode-message"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:30,
+      clientY:30,
+    }))
+    const action = Array.from(document.querySelectorAll(".chat-ctx-menu-item")).find(button => button.textContent === "出现方式")
+    assert.ok(action)
+    action.click()
+
+    const select = document.querySelector("#chatMessageRevealMode")
+    assert.equal(select.value, "stream")
+    select.value = "instant"
+    document.querySelector("#chatMessageRevealSave").click()
+
+    assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages[0].revealMode, "instant")
+    assert.match(overlay.querySelector('[data-message-id="reveal-mode-message"]').textContent, /整条出现/)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("every authored message can set an exact pre-send delay from its context menu", async () => {
   const phoneData = makePhoneData()
   phoneData.chats[0].rounds[0].messages.push({ id:"delay-message", senderId:"contact-1", type:"text", text:"稍等一下。" })
@@ -1483,7 +1583,7 @@ test("every authored message can set an exact pre-send delay from its context me
   }
 })
 
-test("authors can reveal a later message after one stable reader choice", async () => {
+test("authors can reveal a later message with AND-of-OR stable reader choices", async () => {
   const phoneData = makePhoneData()
   phoneData.chats[0].rounds[0].messages.push(
     {
@@ -1511,15 +1611,20 @@ test("authors can reveal a later message after one stable reader choice", async 
       .find(button => button.textContent === "剧情显示条件")
     assert.ok(action)
     action.click()
-    const select = document.querySelector("#chatMessageVisibilityChoice")
-    assert.equal(select.options[0].textContent, "始终显示")
-    select.value = "condition-no"
-    document.querySelector("#chatMessageVisibilitySave").click()
+    assert.match(document.querySelector(".phone-story-condition-editor").textContent, /同一组满足任一项.*不同组全部满足/s)
+    document.querySelector('[data-phone-condition-add-choice="condition-no"]').click()
+    document.querySelector('[data-phone-condition-add-group]').click()
+    document.querySelector('[data-phone-condition-add-choice="condition-yes"][data-phone-condition-group="1"]').click()
+    document.querySelector("#phoneStoryConditionSave").click()
 
-    assert.equal(
-      draft.snapshot().phoneData.chats[0].rounds[0].messages[1].visibleAfterChoiceId,
-      "condition-no",
-    )
+    const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[1]
+    assert.deepEqual(saved.displayCondition, {
+      all:[
+        { anyChoiceIds:["condition-no"] },
+        { anyChoiceIds:["condition-yes"] },
+      ],
+    })
+    assert.equal(Object.hasOwn(saved, "visibleAfterChoiceId"), false)
   } finally {
     closeFixture(fixture)
   }

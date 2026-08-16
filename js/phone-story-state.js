@@ -1,3 +1,5 @@
+import { articleDisplayConditionMatches, normalizeArticleDisplayCondition } from "./article-condition-model.js"
+
 const MAX_PHONE_STORY_SELECTIONS = 500
 
 function items(value) {
@@ -88,12 +90,56 @@ export function selectedPhoneStoryChoiceIds(selections) {
   return selected
 }
 
+function hasOwn(record, key) {
+  return Boolean(record) && typeof record === "object" && Object.prototype.hasOwnProperty.call(record, key)
+}
+
+function rawPhoneStoryDisplayCondition(item) {
+  if (hasOwn(item, "displayCondition")) return item.displayCondition
+  if (exactId(item?.visibleAfterChoiceId)) {
+    return { all:[{ anyChoiceIds:[item.visibleAfterChoiceId] }] }
+  }
+  return null
+}
+
+function strictConditionGroups(item) {
+  const condition = rawPhoneStoryDisplayCondition(item)
+  if (condition === null) return []
+  if (!condition || typeof condition !== "object" || !Array.isArray(condition.all) || condition.all.length === 0) return null
+  const groups = []
+  for (const group of condition.all) {
+    if (!group || typeof group !== "object" || !Array.isArray(group.anyChoiceIds) || group.anyChoiceIds.length === 0) return null
+    const ids = []
+    for (const choiceId of group.anyChoiceIds) {
+      if (!exactId(choiceId) || choiceId.trim() !== choiceId) return null
+      ids.push(choiceId)
+    }
+    groups.push([...new Set(ids)])
+  }
+  return groups
+}
+
+export function normalizePhoneStoryDisplayCondition(item) {
+  const condition = rawPhoneStoryDisplayCondition(item)
+  return condition === null ? { all:[] } : normalizeArticleDisplayCondition(condition)
+}
+
+export function phoneStoryItemHasValidConditionReferences(phoneData, item) {
+  const groups = strictConditionGroups(item)
+  if (groups === null) return false
+  if (groups.length === 0) return true
+  const validIds = new Set(
+    phoneStoryChoiceCatalog(phoneData)
+      .filter(choice => choice.ambiguous === false)
+      .map(choice => choice.id),
+  )
+  return groups.every(group => group.every(choiceId => validIds.has(choiceId)))
+}
+
 export function phoneStoryItemIsVisible(item, selectedChoiceIds) {
-  const requiredChoiceId = exactId(item?.visibleAfterChoiceId)
-    ? item.visibleAfterChoiceId
-    : ""
-  if (!requiredChoiceId) return true
-  return selectedChoiceIds instanceof Set && selectedChoiceIds.has(requiredChoiceId)
+  const condition = rawPhoneStoryDisplayCondition(item)
+  if (condition === null) return true
+  return articleDisplayConditionMatches(condition, selectedChoiceIds)
 }
 
 export function phoneStoryChoiceById(phoneData, choiceId) {
@@ -144,19 +190,24 @@ export function prunePhoneStoryChoiceSelections(phoneData, selections) {
         memo.set(ownerMessageId, false)
         return false
       }
-      const requiredChoiceId = exactId(owner.visibleAfterChoiceId) ? owner.visibleAfterChoiceId : ""
-      if (!requiredChoiceId) {
-        memo.set(ownerMessageId, true)
-        return true
-      }
-      const dependencyOwnerId = choiceOwners.get(requiredChoiceId)
-      if (!dependencyOwnerId || normalized.get(dependencyOwnerId) !== requiredChoiceId) {
+      const groups = strictConditionGroups(owner)
+      if (groups === null) {
         memo.set(ownerMessageId, false)
         return false
       }
+      if (groups.length === 0) {
+        memo.set(ownerMessageId, true)
+        return true
+      }
       const nextVisiting = new Set(visiting)
       nextVisiting.add(ownerMessageId)
-      const reachable = reachesVisibleRoot(dependencyOwnerId, nextVisiting)
+      const reachable = groups.every(function(group) {
+        return group.some(function(requiredChoiceId) {
+          const dependencyOwnerId = choiceOwners.get(requiredChoiceId)
+          if (!dependencyOwnerId || normalized.get(dependencyOwnerId) !== requiredChoiceId) return false
+          return reachesVisibleRoot(dependencyOwnerId, nextVisiting)
+        })
+      })
       memo.set(ownerMessageId, reachable)
       return reachable
     }

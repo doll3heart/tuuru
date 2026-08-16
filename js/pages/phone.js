@@ -19,6 +19,7 @@ import { createContactFriendRequest } from "../contact-friend-request.js"
 import { CHAT_REPLY_PACES, normalizeChatReplyPace } from "../chat-reply-pace.js"
 import { formatChatMessageDelaySeconds, normalizeChatMessageDelayMs } from "../chat-message-delay.js"
 import { CHAT_FOLLOW_UP_DELIVERY_STATES, normalizeChatFollowUpDeliveryState } from "../chat-follow-up.js"
+import { CHAT_MESSAGE_REVEAL_MODES, normalizeChatMessageRevealMode } from "../chat-message-reveal.js"
 import { buildTakeawayOpenTarget, safeMessageCardUrl } from "../message-card-links.js"
 import { deleteAuthorPlaceholderPreset, importAuthorPlaceholderPresetBundle, instantiateAuthorPlaceholderPreset, readAuthorPlaceholderPresets, saveAuthorPlaceholderPreset, serializeAuthorPlaceholderPresetBundle } from "../author-placeholder-presets.js"
 import { downloadBlob } from "../download.js"
@@ -36,7 +37,7 @@ import { dedupeForbiddenWords, parseForbiddenWords } from "../forbidden-words.js
 import { phoneTimestampsHidden, shouldShowPhoneTimestamp } from "../phone-timestamps.js"
 import { renderPhoneShoppingList, renderPhoneShoppingTabs } from "../phone-shopping-view.js"
 import { renderPhoneForumComment, renderPhoneForumPost } from "../phone-forum-view.js"
-import { phoneStoryChoiceCatalog, phoneStoryChoiceById } from "../phone-story-state.js"
+import { normalizePhoneStoryDisplayCondition, phoneStoryChoiceCatalog, phoneStoryChoiceById } from "../phone-story-state.js"
 import { mergeNpcPack, readNpcPacks, saveNpcPack } from "../npc-bundles.js"
 import { referencedMessageContactIds } from "../phone-module-draft.js"
 import { findWorkReferences } from "../work-references.js"
@@ -105,6 +106,24 @@ function confirmPhoneReferencedDeletion({
   })
 }
 
+function confirmPhoneContentDeletion({ title, itemName, detail, onConfirm }) {
+  var copy = '<p>确定删除' + esc(itemName || '这条内容') + '吗？</p>'
+  if (detail) copy += '<p class="form-hint">' + esc(detail) + '</p>'
+  var overlay = modal(
+    title || '确认删除',
+    copy,
+    '<button type="button" class="btn btn-danger btn-sm" data-phone-content-delete-confirm>删除</button><button type="button" class="btn btn-ghost btn-sm" data-phone-content-delete-cancel>取消</button>',
+  )
+  var confirmButton = overlay.querySelector('[data-phone-content-delete-confirm]')
+  var cancelButton = overlay.querySelector('[data-phone-content-delete-cancel]')
+  if (confirmButton) confirmButton.onclick = function() {
+    overlay.remove()
+    if (typeof onConfirm === 'function') onConfirm()
+  }
+  if (cancelButton) cancelButton.onclick = function() { overlay.remove() }
+  return overlay
+}
+
 function escAttr(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -151,26 +170,136 @@ function insertAtSelection(input, value) {
 
 const PHONE_GROUP_WIDE_MENTION = '全体成员'
 
-function phoneStoryVisibilityOptionsHtml(phoneData, selectedChoiceId) {
-  var catalog = phoneStoryChoiceCatalog(phoneData)
-  var selected = String(selectedChoiceId || '')
-  var html = '<option value="">始终显示</option>'
-  catalog.forEach(function(choice) {
-    var label = '选过「' + choice.label + '」后显示 · ' + choice.detail
-    html += '<option value="' + escapeHtmlAttribute(choice.id) + '"'
-      + (choice.id === selected ? ' selected' : '')
-      + (choice.ambiguous ? ' disabled' : '') + '>' + esc(label) + '</option>'
-  })
-  if (selected && !phoneStoryChoiceById(phoneData, selected)) {
-    html += '<option value="' + escapeHtmlAttribute(selected) + '" selected disabled>原判定选项已删除，请重新选择</option>'
-  }
-  return html
+function phoneStoryConditionSummary(phoneData, item) {
+  var condition = normalizePhoneStoryDisplayCondition(item)
+  if (!condition.all.length) return '始终显示'
+  return condition.all.map(function(group) {
+    return group.anyChoiceIds.map(function(choiceId) {
+      var choice = phoneStoryChoiceById(phoneData, choiceId)
+      return choice ? '「' + choice.label + '」' : '失效选项'
+    }).join(' 或 ')
+  }).map(function(label) { return '(' + label + ')' }).join(' 且 ')
 }
 
-function phoneStoryVisibilityFieldHtml(phoneData, selectedChoiceId, selectId) {
-  return '<div class="form-group phone-story-visibility-field"><label class="form-label" for="' + selectId + '">剧情显示条件</label>'
-    + '<select id="' + selectId + '" class="form-select">' + phoneStoryVisibilityOptionsHtml(phoneData, selectedChoiceId) + '</select>'
-    + '<div class="form-hint">可让这项内容在读者选过某个消息回复后才出现；适合模拟新消息或论坛更新。</div></div>'
+function phoneStoryVisibilityFieldHtml(phoneData, item, fieldKey) {
+  return '<div class="form-group phone-story-visibility-field"><span class="form-label">剧情显示条件</span>'
+    + '<button type="button" class="phone-story-condition-open" data-phone-story-condition-open="' + escapeHtmlAttribute(fieldKey) + '"><span>设置条件</span><small>' + esc(phoneStoryConditionSummary(phoneData, item)) + '</small></button>'
+    + '<div class="form-hint">同一组满足任一项（或），不同组需要全部满足（且）。</div></div>'
+}
+
+function applyPhoneStoryDisplayCondition(item, groups) {
+  var cleanGroups = (Array.isArray(groups) ? groups : []).map(function(group) {
+    return Array.from(new Set(Array.isArray(group) ? group.filter(Boolean) : []))
+  }).filter(function(group) { return group.length > 0 })
+  delete item.visibleAfterChoiceId
+  if (cleanGroups.length) {
+    item.displayCondition = { all:cleanGroups.map(function(anyChoiceIds) { return { anyChoiceIds:anyChoiceIds.slice() } }) }
+  } else {
+    delete item.displayCondition
+  }
+}
+
+function phoneStoryConditionDraft(item) {
+  var draft = {}
+  applyPhoneStoryDisplayCondition(draft, normalizePhoneStoryDisplayCondition(item).all.map(function(group) {
+    return group.anyChoiceIds
+  }))
+  return draft
+}
+
+function openPhoneStoryConditionEditor(phoneData, item, options) {
+  options = options || {}
+  var catalog = phoneStoryChoiceCatalog(phoneData)
+  var groups = normalizePhoneStoryDisplayCondition(item).all.map(function(group) { return group.anyChoiceIds.slice() })
+  if (!groups.length) groups = [[]]
+
+  function choiceById(choiceId) {
+    var matches = catalog.filter(function(choice) { return choice.id === choiceId })
+    return matches.length === 1 ? matches[0] : null
+  }
+
+  var ov = modal(options.title || '设置剧情显示条件', '<div class="phone-story-condition-editor"></div>',
+    '<button type="button" id="phoneStoryConditionClear" class="btn btn-ghost btn-sm">始终显示</button><button type="button" id="phoneStoryConditionSave" class="btn btn-primary btn-sm">保存条件</button>')
+  var editor = ov.querySelector('.phone-story-condition-editor')
+
+  function render() {
+    var html = '<p class="phone-story-condition-help">同一组满足任一项（或），不同组全部满足（且）后才显示。</p>'
+    groups.forEach(function(choiceIds, groupIndex) {
+      if (groupIndex) html += '<div class="condition-group-join" aria-hidden="true"><span>并且</span></div>'
+      html += '<section class="condition-group" data-phone-condition-group-card="' + groupIndex + '">'
+      html += '<div class="condition-group-head"><div class="condition-group-title"><span class="condition-group-index">' + (groupIndex + 1) + '</span><span><strong>任一项（或）</strong><small>选中其中一项即可</small></span></div><button type="button" data-phone-condition-remove-group="' + groupIndex + '">删除组</button></div>'
+      html += '<div class="condition-selected">'
+      choiceIds.forEach(function(choiceId) {
+        var choice = choiceById(choiceId)
+        html += '<span class="condition-reference' + (!choice || choice.ambiguous ? ' is-invalid' : '') + '"><span>' + esc(choice ? choice.label : '失效选项 · ' + choiceId) + '</span><button type="button" data-phone-condition-remove-choice="' + escapeHtmlAttribute(choiceId) + '" data-phone-condition-group="' + groupIndex + '" aria-label="移除条件">×</button></span>'
+      })
+      if (!choiceIds.length) html += '<span class="condition-empty">尚未选择回复选项</span>'
+      html += '</div><div class="condition-choice-results">'
+      catalog.forEach(function(choice) {
+        var disabled = choice.ambiguous || choice.ownerMessageId === options.excludeOwnerMessageId || choiceIds.includes(choice.id)
+        html += '<button type="button" class="condition-choice-result" data-phone-condition-add-choice="' + escapeHtmlAttribute(choice.id) + '" data-phone-condition-group="' + groupIndex + '"' + (disabled ? ' disabled' : '') + '><span>' + esc(choice.label) + '</span><small>' + esc(choice.detail) + (choice.ambiguous ? ' · 选项 ID 重复' : '') + '</small></button>'
+      })
+      html += '</div></section>'
+    })
+    html += '<button type="button" class="btn btn-outline btn-sm phone-story-condition-add-group" data-phone-condition-add-group>+ 添加且条件</button>'
+    editor.innerHTML = html
+  }
+
+  editor.onclick = function(event) {
+    var addChoice = event.target.closest('[data-phone-condition-add-choice]')
+    if (addChoice) {
+      var addGroupIndex = Number(addChoice.dataset.phoneConditionGroup)
+      var choiceId = addChoice.dataset.phoneConditionAddChoice
+      if (groups[addGroupIndex] && !groups[addGroupIndex].includes(choiceId) && !addChoice.disabled) groups[addGroupIndex].push(choiceId)
+      render()
+      return
+    }
+    var removeChoice = event.target.closest('[data-phone-condition-remove-choice]')
+    if (removeChoice) {
+      var removeGroupIndex = Number(removeChoice.dataset.phoneConditionGroup)
+      groups[removeGroupIndex] = (groups[removeGroupIndex] || []).filter(function(choiceId) { return choiceId !== removeChoice.dataset.phoneConditionRemoveChoice })
+      render()
+      return
+    }
+    var removeGroup = event.target.closest('[data-phone-condition-remove-group]')
+    if (removeGroup) {
+      var index = Number(removeGroup.dataset.phoneConditionRemoveGroup)
+      if (groups.length === 1) groups[0] = []
+      else groups.splice(index, 1)
+      render()
+      return
+    }
+    if (event.target.closest('[data-phone-condition-add-group]')) {
+      groups.push([])
+      render()
+    }
+  }
+  ov.querySelector('#phoneStoryConditionClear').onclick = function() {
+    applyPhoneStoryDisplayCondition(item, [])
+    ov.remove()
+    options.onSave?.()
+  }
+  ov.querySelector('#phoneStoryConditionSave').onclick = function() {
+    if (groups.some(function(group) { return group.length === 0 })) {
+      showToast('每一组条件都要至少选择一个回复选项', 'error')
+      return
+    }
+    var invalid = groups.some(function(group) {
+      return group.some(function(choiceId) {
+        var choice = choiceById(choiceId)
+        return !choice || choice.ambiguous || choice.ownerMessageId === options.excludeOwnerMessageId
+      })
+    })
+    if (invalid) {
+      showToast('请先移除失效或不可引用的条件', 'error')
+      return
+    }
+    applyPhoneStoryDisplayCondition(item, groups)
+    ov.remove()
+    options.onSave?.()
+  }
+  render()
+  return ov
 }
 
 function phoneMentionOptions(pd, placeholders, context) {
@@ -280,6 +409,7 @@ function openThreadReplyChoiceEditor(owner, options) {
               likes:nonnegativeCount(recalledMessage?.likes ?? message.likes),
               deliveryState:normalizeChatFollowUpDeliveryState(legacyDeliveryState),
               replyPace:message.replyPace || 'inherit',
+              revealMode:normalizeChatMessageRevealMode(message.revealMode),
               delayBeforeMs:Object.hasOwn(message, 'delayBeforeMs') ? normalizeChatMessageDelayMs(message.delayBeforeMs) : null
             }
           })
@@ -341,6 +471,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         if (options.showReplyPace === true) {
           followUp.deliveryState = normalizeChatFollowUpDeliveryState(followUpRow.querySelector('.thread-choice-followup-delivery')?.value)
           followUp.replyPace = followUpRow.querySelector('.thread-choice-followup-pace')?.value || 'inherit'
+          followUp.revealMode = normalizeChatMessageRevealMode(followUpRow.querySelector('.thread-choice-followup-reveal')?.value)
         }
         return followUp
       })
@@ -377,9 +508,9 @@ function openThreadReplyChoiceEditor(owner, options) {
         if (options.showLikeCounts === true) html += '<label class="thread-choice-followup-like"><span>赞</span><input class="thread-choice-followup-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(followUp.likes) + '" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复初始点赞数"></label>'
         html += '<button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
         if (options.showReplyPace === true) {
-          var hasCustomFollowUpSettings = normalizeChatFollowUpDeliveryState(followUp.deliveryState) !== 'normal' || (followUp.replyPace && followUp.replyPace !== 'inherit') || followUp.delayBeforeMs != null
+          var hasCustomFollowUpSettings = normalizeChatFollowUpDeliveryState(followUp.deliveryState) !== 'normal' || (followUp.replyPace && followUp.replyPace !== 'inherit') || normalizeChatMessageRevealMode(followUp.revealMode) !== 'stream' || followUp.delayBeforeMs != null
           html += '<details class="thread-choice-followup-more"' + (hasCustomFollowUpSettings ? ' open' : '') + '><summary>发送设置 <small>' + (hasCustomFollowUpSettings ? '已自定义' : '默认') + '</small></summary><div class="thread-choice-followup-settings"><label><span>消息状态</span><select class="thread-choice-followup-delivery" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复消息状态">' + CHAT_FOLLOW_UP_DELIVERY_STATES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatFollowUpDeliveryState(followUp.deliveryState) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
-          html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>发送前等待（秒）</span><input class="thread-choice-followup-delay" type="number" min="0" max="60" step="0.1" value="' + (followUp.delayBeforeMs == null ? '' : escapeHtmlAttribute(formatChatMessageDelaySeconds(followUp.delayBeforeMs))) + '" placeholder="默认 0.8"></label></div>'
+          html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>出现方式</span><select class="thread-choice-followup-reveal" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复出现方式">' + CHAT_MESSAGE_REVEAL_MODES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatMessageRevealMode(followUp.revealMode) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>发送前等待（秒）</span><input class="thread-choice-followup-delay" type="number" min="0" max="60" step="0.1" value="' + (followUp.delayBeforeMs == null ? '' : escapeHtmlAttribute(formatChatMessageDelaySeconds(followUp.delayBeforeMs))) + '" placeholder="默认 0.8"></label></div>'
           html += '</details>'
         }
         html += '</div>'
@@ -401,7 +532,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         collect()
         var group = groups[Number(button.dataset.threadFollowupAdd)]
         if (!group) return
-        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit', delayBeforeMs:null })
+        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit', revealMode:'stream', delayBeforeMs:null })
         render()
       }
     })
@@ -527,6 +658,8 @@ function openThreadReplyChoiceEditor(owner, options) {
           else nextMessage.deliveryState = deliveryState
           if (followUp.replyPace === 'inherit') delete nextMessage.replyPace
           else nextMessage.replyPace = normalizeChatReplyPace(followUp.replyPace)
+          if (normalizeChatMessageRevealMode(followUp.revealMode) === 'instant') nextMessage.revealMode = 'instant'
+          else delete nextMessage.revealMode
         }
         if (followUp.delayBeforeMs == null) delete nextMessage.delayBeforeMs
         else nextMessage.delayBeforeMs = normalizeChatMessageDelayMs(followUp.delayBeforeMs)
@@ -2883,12 +3016,17 @@ function openCharacterAccessPanel(wid, type) {
   openCharacterAccessEditor(frame, wid, type, pd)
 }
 
-function openCharacterAccessEditor(frame, wid, type, pd) {
+function openCharacterAccessEditor(frame, wid, type, pd, options = {}) {
   var contacts = pd.contacts || []
   var title = CHARACTER_APP_LABELS[type] || '角色内容'
   var savedConnection = pd.appConnections && pd.appConnections[type]
   var savedTarget = savedConnection && savedConnection.contactId
   var selectedContact = contacts.find(function(contact) { return contact.id === savedTarget }) || contacts[0] || null
+
+  if (options.forceSetup !== true && savedTarget && selectedContact && selectedContact.id === savedTarget) {
+    openCharacterAppEditor(frame, wid, type, selectedContact)
+    return
+  }
 
   var h = '<div class="cu-panel cu-panel-embedded character-access-panel">'
   h += '<div class="cu-header character-access-header">'
@@ -2970,20 +3108,29 @@ function openCharacterAppEditor(frame, wid, type, contact) {
   if (type === 'memo') {
     var memos = (pd.memos || []).filter(function(item) { return item.contactId === contact.id })
     openMemoEditor(frame, wid, contact, memos, pd)
-    return
-  }
-  if (type === 'gallery') {
+  } else if (type === 'gallery') {
     openGalleryEditor(frame, wid, contact, pd)
-    return
-  }
-  if (type === 'browser') {
+  } else if (type === 'browser') {
     var history = (pd.browserHistory || []).filter(function(item) { return item.contactId === contact.id })
     openBrowserEditor(frame, wid, contact, history, pd)
-    return
-  }
-  if (type === 'shopping') {
+  } else if (type === 'shopping') {
     openShoppingEditor(frame, wid, contact, pd)
   }
+
+  var header = frame.querySelector('.cu-header')
+  if (!header || frame.querySelector('[data-character-app-switch]')) return
+  var switchButton = document.createElement('button')
+  switchButton.type = 'button'
+  switchButton.className = 'cu-close-btn character-app-switch'
+  switchButton.dataset.characterAppSwitch = ''
+  switchButton.setAttribute('aria-label', '切换接入角色')
+  switchButton.title = '切换接入角色'
+  switchButton.textContent = '切换'
+  var trailing = header.lastElementChild
+  if (trailing && trailing.tagName === 'DIV' && !trailing.textContent.trim()) trailing.replaceWith(switchButton)
+  else if (trailing) header.insertBefore(switchButton, trailing)
+  else header.appendChild(switchButton)
+  switchButton.onclick = function() { openCharacterAccessEditor(frame, wid, type, pd, { forceSetup:true }) }
 }
 /// ===== BROWSER EDITOR (search history style) =====
 function openBrowserEditor(frame, wid, contact, items, pd) {
@@ -3074,7 +3221,12 @@ function openBrowserEditor(frame, wid, contact, items, pd) {
     delBtns.forEach(function(btn) {
       btn.onclick = function() {
         var id = this.dataset.browserDel
-        deleteHistory(id)
+        var item = items.find(function(candidate) { return candidate.id === id })
+        confirmPhoneContentDeletion({
+          title:'删除浏览记录',
+          itemName:'浏览记录“' + (item?.title || '未命名记录') + '”',
+          onConfirm:function() { deleteHistory(id) },
+        })
       }
     })
   }
@@ -3320,7 +3472,17 @@ function openGalleryEditor(frame, wid, contact, pd) {
 
     // Delete album button
     var delAlbumBtn = frame.querySelector('#gaDelAlbum')
-    if (delAlbumBtn) delAlbumBtn.onclick = function() { deleteAlbum(currentAlbumId) }
+    if (delAlbumBtn) delAlbumBtn.onclick = function() {
+      var albumId = currentAlbumId
+      var album = contactAlbums.find(function(item) { return item.id === albumId })
+      var photoCount = contactPhotos.filter(function(photo) { return photo.albumId === albumId }).length
+      confirmPhoneContentDeletion({
+        title:'删除相册',
+        itemName:'相册“' + (album?.name || '未命名相册') + '”',
+        detail:photoCount ? '其中 ' + photoCount + ' 张照片不会删除，会移到未归类。' : '',
+        onConfirm:function() { deleteAlbum(albumId) },
+      })
+    }
 
     var editAlbumBtn = frame.querySelector('[data-album-edit]')
     if (editAlbumBtn) editAlbumBtn.onclick = function() {
@@ -3339,7 +3501,13 @@ function openGalleryEditor(frame, wid, contact, pd) {
     delBtns.forEach(function(btn) {
       btn.onclick = function(e) {
         e.stopPropagation()
-        deletePhoto(btn.dataset.photoDel)
+        var photoId = btn.dataset.photoDel
+        var photo = contactPhotos.find(function(item) { return item.id === photoId })
+        confirmPhoneContentDeletion({
+          title:'删除照片',
+          itemName:'照片“' + (photo?.caption || photo?.description || '未命名照片') + '”',
+          onConfirm:function() { deletePhoto(photoId) },
+        })
       }
     })
 
@@ -3576,7 +3744,15 @@ function openShoppingEditor(frame, wid, contact, pd) {
         var id = b.dataset.more
         var ov = modal('更多操作', '<div style="padding:4px 0"><button id="spReturn" class="btn btn-sm btn-outline w-full" style="display:block;width:100%">恢复至购物车</button><button id="spDelete" class="btn btn-sm btn-ghost w-full" style="display:block;width:100%;margin-top:6px;color:var(--c-accent3)">删除</button></div>', '')
         ov.querySelector('#spReturn').onclick = function() { ov.remove(); returnToCart(id) }
-        ov.querySelector('#spDelete').onclick = function() { ov.remove(); deleteItem(id) }
+        ov.querySelector('#spDelete').onclick = function() {
+          var item = items.find(function(candidate) { return candidate.id === id })
+          ov.remove()
+          confirmPhoneContentDeletion({
+            title:'删除订单',
+            itemName:'订单“' + (item?.name || '未命名商品') + '”',
+            onConfirm:function() { deleteItem(id) },
+          })
+        }
       }
     })
 
@@ -3961,13 +4137,14 @@ function openForumEditor(frame, wid, contact, pd) {
   // Posts
   function addPost() {
     selectIdentity(function(identity) {
+      var conditionDraft = {}
       var ov = modal('发帖',
         '<div class="form-group"><label class="form-label">标题</label><input id="fpTitle" class="form-input" placeholder="帖子标题"></div>' +
         '<div class="form-group"><label class="form-label" for="fpContent">内容</label><textarea id="fpContent" class="form-textarea" placeholder="输入 @ 可选择提及对象" style="min-height:100px"></textarea></div>' +
         '<div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
         '<div class="form-group"><label class="form-label">显示评论数（可选）</label><input id="fpCommentCount" class="form-input" type="number" min="0" inputmode="numeric" placeholder="留空则按实际评论数显示"></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fpImg" class="form-input" placeholder="https://..."></div>' +
-        phoneStoryVisibilityFieldHtml(pd, '', 'fpVisibilityChoice') +
+        phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'new-post-condition') +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">发帖身份：' + esc(identity.name) + '</span></div>',
         '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>',
         undefined,
@@ -3979,18 +4156,25 @@ function openForumEditor(frame, wid, contact, pd) {
         var time = ov.querySelector('#fpTime').value.trim()
         var imgUrl = ov.querySelector('#fpImg') ? ov.querySelector('#fpImg').value.trim() : ''
         if (!title) return
-        posts.unshift({
+        var post = {
           id: uid(), contactId: identity.id, aliasId: identity.aliasId || '', contactName: identity.name,
           contactAvatar: identity.avatar, title: title, content: content, imageUrl: imgUrl || '',
           contactIpLocation: identity.ipLocation || '',
           time: time, pinned:false, featured:false, likes: 0, bookmarks: 0,
           displayCommentCount: ov.querySelector('#fpCommentCount').value === '' ? null : Math.max(0, parseInt(ov.querySelector('#fpCommentCount').value) || 0),
-          visibleAfterChoiceId: ov.querySelector('#fpVisibilityChoice').value || '',
           comments: []
-        })
+        }
+        applyPhoneStoryDisplayCondition(post, normalizePhoneStoryDisplayCondition(conditionDraft).all.map(function(group) { return group.anyChoiceIds }))
+        posts.unshift(post)
         saveData()
         ov.remove()
         renderForum()
+      }
+      ov.querySelector('[data-phone-story-condition-open="new-post-condition"]').onclick = function() {
+        openPhoneStoryConditionEditor(pd, conditionDraft, { onSave:function() {
+          var summary = ov.querySelector('[data-phone-story-condition-open="new-post-condition"] small')
+          if (summary) summary.textContent = phoneStoryConditionSummary(pd, conditionDraft)
+        } })
       }
       ov.querySelector('#fpCancel').onclick = function() { ov.remove() }
     })
@@ -3999,13 +4183,14 @@ function openForumEditor(frame, wid, contact, pd) {
   function editPost(postId) {
     var p = posts.find(function(x) { return x.id === postId })
     if (!p) return
+    var conditionDraft = phoneStoryConditionDraft(p)
     var ov = modal('编辑帖子',
       '<div class="form-group"><label class="form-label" for="editPostTitle">标题</label><input id="editPostTitle" class="form-input" value="' + escAttr(p.title || '') + '"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostContent">主楼内容</label><textarea id="editPostContent" class="form-textarea" style="min-height:140px" placeholder="可使用回车分段；输入 @ 可提及">' + esc(p.content || '') + '</textarea><div class="form-hint">回车分段会在作者预览和读者端原样保留。</div></div>' +
       '<div class="form-group"><label class="form-label" for="editPostTime">发帖时间（可选）</label><input id="editPostTime" class="form-input" value="' + escAttr(p.time || '') + '" placeholder="留空则不显示"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostCommentCount">显示评论数（可选）</label><input id="editPostCommentCount" class="form-input" type="number" min="0" inputmode="numeric" value="' + (p.displayCommentCount == null ? '' : escAttr(p.displayCommentCount)) + '" placeholder="留空则按实际评论数显示"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostImg">图片 URL（可选）</label><input id="editPostImg" class="form-input" value="' + escAttr(p.imageUrl || '') + '" placeholder="https://..."></div>' +
-      phoneStoryVisibilityFieldHtml(pd, p.visibleAfterChoiceId, 'editPostVisibilityChoice'),
+      phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'edit-post-condition'),
       '<button id="editPostSave" class="btn btn-primary btn-sm">保存</button><button id="editPostCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#editPostSave').onclick = function() {
       var title = ov.querySelector('#editPostTitle').value.trim()
@@ -4015,12 +4200,16 @@ function openForumEditor(frame, wid, contact, pd) {
       p.time = ov.querySelector('#editPostTime').value.trim()
       p.displayCommentCount = ov.querySelector('#editPostCommentCount').value === '' ? null : Math.max(0, parseInt(ov.querySelector('#editPostCommentCount').value) || 0)
       p.imageUrl = ov.querySelector('#editPostImg').value.trim()
-      var visibleAfterChoiceId = ov.querySelector('#editPostVisibilityChoice').value
-      if (visibleAfterChoiceId) p.visibleAfterChoiceId = visibleAfterChoiceId
-      else delete p.visibleAfterChoiceId
+      applyPhoneStoryDisplayCondition(p, normalizePhoneStoryDisplayCondition(conditionDraft).all.map(function(group) { return group.anyChoiceIds }))
       saveData()
       ov.remove()
       renderForum()
+    }
+    ov.querySelector('[data-phone-story-condition-open="edit-post-condition"]').onclick = function() {
+      openPhoneStoryConditionEditor(pd, conditionDraft, { onSave:function() {
+        var summary = ov.querySelector('[data-phone-story-condition-open="edit-post-condition"] small')
+        if (summary) summary.textContent = phoneStoryConditionSummary(pd, conditionDraft)
+      } })
     }
     ov.querySelector('#editPostCancel').onclick = function() { ov.remove() }
   }
@@ -4101,15 +4290,23 @@ function openForumEditor(frame, wid, contact, pd) {
         return
       }
 
+      var conditionDraft = {}
       var ov = modal(replyToCommentId ? '回复' : '评论',
         '<div class="form-group"><label class="form-label" for="fcContent">内容</label><textarea id="fcContent" class="form-textarea" placeholder="输入 @ 可选择提及对象" style="min-height:60px"></textarea></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fcImg" class="form-input" placeholder="https://..."></div>' +
         '<button type="button" id="fcAddTime" class="btn btn-sm btn-ghost">＋ 添加时间</button>' +
         '<div class="form-group" id="fcTimeField" hidden><label class="form-label">显示时间（可选）</label><input id="fcTime" class="form-input" placeholder="例如：2026/7/22 21:30"></div>' +
+        phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'new-comment-condition') +
         '<div><span style="font-size:.78rem;color:var(--c-text2)">身份：' + esc(identity.name) + '</span></div>',
         '<button id="fcSave" class="btn btn-primary btn-sm">发送</button><button id="fcCancel" class="btn btn-ghost btn-sm">取消</button>')
 
 
+      ov.querySelector('[data-phone-story-condition-open="new-comment-condition"]').onclick = function() {
+        openPhoneStoryConditionEditor(pd, conditionDraft, { onSave:function() {
+          var summary = ov.querySelector('[data-phone-story-condition-open="new-comment-condition"] small')
+          if (summary) summary.textContent = phoneStoryConditionSummary(pd, conditionDraft)
+        } })
+      }
       ov.querySelector('#fcAddTime').onclick = function() {
         ov.querySelector('#fcTimeField').hidden = false
         ov.querySelector('#fcAddTime').hidden = true
@@ -4125,6 +4322,7 @@ function openForumEditor(frame, wid, contact, pd) {
           contactIpLocation: identity.ipLocation || '',
           time: ov.querySelector('#fcTime')?.value?.trim() || '', createdAt: Date.now(), likes: 0, replies: []
         }
+        applyPhoneStoryDisplayCondition(comment, normalizePhoneStoryDisplayCondition(conditionDraft).all.map(function(group) { return group.anyChoiceIds }))
         if (replyTarget) {
           comment.replyToCommentId = replyTarget.id
           comment.replyToContactId = replyTarget.contactId || replyTarget.senderId || ''
@@ -4918,18 +5116,27 @@ function openForumEditor(frame, wid, contact, pd) {
     if (!p) return
     var c = p.comments.find(function(x) { return x.id === commentId })
     if (!c) return
+    var conditionDraft = phoneStoryConditionDraft(c)
     var ov = modal('编辑评论',
       '<div class="form-group"><label class="form-label" for="ecText">内容</label><textarea id="ecText" class="form-textarea" style="min-height:60px" placeholder="输入 @ 可选择提及对象">' + esc(c.content || '') + '</textarea></div>' +
       '<div class="form-group"><label class="form-label">图片URL</label><input id="ecImg" class="form-input" value="' + esc(c.imageUrl || '') + '" placeholder="https://..."></div>' +
       '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="ecTime" class="form-input" value="' + escAttr(c.time || '') + '" placeholder="留空则不显示"></div>' +
-      '<div class="form-group"><label class="form-label">显示楼层（可选）</label><input id="ecFloor" class="form-input" type="number" min="1" inputmode="numeric" value="' + (c.displayFloor == null ? '' : escAttr(c.displayFloor)) + '" placeholder="留空则按评论顺序显示"></div>',
+      '<div class="form-group"><label class="form-label">显示楼层（可选）</label><input id="ecFloor" class="form-input" type="number" min="1" inputmode="numeric" value="' + (c.displayFloor == null ? '' : escAttr(c.displayFloor)) + '" placeholder="留空则按评论顺序显示"></div>' +
+      phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'edit-comment-condition'),
       '<button id="ecSave" class="btn btn-primary btn-sm">保存</button><button id="ecCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#ecSave').onclick = function() {
       c.content = ov.querySelector('#ecText').value.trim()
       c.imageUrl = ov.querySelector('#ecImg').value.trim()
       c.time = ov.querySelector('#ecTime').value.trim()
       c.displayFloor = ov.querySelector('#ecFloor').value === '' ? null : Math.max(1, parseInt(ov.querySelector('#ecFloor').value) || 1)
+      applyPhoneStoryDisplayCondition(c, normalizePhoneStoryDisplayCondition(conditionDraft).all.map(function(group) { return group.anyChoiceIds }))
       saveData(); ov.remove(); renderForum()
+    }
+    ov.querySelector('[data-phone-story-condition-open="edit-comment-condition"]').onclick = function() {
+      openPhoneStoryConditionEditor(pd, conditionDraft, { onSave:function() {
+        var summary = ov.querySelector('[data-phone-story-condition-open="edit-comment-condition"] small')
+        if (summary) summary.textContent = phoneStoryConditionSummary(pd, conditionDraft)
+      } })
     }
     ov.querySelector('#ecCancel').onclick = function() { ov.remove() }
   }
@@ -4939,14 +5146,23 @@ function openForumEditor(frame, wid, contact, pd) {
     if (!p) return
     var r = findForumCommentById(p.comments, replyId)
     if (!r) return
+    var conditionDraft = phoneStoryConditionDraft(r)
     var ov = modal('编辑回复',
       '<div class="form-group"><label class="form-label" for="erText">内容</label><textarea id="erText" class="form-textarea" style="min-height:60px" placeholder="输入 @ 可选择提及对象">' + esc(r.content || '') + '</textarea></div>' +
-      '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="erTime" class="form-input" value="' + escAttr(r.time || '') + '" placeholder="留空则不显示"></div>',
+      '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="erTime" class="form-input" value="' + escAttr(r.time || '') + '" placeholder="留空则不显示"></div>' +
+      phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'edit-reply-condition'),
       '<button id="erSave" class="btn btn-primary btn-sm">保存</button><button id="erCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#erSave').onclick = function() {
       r.content = ov.querySelector('#erText').value.trim()
       r.time = ov.querySelector('#erTime').value.trim()
+      applyPhoneStoryDisplayCondition(r, normalizePhoneStoryDisplayCondition(conditionDraft).all.map(function(group) { return group.anyChoiceIds }))
       saveData(); ov.remove(); renderForum()
+    }
+    ov.querySelector('[data-phone-story-condition-open="edit-reply-condition"]').onclick = function() {
+      openPhoneStoryConditionEditor(pd, conditionDraft, { onSave:function() {
+        var summary = ov.querySelector('[data-phone-story-condition-open="edit-reply-condition"] small')
+        if (summary) summary.textContent = phoneStoryConditionSummary(pd, conditionDraft)
+      } })
     }
     ov.querySelector('#erCancel').onclick = function() { ov.remove() }
   }
@@ -6566,6 +6782,12 @@ function openChatEditor(frame, wid, chatId, pd) {
   function renderChat() {
     var body = frame.querySelector('#chatContent')
     if (!body) return
+    var previousMessageArea = frame.querySelector('#chatMsgArea')
+    var previousScrollTop = Number(previousMessageArea?.scrollTop || 0)
+    var previousMaxScrollTop = previousMessageArea
+      ? Math.max(0, Number(previousMessageArea.scrollHeight || 0) - Number(previousMessageArea.clientHeight || 0))
+      : 0
+    var followedBottom = previousMaxScrollTop > 0 && previousMaxScrollTop - previousScrollTop <= 24
 
     if (!ch.bgImage && frame.querySelector('#chatContent')) {
       var curBg = frame.querySelector('#chatContent').style.backgroundImage
@@ -6641,6 +6863,10 @@ function openChatEditor(frame, wid, chatId, pd) {
 
     body.innerHTML = h
     bindChatEvents()
+    var nextMessageArea = frame.querySelector('#chatMsgArea')
+    if (previousMessageArea && nextMessageArea) {
+      nextMessageArea.scrollTop = followedBottom ? nextMessageArea.scrollHeight : previousScrollTop
+    }
   }
 
   function renderMessageBubble(msg, mi, ri) {
@@ -6651,6 +6877,11 @@ function openChatEditor(frame, wid, chatId, pd) {
     function delayBadge() {
       return Object.hasOwn(msg, 'delayBeforeMs')
         ? '<small class="chat-message-delay-badge">+' + esc(formatChatMessageDelaySeconds(msg.delayBeforeMs)) + 's</small>'
+        : ''
+    }
+    function revealBadge() {
+      return normalizeChatMessageRevealMode(msg.revealMode) === 'instant' && (!msg.type || msg.type === 'text')
+        ? '<small class="chat-message-reveal-badge">整条出现</small>'
         : ''
     }
     if (msg.type === 'time') {
@@ -6675,19 +6906,23 @@ function openChatEditor(frame, wid, chatId, pd) {
     }
     var isSelf = msg.senderId === 'self'
     var showAsSelf = isSelf
-    var senderName = isSelf ? '读者' : (contacts.find(function(c) { return c.id === msg.senderId }) || {}).name || '未知'
+    var senderName = getSpeakerName(msg.senderId)
     var h = '<div class="chat-msg ' + (showAsSelf ? 'self' : 'other') + (msg.failed ? ' failed' : '') + selectionClass + '" data-message-id="' + escapeHtmlAttribute(msg.id || '') + '" data-selection-id="' + escapeHtmlAttribute(selectionId) + '" data-ri="' + ri + '" data-mi="' + mi + '" style="position:relative">'
     if (msg.senderId !== 'self') {
       var sc = contacts.find(function(c) { return c.id === msg.senderId })
       var messageAvatar = contactAvatar(sc, 'messages')
       var avatarBg = sc ? (messageAvatar ? 'background-image:url(' + escapeHtmlAttribute(messageAvatar) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:var(--c-border)'
-      h += '<div class="chat-avatar" style="' + escapeHtmlAttribute(avatarBg) + '">'
+      h += '<div class="chat-avatar" role="img" aria-label="' + escapeHtmlAttribute(senderName) + '" style="' + escapeHtmlAttribute(avatarBg) + '">'
       if (!messageAvatar) h += '<span>' + esc(senderName.charAt(0)) + '</span>'
       h += '</div>'
     }
     h += '<div style="min-width:0;max-width:100%">'
     var groupRoleLabel = getGroupRoleLabel(msg.senderId)
-    if (groupRoleLabel) h += '<div class="chat-group-role">' + esc(groupRoleLabel) + '</div>'
+    if (ch.type === 'group' && !isSelf) {
+      h += '<div class="chat-group-sender-meta"><span class="chat-group-sender-name">' + esc(senderName) + '</span>'
+      if (groupRoleLabel) h += '<span class="chat-group-role">' + esc(groupRoleLabel) + '</span>'
+      h += '</div>'
+    }
     if (msg.type === 'image') {
       h += '<div class="chat-bubble"><img src="' + escapeHtmlAttribute(msg.image || '') + '" style="max-width:120px;border-radius:4px" onerror="this.style.display=\'none\'"></div>'
     } else if (msg.type === 'link') {
@@ -6774,6 +7009,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       h += renderAuthorMentionText(msg.text || '', groupMentionNames) + '</div>'
     }
     h += delayBadge()
+    h += revealBadge()
     h += '</div>'
     if (msg.choices && msg.choices.length > 0) {
       h += '<div class="chat-choices">'
@@ -6964,20 +7200,30 @@ function openChatEditor(frame, wid, chatId, pd) {
       input.focus()
     }
 
-    function showMessageVisibilityEditor(message) {
-      var body = phoneStoryVisibilityFieldHtml(pd, message.visibleAfterChoiceId, 'chatMessageVisibilityChoice')
-      var ov = modal('设置剧情显示条件', body, '<button id="chatMessageVisibilitySave" class="btn btn-primary btn-sm">保存</button><button id="chatMessageVisibilityCancel" class="btn btn-ghost btn-sm">取消</button>')
-      var select = ov.querySelector('#chatMessageVisibilityChoice')
-      ov.querySelector('#chatMessageVisibilitySave').onclick = function() {
-        var choiceId = select.value
-        if (choiceId) message.visibleAfterChoiceId = choiceId
-        else delete message.visibleAfterChoiceId
+    function showMessageRevealEditor(message) {
+      var selectedMode = normalizeChatMessageRevealMode(message.revealMode)
+      var body = '<div class="form-group chat-message-reveal-editor"><label class="form-label" for="chatMessageRevealMode">这条文字消息如何出现</label><select id="chatMessageRevealMode" class="form-select">' + CHAT_MESSAGE_REVEAL_MODES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === selectedMode ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select><p class="form-hint">只改变这一条文字的呈现；图片、系统消息等仍按原顺序逐条播放。</p></div>'
+      var ov = modal('设置出现方式', body, '<button id="chatMessageRevealSave" class="btn btn-primary btn-sm">保存</button><button id="chatMessageRevealCancel" class="btn btn-ghost btn-sm">取消</button>')
+      var select = ov.querySelector('#chatMessageRevealMode')
+      ov.querySelector('#chatMessageRevealSave').onclick = function() {
+        if (normalizeChatMessageRevealMode(select.value) === 'instant') message.revealMode = 'instant'
+        else delete message.revealMode
         save()
         ov.remove()
         renderChat()
       }
-      ov.querySelector('#chatMessageVisibilityCancel').onclick = function() { ov.remove() }
+      ov.querySelector('#chatMessageRevealCancel').onclick = function() { ov.remove() }
       select.focus()
+    }
+
+    function showMessageVisibilityEditor(message) {
+      openPhoneStoryConditionEditor(pd, message, {
+        excludeOwnerMessageId:message.id,
+        onSave:function() {
+          save()
+          renderChat()
+        },
+      })
     }
 
     // Context menu for messages (PC right-click / mobile long-press)
@@ -7079,6 +7325,11 @@ function openChatEditor(frame, wid, chatId, pd) {
             showReplyPaceEditor(msg)
           })
           paceItem.dataset.chatAction = 'reply-pace'
+        }
+
+        if ((!msg.type || msg.type === 'text') && msg.failed !== true) {
+          var revealItem = addItem('出现方式', function() { showMessageRevealEditor(msg) })
+          revealItem.dataset.chatAction = 'message-reveal'
         }
 
         var delayItem = addItem('发送间隔', function() { showMessageDelayEditor(msg) })
@@ -7443,7 +7694,13 @@ function openMemoEditor(frame, wid, contact, memos, pd) {
     delBtns.forEach(function(btn) {
       btn.onclick = function() {
         var id = this.dataset.memoDel
-        deleteMemo(id)
+        var memo = memos.find(function(item) { return item.id === id })
+        var memoName = String(memo?.content || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24)
+        confirmPhoneContentDeletion({
+          title:'删除备忘录',
+          itemName:'备忘录“' + (memoName || '未命名备忘录') + '”',
+          onConfirm:function() { deleteMemo(id) },
+        })
       }
     })
   }

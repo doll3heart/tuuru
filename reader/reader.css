@@ -1840,7 +1840,7 @@ body.rd-theme-gray .article-meta { color: #333; }
 .rd-flow-next:disabled { opacity: .52; cursor: not-allowed; }
 .rd-chat-flow-empty { padding: 30px 16px; text-align: center; color: #8d7c81; font-size: .7rem; line-height: 1.6; }
 .rd-placeholder-error{margin-top:4px;color:#8b3448;font-size:.68rem;line-height:1.4}
-.rd-chat-group-role{margin:0 0 3px 2px;color:#7d6970;font-size:.58rem;line-height:1.2}
+.rd-chat-group-role{margin:0;color:#7d6970;font-size:.58rem;line-height:1.2}
 @keyframes rdFlowMessageIn {
   from { opacity: 0; transform: translateY(10px) scale(.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }

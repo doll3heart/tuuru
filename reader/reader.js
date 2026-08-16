@@ -4,6 +4,7 @@ import { workReleaseFingerprintMatches } from '../js/work-release.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
+import { normalizeChatMessageRevealMode } from '../js/chat-message-reveal.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { MAX_WORK_PNG_FILE_BYTES, pngBytesFromDataUrl, readPngPayload } from '../js/png-payload.js'
 import {
@@ -129,7 +130,7 @@ import {
   resolvePhoneReadingFlowStep,
 } from '../js/phone-reading-flow.js'
 import {
-  phoneStoryChoiceById,
+  phoneStoryItemHasValidConditionReferences,
   phoneStoryItemIsVisible,
   phoneStoryMessageBlockedByEndedRound,
   prunePhoneStoryChoiceSelections,
@@ -594,11 +595,8 @@ function readerPhoneStoryChoiceIds(work) {
 }
 
 function readerPhoneStoryItemVisible(work, item, phoneData) {
-  var requiredChoiceId = typeof item?.visibleAfterChoiceId === 'string'
-    ? item.visibleAfterChoiceId.trim()
-    : ''
   var storyData = phoneData || (work && work.type === 'phone' ? work.phoneData : null)
-  if (requiredChoiceId && !phoneStoryChoiceById(storyData, requiredChoiceId)) return false
+  if (!phoneStoryItemHasValidConditionReferences(storyData, item)) return false
   return phoneStoryItemIsVisible(item, readerPhoneStoryChoiceIds(work))
 }
 
@@ -8632,6 +8630,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         var bubbleSkinRowClass = readerMessageUsesBubbleShell(msg) ? bubbleSkinClass : ''
         var reselectRunKey = reselectRunsByReply.get(messageLocationKey(ri, msg.id)) || ''
         h += '<div class="chat-msg rd-chat-message ' + (isSelf ? 'self is-self' : 'other is-other') + bubbleSkinRowClass + (isFlowTargetMessage(msg, round) ? ' is-flow-target' : '') + (failedTransition ? ' rd-chat-transient-message' : '') + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '"' + (failedTransition ? ' data-transient-kind="failed" data-transient-key="' + escapeHtmlAttribute(failedTransition.key) + '"' : '') + '>'
+        var messageIdentity = null
         if (isSelf) {
           h += '<div class="chat-avatar rd-reader-chat-avatar" aria-label="' + escapeHtmlAttribute(readerChatName) + '" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';background:' + sanitizeCssColor(avatarColor('reader-' + readerChatName)) + '">'
           if (readerChatAvatar) h += '<img src="' + escapeHtmlAttribute(readerChatAvatar) + '" alt="">'
@@ -8639,10 +8638,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           h += '</div>'
         } else {
           var sc = contacts.find(function(c) { return c.id === msg.senderId })
-          var messageIdentity = resolveReaderContactIdentity(pd, msg.senderId, { surface:'messages', authoredName:sc?.name || '?' })
+          messageIdentity = resolveReaderContactIdentity(pd, msg.senderId, { surface:'messages', authoredName:sc?.name || '?' })
           var messageAvatar = messageIdentity.avatar || ''
           var avBg = sc ? (messageAvatar ? 'background-image:url(' + escapeHtmlAttribute(messageAvatar) + ');background-size:cover' : 'background:' + avatarColor(msg.senderId)) : 'background:#ccc'
-          h += '<div class="chat-avatar" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';' + avBg + '">'
+          h += '<div class="chat-avatar" role="img" aria-label="' + escapeHtmlAttribute(messageIdentity.name || '未知') + '" style="width:' + avSz + ';height:' + avSz + ';flex-basis:' + avSz + ';border-radius:' + ast.avatarRadius + ';' + avBg + '">'
           if (!messageAvatar) h += '<span>' + esc((messageIdentity.name || '?').charAt(0)) + '</span>'
           h += '</div>'
         }
@@ -8653,7 +8652,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           if (ch.groupOwnerId === msg.senderId) groupLabels.push('群主')
           else if (Array.isArray(ch.groupAdminIds) && ch.groupAdminIds.includes(msg.senderId)) groupLabels.push('管理员')
           if (ch.groupTitles && ch.groupTitles[msg.senderId]) groupLabels.push(ch.groupTitles[msg.senderId])
-          if (groupLabels.length) h += '<div class="rd-chat-group-role">' + esc(groupLabels.join(' · ')) + '</div>'
+          h += '<div class="chat-group-sender-meta"><span class="rd-chat-group-sender-name chat-group-sender-name">' + esc(messageIdentity?.name || '未知') + '</span>'
+          if (groupLabels.length) h += '<span class="rd-chat-group-role">' + esc(groupLabels.join(' · ')) + '</span>'
+          h += '</div>'
         }
         var bubbleStyle = isSelf
           ? 'max-width:180px;padding:8px 12px;font-size:' + ast.bubbleFontSize + ';line-height:1.5;overflow-wrap:break-word;background:' + ast.selfBubbleBg + ';color:' + ast.selfBubbleText + ';border-radius:' + ast.selfBubbleRadius + ' ' + ast.selfBubbleRadius + ' 2px ' + ast.selfBubbleRadius
@@ -8765,7 +8766,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
             var quotedSummary = msg.quoteText || chatMessageQuoteSummary(quotedSourceMessage)
             h += '<button type="button" class="chat-quote-preview" data-quote-target="' + escapeHtmlAttribute(msg.quoteId) + '"><span>' + esc(msg.quoteSenderName || '引用消息') + '</span><strong>' + esc(quotedSummary.substring(0, 54)) + '</strong></button>'
           }
-          var streamsCurrentText = isFlowTargetMessage(msg, round) && !chatSession.flowTypedMessageIds.has(String(msg.id))
+          var streamsCurrentText = isFlowTargetMessage(msg, round) && !chatSession.flowTypedMessageIds.has(String(msg.id)) && normalizeChatMessageRevealMode(msg.revealMode) === 'stream'
           if (streamsCurrentText) {
             h += '<span class="rd-flow-stream-text" aria-live="polite" aria-atomic="true"></span>'
           } else {
@@ -9313,7 +9314,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           stream = element.querySelector('.rd-flow-stream-text')
         }
       })
-      var streamsText = (!message.type || message.type === 'text') && message.failed !== true
+      var streamsText = (!message.type || message.type === 'text') && message.failed !== true && normalizeChatMessageRevealMode(message.revealMode) === 'stream'
       if (!streamsText || !stream) {
         chatSession.flowTypedMessageIds.add(String(messageId))
         if (messageRequiresAction(message) && !messageActionIsComplete(message)) {
@@ -9556,7 +9557,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
     phoneChoiceSession.forumPosts.set(forumSessionKey, forumSession)
   }
   if (!(forumSession.likedCommentIds instanceof Set)) forumSession.likedCommentIds = new Set()
-  if (forumSession.sort !== 'latest') forumSession.sort = 'hot'
+  if (!['hot', 'latest', 'floor'].includes(forumSession.sort)) forumSession.sort = 'hot'
   var post = forumSession.post
   var custom = getPhoneCustom()
   var forumVisual = appStyle('forum')
@@ -9590,6 +9591,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
       if (forumSession.sort === 'latest') {
         return forumCommentTimestamp(right.comment) - forumCommentTimestamp(left.comment) || right.index - left.index
       }
+      if (forumSession.sort === 'floor') return left.index - right.index
       return forumCommentHotScore(right.comment) - forumCommentHotScore(left.comment) || left.index - right.index
     }).map(function(entry) { return entry.comment })
   }
@@ -9687,6 +9689,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
       showTimestamp:function(item) { return shouldShowPhoneTimestamp(pd, item.time, post.hideReplyTimes === true) },
       isLiked:function(item) { return forumLikedCommentIds.has(String(item.id)) },
       isGenerated:function(item, childContainerKey) { return readerThreadGeneratedItem(forumChoiceRuns, childContainerKey, item.id) },
+      isVisible:function(item) { return exportMode || readerPhoneStoryItemVisible(w, item, pd) },
       renderChoices:function(item, context) {
         return renderReaderThreadReselect(item, 'forum', context.containerKey, forumChoiceRuns) +
           renderReaderThreadChoiceControls(item, 'forum', context.containerKey, forumChoiceRuns)
@@ -9756,6 +9759,14 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
     var postIdentity = resolveReaderContactIdentity(pd, post.contactId, { surface: 'forum', aliasId:post.aliasId, authoredName: post.contactName, authoredAvatar: post.contactAvatar, authoredIpLocation:post.contactIpLocation })
     var readerName = readerThreadDisplayName(pd, custom)
     var readerAvatar = readerThreadAvatar(pd, custom)
+    var authoredComments = Array.isArray(post.comments) ? post.comments : []
+    var visibleComments = authoredComments.filter(function(comment) {
+      return exportMode || readerPhoneStoryItemVisible(w, comment, pd)
+    })
+    var authoredCommentCount = Number(post.displayCommentCount)
+    var visibleCommentCount = post.displayCommentCount !== '' && post.displayCommentCount !== null && post.displayCommentCount !== undefined && Number.isInteger(authoredCommentCount) && authoredCommentCount >= 0
+      ? authoredCommentCount
+      : visibleComments.length
     var h = '<div class="rd-forum-detail" style="--rd-forum-avatar-radius:' + forumVisual.avatarRadius + '">'
     h += '<header class="rd-forum-detail-header"><button type="button" class="rd-back-btn" aria-label="返回论坛列表">←</button><strong>帖子详情</strong><button type="button" class="rd-forum-account-button" data-reader-forum-account aria-label="设置我的论坛账号">'
     h += '<span class="rd-forum-account-avatar">' + (readerAvatar ? '<img src="' + escapeHtmlAttribute(readerAvatar) + '" alt="">' : esc(readerName.charAt(0) || '我')) + '</span><span class="rd-forum-account-name">' + esc(readerName) + '</span></button></header>'
@@ -9776,14 +9787,13 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
       renderActions:function(item) {
         return '<span class="forum-action">赞 ' + (item.likes || 0) + '</span>' +
           '<span class="forum-action">收藏 ' + (item.bookmarks || 0) + '</span>' +
-          '<span class="forum-action">评论 ' + forumDisplayCommentCount(item) + '</span>'
+          '<span class="forum-action">评论 ' + visibleCommentCount + '</span>'
       },
     })
-    h += '<section class="rd-forum-thread" aria-label="帖子评论"><div class="rd-forum-thread-head"><h4>评论 <span>' + forumDisplayCommentCount(post) + '</span></h4><div class="rd-forum-sort" role="group" aria-label="评论排序"><button type="button" data-forum-sort="hot" aria-pressed="' + (forumSession.sort === 'hot' ? 'true' : 'false') + '">热门</button><button type="button" data-forum-sort="latest" aria-pressed="' + (forumSession.sort === 'latest' ? 'true' : 'false') + '">最新</button></div></div>'
-    var comments = Array.isArray(post.comments) ? post.comments : []
-    if (comments.length === 0) h += '<div class="rd-app-empty">暂无评论</div>'
-    var floorByCommentId = new Map(comments.map(function(comment, commentIndex) { return [String(comment.id), commentIndex + 1] }))
-    sortedForumComments(comments).forEach(function(comment) {
+    h += '<section class="rd-forum-thread" aria-label="帖子评论"><div class="rd-forum-thread-head"><h4>评论 <span>' + visibleCommentCount + '</span></h4><div class="rd-forum-sort" role="group" aria-label="评论排序"><button type="button" data-forum-sort="hot" aria-pressed="' + (forumSession.sort === 'hot' ? 'true' : 'false') + '">热门</button><button type="button" data-forum-sort="latest" aria-pressed="' + (forumSession.sort === 'latest' ? 'true' : 'false') + '">最新</button><button type="button" data-forum-sort="floor" aria-label="按楼层正序" aria-pressed="' + (forumSession.sort === 'floor' ? 'true' : 'false') + '">楼层</button></div></div>'
+    if (visibleComments.length === 0) h += '<div class="rd-app-empty">暂无评论</div>'
+    var floorByCommentId = new Map(authoredComments.map(function(comment, commentIndex) { return [String(comment.id), commentIndex + 1] }))
+    sortedForumComments(visibleComments).forEach(function(comment) {
       h += renderForumComment(comment, floorByCommentId.get(String(comment.id)) || 1, 0, 'root')
     })
     h += '</section></div></div>'
@@ -9801,7 +9811,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
 
     frame.querySelectorAll('[data-forum-sort]').forEach(function(button) {
       button.onclick = function() {
-        forumSession.sort = button.dataset.forumSort === 'latest' ? 'latest' : 'hot'
+        forumSession.sort = ['hot', 'latest', 'floor'].includes(button.dataset.forumSort) ? button.dataset.forumSort : 'hot'
         renderForumPost()
         frame.querySelector('[data-forum-sort="' + forumSession.sort + '"]')?.focus()
       }

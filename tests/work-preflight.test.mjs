@@ -194,14 +194,23 @@ test("phone story conditions reject deleted and self-referential choices", () =>
         content:"正文",
         visibleAfterChoiceId:"deleted-choice",
         images:[],
-        comments:[],
+        comments:[{
+          id:"comment-conditional",
+          content:"隐藏评论",
+          displayCondition:{ all:[
+            { anyChoiceIds:["choice-a"] },
+            { anyChoiceIds:["deleted-comment-choice"] },
+          ] },
+          replies:[],
+        }],
       }],
     },
   }
 
   const report = inspectWorkBeforePublish(work)
   assert.ok(report.issues.some(issue => issue.code === "phone-story-condition-self-reference"))
-  assert.ok(report.issues.some(issue => issue.code === "phone-story-condition-choice-missing"))
+  assert.equal(report.issues.filter(issue => issue.code === "phone-story-condition-choice-missing").length, 2)
+  assert.ok(report.issues.some(issue => /评论/.test(issue.location)))
 })
 
 test("missing type-specific content fails closed without throwing", () => {

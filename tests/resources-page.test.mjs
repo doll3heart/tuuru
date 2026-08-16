@@ -429,7 +429,14 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /正常发送[^。]*发送失败[^。]*发送后撤回/)
   assert.match(source, /继承本组选项/)
   assert.match(source, /【角色后续】中每点一次【添加消息】就新增一个气泡/)
-  assert.match(source, /消息状态[^。]*单条节奏[^。]*发送间隔[^。]*【发送设置】/)
+  assert.match(source, /消息状态[^。]*单条节奏[^。]*出现方式[^。]*发送间隔[^。]*【发送设置】/)
+  assert.match(source, /文字消息出现方式/)
+  assert.match(source, /逐字出现[^。]*整条出现/)
+  assert.match(source, /文字、图片、系统消息和特殊卡片[^。]*原顺序逐条播放/)
+  assert.match(source, /同一组里的多个选项按【或】判断[^。]*【添加且条件】/)
+  assert.match(source, /上一级评论未解锁时[^。]*全部楼中楼也一起隐藏/)
+  assert.match(source, /条件消息进入原有播放队列[^。]*系统消息仍按作者顺序逐条出现/)
+  assert.match(source, /旧作品[^。]*默认逐字出现/)
   assert.match(source, /换行不会自动拆成多个气泡/)
   assert.doesNotMatch(source, /每行文字会生成一个气泡/)
 })
@@ -448,6 +455,17 @@ test("the phone tutorial covers group-wide mentions, contact-card friendship, an
   assert.match(source, /0 到 60 秒[^。]*0\.1 秒/)
   assert.match(source, /当前消息发送前的等待时间/)
   assert.match(source, /发送间隔只决定气泡何时出现[^。]*不会自动显示“正在输入”/)
+})
+
+test("the phone tutorial explains group sender labels, direct character apps, and safe deletion", () => {
+  assert.match(source, /群聊中的角色气泡[^。]*显示发送者姓名/)
+  assert.match(source, /群主、管理员或成员头衔/)
+  assert.match(source, /保存后再次进入[^。]*直接打开该角色内容/)
+  assert.match(source, /标题栏右上角【切换】/)
+  assert.match(source, /内容删除与确认/)
+  assert.match(source, /删除备忘录、浏览记录、照片、相册或购物订单[^。]*确认弹窗/)
+  assert.match(source, /相册里的照片[^。]*【未归类】/)
+  assert.match(source, /取消不会修改作品[^。]*只有确认后才会删除/)
 })
 
 test("the shopping tutorial explains how to edit an existing product card", () => {
@@ -482,6 +500,12 @@ test("the forum tutorial explains the current comment controls and reader reply 
   assert.match(source, /逐条选择联系人、小号或 NPC/)
   assert.match(source, /回复会进入目标评论的楼中楼/)
   assert.match(source, /标题栏右侧的账号入口/)
+})
+
+test("the forum tutorial explains reader-side floor sorting", () => {
+  assert.match(source, /读者端帖子评论区[^。]*热门[^。]*最新[^。]*楼层/)
+  assert.match(source, /【楼层】[^。]*作者保存的一级评论顺序/)
+  assert.match(source, /自定义的楼层号[^。]*保持不变/)
 })
 
 test("the placeholder feature list covers global words, search, and cleanup", () => {
@@ -644,7 +668,7 @@ test("the resources layout reflows form rows and keeps readable tutorial prose o
 
 test("follow-up message controls stay grouped and reflow on narrow touch screens", () => {
   assert.match(css, /\.thread-choice-followup-row\s*\{[^}]*padding\s*:\s*9px 0[^}]*border-bottom\s*:/s)
-  assert.match(css, /\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*repeat\(3,minmax\(0,1fr\)\)/s)
+  assert.match(css, /\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,minmax\(0,1fr\)\)/s)
   assert.match(css, /@media\(max-width:620px\)[^}]*[\s\S]*\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,1fr\)/s)
   assert.match(css, /@media\(pointer:coarse\)[\s\S]*?\.thread-choice-followup-row button\s*\{[^}]*width\s*:\s*44px[^}]*height\s*:\s*44px/s)
 })
