@@ -200,7 +200,7 @@ test("an instant silent choice still streams every follow-up one bubble at a tim
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("丙丁"))
 })
 
-test("a system notice already shown beside a choice does not disappear while its branch streams", async t => {
+test("a system notice before a choice does not disappear while its branch streams", async t => {
   const work = choiceWork()
   const owner = work.phoneData.chats[0].rounds[0].messages[0]
   owner.choices[0].silent = true
@@ -209,12 +209,12 @@ test("a system notice already shown beside a choice does not disappear while its
   owner.choices[0].followUpMessages = [
     { id:"notice-follow-up", type:"text", senderId:"contact-1", text:"甲乙" },
   ]
-  work.phoneData.chats[0].rounds[0].messages = [owner, {
+  work.phoneData.chats[0].rounds[0].messages = [{
     id:"choice-system-notice",
     type:"system",
     senderId:"system",
     text:"群聊系统提示",
-  }, {
+  }, owner, {
     id:"notice-later-owner",
     type:"text",
     senderId:"contact-1",
@@ -229,6 +229,34 @@ test("a system notice already shown beside a choice does not disappear while its
 
   assert.match(document.querySelector("#chatMsgArea").textContent, /群聊系统提示/)
   assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /下一题/)
+})
+
+test("a system notice after a choice waits for the streamed branch to finish", async t => {
+  const work = choiceWork()
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices[0].silent = true
+  owner.choices[0].replyText = ""
+  owner.choices[0].replyPace = "instant"
+  owner.choices[0].followUpMessages = [
+    { id:"system-gate-follow-up", type:"text", senderId:"contact-1", text:"先播放这句话" },
+  ]
+  work.phoneData.chats[0].rounds[0].messages = [owner, {
+    id:"system-after-stream",
+    type:"system",
+    senderId:"system",
+    text:"然后显示系统消息",
+  }]
+
+  await openSeededChat(t, work)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /然后显示系统消息/)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /先播放这句话/)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /然后显示系统消息/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("先播放这句话"))
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /然后显示系统消息/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("然后显示系统消息"))
 })
 
 test("an instant image choice finishes its streamed branch before revealing the next option group", async t => {
@@ -659,17 +687,21 @@ test("separate message choice groups become available in conversation order", as
     /This is the second question/,
     "later choice owners must stay hidden until the current gate is answered",
   )
-  assert.match(
+  assert.doesNotMatch(
     document.querySelector("#chatMsgArea").textContent,
     /A second group system message/,
-    "system messages in the current group segment must not be swallowed by the reply gate",
+    "a system message after the current choice must wait behind the reply gate",
   )
   let options = [...document.querySelectorAll(".rd-reply-option")]
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
   options[0].click()
 
   assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /This is the second question/)
-  assert.match(document.querySelector("#chatMsgArea").textContent, /A second group system message/)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /A second group system message/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("First character follow-up"), 10000)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /A second group system message/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("A second group system message"), 10000)
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /This is the second question/)
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("This is the second question"), 10000)
   assert.match(document.querySelector("#chatMsgArea").textContent, /First reader reply/)
   assert.match(document.querySelector("#chatMsgArea").textContent, /First character follow-up/)
@@ -690,7 +722,7 @@ test("separate message choice groups become available in conversation order", as
   const rerolledText = document.querySelector("#chatMsgArea").textContent
   assert.doesNotMatch(rerolledText, /First reader reply/)
   assert.doesNotMatch(rerolledText, /First character follow-up/)
-  assert.match(rerolledText, /A second group system message/)
+  assert.doesNotMatch(rerolledText, /A second group system message/)
   assert.doesNotMatch(rerolledText, /This is the second question/)
   assert.doesNotMatch(rerolledText, /Second reader reply/)
   assert.doesNotMatch(rerolledText, /Second character follow-up/)

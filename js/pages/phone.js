@@ -7154,12 +7154,27 @@ function openChatEditor(frame, wid, chatId, pd) {
         })
 
         addItem('在前插入消息', function() {
-          var ov = modal('插入消息', '<div class="form-group"><textarea id="insMsgText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>',
+          var insertionSenderIds = ['self'].concat(ch.contactIds || []).concat('system')
+          var defaultInsertionSenderId = insertionSenderIds.includes(msg.senderId)
+            ? msg.senderId
+            : (insertionSenderIds.includes(activeSpeakerId) ? activeSpeakerId : 'self')
+          var senderField = ''
+          if (ch.type === 'group') {
+            senderField = '<label class="form-group"><span class="form-label">发送人</span><select id="insMsgSender" class="form-select">' + insertionSenderIds.map(function(senderId) {
+              return '<option value="' + escapeHtmlAttribute(senderId) + '"' + (senderId === defaultInsertionSenderId ? ' selected' : '') + '>' + esc(getSpeakerName(senderId)) + '</option>'
+            }).join('') + '</select></label>'
+          }
+          var ov = modal('插入消息', senderField + '<div class="form-group"><label class="form-label" for="insMsgText">消息内容</label><textarea id="insMsgText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>',
             '<button id="insMsgSave" class="btn btn-primary btn-sm">插入</button><button id="insMsgCancel" class="btn btn-ghost btn-sm">取消</button>')
           ov.querySelector('#insMsgSave').onclick = function() {
             var text = ov.querySelector('#insMsgText').value.trim()
             if (!text) return
-            var newMsg = { id: uid(), senderId: msg.senderId, text: text, time: new Date().toLocaleString(), type: 'text' }
+            var senderInput = ov.querySelector('#insMsgSender')
+            var senderId = senderInput ? senderInput.value : defaultInsertionSenderId
+            if (!insertionSenderIds.includes(senderId)) senderId = 'self'
+            var newMsg = senderId === 'system'
+              ? { id:uid(), senderId:'system', text:text, time:new Date().toLocaleString(), type:'system' }
+              : { id:uid(), senderId:senderId, text:text, time:new Date().toLocaleString(), type:'text' }
             round.messages.splice(mi, 0, newMsg)
             save(); ov.remove(); renderChat()
           }

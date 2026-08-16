@@ -7898,7 +7898,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
             if (Array.isArray(message.choices) && message.choices.length > 0) {
               break unsequencedMessageScan
             }
-            if (message.type !== 'system') continue
+            continue
           }
           unsequencedVisible.add(String(message.id))
           if (activeUnsequencedId != null && String(message.id) === String(activeUnsequencedId)) {
@@ -9235,7 +9235,6 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         if (Array.isArray(message.choices) && message.choices.length > 0) break
         if (!readerPhoneStoryItemVisible(w, message, pd)) continue
         if (phoneStoryMessageBlockedByEndedRound(pd, String(message.id), phoneChoiceSession.phoneChoiceSelections)) break
-        if (message.type === 'system') continue
         continuationIds.push(String(message.id))
       }
       return continuationIds

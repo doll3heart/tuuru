@@ -325,6 +325,54 @@ test("system time messages open the same author menu and can be deleted", async 
   }
 })
 
+test("group chats choose the sender when inserting a message before another message", async () => {
+  const phoneData = makePhoneData()
+  phoneData.contacts.push({ id:"contact-2", name:"周遥", avatarUrl:"" })
+  phoneData.chats[0].type = "group"
+  phoneData.chats[0].groupName = "临时群聊"
+  phoneData.chats[0].contactIds = ["contact-1", "contact-2"]
+  phoneData.chats[0].rounds[0].messages.push({
+    id:"insert-anchor",
+    type:"text",
+    senderId:"contact-1",
+    text:"原来的消息",
+  })
+  const fixture = await openSingleChat("group-insert-message-sender", phoneData)
+  const { draft, overlay } = fixture
+
+  try {
+    overlay.querySelector('[data-message-id="insert-anchor"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:24,
+      clientY:24,
+    }))
+    const insertAction = Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "在前插入消息")
+    assert.ok(insertAction)
+    insertAction.click()
+
+    const sender = document.querySelector("#insMsgSender")
+    assert.ok(sender, "group insertion should expose a sender selector")
+    assert.deepEqual(
+      Array.from(sender.options).map(option => [option.value, option.textContent]),
+      [["self", "读者"], ["contact-1", "林澈"], ["contact-2", "周遥"], ["system", "系统"]],
+    )
+    sender.value = "contact-2"
+    document.querySelector("#insMsgText").value = "从前面补充一句"
+    document.querySelector("#insMsgSave").click()
+
+    const messages = draft.snapshot().phoneData.chats[0].rounds[0].messages
+    assert.equal(messages.length, 2)
+    assert.equal(messages[0].senderId, "contact-2")
+    assert.equal(messages[0].type, "text")
+    assert.equal(messages[0].text, "从前面补充一句")
+    assert.equal(messages[1].id, "insert-anchor")
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
 test("a written message can be recalled and restored from its context menu", async () => {
   const phoneData = makePhoneData()
   phoneData.chats[0].rounds[0].messages.push({
