@@ -175,6 +175,43 @@ test("an image choice previews and sends the same image without an extra text bu
   assert.doesNotMatch(selfMessages[0].textContent, /好，我会准时到/)
 })
 
+test("claiming a required red packet resumes a group choice reply queue", async t => {
+  const work = choiceWork()
+  const chat = work.phoneData.chats[0]
+  chat.type = "group"
+  chat.groupName = "夜巡群"
+  chat.rounds[0].messages[0].choices[0].followUpMessages = [
+    {
+      id: "required-redpacket",
+      type: "redpacket",
+      senderId: "contact-1",
+      redpacketAmount: 6.66,
+      redpacketMsg: "夜巡辛苦了",
+      actionRequired: true,
+      delayBeforeMs: 0,
+    },
+    {
+      id: "after-redpacket",
+      type: "text",
+      senderId: "contact-1",
+      text: "领完红包继续说。",
+      revealMode: "instant",
+      delayBeforeMs: 0,
+    },
+  ]
+  await openSeededChat(t, work)
+
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  const claim = await waitFor(() => document.querySelector(".rd-card-claim"))
+  assert.doesNotMatch(document.getElementById("chatMsgArea").textContent, /领完红包继续说/)
+  claim.click()
+
+  await waitFor(() => document.getElementById("chatMsgArea")?.textContent.includes("领完红包继续说"))
+  assert.match(document.getElementById("chatMsgArea").textContent, /夜巡辛苦了[\s\S]*领完红包继续说/)
+})
+
 test("an instant silent choice still streams every follow-up one bubble at a time", async t => {
   const work = choiceWork()
   const choice = work.phoneData.chats[0].rounds[0].messages[0].choices[0]

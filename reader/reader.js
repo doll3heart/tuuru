@@ -8979,7 +8979,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       if (
         options?.deferFlowResume !== true
         &&
-        flowStep
+        (flowStep || chatSession.flowGeneratedPlayback)
         && String(currentFlowPlaybackMessageId() || '') === normalizedMessageId
         && chatSession.flowTypedMessageIds.has(normalizedMessageId)
         && !currentFlowChoicePending(rounds)
