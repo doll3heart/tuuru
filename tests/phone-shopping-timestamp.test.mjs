@@ -73,9 +73,29 @@ test("shopping orders let authors edit or clear the displayed time", async t => 
   document.querySelector("#spEdit").click()
 
   const editor = document.querySelector("#spSave").closest(".modal-overlay")
+  const more = editor.querySelector(".phone-form-more")
+  assert.equal(more?.open, false)
+  assert.equal(more?.contains(editor.querySelector("#spStyle")), true)
+  assert.equal(more?.contains(editor.querySelector("#spTime")), true)
   assert.equal(editor.querySelector("#spTime").value, "2026/6/26 23:13:25")
   editor.querySelector("#spTime").value = ""
   editor.querySelector("#spSave").click()
 
   assert.equal(draft.snapshot().phoneData.shoppingItems[0].time, "")
+})
+
+test("new shopping items explain missing required names inline", async t => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { openPhoneAppModal } = await import("../js/pages/phone.js")
+  const data = makePhoneData()
+  data.shoppingItems = []
+  const draft = createPhoneWorkDraft({ id:"shopping-inline-validation", type:"article", phoneData:data })
+  t.after(() => { draft.dispose(); dom.window.close() })
+  const overlay = openPhoneAppModal(draft.id, "shopping")
+  overlay.querySelector("#shopAdd").click()
+  const editor = document.querySelector("#spSave").closest(".modal-overlay")
+  editor.querySelector("#spSave").click()
+  assert.match(editor.querySelector(".modal-inline-error")?.textContent || "", /请填写商品名称/)
+  assert.equal(editor.querySelector("#spName").getAttribute("aria-invalid"), "true")
 })

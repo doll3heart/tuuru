@@ -168,6 +168,32 @@ function insertAtSelection(input, value) {
   input.focus()
 }
 
+function showModalInlineError(overlay, field, message) {
+  if (!overlay || !field) return
+  var fieldId = field.id || ('modalField-' + uid())
+  if (!field.id) field.id = fieldId
+  var errorId = fieldId + '-error'
+  var error = overlay.querySelector('#' + errorId)
+  if (!error) {
+    error = document.createElement('p')
+    error.id = errorId
+    error.className = 'modal-inline-error'
+    error.setAttribute('role', 'alert')
+    var fieldGroup = field.closest('.form-group')
+    ;(fieldGroup || overlay.querySelector('.modal-body') || overlay).appendChild(error)
+  }
+  error.textContent = message
+  field.setAttribute('aria-invalid', 'true')
+  field.setAttribute('aria-describedby', errorId)
+  field.oninput = function() {
+    field.removeAttribute('aria-invalid')
+    if (field.getAttribute('aria-describedby') === errorId) field.removeAttribute('aria-describedby')
+    error.remove()
+    field.oninput = null
+  }
+  field.focus()
+}
+
 const PHONE_GROUP_WIDE_MENTION = '全体成员'
 
 function phoneStoryConditionSummary(phoneData, item) {
@@ -223,7 +249,9 @@ function openPhoneStoryConditionEditor(phoneData, item, options) {
   var editor = ov.querySelector('.phone-story-condition-editor')
 
   function render() {
-    var html = '<p class="phone-story-condition-help">同一组满足任一项（或），不同组全部满足（且）后才显示。</p>'
+    var selectedConditionCount = groups.reduce(function(total, choiceIds) { return total + choiceIds.length }, 0)
+    var html = '<div class="phone-story-condition-summary"><strong>' + groups.length + ' 组条件</strong><span>' + (selectedConditionCount ? selectedConditionCount + ' 个选项' : '尚未选择选项') + '</span><small>组内任选一项 · 组间全部满足</small></div>'
+    html += '<p class="phone-story-condition-help">同一组满足任一项（或），不同组全部满足（且）后才显示。</p>'
     groups.forEach(function(choiceIds, groupIndex) {
       if (groupIndex) html += '<div class="condition-group-join" aria-hidden="true"><span>并且</span></div>'
       html += '<section class="condition-group" data-phone-condition-group-card="' + groupIndex + '">'
@@ -387,6 +415,7 @@ function openThreadReplyChoiceEditor(owner, options) {
   var originalChoices = Array.isArray(owner.choices) ? owner.choices : []
   var groups = originalChoices.map(function(choice) {
     return {
+      editorKey: choice.id || uid(),
       id: choice.id || '',
       text: choice.text || '',
       replyText: choice.replyText || '',
@@ -404,6 +433,7 @@ function openThreadReplyChoiceEditor(owner, options) {
               : (message.type === 'system-event' && message.eventKind === 'recall' ? 'recalled' : message.deliveryState)
             return {
               id:message.id || '',
+              editorKey:uid(),
               actorKey:String(senderId) + '::' + String(recalledMessage?.aliasId || message.aliasId || ''),
               text:recalledMessage?.text || message.originalText || message.text || message.content || '',
               likes:nonnegativeCount(recalledMessage?.likes ?? message.likes),
@@ -416,7 +446,10 @@ function openThreadReplyChoiceEditor(owner, options) {
         : []
     }
   })
-  if (!groups.length) groups.push({id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
+  if (!groups.length) groups.push({editorKey:uid(), id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
+  var expandedChoiceKeys = new Set([groups[0].editorKey])
+  var expandedFollowUpKeys = new Set()
+  var expandedFollowUpMessageKeys = new Set()
   var actors = Array.isArray(options.followUpActors) && options.followUpActors.length
     ? options.followUpActors
     : [{ id:options.defaultFollowUpSenderId || owner.contactId || 'self', aliasId:'', name:'角色' }]
@@ -435,10 +468,14 @@ function openThreadReplyChoiceEditor(owner, options) {
     }).join('')
   }
 
-  var body = '<div id="threadChoiceGroups"></div>'
+  function actorName(selectedKey) {
+    return actors.find(function(actor) { return actor.key === selectedKey })?.name || '原角色'
+  }
+
+  var body = '<div class="thread-choice-overview"><span><strong>按选项组织回复</strong><small>一次只展开一组选项；角色后续会按播放顺序折叠显示。</small></span><output id="threadChoiceCount"></output></div><div id="threadChoiceGroups"></div>'
   body += '<button type="button" id="threadChoiceAdd" class="btn btn-sm btn-outline" style="width:100%">+ 添加新选项组</button>'
   var overlay = modal(options.title || '编辑回复选项', body,
-    '<button type="button" id="threadChoiceSave" class="btn btn-primary btn-sm">保存</button><button type="button" id="threadChoiceDeleteAll" class="btn btn-ghost btn-sm">删除选项组</button><button type="button" id="threadChoiceCancel" class="btn btn-ghost btn-sm">取消</button>')
+    '<button type="button" id="threadChoiceDeleteAll" class="btn btn-ghost btn-sm thread-choice-delete-all">删除全部选项</button><button type="button" id="threadChoiceCancel" class="btn btn-ghost btn-sm">取消</button><button type="button" id="threadChoiceSave" class="btn btn-primary btn-sm">保存</button>')
   overlay.classList.add('thread-choice-modal')
   var list = overlay.querySelector('#threadChoiceGroups')
 
@@ -460,6 +497,7 @@ function openThreadReplyChoiceEditor(owner, options) {
       groups[index].followUps = Array.from(row.querySelectorAll('.thread-choice-followup-row')).map(function(followUpRow) {
         var followUp = {
           id:followUpRow.dataset.followupId || '',
+          editorKey:followUpRow.dataset.threadFollowupKey || uid(),
           actorKey:followUpRow.querySelector('.thread-choice-followup-sender')?.value || String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::',
           text:followUpRow.querySelector('.thread-choice-followups')?.value || '',
           likes:options.showLikeCounts === true ? nonnegativeCount(followUpRow.querySelector('.thread-choice-followup-likes')?.value) : 0
@@ -479,17 +517,23 @@ function openThreadReplyChoiceEditor(owner, options) {
   }
 
   function render() {
+    var count = overlay.querySelector('#threadChoiceCount')
+    if (count) count.textContent = groups.length + ' 组选项'
     list.innerHTML = groups.map(function(group, index) {
       var mentionScopeAttr = options.allowGroupWideMention === true ? ' data-phone-group-mention="true"' : ''
       var safeChoiceImage = isSafeImageUrl(group.imageUrl) ? group.imageUrl.trim() : ''
       var defaultPace = normalizeChatReplyPace(group.replyPace)
-      var optionalSettingCount = (safeChoiceImage ? 1 : 0) + (group.silent ? 1 : 0) + (group.endRound ? 1 : 0) + (defaultPace !== 'instant' ? 1 : 0) + (nonnegativeCount(group.replyLikes) > 0 ? 1 : 0)
-      var html = '<section class="thread-choice-row" data-thread-choice-index="' + index + '">'
-      html += '<header class="thread-choice-row-head"><strong>选项 ' + (index + 1) + '</strong><button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除选项 ' + (index + 1) + '">删除</button></header>'
+      var optionalSettingCount = (safeChoiceImage ? 1 : 0) + (group.silent ? 1 : 0) + (group.endRound ? 1 : 0) + (defaultPace !== 'normal' ? 1 : 0) + (nonnegativeCount(group.replyLikes) > 0 ? 1 : 0)
+      var followUpCount = (group.followUps || []).length
+      var summaryTitle = String(group.text || '').trim() || '未命名选项'
+      var summaryMeta = followUpCount + ' 条角色后续' + (optionalSettingCount ? ' · ' + optionalSettingCount + ' 项附加设置' : '')
+      var html = '<details class="thread-choice-row" data-thread-choice-index="' + index + '" data-thread-choice-key="' + escapeHtmlAttribute(group.editorKey) + '"' + (expandedChoiceKeys.has(group.editorKey) ? ' open' : '') + '>'
+      html += '<summary class="thread-choice-row-summary"><span class="thread-choice-summary-index">' + String(index + 1).padStart(2, '0') + '</span><span class="thread-choice-summary-copy"><strong class="thread-choice-summary-title">' + esc(summaryTitle) + '</strong><small>' + esc(summaryMeta) + '</small></span><span class="thread-choice-summary-action">编辑</span></summary>'
+      html += '<div class="thread-choice-row-body"><header class="thread-choice-row-head"><strong>读者选择与发送</strong><button type="button" class="thread-choice-remove" data-thread-choice-remove="' + index + '" aria-label="删除选项 ' + (index + 1) + '">删除这个选项</button></header>'
       html += '<div class="thread-choice-primary"><label><span>选项文字</span><input class="thread-choice-text form-input"' + mentionScopeAttr + ' value="' + escAttr(group.text) + '" placeholder="读者在按钮上看到的内容"></label>'
       var replyInputId = 'threadChoiceReply-' + index
       html += '<label for="' + replyInputId + '"><span>发送内容</span><input id="' + replyInputId + '" class="thread-choice-reply form-input"' + mentionScopeAttr + ' value="' + escAttr(group.replyText) + '" placeholder="留空则与选项文字相同"' + (group.silent ? ' disabled' : '') + '></label></div>'
-      html += '<details class="thread-choice-more"' + (optionalSettingCount > 0 ? ' open' : '') + '><summary><span>图片与更多设置</span><small>' + (optionalSettingCount > 0 ? '已设置 ' + optionalSettingCount + ' 项' : '可选') + '</small></summary><div class="thread-choice-more-body">'
+      html += '<details class="thread-choice-more"><summary><span>图片与更多设置</span><small>' + (optionalSettingCount > 0 ? '已设置 ' + optionalSettingCount + ' 项' : '可选') + '</small></summary><div class="thread-choice-more-body">'
       html += '<div class="thread-choice-image-field"><label class="form-label" for="threadChoiceImage-' + index + '">回复图片</label><div class="thread-choice-image-controls"><input id="threadChoiceImage-' + index + '" class="thread-choice-image-url form-input" value="' + escapeHtmlAttribute(group.imageUrl || '') + '" placeholder="粘贴图片链接"><label class="thread-choice-image-file-button btn btn-outline btn-sm">选择图片<input class="thread-choice-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden></label><button type="button" class="thread-choice-image-clear btn btn-ghost btn-sm">清除</button></div><div class="form-hint">有图片时，读者会发送图片；文字只作选项说明。</div><figure class="thread-choice-image-preview"' + (safeChoiceImage ? '' : ' hidden') + '><img' + (safeChoiceImage ? ' src="' + escapeHtmlAttribute(safeChoiceImage) + '"' : '') + ' alt="第 ' + (index + 1) + ' 个选项的图片预览"></figure></div>'
       if (options.allowSilent === true || options.allowEndRound === true) html += '<div class="thread-choice-behavior-list">'
       if (options.allowSilent === true) html += '<label class="thread-choice-behavior"><input type="checkbox" class="thread-choice-silent"' + (group.silent ? ' checked' : '') + '><span><strong>沉默</strong><small>不发送读者气泡，直接触发后续</small></span></label>'
@@ -500,47 +544,68 @@ function openThreadReplyChoiceEditor(owner, options) {
       if (options.showLikeCounts === true) html += '<label><span>读者回复点赞数</span><input class="thread-choice-reply-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(group.replyLikes) + '"></label>'
       if (options.showReplyPace === true || options.showLikeCounts === true) html += '</div>'
       html += '</div></details>'
-      html += '<div class="thread-choice-followup-head"><span>角色后续 <small>' + (group.followUps || []).length + ' 条</small></span><button type="button" data-thread-followup-add="' + index + '">＋ 添加消息</button></div>'
+      html += '<details class="thread-choice-followup-section"' + (expandedFollowUpKeys.has(group.editorKey) ? ' open' : '') + '><summary><span>角色后续 <small>' + followUpCount + ' 条</small></span><span class="thread-choice-followup-summary-action">' + (followUpCount ? '展开编辑' : '可选') + '</span></summary><div class="thread-choice-followup-body">'
+      html += '<div class="thread-choice-followup-head"><span>按播放顺序排列</span><button type="button" data-thread-followup-add="' + index + '">＋ 添加消息</button></div>'
       html += '<div class="thread-choice-followup-list">'
       if (!(group.followUps || []).length) html += '<p class="thread-choice-followup-empty">还没有后续消息</p>'
       ;(group.followUps || []).forEach(function(followUp, followUpIndex) {
-        html += '<div class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '"><div class="thread-choice-followup-main"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input"' + mentionScopeAttr + ' value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
+        if (!followUp.editorKey) followUp.editorKey = uid()
+        var hasCustomFollowUpSettings = options.showReplyPace === true && (normalizeChatFollowUpDeliveryState(followUp.deliveryState) !== 'normal' || (followUp.replyPace && followUp.replyPace !== 'inherit') || normalizeChatMessageRevealMode(followUp.revealMode) !== 'stream' || followUp.delayBeforeMs != null)
+        var followUpSummary = String(followUp.text || '').trim() || '未填写消息内容'
+        html += '<details class="thread-choice-followup-row' + (options.showLikeCounts === true ? ' has-like-count' : '') + '" data-followup-id="' + escapeHtmlAttribute(followUp.id || '') + '" data-thread-followup-key="' + escapeHtmlAttribute(followUp.editorKey) + '"' + (expandedFollowUpMessageKeys.has(followUp.editorKey) ? ' open' : '') + '><summary class="thread-choice-followup-row-summary"><span class="thread-choice-followup-index">' + String(followUpIndex + 1).padStart(2, '0') + '</span><span class="thread-choice-followup-summary-copy"><strong>' + esc(actorName(followUp.actorKey)) + '</strong><small>' + esc(followUpSummary) + '</small></span><span class="thread-choice-followup-row-action">' + (hasCustomFollowUpSettings ? '已自定义' : '编辑') + '</span></summary><div class="thread-choice-followup-editor"><div class="thread-choice-followup-main"><select class="thread-choice-followup-sender" aria-label="第 ' + (followUpIndex + 1) + ' 条后续消息角色">' + actorOptions(followUp.actorKey) + '</select><input class="thread-choice-followups form-input"' + mentionScopeAttr + ' value="' + escapeHtmlAttribute(followUp.text || '') + '" placeholder="角色回复内容">'
         if (options.showLikeCounts === true) html += '<label class="thread-choice-followup-like"><span>赞</span><input class="thread-choice-followup-likes form-input" type="number" min="0" inputmode="numeric" value="' + nonnegativeCount(followUp.likes) + '" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复初始点赞数"></label>'
         html += '<button type="button" data-thread-followup-remove="' + followUpIndex + '" aria-label="删除这条角色回复">×</button></div>'
         if (options.showReplyPace === true) {
-          var hasCustomFollowUpSettings = normalizeChatFollowUpDeliveryState(followUp.deliveryState) !== 'normal' || (followUp.replyPace && followUp.replyPace !== 'inherit') || normalizeChatMessageRevealMode(followUp.revealMode) !== 'stream' || followUp.delayBeforeMs != null
           html += '<details class="thread-choice-followup-more"' + (hasCustomFollowUpSettings ? ' open' : '') + '><summary>发送设置 <small>' + (hasCustomFollowUpSettings ? '已自定义' : '默认') + '</small></summary><div class="thread-choice-followup-settings"><label><span>消息状态</span><select class="thread-choice-followup-delivery" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复消息状态">' + CHAT_FOLLOW_UP_DELIVERY_STATES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatFollowUpDeliveryState(followUp.deliveryState) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'
           html += '<label><span>单条节奏</span><select class="thread-choice-followup-pace" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复节奏"><option value="inherit"' + (followUp.replyPace === 'inherit' ? ' selected' : '') + '>继承本组选项</option>' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === followUp.replyPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>出现方式</span><select class="thread-choice-followup-reveal" aria-label="第 ' + (followUpIndex + 1) + ' 条角色回复出现方式">' + CHAT_MESSAGE_REVEAL_MODES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === normalizeChatMessageRevealMode(followUp.revealMode) ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label><label><span>发送前等待（秒）</span><input class="thread-choice-followup-delay" type="number" min="0" max="60" step="0.1" value="' + (followUp.delayBeforeMs == null ? '' : escapeHtmlAttribute(formatChatMessageDelaySeconds(followUp.delayBeforeMs))) + '" placeholder="默认 0.8"></label></div>'
           html += '</details>'
         }
-        html += '</div>'
+        html += '</div></details>'
       })
-      html += '</div>'
-      html += '</section>'
+      html += '</div></div></details>'
+      html += '</div></details>'
       return html
     }).join('')
     list.querySelectorAll('[data-thread-choice-remove]').forEach(function(button) {
       button.onclick = function() {
         collect()
-        groups.splice(Number(button.dataset.threadChoiceRemove), 1)
-        if (!groups.length) groups.push({id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
+        var removeIndex = Number(button.dataset.threadChoiceRemove)
+        var removed = groups[removeIndex]
+        if (removed) {
+          expandedChoiceKeys.delete(removed.editorKey)
+          expandedFollowUpKeys.delete(removed.editorKey)
+        }
+        groups.splice(removeIndex, 1)
+        if (!groups.length) groups.push({editorKey:uid(), id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
+        expandedChoiceKeys.clear()
+        expandedChoiceKeys.add(groups[Math.min(removeIndex, groups.length - 1)].editorKey)
         render()
       }
     })
     list.querySelectorAll('[data-thread-followup-add]').forEach(function(button) {
       button.onclick = function() {
         collect()
-        var group = groups[Number(button.dataset.threadFollowupAdd)]
+        var groupIndex = Number(button.dataset.threadFollowupAdd)
+        var group = groups[groupIndex]
         if (!group) return
-        group.followUps.push({ id:'', actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit', revealMode:'stream', delayBeforeMs:null })
+        var nextFollowUp = { id:'', editorKey:uid(), actorKey:String(options.defaultFollowUpSenderId || owner.contactId || 'self') + '::', text:'', likes:0, deliveryState:'normal', replyPace:'inherit', revealMode:'stream', delayBeforeMs:null }
+        group.followUps.push(nextFollowUp)
+        expandedChoiceKeys.clear()
+        expandedChoiceKeys.add(group.editorKey)
+        expandedFollowUpKeys.add(group.editorKey)
+        expandedFollowUpMessageKeys.clear()
+        expandedFollowUpMessageKeys.add(nextFollowUp.editorKey)
         render()
+        list.querySelector('[data-thread-choice-index="' + groupIndex + '"] .thread-choice-followup-row:last-child .thread-choice-followups')?.focus()
       }
     })
     list.querySelectorAll('[data-thread-followup-remove]').forEach(function(button) {
       button.onclick = function() {
         var choiceRow = button.closest('.thread-choice-row')
         var groupIndex = Number(choiceRow?.dataset.threadChoiceIndex)
+        var followUpRow = button.closest('.thread-choice-followup-row')
         collect()
+        if (followUpRow?.dataset.threadFollowupKey) expandedFollowUpMessageKeys.delete(followUpRow.dataset.threadFollowupKey)
         groups[groupIndex]?.followUps.splice(Number(button.dataset.threadFollowupRemove), 1)
         render()
       }
@@ -555,6 +620,52 @@ function openThreadReplyChoiceEditor(owner, options) {
     })
     list.querySelectorAll('.thread-choice-row').forEach(function(row) {
       var groupIndex = Number(row.dataset.threadChoiceIndex)
+      var groupKey = row.dataset.threadChoiceKey
+      row.addEventListener('toggle', function() {
+        if (row.open) {
+          expandedChoiceKeys.clear()
+          expandedChoiceKeys.add(groupKey)
+          list.querySelectorAll('.thread-choice-row').forEach(function(otherRow) {
+            if (otherRow !== row) otherRow.open = false
+          })
+        } else {
+          expandedChoiceKeys.delete(groupKey)
+        }
+      })
+      var followUpSection = row.querySelector('.thread-choice-followup-section')
+      followUpSection?.addEventListener('toggle', function() {
+        if (followUpSection.open) expandedFollowUpKeys.add(groupKey)
+        else expandedFollowUpKeys.delete(groupKey)
+      })
+      row.querySelectorAll('details.thread-choice-followup-row').forEach(function(followUpRow) {
+        var followUpKey = followUpRow.dataset.threadFollowupKey
+        followUpRow.addEventListener('toggle', function() {
+          if (followUpRow.open) {
+            expandedFollowUpMessageKeys.clear()
+            expandedFollowUpMessageKeys.add(followUpKey)
+            row.querySelectorAll('details.thread-choice-followup-row').forEach(function(otherRow) {
+              if (otherRow !== followUpRow) otherRow.open = false
+            })
+          } else {
+            expandedFollowUpMessageKeys.delete(followUpKey)
+          }
+        })
+        var sender = followUpRow.querySelector('.thread-choice-followup-sender')
+        var message = followUpRow.querySelector('.thread-choice-followups')
+        sender?.addEventListener('change', function() {
+          var actor = followUpRow.querySelector('.thread-choice-followup-summary-copy strong')
+          if (actor) actor.textContent = actorName(sender.value)
+        })
+        message?.addEventListener('input', function() {
+          var summary = followUpRow.querySelector('.thread-choice-followup-summary-copy small')
+          if (summary) summary.textContent = message.value.trim() || '未填写消息内容'
+        })
+      })
+      var choiceTextInput = row.querySelector('.thread-choice-text')
+      choiceTextInput?.addEventListener('input', function() {
+        var title = row.querySelector('.thread-choice-summary-title')
+        if (title) title.textContent = choiceTextInput.value.trim() || '未命名选项'
+      })
       var imageInput = row.querySelector('.thread-choice-image-url')
       var imageFile = row.querySelector('.thread-choice-image-file')
       var clearButton = row.querySelector('.thread-choice-image-clear')
@@ -599,8 +710,12 @@ function openThreadReplyChoiceEditor(owner, options) {
 
   overlay.querySelector('#threadChoiceAdd').onclick = function() {
     collect()
-    groups.push({id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []})
+    var nextGroup = {editorKey:uid(), id: '', text: '', replyText: '', imageUrl:'', replyPace:'normal', replyLikes:0, followUps: []}
+    groups.push(nextGroup)
+    expandedChoiceKeys.clear()
+    expandedChoiceKeys.add(nextGroup.editorKey)
     render()
+    list.querySelector('.thread-choice-row:last-child .thread-choice-text')?.focus()
   }
   overlay.querySelector('#threadChoiceCancel').onclick = function() { overlay.remove() }
   overlay.querySelector('#threadChoiceDeleteAll').onclick = function() {
@@ -2482,7 +2597,9 @@ function renderPfContacts(contacts, sortMode) {
     h += '<button type="button" class="ct-drag" data-ct-drag="' + escapeHtmlAttribute(c.id) + '" aria-label="拖动调整联系人顺序" title="自定义排序">↕</button>'
     h += '<button class="ct-del" data-ct-del data-ct-idx="' + i + '" title="删除">\u2715</button>'
     h += '</div>'
+    h += '<details class="ct-contact-details" data-contact-details><summary><span><strong>编辑联系人资料</strong><small>' + esc(c.alias || c.note || '身份、头像与互动设置') + '</small></span><span class="ct-contact-details-action">展开</span></summary><div class="ct-contact-details-body">'
     // Name card: row1 alias+note, row2 msgId+forumId
+    h += '<details class="ct-contact-section"><summary>身份与备注</summary><div class="ct-contact-section-body">'
     h += '<div class="ct-sub-row">'
     h += '<span class="ct-sub-label">别名</span>'
     h += '<input class="ct-sub-input" data-ct-alias data-ct-idx="' + i + '" value="' + esc(c.alias || '') + '" placeholder="昵称">'
@@ -2495,23 +2612,26 @@ function renderPfContacts(contacts, sortMode) {
     h += '<span class="ct-sub-label" style="margin-left:4px">论坛ID</span>'
     h += '<input class="ct-sub-input" data-ct-forum data-ct-idx="' + i + '" value="' + esc(c.forumId || '') + '" placeholder="论坛ID">'
     h += '</div>'
+    h += '</div></details>'
+    h += '<details class="ct-contact-section"><summary>头像与通话</summary><div class="ct-contact-section-body">'
     h += '<div class="ct-sub-row ct-call-bg-row">'
     h += '<label class="ct-call-bg-field"><span class="ct-sub-label">视频通话背景图</span>'
     h += '<input class="ct-sub-input" data-ct-face data-ct-idx="' + i + '" value="' + esc(c.faceUrl || '') + '" placeholder="粘贴图片链接"></label>'
     h += '<span class="ct-field-hint">用于该角色发起视频通话时的画面背景；语音通话不会使用。</span>'
     h += '</div>'
     h += '<div class="ct-sub-row ct-channel-row"><label><span class="ct-sub-label">消息头像</span><input class="ct-sub-input" data-ct-message-avatar data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.messageAvatarUrl || '') + '" placeholder="留空沿用名片头像"></label><label><span class="ct-sub-label">论坛头像</span><input class="ct-sub-input" data-ct-forum-avatar data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.forumAvatarUrl || '') + '" placeholder="留空沿用名片头像"></label><label><span class="ct-sub-label">论坛 IP 属地</span><input class="ct-sub-input" data-ct-forum-ip data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.forumIpLocation || '') + '" placeholder="例如：上海"></label></div>'
+    h += '</div></details>'
     var readerAddMode = ['hidden', 'direct', 'request'].includes(c.readerAddMode) ? c.readerAddMode : 'existing'
     var readerAddOutcome = ['accepted', 'declined', 'pending'].includes(c.readerAddOutcome) ? c.readerAddOutcome : 'accepted'
-    h += '<section class="ct-reader-add-section" data-ct-reader-add data-ct-idx="' + i + '" data-reader-add-mode="' + readerAddMode + '" data-reader-add-outcome="' + readerAddOutcome + '">'
-    h += '<div class="ct-reader-add-head"><span><strong>读者主动添加</strong><small>控制联系人 App 中的搜索与好友申请</small></span><label><span class="sr-only">读者添加方式</span><select data-ct-reader-add-mode data-ct-idx="' + i + '"><option value="existing"' + (readerAddMode === 'existing' ? ' selected' : '') + '>已在联系人中</option><option value="direct"' + (readerAddMode === 'direct' ? ' selected' : '') + '>搜索后直接添加</option><option value="request"' + (readerAddMode === 'request' ? ' selected' : '') + '>搜索后发送申请</option><option value="hidden"' + (readerAddMode === 'hidden' ? ' selected' : '') + '>不在联系人 App 出现</option></select></label></div>'
+    h += '<details class="ct-reader-add-section" data-ct-reader-add data-ct-idx="' + i + '" data-reader-add-mode="' + readerAddMode + '" data-reader-add-outcome="' + readerAddOutcome + '"><summary>读者添加</summary><div class="ct-contact-section-body">'
+    h += '<div class="ct-reader-add-head"><span><small>控制联系人 App 中的搜索与好友申请</small></span><label><span class="sr-only">读者添加方式</span><select data-ct-reader-add-mode data-ct-idx="' + i + '"><option value="existing"' + (readerAddMode === 'existing' ? ' selected' : '') + '>已在联系人中</option><option value="direct"' + (readerAddMode === 'direct' ? ' selected' : '') + '>搜索后直接添加</option><option value="request"' + (readerAddMode === 'request' ? ' selected' : '') + '>搜索后发送申请</option><option value="hidden"' + (readerAddMode === 'hidden' ? ' selected' : '') + '>不在联系人 App 出现</option></select></label></div>'
     h += '<p class="ct-reader-add-guide" data-reader-add-guide></p>'
     h += '<div class="ct-reader-add-outcome" data-reader-add-outcome-settings><label><span>申请结果</span><select data-ct-reader-add-outcome data-ct-idx="' + i + '"><option value="accepted"' + (readerAddOutcome === 'accepted' ? ' selected' : '') + '>对方接受</option><option value="declined"' + (readerAddOutcome === 'declined' ? ' selected' : '') + '>对方拒绝</option><option value="pending"' + (readerAddOutcome === 'pending' ? ' selected' : '') + '>保持申请中</option></select></label></div>'
     h += '<label class="ct-reader-add-copy" data-reader-add-copy="accepted"><span>添加成功提示</span><input data-ct-reader-add-accepted data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.readerAddAcceptedText || '') + '" placeholder="例如：对方通过了你的好友申请。"></label>'
     h += '<label class="ct-reader-add-copy" data-reader-add-copy="declined"><span>拒绝提示</span><input data-ct-reader-add-declined data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.readerAddDeclinedText || '') + '" placeholder="例如：对方暂时没有同意。"></label>'
     h += '<label class="ct-reader-add-copy" data-reader-add-copy="pending"><span>申请中提示</span><input data-ct-reader-add-pending data-ct-idx="' + i + '" value="' + escapeHtmlAttribute(c.readerAddPendingText || '') + '" placeholder="例如：好友申请已发送，请等待回复。"></label>'
-    h += '</section>'
-    h += '<section class="ct-account-section"><div class="ct-account-head"><span class="ct-account-title">论坛身份 <small>' + aliases.length + ' 个小号</small></span><button type="button" class="btn btn-sm btn-outline ct-account-add" data-ct-account-add data-ct-idx="' + i + '">＋ 添加小号</button></div><p class="ct-account-guide">小号只用于论坛身份；论坛发帖与评论时可以选择主号或这里的小号。</p>'
+    h += '</div></details>'
+    h += '<details class="ct-account-section"><summary>论坛身份 <small>' + aliases.length + ' 个小号</small></summary><div class="ct-contact-section-body"><div class="ct-account-head"><button type="button" class="btn btn-sm btn-outline ct-account-add" data-ct-account-add data-ct-idx="' + i + '">＋ 添加小号</button></div><p class="ct-account-guide">小号只用于论坛身份；论坛发帖与评论时可以选择主号或这里的小号。</p>'
     aliases.forEach(function(account, accountIndex) {
       var accountName = account.name || account.forumId || '小号'
       h += '<div class="ct-account-row" data-ct-account-row data-ct-idx="' + i + '" data-account-idx="' + accountIndex + '">'
@@ -2519,7 +2639,8 @@ function renderPfContacts(contacts, sortMode) {
       h += '<div class="ct-account-fields"><label><span>显示名称</span><input data-ct-account-name value="' + escapeHtmlAttribute(account.name || '') + '" placeholder="例如：匿名小号"></label><label><span>论坛 ID</span><input data-ct-account-forum value="' + escapeHtmlAttribute(account.forumId || '') + '" placeholder="帖子中显示的 ID"></label><label><span>头像链接</span><input data-ct-account-avatar value="' + escapeHtmlAttribute(account.avatarUrl || '') + '" placeholder="https://..."></label><label><span>IP 属地</span><input data-ct-account-ip value="' + escapeHtmlAttribute(account.forumIpLocation || '') + '" placeholder="例如：北京"></label></div>'
       h += '</div>'
     })
-    h += '</section>'
+    h += '</div></details>'
+    h += '</div></details>'
     h += '</div>'
   }
 
@@ -2553,7 +2674,20 @@ function syncContactReaderAddSettings(root) {
   })
 }
 
+function bindContactProgressiveDisclosure(root) {
+  var editors = Array.from(root?.querySelectorAll('.ct-contact-details') || [])
+  editors.forEach(function(details) {
+    details.ontoggle = function() {
+      if (!details.open) return
+      editors.forEach(function(other) {
+        if (other !== details) other.open = false
+      })
+    }
+  })
+}
+
 function bindContactListSearch(root) {
+  bindContactProgressiveDisclosure(root)
   var input = root && root.querySelector('[data-contact-search]')
   if (!input) return
   var status = root.querySelector('.ct-search-status')
@@ -3278,10 +3412,11 @@ function openGalleryEditor(frame, wid, contact, pd) {
     var ov = modal(isEditing ? '编辑照片' : '新建照片',
       '<div class="form-group"><label class="form-label">描述（文字模拟图片）</label><input id="gpDesc" class="form-input" placeholder="例如：蓝色天空下的樱花树"></div>' +
       '<div class="form-group"><label class="form-label">图片URL（可选）</label>' + IMGHOST_HINT + '<input id="gpUrl" class="form-input" placeholder="https://..."></div>' +
+      '<details class="phone-form-more"><summary><span>归档与显示设置</span><small>时间、相册</small></summary><div class="phone-form-more-body">' +
       '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="gpTime" class="form-input" placeholder="留空则不显示"></div>' +
       '<div class="form-group"><label class="form-label">放入相册（可选）</label><select id="gpAlbum" class="form-select"><option value="">未归类</option>' +
       contactAlbums.map(function(a) { return '<option value="' + a.id + '">' + esc(a.name) + '</option>' }).join('') +
-      '</select></div>',
+      '</select></div></div></details>',
       '<button id="gpSave" class="btn btn-primary btn-sm">保存</button><button id="gpCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     var saveBtn = ov.querySelector('#gpSave')
@@ -3299,7 +3434,7 @@ function openGalleryEditor(frame, wid, contact, pd) {
       var url = ov.querySelector('#gpUrl').value.trim()
       var time = ov.querySelector('#gpTime').value.trim()
       var albumId = ov.querySelector('#gpAlbum').value || null
-      if (!desc && !url) return
+      if (!desc && !url) { showModalInlineError(ov, ov.querySelector('#gpDesc'), '请填写照片描述或图片链接'); return }
       if (editingPhoto) {
         editingPhoto.albumId = albumId
         editingPhoto.caption = desc
@@ -3328,7 +3463,7 @@ function openGalleryEditor(frame, wid, contact, pd) {
     if (editingAlbum) ov.querySelector('#gaName').value = editingAlbum.name || ''
     if (saveBtn) saveBtn.onclick = function() {
       var name = ov.querySelector('#gaName').value.trim()
-      if (!name) return
+      if (!name) { showModalInlineError(ov, ov.querySelector('#gaName'), '请填写相册名称'); return }
       if (editingAlbum) editingAlbum.name = name
       else albums.push({ id: uid(), contactId: contact.id, name: name, coverPhotoId: null, time: new Date().toLocaleString() })
       savePhotoData()
@@ -3554,10 +3689,11 @@ function openShoppingEditor(frame, wid, contact, pd) {
     var ov = modal('添加商品',
       '<div class="form-group"><label class="form-label">商品名称</label><input id="spName" class="form-input" placeholder="商品名"></div>' +
       '<div class="form-group"><label class="form-label">价格</label><input id="spPrice" class="form-input" type="number" step="0.01" placeholder="0.00"></div>' +
+      '<details class="phone-form-more"><summary><span>更多商品设置</span><small>款式、店铺、时间与图片</small></summary><div class="phone-form-more-body">' +
       '<div class="form-group"><label class="form-label">款式</label><input id="spStyle" class="form-input" placeholder="例如：白色 / L码"></div>' +
       '<div class="form-group"><label class="form-label">店铺</label><input id="spShop" class="form-input" placeholder="店铺名"></div>' +
       '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="spTime" class="form-input" value="' + escapeHtmlAttribute(new Date().toLocaleString()) + '" placeholder="留空则不显示"></div>' +
-      '<div class="form-group"><label class="form-label">图片URL（可选）</label>' + IMGHOST_HINT + '<input id="spImg" class="form-input" placeholder="https://..."></div>',
+      '<div class="form-group"><label class="form-label">图片URL（可选）</label>' + IMGHOST_HINT + '<input id="spImg" class="form-input" placeholder="https://..."></div></div></details>',
       '<button id="spSave" class="btn btn-primary btn-sm">保存</button><button id="spCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     var saveBtn = ov.querySelector('#spSave')
@@ -3565,7 +3701,7 @@ function openShoppingEditor(frame, wid, contact, pd) {
     if (saveBtn) saveBtn.onclick = function() {
       var name = ov.querySelector('#spName').value.trim()
       var price = parseFloat(ov.querySelector('#spPrice').value) || 0
-      if (!name) return
+      if (!name) { showModalInlineError(ov, ov.querySelector('#spName'), '请填写商品名称'); return }
       items.push({
         id: uid(), contactId: contact.id, name: name,
         price: Math.round(price * 100) / 100,
@@ -3623,17 +3759,18 @@ function openShoppingEditor(frame, wid, contact, pd) {
     var ov = modal('编辑商品',
       '<div class="form-group"><label class="form-label">商品名称</label><input id="spName" class="form-input" value="' + esc(it.name || '') + '" placeholder="商品名"></div>' +
       '<div class="form-group"><label class="form-label">价格</label><input id="spPrice" class="form-input" type="number" step="0.01" value="' + fmtPrice(it.price) + '" placeholder="0.00"></div>' +
+      '<details class="phone-form-more"><summary><span>更多商品设置</span><small>款式、店铺、时间与图片</small></summary><div class="phone-form-more-body">' +
       '<div class="form-group"><label class="form-label">款式</label><input id="spStyle" class="form-input" value="' + esc(it.style || '') + '" placeholder="例如：白色 / L码"></div>' +
       '<div class="form-group"><label class="form-label">店铺</label><input id="spShop" class="form-input" value="' + esc(it.shop || '') + '" placeholder="店铺名"></div>' +
       '<div class="form-group"><label class="form-label">显示时间（可选）</label><input id="spTime" class="form-input" value="' + escapeHtmlAttribute(it.time || '') + '" placeholder="留空则不显示"></div>' +
-      '<div class="form-group"><label class="form-label">图片URL（可选）</label>' + IMGHOST_HINT + '<input id="spImg" class="form-input" value="' + esc(it.imageUrl || '') + '" placeholder="https://..."></div>',
+      '<div class="form-group"><label class="form-label">图片URL（可选）</label>' + IMGHOST_HINT + '<input id="spImg" class="form-input" value="' + esc(it.imageUrl || '') + '" placeholder="https://..."></div></div></details>',
       '<button id="spSave" class="btn btn-primary btn-sm">保存</button><button id="spCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     var saveBtn = ov.querySelector('#spSave')
     var cancelBtn = ov.querySelector('#spCancel')
     if (saveBtn) saveBtn.onclick = function() {
       var name = ov.querySelector('#spName').value.trim()
-      if (!name) return
+      if (!name) { showModalInlineError(ov, ov.querySelector('#spName'), '请填写商品名称'); return }
       it.name = name
       it.price = Math.round((parseFloat(ov.querySelector('#spPrice').value) || 0) * 100) / 100
       it.style = ov.querySelector('#spStyle').value.trim()
@@ -3999,8 +4136,9 @@ function openForumEditor(frame, wid, contact, pd) {
     var ov = modal('新建NPC',
       '<div class="form-group"><label class="form-label">类型</label><select id="npType" class="form-select"><option value="npc">普通NPC</option><option value="momo">momo</option><option value="userxx">用户xxxxx</option></select></div>' +
       '<div class="form-group"><label class="form-label">名称</label><input id="npName" class="form-input" placeholder="名称"></div>' +
+      '<details class="phone-form-more"><summary><span>身份外观</span><small>头像、IP 属地</small></summary><div class="phone-form-more-body">' +
       '<div class="form-group"><label class="form-label">头像URL（可选）</label>' + IMGHOST_HINT.replace('推荐图床', '') + '<input id="npAvatar" class="form-input" placeholder="https://..."></div>' +
-      '<div class="form-group"><label class="form-label">IP 属地（可选）</label><input id="npIpLocation" class="form-input" placeholder="例如：广东"></div>',
+      '<div class="form-group"><label class="form-label">IP 属地（可选）</label><input id="npIpLocation" class="form-input" placeholder="例如：广东"></div></div></details>',
       '<button id="npSave" class="btn btn-primary btn-sm">保存</button><button id="npCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     var typeSel = ov.querySelector('#npType')
@@ -4024,7 +4162,7 @@ function openForumEditor(frame, wid, contact, pd) {
 
     ov.querySelector('#npSave').onclick = function() {
       var name = nameEl.value.trim()
-      if (!name) return
+      if (!name) { showModalInlineError(ov, nameEl, '请填写 NPC 名称'); return }
       npcs.push({
         id: uid(), type: typeSel.value, name: name,
         avatarUrl: avatarEl.value.trim(),
@@ -4044,13 +4182,16 @@ function openForumEditor(frame, wid, contact, pd) {
     var ov = modal('编辑NPC',
       '<div class="form-group"><label class="form-label">类型</label><select id="npType" class="form-select"><option value="npc"' + (n.type === 'npc' ? ' selected' : '') + '>普通NPC</option><option value="momo"' + (n.type === 'momo' ? ' selected' : '') + '>momo</option><option value="userxx"' + (n.type === 'userxx' ? ' selected' : '') + '>用户xxxxx</option></select></div>' +
       '<div class="form-group"><label class="form-label">名称</label><input id="npName" class="form-input" value="' + esc(n.name) + '"></div>' +
+      '<details class="phone-form-more"><summary><span>身份外观</span><small>头像、IP 属地</small></summary><div class="phone-form-more-body">' +
       '<div class="form-group"><label class="form-label">头像URL</label>' + IMGHOST_HINT.replace('推荐图床', '') + '<input id="npAvatar" class="form-input" value="' + esc(n.avatarUrl || '') + '"></div>' +
-      '<div class="form-group"><label class="form-label">IP 属地（可选）</label><input id="npIpLocation" class="form-input" value="' + escAttr(n.ipLocation || '') + '" placeholder="例如：广东"></div>',
+      '<div class="form-group"><label class="form-label">IP 属地（可选）</label><input id="npIpLocation" class="form-input" value="' + escAttr(n.ipLocation || '') + '" placeholder="例如：广东"></div></div></details>',
       '<button id="npSave" class="btn btn-primary btn-sm">保存</button><button id="npCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     ov.querySelector('#npSave').onclick = function() {
       n.type = ov.querySelector('#npType').value
-      n.name = ov.querySelector('#npName').value.trim() || n.name
+      var nextName = ov.querySelector('#npName').value.trim()
+      if (!nextName) { showModalInlineError(ov, ov.querySelector('#npName'), '请填写 NPC 名称'); return }
+      n.name = nextName
       n.avatarUrl = ov.querySelector('#npAvatar').value.trim()
       n.ipLocation = ov.querySelector('#npIpLocation').value.trim()
       saveData()
@@ -4139,16 +4280,17 @@ function openForumEditor(frame, wid, contact, pd) {
     selectIdentity(function(identity) {
       var conditionDraft = {}
       var ov = modal('发帖',
+        '<div class="forum-post-identity"><span>发帖身份</span><strong>' + esc(identity.name) + '</strong></div>' +
         '<div class="form-group"><label class="form-label">标题</label><input id="fpTitle" class="form-input" placeholder="帖子标题"></div>' +
         '<div class="form-group"><label class="form-label" for="fpContent">内容</label><textarea id="fpContent" class="form-textarea" placeholder="输入 @ 可选择提及对象" style="min-height:100px"></textarea></div>' +
-        '<div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
+        '<details class="forum-post-more"><summary><span>发布设置</span><small>时间、图片与显示条件</small></summary><div class="forum-post-more-body"><div class="form-group"><label class="form-label">发帖时间（可选）</label><input id="fpTime" class="form-input" placeholder="不填写则不显示"></div>' +
         '<div class="form-group"><label class="form-label">显示评论数（可选）</label><input id="fpCommentCount" class="form-input" type="number" min="0" inputmode="numeric" placeholder="留空则按实际评论数显示"></div>' +
         '<div class="form-group"><label class="form-label">图片URL（可选）</label><input id="fpImg" class="form-input" placeholder="https://..."></div>' +
-        phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'new-post-condition') +
-        '<div><span style="font-size:.78rem;color:var(--c-text2)">发帖身份：' + esc(identity.name) + '</span></div>',
+        phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'new-post-condition') + '</div></details>',
         '<button id="fpSave" class="btn btn-primary btn-sm">发布</button><button id="fpCancel" class="btn btn-ghost btn-sm">取消</button>',
         undefined,
         { initialFocus:'#fpTitle' })
+      ov.classList.add('forum-post-editor-modal')
 
       ov.querySelector('#fpSave').onclick = function() {
         var title = ov.querySelector('#fpTitle').value.trim()
@@ -4184,14 +4326,16 @@ function openForumEditor(frame, wid, contact, pd) {
     var p = posts.find(function(x) { return x.id === postId })
     if (!p) return
     var conditionDraft = phoneStoryConditionDraft(p)
+    var postOptionalCount = (p.time ? 1 : 0) + (p.displayCommentCount == null ? 0 : 1) + (p.imageUrl ? 1 : 0) + (normalizePhoneStoryDisplayCondition(conditionDraft).all.length ? 1 : 0)
     var ov = modal('编辑帖子',
       '<div class="form-group"><label class="form-label" for="editPostTitle">标题</label><input id="editPostTitle" class="form-input" value="' + escAttr(p.title || '') + '"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostContent">主楼内容</label><textarea id="editPostContent" class="form-textarea" style="min-height:140px" placeholder="可使用回车分段；输入 @ 可提及">' + esc(p.content || '') + '</textarea><div class="form-hint">回车分段会在作者预览和读者端原样保留。</div></div>' +
-      '<div class="form-group"><label class="form-label" for="editPostTime">发帖时间（可选）</label><input id="editPostTime" class="form-input" value="' + escAttr(p.time || '') + '" placeholder="留空则不显示"></div>' +
+      '<details class="forum-post-more"><summary><span>发布设置</span><small>' + (postOptionalCount ? '已设置 ' + postOptionalCount + ' 项' : '可选') + '</small></summary><div class="forum-post-more-body"><div class="form-group"><label class="form-label" for="editPostTime">发帖时间（可选）</label><input id="editPostTime" class="form-input" value="' + escAttr(p.time || '') + '" placeholder="留空则不显示"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostCommentCount">显示评论数（可选）</label><input id="editPostCommentCount" class="form-input" type="number" min="0" inputmode="numeric" value="' + (p.displayCommentCount == null ? '' : escAttr(p.displayCommentCount)) + '" placeholder="留空则按实际评论数显示"></div>' +
       '<div class="form-group"><label class="form-label" for="editPostImg">图片 URL（可选）</label><input id="editPostImg" class="form-input" value="' + escAttr(p.imageUrl || '') + '" placeholder="https://..."></div>' +
-      phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'edit-post-condition'),
+      phoneStoryVisibilityFieldHtml(pd, conditionDraft, 'edit-post-condition') + '</div></details>',
       '<button id="editPostSave" class="btn btn-primary btn-sm">保存</button><button id="editPostCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.classList.add('forum-post-editor-modal')
     ov.querySelector('#editPostSave').onclick = function() {
       var title = ov.querySelector('#editPostTitle').value.trim()
       if (!title) return
@@ -5403,13 +5547,14 @@ function openMessagesEditor(frame, wid, pd) {
     var timeValue = moment ? moment.time || '' : new Date().toLocaleString()
     var ov = modal(editing ? '编辑动态' : '发动态',
       '<div class="form-group"><textarea id="moContent" class="form-textarea" placeholder="内容">' + esc(contentValue) + '</textarea></div>' +
-      '<div class="form-group"><label class="form-label">图片URL（多个用换行分隔）</label><textarea id="moImgs" class="form-textarea" style="min-height:50px" placeholder="https://...">' + esc(imageValue) + '</textarea></div>' +
       '<div class="form-group"><label class="form-label">发送者</label><select id="moSender" class="form-select">' + senderOptions + '</select></div>' +
-      '<div class="form-group"><label class="form-label">时间（可修改）</label><input id="moTime" class="form-input" value="' + escapeHtmlAttribute(timeValue) + '"></div>',
+      '<details class="phone-form-more"><summary><span>发布设置</span><small>图片、时间</small></summary><div class="phone-form-more-body">' +
+      '<div class="form-group"><label class="form-label">图片URL（多个用换行分隔）</label><textarea id="moImgs" class="form-textarea" style="min-height:50px" placeholder="https://...">' + esc(imageValue) + '</textarea></div>' +
+      '<div class="form-group"><label class="form-label">时间（可修改）</label><input id="moTime" class="form-input" value="' + escapeHtmlAttribute(timeValue) + '"></div></div></details>',
       '<button id="moSave" class="btn btn-primary btn-sm">' + (editing ? '保存' : '发布') + '</button><button id="moCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#moSave').onclick = function() {
       var content = ov.querySelector('#moContent').value.trim()
-      if (!content) return
+      if (!content) { showModalInlineError(ov, ov.querySelector('#moContent'), '请填写动态内容'); return }
       var senderId = ov.querySelector('#moSender').value
       var imgs = (ov.querySelector('#moImgs').value || '').split('\n').map(function(line) { return line.trim() }).filter(Boolean)
       var timeVal = ov.querySelector('#moTime').value.trim() || new Date().toLocaleString()
@@ -6016,6 +6161,7 @@ function openChatEditor(frame, wid, chatId, pd) {
     }
     var typeLabel = typeLabels[type] || '消息'
     var extraHtml = ''
+    var moreHtml = ''
     var contactOptionsHtml = contacts.map(function(contact) {
       return '<option value="' + escapeHtmlAttribute(contact.id) + '">' + esc(contactDisplayName(contact, 'messages')) + '</option>'
     }).join('')
@@ -6034,20 +6180,39 @@ function openChatEditor(frame, wid, chatId, pd) {
     else if (type === 'redpacket') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amRpAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">祝福语</label><input id="amRpMsg" class="form-input" placeholder="恭喜发财"></div>'
     else if (type === 'transfer') extraHtml = '<div class="form-group"><label class="form-label">金额</label><input id="amTrAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">备注</label><input id="amTrNote" class="form-input" placeholder="转账"></div>'
     else if (type === 'familycard') extraHtml = '<div class="form-group"><label class="form-label">亲属关系</label><input id="amFcRel" class="form-input" placeholder="例如：爸爸/妈妈/姐姐"><label class="form-label">金额</label><input id="amFcAmt" class="form-input" type="number" step="0.01" placeholder="0.00"></div>'
-    else if (type === 'takeaway') extraHtml = '<div class="form-group"><label class="form-label">商家</label><input id="amTkShop" class="form-input" placeholder="例如：春风小馆"><label class="form-label">订单内容</label><textarea id="amTkOrder" class="form-textarea" placeholder="例如：番茄牛腩饭 × 1，少辣"></textarea><label class="form-label">金额</label><input id="amTkAmt" class="form-input" type="number" step="0.01" placeholder="0.00"><label class="form-label">状态</label><input id="amTkStatus" class="form-input" placeholder="例如：骑手正在配送"></div>'
-    else if (type === 'location') extraHtml = '<div class="form-group"><label class="form-label">地点名称</label><input id="amLocationName" class="form-input" placeholder="例如：旧城区车站"><label class="form-label">详细地址</label><input id="amLocationAddress" class="form-input" placeholder="例如：白石街 17 号"><label class="form-label">地图预览图（可选）</label><input id="amLocationImage" class="form-input" placeholder="图片 URL"></div>'
-    else if (type === 'contact-card') extraHtml = '<div class="form-group"><label class="form-label">联系人</label><select id="amContactTarget" class="form-select"><option value="">自定义名片</option>' + contactOptionsHtml + '</select><label class="form-label">显示名称</label><input id="amContactName" class="form-input" placeholder="选择联系人后可留空"><label class="form-label">名片附言</label><input id="amContactNote" class="form-input" placeholder="例如：这是负责接应的人"><label class="form-label">读者互动</label><select id="amContactAction" class="form-select"><option value="view">仅查看名片</option><option value="direct">读者直接添加好友</option><option value="request">读者发送好友申请</option></select><div class="form-hint">添加好友需要选择上方已有联系人；旧作品默认仅查看。</div><div id="amContactRequestSettings" class="contact-card-request-settings" hidden><div id="amContactOutcomeSettings"><label class="form-label">申请结果</label><select id="amContactOutcome" class="form-select"><option value="accepted">角色同意</option><option value="declined">角色拒绝</option><option value="pending">暂不回应</option></select><label class="form-label">拒绝后的角色反应</label><input id="amContactDeclinedText" class="form-input" placeholder="例如：对方拒绝了你的好友申请。"><label class="form-label">暂不回应时的提示</label><input id="amContactPendingText" class="form-input" placeholder="例如：申请已经送达。"></div><label class="form-label">添加成功后的角色反应</label><input id="amContactAcceptedText" class="form-input" placeholder="例如：对方通过了你的好友申请。"></div></div>'
+    else if (type === 'takeaway') {
+      extraHtml = '<div class="form-group"><label class="form-label">商家</label><input id="amTkShop" class="form-input" placeholder="例如：春风小馆"><label class="form-label">订单内容</label><textarea id="amTkOrder" class="form-textarea" placeholder="例如：番茄牛腩饭 × 1，少辣"></textarea><label class="form-label">金额</label><input id="amTkAmt" class="form-input" type="number" step="0.01" placeholder="0.00"></div>'
+      moreHtml = '<div class="form-group"><label class="form-label">状态</label><input id="amTkStatus" class="form-input" placeholder="例如：骑手正在配送"></div>'
+    }
+    else if (type === 'location') {
+      extraHtml = '<div class="form-group"><label class="form-label">地点名称</label><input id="amLocationName" class="form-input" placeholder="例如：旧城区车站"><label class="form-label">详细地址</label><input id="amLocationAddress" class="form-input" placeholder="例如：白石街 17 号"></div>'
+      moreHtml = '<div class="form-group"><label class="form-label">地图预览图（可选）</label><input id="amLocationImage" class="form-input" placeholder="图片 URL"></div>'
+    }
+    else if (type === 'contact-card') {
+      extraHtml = '<div class="form-group"><label class="form-label">联系人</label><select id="amContactTarget" class="form-select"><option value="">自定义名片</option>' + contactOptionsHtml + '</select><label class="form-label">显示名称</label><input id="amContactName" class="form-input" placeholder="选择联系人后可留空"><label class="form-label">名片附言</label><input id="amContactNote" class="form-input" placeholder="例如：这是负责接应的人"></div>'
+      moreHtml = '<div class="form-group"><label class="form-label">读者互动</label><select id="amContactAction" class="form-select"><option value="view">仅查看名片</option><option value="direct">读者直接添加好友</option><option value="request">读者发送好友申请</option></select><div class="form-hint">添加好友需要选择上方已有联系人；旧作品默认仅查看。</div><div id="amContactRequestSettings" class="contact-card-request-settings" hidden><div id="amContactOutcomeSettings"><label class="form-label">申请结果</label><select id="amContactOutcome" class="form-select"><option value="accepted">角色同意</option><option value="declined">角色拒绝</option><option value="pending">暂不回应</option></select><label class="form-label">拒绝后的角色反应</label><input id="amContactDeclinedText" class="form-input" placeholder="例如：对方拒绝了你的好友申请。"><label class="form-label">暂不回应时的提示</label><input id="amContactPendingText" class="form-input" placeholder="例如：申请已经送达。"></div><label class="form-label">添加成功后的角色反应</label><input id="amContactAcceptedText" class="form-input" placeholder="例如：对方通过了你的好友申请。"></div></div>'
+    }
     else if (type === 'file') extraHtml = '<div class="form-group"><label class="form-label">文件名</label><input id="amFileName" class="form-input" placeholder="例如：夜巡值班表.pdf"><label class="form-label">类型与大小</label><div class="form-row"><input id="amFileType" class="form-input" placeholder="PDF"><input id="amFileSize" class="form-input" placeholder="1.2 MB"></div><label class="form-label">打开后显示的正文</label><textarea id="amFileContent" class="form-textarea" placeholder="文件内容会在小手机画中画里显示"></textarea></div>'
-    else if (type === 'music') extraHtml = '<div class="form-group"><label class="form-label">歌曲名</label><input id="amMusicTitle" class="form-input" placeholder="例如：失眠航线"><label class="form-label">歌手</label><input id="amMusicArtist" class="form-input" placeholder="歌手名"><label class="form-label">封面（可选）</label><input id="amMusicCover" class="form-input" placeholder="图片 URL"><label class="form-label">外部链接（可选）</label><input id="amMusicUrl" class="form-input" placeholder="https://..."></div>'
+    else if (type === 'music') {
+      extraHtml = '<div class="form-group"><label class="form-label">歌曲名</label><input id="amMusicTitle" class="form-input" placeholder="例如：失眠航线"><label class="form-label">歌手</label><input id="amMusicArtist" class="form-input" placeholder="歌手名"></div>'
+      moreHtml = '<div class="form-group"><label class="form-label">封面（可选）</label><input id="amMusicCover" class="form-input" placeholder="图片 URL"><label class="form-label">外部链接（可选）</label><input id="amMusicUrl" class="form-input" placeholder="https://..."></div>'
+    }
     else if (type === 'forward') extraHtml = '<div class="form-group"><label class="form-label">转发标题</label><input id="amForwardTitle" class="form-input" placeholder="例如：与林晚的聊天记录"><label class="form-label">聊天记录</label><textarea id="amForwardItems" class="form-textarea" placeholder="每行一条：&#10;林晚：你到哪里了？&#10;我：马上到。"></textarea><div class="form-hint">使用“发送者：内容”的格式，每行一条。</div></div>'
-    else if (type === 'schedule') extraHtml = '<div class="form-group"><label class="form-label">日程标题</label><input id="amScheduleTitle" class="form-input" placeholder="例如：车站接应"><label class="form-label">时间</label><input id="amScheduleTime" class="form-input" placeholder="例如：今晚 23:40"><label class="form-label">地点</label><input id="amScheduleLocation" class="form-input" placeholder="旧城区车站"><label class="form-label">说明</label><textarea id="amScheduleDetails" class="form-textarea" placeholder="需要携带的物品或注意事项"></textarea><label class="form-label">操作文字</label><div class="form-row"><input id="amScheduleAccept" class="form-input" placeholder="接受"><input id="amScheduleDecline" class="form-input" placeholder="拒绝"></div></div>'
+    else if (type === 'schedule') {
+      extraHtml = '<div class="form-group"><label class="form-label">日程标题</label><input id="amScheduleTitle" class="form-input" placeholder="例如：车站接应"><label class="form-label">时间</label><input id="amScheduleTime" class="form-input" placeholder="例如：今晚 23:40"><label class="form-label">地点</label><input id="amScheduleLocation" class="form-input" placeholder="旧城区车站"></div>'
+      moreHtml = '<div class="form-group"><label class="form-label">说明</label><textarea id="amScheduleDetails" class="form-textarea" placeholder="需要携带的物品或注意事项"></textarea><label class="form-label">操作文字</label><div class="form-row"><input id="amScheduleAccept" class="form-input" placeholder="接受"><input id="amScheduleDecline" class="form-input" placeholder="拒绝"></div></div>'
+    }
+
+    var foldedSettingsHtml = moreHtml || actionHtml
+      ? '<details class="chat-special-more"><summary><span>互动与更多设置</span><small>选填</small></summary><div class="chat-special-more-body">' + moreHtml + actionHtml + '</div></details>'
+      : ''
 
     var isEditing = Boolean(editingMessage)
     var ov = modal((isEditing ? '编辑' : '添加') + typeLabel,
+      '<div class="form-group chat-special-sender"><label class="form-label">发送者</label><select id="amSender" class="form-select">' + optionsHtml + '</select></div>' +
       (['image', 'redpacket', 'transfer', 'familycard', 'takeaway', 'location', 'contact-card', 'file', 'music', 'forward', 'schedule'].indexOf(type) < 0 ? '<div class="form-group"><textarea id="amText" class="form-textarea" placeholder="消息内容" style="min-height:60px"></textarea></div>' : '') +
       extraHtml +
-      actionHtml +
-      '<div class="form-group"><label class="form-label">发送者</label><select id="amSender" class="form-select">' + optionsHtml + '</select></div>',
+      foldedSettingsHtml,
       '<button id="amSave" class="btn btn-primary btn-sm">' + (isEditing ? '保存' : '添加') + '</button><button id="amCancel" class="btn btn-ghost btn-sm">取消</button>')
 
     if (editingMessage) {
@@ -6195,14 +6360,14 @@ function openChatEditor(frame, wid, chatId, pd) {
         msg.takeawayOrder = ov.querySelector('#amTkOrder').value.trim()
         msg.takeawayAmount = parseFloat(ov.querySelector('#amTkAmt').value) || 0
         msg.takeawayStatus = ov.querySelector('#amTkStatus').value.trim() || '订单进行中'
-        if (!msg.takeawayOrder) { ov.querySelector('#amTkOrder').focus(); return }
+        if (!msg.takeawayOrder) { showModalInlineError(ov, ov.querySelector('#amTkOrder'), '请填写订单内容'); return }
       }
       if (type === 'location') {
         msg.locationName = ov.querySelector('#amLocationName').value.trim()
         msg.locationAddress = ov.querySelector('#amLocationAddress').value.trim()
         msg.locationImage = ov.querySelector('#amLocationImage').value.trim()
         msg.text = msg.locationName
-        if (!msg.locationName) { ov.querySelector('#amLocationName').focus(); return }
+        if (!msg.locationName) { showModalInlineError(ov, ov.querySelector('#amLocationName'), '请填写地点名称'); return }
       }
       if (type === 'contact-card') {
         var contactTargetId = ov.querySelector('#amContactTarget').value
@@ -6226,14 +6391,14 @@ function openChatEditor(frame, wid, chatId, pd) {
         msg.fileType = ov.querySelector('#amFileType').value.trim()
         msg.fileSize = ov.querySelector('#amFileSize').value.trim()
         msg.fileContent = ov.querySelector('#amFileContent').value.trim()
-        if (!msg.fileName) { ov.querySelector('#amFileName').focus(); return }
+        if (!msg.fileName) { showModalInlineError(ov, ov.querySelector('#amFileName'), '请填写文件名'); return }
       }
       if (type === 'music') {
         msg.musicTitle = ov.querySelector('#amMusicTitle').value.trim()
         msg.musicArtist = ov.querySelector('#amMusicArtist').value.trim()
         msg.musicCover = ov.querySelector('#amMusicCover').value.trim()
         msg.musicUrl = ov.querySelector('#amMusicUrl').value.trim()
-        if (!msg.musicTitle) { ov.querySelector('#amMusicTitle').focus(); return }
+        if (!msg.musicTitle) { showModalInlineError(ov, ov.querySelector('#amMusicTitle'), '请填写歌曲名'); return }
       }
       if (type === 'forward') {
         msg.forwardTitle = ov.querySelector('#amForwardTitle').value.trim() || '聊天记录'
@@ -6241,7 +6406,7 @@ function openChatEditor(frame, wid, chatId, pd) {
           var match = line.match(/^([^：:]+)[：:]\s*(.*)$/)
           return match ? { sender:match[1].trim(), text:match[2].trim() } : { sender:'', text:line.trim() }
         }).filter(function(item) { return item.sender || item.text })
-        if (!msg.forwardItems.length) { ov.querySelector('#amForwardItems').focus(); return }
+        if (!msg.forwardItems.length) { showModalInlineError(ov, ov.querySelector('#amForwardItems'), '请填写至少一条聊天记录'); return }
       }
       if (type === 'schedule') {
         msg.scheduleTitle = ov.querySelector('#amScheduleTitle').value.trim()
@@ -6250,7 +6415,7 @@ function openChatEditor(frame, wid, chatId, pd) {
         msg.scheduleDetails = ov.querySelector('#amScheduleDetails').value.trim()
         msg.acceptLabel = ov.querySelector('#amScheduleAccept').value.trim() || '接受'
         msg.declineLabel = ov.querySelector('#amScheduleDecline').value.trim() || '拒绝'
-        if (!msg.scheduleTitle) { ov.querySelector('#amScheduleTitle').focus(); return }
+        if (!msg.scheduleTitle) { showModalInlineError(ov, ov.querySelector('#amScheduleTitle'), '请填写日程标题'); return }
       }
       if (!editingMessage) {
         var currentRound = ch.rounds[ch.rounds.length - 1]
@@ -6747,17 +6912,35 @@ function openChatEditor(frame, wid, chatId, pd) {
     if (ch.type !== 'group') return
     var titles = ch.groupTitles && typeof ch.groupTitles === 'object' ? ch.groupTitles : {}
     var selected = new Set(ch.contactIds || [])
-    var h = '<div class="form-group"><label class="form-label">群聊名称</label><input id="groupEditName" class="form-input" value="' + escapeHtmlAttribute(ch.groupName || '') + '"><label class="form-label">群头像链接</label><input id="groupEditAvatar" class="form-input" value="' + escapeHtmlAttribute(ch.groupAvatarUrl || '') + '" placeholder="https://..."></div>'
-    h += '<div class="form-group"><label class="form-label">群成员与身份</label><div id="groupMemberList" style="max-height:42vh;overflow:auto">'
+    var h = '<div class="form-group group-name-field"><label class="form-label" for="groupEditName">群聊名称</label><input id="groupEditName" class="form-input" value="' + escapeHtmlAttribute(ch.groupName || '') + '"></div>'
+    h += '<details class="group-avatar-settings"><summary><span>群头像</span><small>' + (ch.groupAvatarUrl ? '已设置' : '可选') + '</small></summary><div class="group-avatar-settings-body"><label class="form-label" for="groupEditAvatar">图片链接</label><input id="groupEditAvatar" class="form-input" value="' + escapeHtmlAttribute(ch.groupAvatarUrl || '') + '" placeholder="https://..."></div></details>'
+    h += '<div class="form-group group-members-field"><div class="group-members-heading"><label class="form-label">群成员</label><small>勾选加入群聊，身份与头衔按需设置</small></div><div id="groupMemberList" class="group-member-list">'
     contacts.forEach(function(contact) {
       var checked = selected.has(contact.id) ? ' checked' : ''
       var isAdmin = (ch.groupAdminIds || []).includes(contact.id)
-      h += '<div class="group-member-editor" data-group-member="' + escapeHtmlAttribute(contact.id) + '"><label><input type="checkbox" data-group-include value="' + escapeHtmlAttribute(contact.id) + '"' + checked + '> ' + esc(contact.name || '未命名') + '</label><label><input type="checkbox" data-group-admin value="' + escapeHtmlAttribute(contact.id) + '"' + (isAdmin ? ' checked' : '') + '> 管理员</label><input class="form-input" data-group-title value="' + escapeHtmlAttribute(titles[contact.id] || '') + '" placeholder="群头衔（可选）"></div>'
+      var title = titles[contact.id] || ''
+      var roleSummary = isAdmin ? '管理员' : (title ? '已设置头衔' : '可选')
+      h += '<div class="group-member-editor" data-group-member="' + escapeHtmlAttribute(contact.id) + '"><div class="group-member-main"><label><input type="checkbox" data-group-include value="' + escapeHtmlAttribute(contact.id) + '"' + checked + '><span>' + esc(contact.name || '未命名') + '</span></label><small>' + (checked ? '已加入' : '未加入') + '</small></div><details class="group-member-settings"><summary><span>身份设置</span><small>' + esc(roleSummary) + '</small></summary><div class="group-member-settings-body"><label class="group-member-admin"><input type="checkbox" data-group-admin value="' + escapeHtmlAttribute(contact.id) + '"' + (isAdmin ? ' checked' : '') + '> 管理员</label><label><span class="form-label">群头衔</span><input class="form-input" data-group-title value="' + escapeHtmlAttribute(title) + '" placeholder="例如：记录员"></label></div></details></div>'
     })
     h += '</div></div><div class="form-group"><label class="form-label">群主</label><select id="groupOwner" class="form-select"><option value="self"' + (ch.groupOwnerId === 'self' || !ch.groupOwnerId ? ' selected' : '') + '>读者</option>'
     contacts.forEach(function(contact) { h += '<option value="' + escapeHtmlAttribute(contact.id) + '"' + (ch.groupOwnerId === contact.id ? ' selected' : '') + '>' + esc(contact.name || '未命名') + '</option>' })
     h += '</select></div>'
     var ov = modal('管理群聊', h, '<button id="groupEditSave" class="btn btn-primary btn-sm">保存</button><button id="groupEditCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.classList.add('group-editor-modal')
+    ov.querySelectorAll('[data-group-member]').forEach(function(row) {
+      var include = row.querySelector('[data-group-include]')
+      var settings = row.querySelector('.group-member-settings')
+      var status = row.querySelector('.group-member-main small')
+      function syncMemberState() {
+        var active = include?.checked === true
+        settings?.classList.toggle('is-disabled', !active)
+        settings?.querySelectorAll('input').forEach(function(input) { input.disabled = !active })
+        if (status) status.textContent = active ? '已加入' : '未加入'
+        if (!active && settings) settings.open = false
+      }
+      include?.addEventListener('change', syncMemberState)
+      syncMemberState()
+    })
     ov.querySelector('#groupEditSave').onclick = function() {
       var memberIds = Array.from(ov.querySelectorAll('[data-group-include]:checked')).map(function(input) { return input.value })
       if (!memberIds.length) { showToast('群聊至少需要一位角色'); return }
@@ -7796,6 +7979,7 @@ function openSettingsEditor(wid) {
   pd.readingFlow.sequence = expandPhoneReadingFlowSequence(pd, pd.readingFlow.sequence)
   var flow = pd.readingFlow
   var hideAllTimestamps = phoneTimestampsHidden(pd)
+  var activeSettingsTab = 'basic'
 
   var frame = document.getElementById('phoneFrame')
   if (!frame) return
@@ -7815,9 +7999,13 @@ function openSettingsEditor(wid) {
 
     var h = '<div class="cu-panel cu-panel-embedded" id="settingsPanel">'
     h += '<div class="cu-header"><span class="cu-title">设置</span><button id="settingsClose" class="cu-close-btn">&times;</button></div>'
-    h += '<div class="cu-body">'
+    h += '<div class="phone-settings-tabs" role="tablist" aria-label="设置分类"><button type="button" role="tab" data-phone-settings-tab="basic" aria-selected="' + (activeSettingsTab === 'basic') + '">基础设置</button><button type="button" role="tab" data-phone-settings-tab="placeholders" aria-selected="' + (activeSettingsTab === 'placeholders') + '">占位符与违禁词</button><button type="button" role="tab" data-phone-settings-tab="flow" aria-selected="' + (activeSettingsTab === 'flow') + '">播放顺序</button></div>'
+    h += '<div class="cu-body phone-settings-body">'
+    h += '<section class="phone-settings-pane" data-phone-settings-panel="basic"' + (activeSettingsTab === 'basic' ? '' : ' hidden') + '>'
     h += '<section class="phone-display-settings"><div class="st-row"><div><div class="st-label">内容时间戳</div><div class="st-desc">隐藏各 App 的内容时间，但保留原始数据和状态栏时钟；编辑器中的时间输入仍可修改。</div></div>'
     h += '<label class="tgl-switch"><input type="checkbox" id="hideAllTimestamps"' + (hideAllTimestamps ? ' checked' : '') + ' aria-label="隐藏全机所有内容时间戳"><span class="tgl-slider"></span></label></div></section>'
+    h += '</section>'
+    h += '<section class="phone-settings-pane" data-phone-settings-panel="placeholders"' + (activeSettingsTab === 'placeholders' ? '' : ' hidden') + '>'
     h += '<section class="phone-placeholder-settings"><div class="st-label">占位符管理</div><div class="st-desc">正文写入“标记”，读者填写“问题”后会替换对应内容。</div><div class="phone-placeholder-actions"><button type="button" class="btn btn-sm btn-outline" id="phonePlaceholderPresetName">添加 NAME 预设</button><button type="button" class="btn btn-sm btn-primary" id="phonePlaceholderAdd">添加占位符</button></div><label class="placeholder-tool-search"><span class="sr-only">搜索占位符或违禁词</span><input type="search" class="form-input" data-placeholder-search placeholder="搜索名称、标记、问题或违禁词"><span data-placeholder-search-status aria-live="polite"></span></label><details class="placeholder-global-forbidden" data-global-forbidden-editor><summary><span class="placeholder-global-heading"><span class="placeholder-global-title-row"><strong>全局违禁词</strong><span class="placeholder-scope-badge">全作品</span></span><small>同时应用到当前作品的所有占位符</small></span><span class="placeholder-forbidden-count" data-forbidden-count>' + (globalForbidden.length + globalExactForbidden.length) + ' 个</span><svg class="placeholder-disclosure-chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></summary><div class="placeholder-forbidden-body"><div class="placeholder-forbidden-groups"><label class="placeholder-forbidden-group"><span><strong>包含匹配</strong><small>答案中只要出现就拦截，单字也会生效</small></span><textarea id="phoneGlobalForbidden" class="form-textarea" aria-label="全局包含匹配违禁词" placeholder="每行一个，例如：蠢">' + esc(globalForbidden.join('\n')) + '</textarea></label><label class="placeholder-forbidden-group"><span><strong>完全匹配</strong><small>只拦截整段相同的答案，不会拦截包含它的长句</small></span><textarea id="phoneGlobalExactForbidden" class="form-textarea" aria-label="全局完全匹配违禁词" placeholder="每行一个，例如：哥哥">' + esc(globalExactForbidden.join('\n')) + '</textarea></label></div><div class="placeholder-forbidden-actions"><small>支持换行、逗号、顿号、分号或斜杠分隔</small><button type="button" class="btn btn-sm btn-outline" id="phoneForbiddenCleanup">整理全部词库</button></div></div></details><div class="phone-author-presets"><select class="form-select" id="phoneAuthorPreset"><option value="">我的预设</option>'
     authorPresets.forEach(function(preset) { h += '<option value="' + escapeHtmlAttribute(preset.id) + '">' + esc(preset.name) + '</option>' })
     h += '</select><button type="button" class="btn btn-sm btn-outline" id="phoneAuthorPresetApply">套用预设</button><details class="placeholder-preset-management"><summary>管理预设</summary><div><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetSave">保存当前为预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetDelete">删除预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetExport">导出预设</button><button type="button" class="btn btn-sm btn-ghost" id="phoneAuthorPresetImport">导入预设</button></div></details><input type="file" id="phoneAuthorPresetFile" accept=".json,application/json" hidden></div><div id="phonePlaceholderList">'
@@ -7835,6 +8023,8 @@ function openSettingsEditor(wid) {
     })
     if (placeholders.length === 0) h += '<div class="phone-placeholder-empty">暂无占位符</div>'
     h += '</div></section>'
+    h += '</section>'
+    h += '<section class="phone-settings-pane" data-phone-settings-panel="flow"' + (activeSettingsTab === 'flow' ? '' : ' hidden') + '>'
     h += '<div class="st-row"><div><div class="st-label">阅读节奏控制</div><div class="st-desc">启用后可拖拽排序。消息中每个消息气泡是一张卡片；旧版按整轮保存的记录会自动拆成多张。</div></div>'
     h += '<label class="tgl-switch"><input type="checkbox" id="flowToggle"' + (flow.enabled ? ' checked' : '') + '><span class="tgl-slider"></span></label></div>'
     h += '<div style="margin-top:12px"><div style="font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--c-text)">卡片序列 (' + seq.length + ')</div>'
@@ -7853,9 +8043,10 @@ function openSettingsEditor(wid) {
         h += '<button type="button" class="flow-handle" data-flow-drag="' + si + '" aria-label="拖动调整这张卡片的顺序；也可用上下方向键" aria-disabled="' + (flow.enabled ? 'false' : 'true') + '"></button></div>'
       }
     }
-    h += '</div></div>'
+    h += '</div><div class="phone-settings-flow-actions"><button class="btn btn-sm btn-outline" id="flowRebuild">重建序列</button></div></div>'
+    h += '</section>'
     h += '</div>'
-    h += '<div class="cu-footer"><button class="btn btn-sm btn-outline" id="flowRebuild">重建序列</button><button class="btn btn-sm btn-primary" id="flowSave">保存</button><button class="btn btn-sm btn-ghost" id="flowCancel">取消</button></div>'
+    h += '<div class="cu-footer"><button class="btn btn-sm btn-ghost" id="flowCancel">取消</button><button class="btn btn-sm btn-primary" id="flowSave">保存</button></div>'
     h += '</div>'
     return h
   }
@@ -7915,6 +8106,19 @@ function openSettingsEditor(wid) {
   }
 
   function bindAll() {
+    var settingsTabs = Array.from(frame.querySelectorAll('[data-phone-settings-tab]'))
+    var settingsPanels = Array.from(frame.querySelectorAll('[data-phone-settings-panel]'))
+    settingsTabs.forEach(function(tab) {
+      tab.onclick = function() {
+        activeSettingsTab = tab.dataset.phoneSettingsTab || 'basic'
+        settingsTabs.forEach(function(candidate) {
+          candidate.setAttribute('aria-selected', candidate === tab ? 'true' : 'false')
+        })
+        settingsPanels.forEach(function(panel) {
+          panel.hidden = panel.dataset.phoneSettingsPanel !== activeSettingsTab
+        })
+      }
+    })
     function collectPlaceholders() {
       var rows = frame.querySelectorAll('[data-placeholder-index]')
       placeholders = Array.from(rows).map(function(row, index) {

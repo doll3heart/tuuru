@@ -82,6 +82,10 @@ test("existing photos reopen the photo form and keep stable data", async () => {
     edit.click()
 
     const editor = document.querySelector("#gpSave").closest(".modal-overlay")
+    const more = editor.querySelector(".phone-form-more")
+    assert.equal(more?.open, false)
+    assert.equal(more?.contains(editor.querySelector("#gpTime")), true)
+    assert.equal(more?.contains(editor.querySelector("#gpAlbum")), true)
     assert.equal(editor.querySelector("#gpDesc").value, "旧照片")
     assert.equal(editor.querySelector("#gpUrl").value, "https://example.com/old.png")
     assert.equal(editor.querySelector("#gpAlbum").value, "album-1")

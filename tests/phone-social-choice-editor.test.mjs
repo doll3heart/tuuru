@@ -207,6 +207,10 @@ test("a newly published moment can reopen the same form and keep its attached da
   try {
     overlay.querySelector("#msgTabMoments").click()
     overlay.querySelector("#msgAddMoment").click()
+    const optionalSettings = document.querySelector("#moSave").closest(".modal-overlay").querySelector(".phone-form-more")
+    assert.equal(optionalSettings?.open, false)
+    assert.equal(optionalSettings?.contains(document.querySelector("#moImgs")), true)
+    assert.equal(optionalSettings?.contains(document.querySelector("#moTime")), true)
     document.querySelector("#moContent").value = "刚发布的动态"
     document.querySelector("#moImgs").value = "first.png\nsecond.png"
     document.querySelector("#moSender").value = "contact-1"
@@ -355,6 +359,8 @@ test("forum post time starts empty and remains directly editable", async () => {
     document.querySelector("#idOk").click()
     const createModal = document.querySelector("#fpSave").closest(".modal-overlay")
     assert.equal(document.activeElement, createModal.querySelector("#fpTitle"))
+    assert.equal(createModal.querySelector(".forum-post-more")?.open, false)
+    assert.equal(createModal.querySelector(".forum-post-more")?.contains(createModal.querySelector("#fpTime")), true)
     assert.equal(createModal.querySelector("#fpTime").value, "")
     createModal.querySelector("#fpTitle").value = "没有默认时间"
     createModal.querySelector("#fpSave").click()
@@ -381,6 +387,7 @@ test("forum post detail exposes a complete editor and preserves paragraph breaks
     editButton.click()
 
     const editor = document.querySelector("#editPostSave").closest(".modal-overlay")
+    assert.equal(editor.querySelector(".forum-post-more")?.open, false)
     const contentInput = editor.querySelector("#editPostContent")
     contentInput.value = "正文@"
     contentInput.setSelectionRange(contentInput.value.length, contentInput.value.length)

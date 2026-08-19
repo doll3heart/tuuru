@@ -198,6 +198,13 @@ test("article contacts expose the full card and persist App identities and avata
   const overlay = openPhoneAppModal(draft.id, "contacts")
   assert.ok(overlay.querySelector(".ct-card"))
   assert.ok(overlay.querySelector("[data-ct-avatar]"))
+  const contactEditor = overlay.querySelector(".ct-contact-details")
+  assert.equal(contactEditor?.tagName, "DETAILS")
+  assert.equal(contactEditor?.open, false, "contact cards should start as compact summaries")
+  assert.deepEqual(
+    [...contactEditor.querySelectorAll(":scope > .ct-contact-details-body > details")].map(section => section.querySelector("summary")?.textContent.trim()),
+    ["身份与备注", "头像与通话", "读者添加", "论坛身份 0 个小号"],
+  )
   assert.match(overlay.querySelector(".ct-call-bg-row").textContent, /视频通话背景图/)
   assert.match(overlay.querySelector(".ct-field-hint").textContent, /该角色发起视频通话时的画面背景/)
 
@@ -340,6 +347,13 @@ test("contact editor persists pinning, A-Z mode, and custom keyboard order", asy
     contacts:[{ id:"z", name:"周周" }, { id:"a", name:"安安" }, { id:"b", name:"白白" }], chats:[], moments:[], forumPosts:[], forumNpcs:[], memos:[], photos:[], albums:[], browserHistory:[], shoppingItems:[], skin:{ readerId:"Reader" }, apps:[],
   } })
   const overlay = openPhoneAppModal(draft.id, "contacts")
+  const compactEditors = overlay.querySelectorAll(".ct-contact-details")
+  compactEditors[0].open = true
+  compactEditors[0].dispatchEvent(new Event("toggle"))
+  compactEditors[1].open = true
+  compactEditors[1].dispatchEvent(new Event("toggle"))
+  assert.equal(compactEditors[0].open, false, "only one contact card should stay expanded")
+  assert.equal(compactEditors[1].open, true)
   assert.equal(overlay.querySelector('[data-contact-sort]').value, "custom")
   overlay.querySelector('[data-ct-drag="z"]').dispatchEvent(new window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true }))
   assert.deepEqual(draft.snapshot().phoneData.contacts.map(contact => contact.id), ["a", "z", "b"])

@@ -43,6 +43,19 @@ test("author modal and feedback share accessible interaction foundations", async
   assert.equal(document.querySelector(".modal-overlay"), null)
   assert.equal(document.activeElement?.id, trigger.id)
 
+  const formOverlay = modal(
+    "编辑资料",
+    '<label for="profileName">名称</label><input id="profileName"><details><summary>更多设置</summary><input id="hiddenExtra"></details>',
+    '<button type="button" class="btn btn-primary" id="saveProfile">保存</button><button type="button" class="btn btn-ghost" id="cancelProfile">取消</button>',
+  )
+  assert.equal(document.activeElement?.id, "profileName", "long forms should start at their first visible field")
+  assert.deepEqual(
+    [...formOverlay.querySelectorAll(".modal-footer > button")].map(button => button.id),
+    ["cancelProfile", "saveProfile"],
+    "modal actions should end with cancel then primary regardless of call-site order",
+  )
+  formOverlay.remove()
+
   const firstToast = showToast("正在处理", "info", {key:"operation"})
   const secondToast = showToast("处理完成", "success", {key:"operation"})
   assert.equal(firstToast, secondToast)

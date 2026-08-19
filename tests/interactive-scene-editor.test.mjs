@@ -109,15 +109,23 @@ test("author editor uses the shared scene renderer inside the approved three-col
 
 test("mobile scene editor exposes explicit stage, preview, and settings panes", () => {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true })
+  const scene = createInteractiveScene({ id: "scene-1", stageId: "stage-1" })
+  scene.stages.push({ ...structuredClone(scene.stages[0]), id:"stage-2", name:"第二画面" })
   const editor = openInteractiveSceneEditor({
-    scene: createInteractiveScene({ id: "scene-1", stageId: "stage-1" }),
+    scene,
     documentObject: dom.window.document,
   })
   const controls = editor.overlay.querySelectorAll("[data-scene-pane]")
 
   assert.deepEqual(Array.from(controls, control => control.dataset.scenePane), ["stages", "preview", "properties"])
+  assert.deepEqual(Array.from(controls, control => control.querySelector("small")?.textContent), ["流程", "构图", "属性"])
   controls[2].click()
   assert.equal(editor.overlay.querySelector(".interactive-scene-editor").dataset.mobilePane, "properties")
+  controls[0].click()
+  editor.overlay.querySelectorAll(".interactive-scene-stage-item")[1].click()
+  assert.equal(editor.overlay.querySelector(".interactive-scene-editor").dataset.mobilePane, "preview")
+  assert.equal(controls[1].getAttribute("aria-pressed"), "true")
+  assert.match(editorStyles, /@media\s*\(max-width:\s*720px\),\s*\(max-height:\s*680px\)/)
   editor.close()
   dom.window.close()
 })

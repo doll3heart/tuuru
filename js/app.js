@@ -67,6 +67,16 @@ export function modal(title, bodyHtml, footerHtml, onClose, options={}){
       ${footerHtml?`<div class="modal-footer">${footerHtml}</div>`:""}
     </div>`
   document.body.appendChild(overlay)
+  const footer = overlay.querySelector(".modal-footer")
+  if (footer) {
+    const buttons = Array.from(footer.children).filter(child => child.matches?.("button,.btn"))
+    const destructive = buttons.filter(button => button.matches(".btn-danger,[data-modal-destructive],.thread-choice-delete-all") || /^(删除|清空|移除)/.test(button.textContent.trim()))
+    const primary = buttons.filter(button => button.matches(".btn-primary"))
+    const cancel = buttons.filter(button => /^(取消|关闭)$/.test(button.textContent.trim()))
+    const rest = buttons.filter(button => !destructive.includes(button) && !primary.includes(button) && !cancel.includes(button))
+    destructive.forEach(button => button.setAttribute("data-modal-destructive", "true"))
+    destructive.concat(rest, cancel, primary).forEach(button => footer.appendChild(button))
+  }
   const dialog = overlay.querySelector(".modal")
   const nativeRemove = overlay.remove.bind(overlay)
   let closed = false
@@ -82,8 +92,12 @@ export function modal(title, bodyHtml, footerHtml, onClose, options={}){
   }
   overlay.closeModal = close
   overlay.remove = () => close("programmatic")
+  const firstBodyControl = Array.from(overlay.querySelectorAll(
+    '.modal-body input:not([type="hidden"]):not([disabled]),.modal-body textarea:not([disabled]),.modal-body select:not([disabled]),.modal-body button:not([disabled]),.modal-body [href],.modal-body [tabindex]:not([tabindex="-1"])',
+  )).find(control => !control.closest('[hidden],details:not([open])'))
   const initialFocus = options.initialFocus
     || overlay.querySelector("[autofocus]")
+    || firstBodyControl
     || overlay.querySelector(".modal-footer .btn-primary")
     || overlay.querySelector("#modalClose")
   lifecycle = installDialogInteraction({

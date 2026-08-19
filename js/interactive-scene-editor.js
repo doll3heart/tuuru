@@ -304,9 +304,9 @@ export function openInteractiveSceneEditor(options = {}) {
         <button type="button" data-scene-close aria-label="关闭">×</button>
       </header>
       <nav class="interactive-scene-editor-mobile-tabs" aria-label="互动场景编辑步骤">
-        <button type="button" data-scene-pane="stages" aria-pressed="false">画面</button>
-        <button type="button" data-scene-pane="preview" aria-pressed="true">预览</button>
-        <button type="button" data-scene-pane="properties" aria-pressed="false">设置</button>
+        <button type="button" data-scene-pane="stages" aria-pressed="false"><span>画面</span><small>流程</small></button>
+        <button type="button" data-scene-pane="preview" aria-pressed="true"><span>预览</span><small>构图</small></button>
+        <button type="button" data-scene-pane="properties" aria-pressed="false"><span>设置</span><small>属性</small></button>
       </nav>
       <div class="interactive-scene-editor-grid">
         <aside class="interactive-scene-stage-panel" aria-label="画面列表"></aside>
@@ -468,6 +468,13 @@ export function openInteractiveSceneEditor(options = {}) {
   const properties = overlay.querySelector(".interactive-scene-properties")
   const preview = overlay.querySelector(".interactive-scene-preview")
   const status = overlay.querySelector(".interactive-scene-editor-status")
+  const editorShell = overlay.querySelector(".interactive-scene-editor")
+  function setEditorPane(pane) {
+    editorShell.dataset.mobilePane = pane
+    overlay.querySelectorAll("[data-scene-pane]").forEach(control => {
+      control.setAttribute("aria-pressed", String(control.dataset.scenePane === pane))
+    })
+  }
   const deleteSceneButton = overlay.querySelector("[data-scene-delete]")
   deleteSceneButton.hidden = options.allowDelete === false
   const requiresNextNode = Array.isArray(options.targetGroups)
@@ -1126,6 +1133,7 @@ export function openInteractiveSceneEditor(options = {}) {
         selectedDialogueId = ""
         inspectorSection = "visual"
         render()
+        setEditorPane("preview")
       })
       list.appendChild(control)
     })
@@ -1220,6 +1228,7 @@ export function openInteractiveSceneEditor(options = {}) {
       inspectorSection = "visual"
       updateScene(scene)
       render()
+      setEditorPane("preview")
     })
     stagePanel.insertBefore(addStage, canvasSettings)
 
@@ -2645,7 +2654,7 @@ export function openInteractiveSceneEditor(options = {}) {
     }
     if (requiresNextNode && !validNextNodeIds.has(scene.nextNodeId)) {
       status.textContent = "请选择互动图片完成后的后续跳转节点"
-      overlay.querySelector(".interactive-scene-editor").dataset.mobilePane = "stages"
+      setEditorPane("stages")
       const nextNode = overlay.querySelector("[data-scene-next-node]")
       nextNode?.focus()
       return
@@ -2693,10 +2702,7 @@ export function openInteractiveSceneEditor(options = {}) {
   })
   overlay.querySelectorAll("[data-scene-pane]").forEach(control => {
     control.addEventListener("click", () => {
-      overlay.querySelector(".interactive-scene-editor").dataset.mobilePane = control.dataset.scenePane
-      overlay.querySelectorAll("[data-scene-pane]").forEach(candidate => {
-        candidate.setAttribute("aria-pressed", String(candidate === control))
-      })
+      setEditorPane(control.dataset.scenePane)
     })
   })
   overlay.querySelectorAll("[data-canvas-mode]").forEach(control => {
@@ -2752,7 +2758,7 @@ export function openInteractiveSceneEditor(options = {}) {
   })
 
   render()
-  overlay.querySelector(".interactive-scene-editor").dataset.mobilePane = "preview"
+  setEditorPane("preview")
   overlay.querySelector("[data-scene-close]").focus()
   return { overlay, close, get scene() { return scene } }
 }

@@ -321,6 +321,7 @@ test("the tutorial gives interactive pictures a complete searchable section", ()
     "HTTPS 图床",
     "不会替换图片链接",
   ]) assert.match(source, new RegExp(detail))
+  assert.match(source, /手机或矮屏[^。]*【画面】[^。]*【预览】[^。]*【设置】/)
 })
 
 test("Mini game guidance distinguishes direct continuation from authored scene choices", () => {
@@ -428,7 +429,8 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /每条后续都会按所选角色的身份显示/)
   assert.match(source, /正常发送[^。]*发送失败[^。]*发送后撤回/)
   assert.match(source, /继承本组选项/)
-  assert.match(source, /【角色后续】中每点一次【添加消息】就新增一个气泡/)
+  assert.match(source, /展开【角色后续】。每点一次【添加消息】就新增一个气泡/)
+  assert.match(source, /每条后续会先显示为顺序摘要[^。]*点摘要再编辑/)
   assert.match(source, /消息状态[^。]*单条节奏[^。]*出现方式[^。]*发送间隔[^。]*【发送设置】/)
   assert.match(source, /文字消息出现方式/)
   assert.match(source, /逐字出现[^。]*整条出现/)
@@ -445,6 +447,11 @@ test("the phone tutorial covers group-wide mentions, contact-card friendship, an
   assert.match(source, /群聊 @ 全体成员/)
   assert.match(source, /候选项只在群聊出现[^。]*单聊和论坛不会混入/)
   assert.match(source, /联系人名片与读者加好友/)
+  assert.match(source, /编辑联系人资料[^。]*身份与备注[^。]*头像与通话/)
+  assert.match(source, /设置[^。]*播放顺序[^。]*阅读节奏控制/)
+  assert.match(source, /添加特殊消息[\s\S]*发送者[\s\S]*互动与更多设置/)
+  assert.match(source, /归档与显示设置/)
+  assert.match(source, /更多商品设置/)
   assert.match(source, /仅查看名片[^。]*直接添加好友[^。]*发送好友申请/)
   assert.match(source, /接受、拒绝或申请中/)
   assert.match(source, /结果会保存在当前阅读档案中/)
@@ -667,7 +674,9 @@ test("the resources layout reflows form rows and keeps readable tutorial prose o
 })
 
 test("follow-up message controls stay grouped and reflow on narrow touch screens", () => {
-  assert.match(css, /\.thread-choice-followup-row\s*\{[^}]*padding\s*:\s*9px 0[^}]*border-bottom\s*:/s)
+  assert.match(css, /\.thread-choice-followup-row-summary\s*\{[^}]*min-height\s*:\s*52px[^}]*grid-template-columns\s*:/s)
+  assert.match(css, /\.thread-choice-followup-section>summary:focus-visible\s*\{[^}]*outline\s*:\s*2px solid color-mix\(in srgb,var\(--c-primary-hover\) 58%,var\(--c-surface\)\)[^}]*outline-offset\s*:\s*-3px/s)
+  assert.match(css, /\.thread-choice-followup-editor\s*\{[^}]*padding\s*:\s*9px 2px 10px/s)
   assert.match(css, /\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,minmax\(0,1fr\)\)/s)
   assert.match(css, /@media\(max-width:620px\)[^}]*[\s\S]*\.thread-choice-followup-settings\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,1fr\)/s)
   assert.match(css, /@media\(pointer:coarse\)[\s\S]*?\.thread-choice-followup-row button\s*\{[^}]*width\s*:\s*44px[^}]*height\s*:\s*44px/s)

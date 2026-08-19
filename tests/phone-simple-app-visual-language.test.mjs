@@ -55,7 +55,7 @@ test("author contact identity cards use compact non-circular geometry", () => {
   assert.match(avatar, /border-radius\s*:\s*var\(--phone-system-radius-/)
   assert.doesNotMatch(avatar, /border-radius\s*:\s*50%/)
   assert.match(editorSource, /data-ct-reader-add-mode/)
-  assert.match(editorSource, /读者主动添加/)
+  assert.match(editorSource, /读者添加/)
   assert.match(editorSource, /搜索后直接添加/)
   assert.match(editorSource, /搜索后发送申请/)
 })

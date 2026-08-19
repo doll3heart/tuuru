@@ -560,6 +560,18 @@ test("group chats can update identity, membership, roles, and titles", async () 
     overlay.querySelector("#chatBgBtn").click()
     document.querySelector("#chatManageGroup").click()
     const manager = document.querySelector("#groupEditSave").closest(".modal-overlay")
+    assert.equal(manager.querySelector(".group-avatar-settings")?.open, false)
+    assert.equal(manager.querySelector('[data-group-member="contact-1"] .group-member-settings')?.open, false)
+    assert.match(
+      manager.querySelector('[data-group-member="contact-1"] .group-member-settings summary')?.textContent || "",
+      /身份设置/,
+    )
+    const secondMember = manager.querySelector('[data-group-member="contact-2"]')
+    const secondMemberInclude = secondMember.querySelector('[data-group-include]')
+    assert.equal(secondMember.querySelector('[data-group-admin]').disabled, true)
+    secondMemberInclude.checked = true
+    secondMemberInclude.dispatchEvent(new window.Event("change", { bubbles:true }))
+    assert.equal(secondMember.querySelector('[data-group-admin]').disabled, false)
     manager.querySelector("#groupEditName").value = "新群名"
     manager.querySelector("#groupEditAvatar").value = "https://example.com/group.png"
     manager.querySelector('[data-group-include][value="contact-2"]').checked = true
@@ -659,6 +671,53 @@ test("the Settings App places editable placeholders and forbidden words before r
   assert.doesNotMatch(settings, /placeholder="显示名称"/)
   assert.doesNotMatch(settings, /placeholder="正文中的占位文字"/)
   assert.match(settings, /updateWork\(wid, \{ phoneData: pd, placeholders: placeholders, globalForbidden:globalForbidden, globalExactForbidden:globalExactForbidden \}\)/)
+})
+
+test("the Settings App separates basic, placeholder, and reading-flow work into stable tabs", async () => {
+  const dom = installDom()
+  const { createPhoneWorkDraft } = await import("../js/phone-work-access.js")
+  const { renderPhoneEditor } = await import(`../js/pages/phone.js?settings-tabs=${Date.now()}-${Math.random()}`)
+  const draft = createPhoneWorkDraft({ id:"phone-settings-tabs", type:"article", phoneData:makePhoneData() })
+  document.getElementById("app").innerHTML = renderPhoneEditor(draft.id)
+  document.querySelector('[data-app-type="settings"]').click()
+  const frame = document.getElementById("phoneFrame")
+  try {
+    const tabs = [...frame.querySelectorAll("[data-phone-settings-tab]")]
+    assert.deepEqual(tabs.map(tab => tab.textContent.trim()), ["基础设置", "占位符与违禁词", "播放顺序"])
+    assert.equal(frame.querySelector('[data-phone-settings-panel="basic"]').hidden, false)
+    assert.equal(frame.querySelector('[data-phone-settings-panel="placeholders"]').hidden, true)
+    tabs[1].click()
+    assert.equal(frame.querySelector('[data-phone-settings-panel="basic"]').hidden, true)
+    assert.equal(frame.querySelector('[data-phone-settings-panel="placeholders"]').hidden, false)
+    assert.equal(tabs[1].getAttribute("aria-selected"), "true")
+    tabs[2].click()
+    assert.equal(frame.querySelector('[data-phone-settings-panel="flow"]').hidden, false)
+  } finally {
+    draft.dispose()
+    dom.window.close()
+  }
+})
+
+test("complex special messages lead with sender and fold secondary interaction settings", async () => {
+  const fixture = await openSingleChat("message-editor-schedule-disclosure")
+  const { overlay } = fixture
+  try {
+    overlay.querySelector("#chatPlusBtn").click()
+    overlay.querySelector("#chatToolNext").click()
+    overlay.querySelector('[data-chat-tool="schedule"]').click()
+    const editor = document.querySelector("#amSave").closest(".modal-overlay")
+    const sender = editor.querySelector("#amSender")
+    const title = editor.querySelector("#amScheduleTitle")
+    const more = editor.querySelector(".chat-special-more")
+    assert.ok(sender.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING)
+    assert.equal(more?.open, false)
+    assert.equal(more?.contains(editor.querySelector("#amScheduleDetails")), true)
+    assert.equal(more?.contains(editor.querySelector("#amScheduleAccept")), true)
+    assert.match(more?.querySelector("summary")?.textContent || "", /互动与更多设置/)
+  } finally {
+    document.querySelector("#amCancel")?.click()
+    closeFixture(fixture)
+  }
 })
 
 test("phone authors can save and reapply their local placeholder preset", async () => {
@@ -1240,11 +1299,32 @@ test("author choice buttons edit their owner instead of executing a reader branc
     const imageInput = editor.querySelector(".thread-choice-image-url")
     const imagePreview = editor.querySelector(".thread-choice-image-preview img")
     const optionalSettings = editor.querySelector(".thread-choice-more")
-    assert.equal(optionalSettings?.open, true, "saved optional settings should reopen for editing")
+    assert.equal(optionalSettings?.open, false, "saved optional settings should stay summarized until requested")
     assert.equal(optionalSettings?.contains(imageInput), true)
     assert.equal(optionalSettings?.contains(editor.querySelector(".thread-choice-text")), false)
     assert.equal(imageInput?.value, "https://example.invalid/choice-before.png")
     assert.equal(imagePreview?.getAttribute("src"), "https://example.invalid/choice-before.png")
+    const choiceRows = [...editor.querySelectorAll("details.thread-choice-row")]
+    assert.equal(choiceRows.length, 2)
+    assert.equal(choiceRows[0].open, true, "the first choice should be ready to edit")
+    assert.equal(choiceRows[1].open, false, "later choices should start as compact summaries")
+    choiceRows[1].open = true
+    choiceRows[1].dispatchEvent(new window.Event("toggle"))
+    assert.equal(choiceRows[0].open, false, "opening another choice should keep the editor to one active group")
+    assert.ok(choiceRows[0].querySelector(".thread-choice-summary-title")?.textContent.trim())
+    assert.equal(
+      choiceRows[0].querySelector(".thread-choice-followup-section")?.open,
+      false,
+      "saved follow-ups should stay summarized until requested",
+    )
+    const followUpRows = [...choiceRows[0].querySelectorAll("details.thread-choice-followup-row")]
+    assert.equal(followUpRows.length, 1)
+    assert.equal(followUpRows[0].open, false, "completed follow-ups should start as compact sequence summaries")
+    assert.match(followUpRows[0].querySelector("summary")?.textContent || "", /林沐|我听见了/)
+    assert.deepEqual(
+      [...document.querySelector(".thread-choice-modal .modal-footer").querySelectorAll("button")].map(button => button.id),
+      ["threadChoiceDeleteAll", "threadChoiceCancel", "threadChoiceSave"],
+    )
     const pace = editor.querySelector(".thread-choice-reply-pace")
     assert.ok(pace)
     assert.equal(pace.value, "instant")
@@ -1612,7 +1692,9 @@ test("authors can reveal a later message with AND-of-OR stable reader choices", 
     assert.ok(action)
     action.click()
     assert.match(document.querySelector(".phone-story-condition-editor").textContent, /同一组满足任一项.*不同组全部满足/s)
+    assert.match(document.querySelector(".phone-story-condition-summary").textContent, /1 组条件.*尚未选择选项/s)
     document.querySelector('[data-phone-condition-add-choice="condition-no"]').click()
+    assert.match(document.querySelector(".phone-story-condition-summary").textContent, /1 组条件.*1 个选项/s)
     document.querySelector('[data-phone-condition-add-group]').click()
     document.querySelector('[data-phone-condition-add-choice="condition-yes"][data-phone-condition-group="1"]').click()
     document.querySelector("#phoneStoryConditionSave").click()
