@@ -57,6 +57,7 @@ test("reader disables a dangling article choice instead of silently restarting",
   }]))
 
   await import(`../reader/reader.js?dangling-choice=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.querySelector("#rdStartBtn").click()
 

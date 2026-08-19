@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { JSDOM } from "jsdom"
 
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
+const readerAppearanceWorkbenchSource = readFileSync(new URL("../reader/reader-appearance-workbench.js", import.meta.url), "utf8")
 const readerCss = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 const sharedChatCss = readFileSync(new URL("../css/phone-chat.css", import.meta.url), "utf8")
 
@@ -122,6 +123,7 @@ async function openSeededChat(t, work = choiceWork(), phoneCustom) {
   seedPhoneWork(work)
   if (phoneCustom) localStorage.setItem("moirain_phoneCustom", JSON.stringify(phoneCustom))
   await import(`../reader/reader.js?reader-chat-choice-runtime=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()
@@ -658,7 +660,7 @@ test("a full-sentence choice is inserted after its owner and can be rolled back 
   assert.match(readerCss, /\.rd-reply-option\s*\{[^}]*text-align:\s*center/s)
   assert.match(sharedChatCss, /\.phone-frame \.chat-msg-area\s*\{[^}]*scrollbar-width:\s*none/s)
   assert.match(sharedChatCss, /\.phone-frame \.chat-msg-area::-webkit-scrollbar\s*\{[^}]*display:\s*none/s)
-  assert.match(readerSource, /rd-app-preview-chat chat-author-shell chat-reader-shell/)
+  assert.match(readerAppearanceWorkbenchSource, /rd-app-preview-chat chat-author-shell chat-reader-shell/)
 
   const composer = document.getElementById("chatInput")
   assert.ok(composer)

@@ -54,6 +54,7 @@ async function startWork(work, key) {
   localStorage.setItem("moirain_recent", JSON.stringify([{id:work.id, title:work.title, type:work.type, importedAt:Date.now()}]))
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
   await import(`../reader/reader.js?${key}=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 }

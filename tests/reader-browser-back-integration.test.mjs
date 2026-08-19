@@ -70,6 +70,7 @@ test("browser Back exits phone detail and App one layer at a time", async t => {
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?browser-back-phone=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()
@@ -134,6 +135,7 @@ test("visible in-phone Back controls cannot be covered by the bookshelf Back con
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?control-back-phone=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 

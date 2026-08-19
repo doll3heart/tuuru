@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { access, readFile } from "node:fs/promises"
+import { runInNewContext } from "node:vm"
 
 const root = new URL("../", import.meta.url)
 
@@ -60,17 +61,43 @@ test("the service worker follows web deployments without forcing an editor reloa
   assert.match(registration, /serviceWorker\.register\("\/sw\.js",\s*\{\s*scope:\s*"\/"\s*\}\)/s)
   assert.doesNotMatch(registration, /location\.reload/)
   assert.match(worker, /self\.skipWaiting\(\)/)
-  assert.match(worker, /self\.clients\.claim\(\)/)
-  assert.match(worker, /CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v4`/)
+  assert.match(worker, /previousCacheNames[\s\S]*?slice\(-2\)/)
+  assert.match(worker, /firstInstall:\s*previousCacheNames\.length === 0/)
+  assert.match(worker, /activation\.firstInstall\s*\?\s*self\.clients\.claim\(\)\s*:\s*undefined/)
+  assert.doesNotMatch(worker, /\.then\(\(\)\s*=>\s*self\.clients\.claim\(\)\)/)
+  assert.match(worker, /BUILD_CACHE_VERSION\s*=\s*\/\* tuuru-build-version \*\/\s*"dev"/)
+  assert.match(worker, /CACHE_NAME\s*=\s*`\$\{CACHE_PREFIX\}v5-\$\{BUILD_CACHE_VERSION\}`/)
   assert.match(worker, /tuuru-rabbit-v2-192\.png/)
   assert.match(worker, /request\.mode\s*===\s*"navigate"/)
   assert.match(worker, /url\.origin\s*!==\s*self\.location\.origin/)
   assert.match(worker, /request\.destination\s*===\s*"style"/)
   assert.match(worker, /request\.destination\s*===\s*"script"/)
-  assert.match(worker, /networkFirstAsset\(request\)/)
+  assert.match(
+    worker,
+    /if \(request\.destination === "style" \|\| request\.destination === "script"\) \{\s*event\.respondWith\(\s*url\.pathname\.startsWith\("\/assets\/"\)\s*\? cachedAsset\(request\)\s*:\s*networkFirstAsset\(request\),\s*\)\s*return/s,
+  )
   assert.match(worker, /caches\.delete/)
   assert.match(headers, /\/sw\.js\s*\n\s+Cache-Control:\s*public,\s*no-cache,\s*must-revalidate/i)
   assert.match(headers, /\/manifest\.webmanifest\s*\n\s+Cache-Control:\s*public,\s*no-cache,\s*must-revalidate/i)
+  assert.match(headers, /\/assets\/\*\s*\n\s+Cache-Control:\s*public,\s*max-age=31536000,\s*immutable/i)
+})
+
+test("a worker update keeps two prior builds without taking over their open tabs", async () => {
+  const worker = await text("public/sw.js")
+  const plan = runInNewContext(
+    `${worker}\nplanCacheActivation(["other-cache", "tuuru-web-v3", "tuuru-web-v4", "tuuru-web-v5-old", CACHE_NAME])`,
+    { self:{ addEventListener() {} } },
+  )
+
+  assert.equal(plan.firstInstall, false)
+  assert.deepEqual(Array.from(plan.staleCacheNames), ["tuuru-web-v3"])
+
+  const firstInstall = runInNewContext(
+    `${worker}\nplanCacheActivation([CACHE_NAME])`,
+    { self:{ addEventListener() {} } },
+  )
+  assert.equal(firstInstall.firstInstall, true)
+  assert.deepEqual(Array.from(firstInstall.staleCacheNames), [])
 })
 
 test("the TWA contract follows the device user rotation lock while unlocked browsers may rotate", async () => {

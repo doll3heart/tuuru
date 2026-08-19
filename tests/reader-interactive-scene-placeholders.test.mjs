@@ -88,6 +88,7 @@ test("the real reader substitutes placeholders in scene prompt, speaker, and rea
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
   await import(`../reader/reader.js?scene-placeholders=${Date.now()}-${Math.random()}`)
 
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   const nameInput = document.querySelector('[data-ph-id="reader-name"]')
   nameInput.value = "阿雾"

@@ -36,6 +36,7 @@ function cacheWork(work) {
 async function openCachedWork(work, tag) {
   cacheWork(work)
   await import(`../reader/reader.js?${tag}=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector("[data-reader-recent-index]").click()
   document.getElementById("rdStartBtn").click()
 }

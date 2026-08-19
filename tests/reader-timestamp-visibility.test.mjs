@@ -112,6 +112,7 @@ test("reader Apps hide every content timestamp when the phone setting is enabled
   installDom(t)
   seedWork()
   await import(`../reader/reader.js?reader-hidden-phone-times=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 

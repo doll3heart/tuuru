@@ -253,13 +253,7 @@ export function renderHeader(){
 }
 
 // ==================== Pages ====================
-import { bindHome, renderHome } from "./pages/home.js"
-import { renderNew } from "./pages/new.js"
-import { bindEditor, renderEditor } from "./pages/editor.js"
 import { buildReaderPreviewUrl, openReaderPreview } from "./pages/reader.js"
-import { renderPhoneEditor } from "./pages/phone.js"
-import { bindResourcesPage, renderResourcesPage } from "./pages/resources.js"
-import { bindExportCenter, renderExportCenter } from "./pages/exports.js"
 
 // ==================== Init ====================
 export function startCorruptLocalDatabaseReset({
@@ -538,31 +532,40 @@ export function init(){
     return
   }
   
-  router("/", (container) => {
+  router("/", async (container) => {
+    const { bindHome, renderHome } = await import("./pages/home.js")
     app.innerHTML = renderHeader() + '<main class="app-main">'+renderHome()+'</main>'
     bindHome()
   })
   
-  router("/new", (container) => {
+  router("/new", async (container) => {
+    const { renderNew } = await import("./pages/new.js")
     app.innerHTML = renderHeader() + '<main class="app-main narrow">'+renderNew()+'</main>'
   })
 
-  router("/resources", () => {
+  router("/resources", async () => {
+    const { bindResourcesPage, renderResourcesPage } = await import("./pages/resources.js")
     app.innerHTML = renderHeader() + renderResourcesPage({ initialTab:"habits" })
     bindResourcesPage()
   })
 
-  router("/resources/tutorial", () => {
+  router("/resources/tutorial", async () => {
+    const { bindResourcesPage, renderResourcesPage } = await import("./pages/resources.js")
     app.innerHTML = renderHeader() + renderResourcesPage({ initialTab:"tutorial" })
     bindResourcesPage()
   })
 
-  router("/exports", () => {
+  router("/exports", async () => {
+    const [{ bindExportCenter, renderExportCenter }] = await Promise.all([
+      import("./pages/exports.js"),
+      import("./pages/home.js"),
+    ])
     app.innerHTML = renderHeader() + '<main class="app-main narrow">' + renderExportCenter() + '</main>'
     bindExportCenter()
   })
   
-  router("/edit/:id", (container, p) => {
+  router("/edit/:id", async (container, p) => {
+    const { bindEditor, renderEditor } = await import("./pages/editor.js")
     app.innerHTML = renderHeader() + renderEditor(p.id)
     bindEditor(p.id)
   })
@@ -571,7 +574,8 @@ export function init(){
     openReaderPreview(p.id)
   })
 
-  router("/phone/:id", (container, p) => {
+  router("/phone/:id", async (container, p) => {
+    const { renderPhoneEditor } = await import("./pages/phone.js")
     app.innerHTML = renderHeader() + renderPhoneEditor(p.id)
   })
   

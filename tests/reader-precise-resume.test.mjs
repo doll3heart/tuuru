@@ -91,6 +91,7 @@ function phoneWork() {
 }
 
 function openRecentAndStart() {
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 }
@@ -138,6 +139,7 @@ test("article resume persists an anchor-relative passage and restores it on reop
 
   document.querySelector("[data-reader-home]").click()
   scrollY = 0
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   assert.equal(document.querySelector(".rd-landing-modal"), null)
   assert.equal(scrollCalls.at(-1).top, 500)
@@ -180,6 +182,7 @@ test("phone resume reopens the saved chat and restores its message position", as
   document.querySelector("[data-reader-home]").click()
   localStorage.setItem(READER_LIBRARY_STORAGE_KEY, persisted.library)
   localStorage.setItem("moirain_recent", persisted.recent)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
 
   const restoredArea = document.getElementById("chatMsgArea")

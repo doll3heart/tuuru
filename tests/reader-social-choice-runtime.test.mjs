@@ -179,6 +179,7 @@ async function openSeededPhone(t, work = socialChoiceWork()) {
   installDom(t)
   seedPhoneWork(work)
   await import(`../reader/reader.js?reader-social-choice-runtime=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   return work
@@ -464,6 +465,7 @@ test("reader forum applies the selected avatar shape and renders avatars for com
     appSettings:{ forum:{ avatarShape:"circle" } },
   }))
   await import(`../reader/reader.js?reader-forum-avatar=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="forum"]').click()

@@ -47,11 +47,12 @@ test("the post-build HTML transform covers Vite-generated stylesheet links", () 
   assert.equal(plugin.transformIndexHtml.handler, addStylesheetRecovery)
 })
 
-test("Cloudflare revalidates entry documents and built assets", () => {
+test("Cloudflare revalidates entry documents while hashed assets are immutable", () => {
   const headers = readFileSync(new URL("../public/_headers", import.meta.url), "utf8")
 
-  for (const route of ["/", "/reader/", "/assets/*"]) {
+  for (const route of ["/", "/reader/"]) {
     const escapedRoute = route.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     assert.match(headers, new RegExp(`(?:^|\\n)${escapedRoute}\\s*\\n\\s+Cache-Control:\\s*public,\\s*no-cache,\\s*must-revalidate`, "i"))
   }
+  assert.match(headers, /(?:^|\n)\/assets\/\*\s*\n\s+Cache-Control:\s*public,\s*max-age=31536000,\s*immutable/i)
 })

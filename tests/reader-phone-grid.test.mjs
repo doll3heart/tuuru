@@ -15,6 +15,7 @@ import {
 } from "../reader/phone-home-layout.js"
 
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
+const readerAppearanceWorkbenchSource = readFileSync(new URL("../reader/reader-appearance-workbench.js", import.meta.url), "utf8")
 const css = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
 
@@ -145,9 +146,9 @@ test("both reader phone renderers are wired to the shared multi-screen home layo
 })
 
 test("custom decoration uploads are wired to grid-size controls and contained artwork", () => {
-  assert.match(readerSource, /data-cu-custom-widget-upload/)
-  assert.match(readerSource, /data-cu-custom-widget-size/)
-  assert.match(readerSource, /data-cu-custom-widget-remove/)
+  assert.match(readerAppearanceWorkbenchSource, /data-cu-custom-widget-upload/)
+  assert.match(readerAppearanceWorkbenchSource, /data-cu-custom-widget-size/)
+  assert.match(readerAppearanceWorkbenchSource, /data-cu-custom-widget-remove/)
   assert.match(readerSource, /phoneCustomDecorationSizeForDimensions/)
   assert.match(readerSource, /renderPhoneCustomDecoration/)
 

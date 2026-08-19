@@ -96,10 +96,16 @@ test("reader exposes article, phone appearance, and profile as reader-owned cont
   document.getElementById("rsClose").click()
 
   appearance.click()
+  for (let attempt = 0; attempt < 100 && !document.getElementById("cuSave"); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
   assert.ok(document.getElementById("cuSave"))
   document.getElementById("cuCancel").click()
 
   profile.click()
+  for (let attempt = 0; attempt < 100 && !document.getElementById("rpSave"); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
   assert.ok(document.getElementById("rpSave"))
 })
 

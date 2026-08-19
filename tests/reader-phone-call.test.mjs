@@ -159,6 +159,7 @@ function callPhoneWork({ contactName = "林澈", contactFaceUrl = "", messages, 
 
 async function openFirstCall(moduleKey) {
   await import(`../reader/reader.js?${moduleKey}=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()
@@ -412,6 +413,7 @@ test("caller names stay data instead of becoming injected call-scene attributes"
   seedPhoneWork(callPhoneWork({ contactName: maliciousName }))
 
   await import(`../reader/reader.js?reader-phone-call-attribute-safety=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()
@@ -638,6 +640,7 @@ test("reader merges mixed legacy messages with existing rounds", async t => {
   }))
 
   await import(`../reader/reader.js?reader-phone-mixed-chat=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()

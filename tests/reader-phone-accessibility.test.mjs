@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 
 const readerSource = readFileSync(new URL("../reader/reader.js", import.meta.url), "utf8")
+const readerAppearanceWorkbenchSource = readFileSync(new URL("../reader/reader-appearance-workbench.js", import.meta.url), "utf8")
 const css = readFileSync(new URL("../reader/reader.css", import.meta.url), "utf8")
 const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "")
 
@@ -61,7 +62,10 @@ test("reader App Back controls are named 44px targets with focus continuity", ()
   assert.match(backRule, /width\s*:\s*44px/)
   assert.match(backRule, /height\s*:\s*44px/)
   assert.match(backFocus, /outline\s*:\s*2px\s+solid/)
-  assert.equal([...readerSource.matchAll(/class="rd-back-spacer"/g)].length, 2)
+  assert.equal(
+    [...readerSource.matchAll(/class="rd-back-spacer"/g), ...readerAppearanceWorkbenchSource.matchAll(/class="rd-back-spacer"/g)].length,
+    2,
+  )
   assert.match(backSpacer, /width\s*:\s*44px/)
   assert.match(readerSource, /data-reader-forum-account aria-label="设置我的论坛账号"/)
   assert.match(forumAccount, /min-height\s*:\s*44px/)

@@ -74,6 +74,7 @@ test("reader phone Apps resolve current contact avatar and per-App IDs", async t
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?reader-contact-identity=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.querySelector('[data-ph-id="reader-name"]').value = "读者"
   document.getElementById("rdStartBtn").click()

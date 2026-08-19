@@ -37,6 +37,14 @@ function installDom(t) {
   return dom
 }
 
+async function waitForGalleryAppearance() {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (document.querySelector('.cu-modal.app-appearance-workbench')) return
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.fail('timed out waiting for gallery appearance settings')
+}
+
 function seedRecentWork(work) {
   localStorage.setItem("moirain_recent", JSON.stringify([{
     id: work.id,
@@ -90,6 +98,7 @@ test("reader gallery applies bounded runtime style settings", async t => {
   }))
 
   await import(`../reader/reader.js?reader-gallery-runtime-style=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="gallery"]').click()
@@ -128,6 +137,7 @@ test("gallery styling preserves zero radius through preview and save", async t =
   await import(`../reader/reader.js?reader-gallery-zero-style=${Date.now()}`)
   document.querySelector('[data-tab="custom"]').click()
   document.querySelector('.rd-app-icon[data-app="gallery"]').click()
+  await waitForGalleryAppearance()
 
   const radius = document.getElementById("cuImgRadius")
   radius.value = "0"
@@ -157,6 +167,7 @@ test("gallery settings normalize corrupted values before rendering controls", as
   await import(`../reader/reader.js?reader-gallery-corrupt-style=${Date.now()}`)
   document.querySelector('[data-tab="custom"]').click()
   document.querySelector('.rd-app-icon[data-app="gallery"]').click()
+  await waitForGalleryAppearance()
 
   assert.equal(document.querySelector("[data-forged]"), null)
   assert.equal(document.getElementById("cuImgRadius").value, "4")
@@ -221,6 +232,7 @@ test("article gallery modules preserve their authored character connection in th
   seedRecentWork(work)
 
   await import(`../reader/reader.js?reader-gallery-albums=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector(".rd-pm-trigger").click()
@@ -285,6 +297,7 @@ test("standalone gallery albums support drill-down, recovery, and focus continui
   seedRecentWork(work)
 
   await import(`../reader/reader.js?reader-gallery-navigation=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="gallery"]').click()

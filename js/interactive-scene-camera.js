@@ -1,14 +1,20 @@
-import {
-  FaceDetector as MediaPipeFaceDetector,
-  FilesetResolver,
-} from "@mediapipe/tasks-vision"
-
 const FRONT_CAMERA_CONSTRAINTS = Object.freeze({
   audio: false,
   video: { facingMode: { ideal: "user" } },
 })
 
 const mediaPipeFilesets = new Map()
+let mediaPipeTasksVisionPromise = null
+
+function loadMediaPipeTasksVision() {
+  if (!mediaPipeTasksVisionPromise) {
+    mediaPipeTasksVisionPromise = import("@mediapipe/tasks-vision").catch(error => {
+      mediaPipeTasksVisionPromise = null
+      throw error
+    })
+  }
+  return mediaPipeTasksVisionPromise
+}
 
 function stopStream(stream) {
   if (!stream || typeof stream.getTracks !== "function") return
@@ -29,6 +35,8 @@ async function createMediaPipeFaceDetector(options = {}) {
   const assetRoot = detectorAssetRoot(documentObject, options)
   const wasmRoot = new URL("wasm/", assetRoot).href
   const modelUrl = new URL("models/blaze_face_short_range.tflite", assetRoot).href
+  const mediaPipeTasksVision = await loadMediaPipeTasksVision()
+  const { FilesetResolver } = mediaPipeTasksVision
   let filesetPromise = mediaPipeFilesets.get(wasmRoot)
   if (!filesetPromise) {
     filesetPromise = FilesetResolver.forVisionTasks(wasmRoot)
@@ -41,6 +49,7 @@ async function createMediaPipeFaceDetector(options = {}) {
     mediaPipeFilesets.delete(wasmRoot)
     throw error
   }
+  const { FaceDetector: MediaPipeFaceDetector } = mediaPipeTasksVision
   const detector = await MediaPipeFaceDetector.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: modelUrl },
     runningMode: "VIDEO",

@@ -84,6 +84,7 @@ function seedWork() {
 }
 
 function openManagerAfterChoosingRoute() {
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-choice-id="left"]').click()

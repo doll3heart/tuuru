@@ -25,17 +25,48 @@ function installDom(t) {
   return dom
 }
 
-function openPhoneAppearance() {
+async function waitForSelector(selector) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const element = document.querySelector(selector)
+    if (element) return element
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.fail(`timed out waiting for ${selector}`)
+}
+
+async function openPhoneAppearance() {
   document.querySelector('[data-tab="custom"]').click()
   const trigger = document.querySelector('[data-reader-phone-control="appearance"]')
   trigger.focus()
   trigger.click()
+  await waitForSelector('.cu-modal.phone-appearance-workbench')
   return trigger
 }
 
 function dispatchInput(element) {
   element.dispatchEvent(new Event("input", { bubbles: true }))
 }
+
+test("a first-load double activation opens one workbench without a false load error", async t => {
+  installDom(t)
+  await import(`../reader/reader.js?phone-appearance-double-activation=${Date.now()}-${Math.random()}`)
+
+  document.querySelector('[data-tab="custom"]').click()
+  const trigger = document.querySelector('[data-reader-phone-control="appearance"]')
+  trigger.focus()
+  trigger.click()
+  trigger.click()
+
+  await waitForSelector('.cu-modal.phone-appearance-workbench')
+  await new Promise(resolve => setTimeout(resolve, 20))
+
+  assert.equal(document.querySelectorAll('.cu-modal-overlay').length, 1)
+  assert.equal(document.querySelectorAll('.cu-modal.phone-appearance-workbench').length, 1)
+  assert.doesNotMatch(document.querySelector('[data-feedback-copy]')?.textContent || '', /外观编辑器加载失败/)
+
+  document.getElementById('cuCancel').click()
+  assert.equal(document.activeElement, trigger)
+})
 
 test("phone appearance workbench previews drafts live and saves only on confirmation", async t => {
   installDom(t)
@@ -51,7 +82,7 @@ test("phone appearance workbench previews drafts live and saves only on confirma
   }))
   await import(`../reader/reader.js?phone-appearance-workbench=${Date.now()}-${Math.random()}`)
 
-  const trigger = openPhoneAppearance()
+  const trigger = await openPhoneAppearance()
   const originalStorage = localStorage.getItem("moirain_phoneCustom")
   const dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
   assert.ok(dialog)
@@ -210,7 +241,7 @@ test("phone appearance invalid CSS stays unapplied and cancel preserves exact st
   localStorage.setItem("moirain_phoneCustom", raw)
   await import(`../reader/reader.js?phone-appearance-cancel=${Date.now()}-${Math.random()}`)
 
-  const trigger = openPhoneAppearance()
+  const trigger = await openPhoneAppearance()
   const customCss = document.getElementById("cuCustomCss")
   const previousPreviewCss = document.getElementById("reader-phone-preview-user-css").textContent
   customCss.value = ".phone-profile { position: fixed; }"
@@ -245,7 +276,7 @@ test("saved custom decorations can change occupied cells and be deleted", async 
   }))
   await import(`../reader/reader.js?phone-custom-decoration=${Date.now()}-${Math.random()}`)
 
-  openPhoneAppearance()
+  await openPhoneAppearance()
   const dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
   let homeItem = document.querySelector("#phoneAppearancePreview [data-phone-home-key='custom:custom-sticker01']")
   assert.ok(homeItem)
@@ -284,7 +315,7 @@ test("uploading a wide raster automatically adds an 8 by 3 decoration and surviv
   }
   await import(`../reader/reader.js?phone-custom-upload=${Date.now()}-${Math.random()}`)
 
-  openPhoneAppearance()
+  await openPhoneAppearance()
   let dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
   const fileInput = dialog.querySelector("[data-cu-custom-widget-file]")
   const pngSignature = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])
@@ -309,7 +340,7 @@ test("uploading a wide raster automatically adds an 8 by 3 decoration and surviv
     { name:"wide-sticker", size:"wide" },
   ])
 
-  openPhoneAppearance()
+  await openPhoneAppearance()
   dialog = document.querySelector(".cu-modal.phone-appearance-workbench")
   homeItem = document.querySelector(`#phoneAppearancePreview [data-phone-home-key="custom:${customId}"]`)
   assert.ok(homeItem)
@@ -326,7 +357,7 @@ test("phone appearance restores valid adjustments after an accidental close", as
   }))
   await import(`../reader/reader.js?phone-appearance-draft=${Date.now()}-${Math.random()}`)
 
-  openPhoneAppearance()
+  await openPhoneAppearance()
   const originalStorage = localStorage.getItem("moirain_phoneCustom")
   const radius = document.getElementById("cuRadius")
   radius.value = "30"
@@ -336,7 +367,7 @@ test("phone appearance restores valid adjustments after an accidental close", as
   assert.equal(document.querySelector(".cu-modal-overlay"), null)
   assert.equal(localStorage.getItem("moirain_phoneCustom"), originalStorage)
 
-  openPhoneAppearance()
+  await openPhoneAppearance()
   assert.equal(document.getElementById("cuRadius").value, "30")
   assert.match(document.getElementById("cuLiveStatus").textContent, /已恢复/)
   document.getElementById("cuSave").click()
@@ -404,6 +435,7 @@ test("saved phone appearance reaches the standalone reader phone", async t => {
   }))
 
   await import(`../reader/reader.js?phone-appearance-runtime=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -459,6 +491,7 @@ test("saved reader profile images can be replaced and cleared after reopening", 
   await import(`../reader/reader.js?reader-profile-reedit=${Date.now()}-${Math.random()}`)
   document.querySelector('[data-tab="custom"]').click()
   document.querySelector('[data-reader-phone-control="profile"]').click()
+  await waitForSelector('.cu-modal.profile-appearance-workbench')
 
   const profileDialog = document.querySelector(".cu-modal.profile-appearance-workbench")
   assert.ok(profileDialog)
@@ -489,6 +522,7 @@ test("saved reader profile images can be replaced and cleared after reopening", 
   assert.equal(stored.readerSignature, "慢慢读，慢慢喜欢。")
 
   document.querySelector('[data-reader-phone-control="profile"]').click()
+  await waitForSelector('.cu-modal.profile-appearance-workbench')
   document.getElementById("rpClearAv").click()
   assert.equal(document.getElementById("rpAvatarUrl").value, "")
   document.getElementById("rpSave").click()
@@ -497,6 +531,7 @@ test("saved reader profile images can be replaced and cleared after reopening", 
   assert.equal(stored.readerAvatar, null)
 
   document.querySelector('[data-reader-phone-control="profile"]').click()
+  await waitForSelector('.cu-modal.profile-appearance-workbench')
   document.getElementById("rpClearTop").click()
   assert.equal(document.getElementById("rpTopBgUrl").value, "")
   document.getElementById("rpSave").click()
@@ -512,6 +547,7 @@ test("reader profile restores an accidentally closed draft", async t => {
 
   document.querySelector('[data-tab="custom"]').click()
   document.querySelector('[data-reader-phone-control="profile"]').click()
+  await waitForSelector('.cu-modal.profile-appearance-workbench')
   const name = document.getElementById("rpName")
   name.value = "暂存昵称"
   name.dispatchEvent(new Event("input", { bubbles:true }))
@@ -519,6 +555,7 @@ test("reader profile restores an accidentally closed draft", async t => {
 
   assert.equal(JSON.parse(localStorage.getItem("moirain_phoneCustom")).readerId, "原昵称")
   document.querySelector('[data-reader-phone-control="profile"]').click()
+  await waitForSelector('.cu-modal.profile-appearance-workbench')
   assert.equal(document.getElementById("rpName").value, "暂存昵称")
   assert.match(document.querySelector(".phone-appearance-status").textContent, /已恢复/)
   document.getElementById("rpSave").click()

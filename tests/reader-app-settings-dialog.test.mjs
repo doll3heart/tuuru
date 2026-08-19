@@ -38,20 +38,30 @@ function sharedChatCssBody(selector) {
   return sharedChatCss.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? ""
 }
 
-function openGallerySettings() {
+async function openGallerySettings() {
   document.querySelector('[data-tab="custom"]').click()
   const trigger = document.querySelector('.rd-app-icon[data-app="gallery"]')
   trigger.focus()
   trigger.click()
+  await waitForAppSettings()
   return trigger
 }
 
-function openNamedAppSettings(type) {
+async function openNamedAppSettings(type) {
   document.querySelector('[data-tab="custom"]').click()
   const trigger = document.querySelector(`.rd-app-icon[data-app="${type}"]`)
   trigger.focus()
   trigger.click()
+  await waitForAppSettings()
   return trigger
+}
+
+async function waitForAppSettings() {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (document.querySelector('.cu-modal.app-appearance-workbench')) return
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.fail('timed out waiting for the per-App appearance workbench')
 }
 
 function setInputFiles(input, files) {
@@ -197,7 +207,7 @@ test("reader App settings behave as a modal dialog and restore focus", async t =
   const dom = installDom(t)
   await import(`../reader/reader.js?reader-app-settings-dialog=${Date.now()}`)
 
-  const trigger = openGallerySettings()
+  const trigger = await openGallerySettings()
   const overlay = document.querySelector(".cu-modal-overlay")
   const dialog = overlay.querySelector(".cu-modal")
   const closeButton = overlay.querySelector("#cuModalClose")
@@ -225,6 +235,7 @@ test("reader App settings behave as a modal dialog and restore focus", async t =
   assert.equal(document.activeElement, trigger)
 
   trigger.click()
+  await waitForAppSettings()
   const galleryGap = document.getElementById("cuGap")
   galleryGap.value = "8"
   galleryGap.dispatchEvent(new Event("input", { bubbles:true }))
@@ -249,7 +260,7 @@ test("reader App appearance previews the real App shell and scopes live CSS", as
   installDom(t)
   await import(`../reader/reader.js?reader-app-real-preview=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("browser")
+  await openNamedAppSettings("browser")
   const dialog = document.querySelector(".cu-modal")
   const preview = document.getElementById("cuPreview")
   const cssInput = document.getElementById("cuAppCustomCss")
@@ -299,7 +310,7 @@ test("every reader App appearance preview uses its runtime component vocabulary"
   }
 
   for (const [type, selector] of Object.entries(expectedComponents)) {
-    openNamedAppSettings(type)
+    await openNamedAppSettings(type)
     const preview = document.getElementById("cuPreview")
     assert.ok(preview.querySelector(`.reader-app-preview-scope.rd-phone-app-${type}`), `${type} uses the real App shell`)
     assert.ok(preview.querySelector(selector), `${type} uses ${selector}`)
@@ -313,7 +324,7 @@ test("reader App settings stay retryable when local persistence fails", async t 
   globalThis.alert = message => alerts.push(String(message))
   await import(`../reader/reader.js?reader-app-settings-storage=${Date.now()}`)
 
-  openGallerySettings()
+  await openGallerySettings()
   const overlay = document.querySelector(".cu-modal-overlay")
   const nativeStorage = globalThis.localStorage
   globalThis.localStorage = {
@@ -351,7 +362,7 @@ test("reader message appearance uses only named native color pickers", async t =
   installDom(t)
   await import(`../reader/reader.js?reader-app-settings-colors=${Date.now()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const groups = [...document.querySelectorAll(".cu-settings-section .cu-color-group")]
   const picker = document.querySelector('[data-cu-self-bg-picker]')
 
@@ -376,7 +387,7 @@ test("reader messages can preview, save, and clear a local chat background image
   installImageDecoder(t)
   await import(`../reader/reader.js?reader-chat-background-image=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const beforeRaw = localStorage.getItem("moirain_phoneCustom")
   const fileInput = document.getElementById("cuChatBackgroundFile")
   assert.ok(document.getElementById("cuChatBackgroundUpload"))
@@ -395,7 +406,7 @@ test("reader messages can preview, save, and clear a local chat background image
   let saved = JSON.parse(localStorage.getItem("moirain_phoneCustom"))
   assert.equal(saved.appSettings.messages.chatBgImage, imageUrl)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.getElementById("cuChatBackgroundClear").click()
   assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-image"), "none")
   document.getElementById("cuModalSave").click()
@@ -407,7 +418,7 @@ test("reader message appearance previews and saves bubble weight and reply butto
   installDom(t)
   await import(`../reader/reader.js?reader-message-weight-and-button=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const weightButtons = [...document.querySelectorAll("[data-cu-bubble-weight]")]
   const boldButton = document.querySelector('[data-cu-bubble-weight="800"]')
   const buttonColor = document.querySelector('[data-cu-send-bg-picker]')
@@ -433,7 +444,7 @@ test("reader message bottom actions expose custom input colors, radius, and a CS
   installDom(t)
   await import(`../reader/reader.js?reader-message-composer=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const autoToggle = document.getElementById("cuComposerAutoReadability")
   const barColor = document.querySelector("[data-cu-composer-bg-picker]")
   const inputColor = document.querySelector("[data-cu-composer-input-bg-picker]")
@@ -499,7 +510,7 @@ test("reader message appearance renders separate full bubble skins with adjustab
   }))
   await import(`../reader/reader.js?reader-message-bubble-skins=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const preview = document.querySelector(".rd-app-preview-chat")
   assert.ok(document.getElementById("cuSelfBubbleSkinUpload"))
   assert.ok(document.getElementById("cuOtherBubbleSkinUpload"))
@@ -531,7 +542,7 @@ test("slice bubble skins use the size control and allow a larger 220 percent ran
   }))
   await import(`../reader/reader.js?reader-message-slice-size=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const size = document.getElementById("cuSelfBubbleSkinSize")
   const preview = document.querySelector(".rd-app-preview-chat")
   assert.equal(size.max, "220")
@@ -560,7 +571,7 @@ test("reader bubble skin upload stays draft-only, clears per side, and resets wi
   installImageDecoder(t)
   await import(`../reader/reader.js?reader-message-bubble-skin-upload=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const selfFile = document.getElementById("cuSelfBubbleSkinFile")
   setInputFiles(selfFile, [{ type:"image/png", size:8 }])
   await flushAsyncImageWork()
@@ -595,7 +606,7 @@ test("reader bubble skin upload stays draft-only, clears per side, and resets wi
   assert.equal(saved.selfBubbleSkinPadding, 11)
   assert.equal(saved.otherBubbleSkinImage, imageUrl)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.querySelector('[data-cu-reset-message-section="bubbles"]').click()
   preview = document.querySelector(".rd-app-preview-chat")
   assert.equal(preview.querySelector(".chat-msg.self .chat-bubble").classList.contains("has-bubble-skin"), false)
@@ -612,7 +623,7 @@ test("local appearance image upload reports dimensions, size, and edge transpare
   installImageDecoder(t, { width:640, height:360 })
   await import(`../reader/reader.js?reader-image-inspection=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   setInputFiles(document.getElementById("cuSelfBubbleSkinFile"), [{
     name:"bubble.png",
     type:"image/png",
@@ -632,7 +643,7 @@ test("reader message wallpaper controls preview and save fit, focus, tone, and a
   installDom(t)
   await import(`../reader/reader.js?reader-message-wallpaper-controls=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.querySelector('[data-cu-chat-bg-fit="contain"]').click()
   const tone = document.getElementById("cuChatBgTone")
   const positionX = document.getElementById("cuChatBgPosX")
@@ -666,7 +677,7 @@ test("reader message appearance groups stay compact and preview clicks reveal th
   installDom(t)
   await import(`../reader/reader.js?reader-message-appearance-sections=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const sections = [...document.querySelectorAll(".cu-settings-section")]
   assert.deepEqual(
     sections.slice(0, 4).map(section => section.id),
@@ -691,7 +702,7 @@ test("reader message bubble controls use collapsible groups and picker-only colo
   installDom(t)
   await import(`../reader/reader.js?reader-message-bubble-groups=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const groups = [...document.querySelectorAll("#cuMessageBubbles > .cu-settings-section-body > details")]
   assert.deepEqual(
     groups.map(group => group.id),
@@ -716,7 +727,7 @@ test("reader appearance ranges support exact numeric entry with clamping", async
   installDom(t)
   await import(`../reader/reader.js?reader-app-exact-ranges=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const range = document.getElementById("cuSelfRadius")
   const exact = document.querySelector('[data-appearance-range-input="cuSelfRadius"]')
   assert.ok(exact)
@@ -733,7 +744,7 @@ test("reader appearance sections expose live summaries and one-step undo", async
   installDom(t)
   await import(`../reader/reader.js?reader-app-section-state=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const section = document.getElementById("cuMessageBubbles")
   const summary = section.querySelector("[data-appearance-summary]")
   const undo = document.querySelector(".appearance-workbench-undo")
@@ -760,7 +771,7 @@ test("message bubble appearance can be copied between both sides", async t => {
   installDom(t)
   await import(`../reader/reader.js?reader-bubble-style-copy=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const selfColor = document.querySelector("[data-cu-self-bg-picker]")
   selfColor.value = "#123456"
   selfColor.dispatchEvent(new Event("input", { bubbles:true }))
@@ -782,13 +793,13 @@ test("non-message App preview clicks reveal their matching settings", async t =>
   installDom(t)
   await import(`../reader/reader.js?reader-app-preview-targets=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("forum")
+  await openNamedAppSettings("forum")
   document.querySelector(".rd-forum-title").click()
   assert.equal(document.getElementById("cuForumTypography").open, true)
   assert.equal(document.querySelector(".appearance-workbench-pages").dataset.appearanceActivePage, "controls")
   document.getElementById("cuModalCancel").click()
 
-  openNamedAppSettings("gallery")
+  await openNamedAppSettings("gallery")
   document.querySelector(".rd-gallery-photo").click()
   assert.equal(document.getElementById("cuGalleryAppearance").open, true)
 })
@@ -807,7 +818,7 @@ test("every reader App appearance editor uses collapsible groups and shared prev
   }
 
   for (const [type, sectionIds] of Object.entries(expectedSections)) {
-    openNamedAppSettings(type)
+    await openNamedAppSettings(type)
     const workbench = document.querySelector(".app-appearance-workbench")
     const sections = [...workbench.querySelectorAll(".app-appearance-controls > .cu-settings-section")]
     assert.equal(workbench.querySelectorAll(".app-appearance-controls > .cu-card").length, 0, type)
@@ -829,7 +840,7 @@ test("reader App preview scales to the available height on short wide screens", 
   Object.defineProperty(dom.window, "innerWidth", { configurable: true, value: 1100 })
   await import(`../reader/reader.js?reader-app-preview-height=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const modalBody = document.querySelector(".app-appearance-workbench .cu-modal-body")
   const previewLabel = document.querySelector(".app-appearance-preview-pane .cu-preview-label")
   const previewStatus = document.querySelector(".app-appearance-preview-pane .phone-appearance-status")
@@ -865,7 +876,7 @@ test("reader message section reset stays draft-only and preserves other groups",
   }))
   await import(`../reader/reader.js?reader-message-section-reset=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const rawBefore = localStorage.getItem("moirain_phoneCustom")
   const resetButtons = [...document.querySelectorAll("[data-cu-reset-message-section]")]
   assert.deepEqual(resetButtons.map(button => button.dataset.cuResetMessageSection), ["bubbles", "background", "actions", "call"])
@@ -897,7 +908,7 @@ test("reader message wallpaper focus can be dragged directly in the preview", as
   }))
   await import(`../reader/reader.js?reader-message-wallpaper-drag=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const area = document.querySelector(".rd-app-preview-chat .chat-msg-area")
   area.getBoundingClientRect = () => ({ left: 10, top: 20, width: 200, height: 100, right: 210, bottom: 120 })
   const pointer = (type, x, y) => {
@@ -938,7 +949,7 @@ test("reader message section resets stay draft-only and do not affect sibling gr
   const beforeRaw = localStorage.getItem("moirain_phoneCustom")
   await import(`../reader/reader.js?reader-message-section-reset=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.querySelector('[data-cu-reset-message-section="background"]').click()
 
   let previewChat = document.querySelector(".rd-app-preview-chat")
@@ -1013,7 +1024,7 @@ test("reader message wallpaper readability stays local and protects dark backgro
   }))
   await import(`../reader/reader.js?reader-message-readability=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const previewChat = document.querySelector(".rd-app-preview-chat")
   assert.equal(document.getElementById("cuChatAutoReadability").checked, true)
   assert.equal(previewChat.style.getPropertyValue("--chat-time-color"), "#ffffff")
@@ -1028,7 +1039,7 @@ test("reader App settings restore an accidentally closed draft", async t => {
   installDom(t)
   await import(`../reader/reader.js?reader-app-dirty-draft=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const save = document.getElementById("cuModalSave")
   const status = document.getElementById("cuAppLiveStatus")
   assert.equal(save.disabled, true)
@@ -1044,7 +1055,7 @@ test("reader App settings restore an accidentally closed draft", async t => {
   assert.equal(document.querySelector(".app-appearance-workbench"), null)
   assert.equal(localStorage.getItem("moirain_phoneCustom"), null)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   assert.equal(document.getElementById("cuBubbleFs").value, "15")
   assert.equal(document.getElementById("cuModalSave").disabled, false)
   document.getElementById("cuModalSave").click()
@@ -1062,7 +1073,7 @@ test("reader App Restore Default is draft-only and immediately undoable", async 
   const beforeRaw = localStorage.getItem("moirain_phoneCustom")
   await import(`../reader/reader.js?reader-app-reset-undo=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.getElementById("cuAppReset").click()
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
   assert.equal(document.querySelector(".rd-app-preview-chat").style.getPropertyValue("--chat-editor-pink"), "#555")
@@ -1080,7 +1091,7 @@ test("reader App preview supports press-and-hold original comparison", async t =
   installDom(t)
   await import(`../reader/reader.js?reader-app-hold-comparison=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const picker = document.querySelector('[data-cu-self-bg-picker]')
   picker.value = "#3b82f6"
   picker.dispatchEvent(new Event("input", { bubbles:true }))
@@ -1164,7 +1175,7 @@ test("call background presets appear only in Messages and default safely", async
   }))
   await import(`../reader/reader.js?call-background-defaults=${Date.now()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const presets = [...document.querySelectorAll(".cu-call-background-preset")]
   assert.equal(presets.length, 4)
   assert.equal(presets.filter(button => button.getAttribute("aria-pressed") === "true").length, 1)
@@ -1177,7 +1188,7 @@ test("call background presets appear only in Messages and default safely", async
   assert.equal(callBackgroundCard.querySelector('input[type="url"], input[type="text"]'), null)
   document.getElementById("cuModalCancel").click()
 
-  openNamedAppSettings("gallery")
+  await openNamedAppSettings("gallery")
   assert.equal(document.querySelector("#cuCallBackgroundCard"), null)
 })
 
@@ -1193,7 +1204,7 @@ test("primitive and array-shaped phone customization cannot break settings", asy
   ]
   for (const value of corruptValues) {
     localStorage.setItem("moirain_phoneCustom", JSON.stringify(value))
-    assert.doesNotThrow(() => openNamedAppSettings("messages"))
+    await assert.doesNotReject(() => openNamedAppSettings("messages"))
     assert.equal(
       document.querySelector('.cu-call-background-preset[aria-pressed="true"]').dataset.cuCallBackgroundPreset,
       "plain",
@@ -1207,7 +1218,7 @@ test("magic customization keys cannot poison defensive settings copies", async t
   localStorage.setItem("moirain_phoneCustom", '{"__proto__":{"wallpaper":"#000000"},"hasOwnProperty":"blocked","customIcons":{"__proto__":{"messages":"prototype-icon"},"gallery":"kept-icon"},"appSettings":{"__proto__":{"messages":{"callBackgroundPreset":"water"}},"messages":{"__proto__":{"callBackgroundPreset":"rose"},"selfBubbleBg":"#123456","keptField":"kept"},"gallery":{"columns":2}}}')
   await import(`../reader/reader.js?call-background-magic-keys=${Date.now()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   assert.equal(document.querySelector('#cuIconUrl').value, "")
   assert.equal(
     document.querySelector('.cu-call-background-preset[aria-pressed="true"]').dataset.cuCallBackgroundPreset,
@@ -1236,14 +1247,14 @@ test("call preset changes stay draft-only until Save and Cancel preserves raw st
   const beforeRaw = localStorage.getItem("moirain_phoneCustom")
   await import(`../reader/reader.js?call-background-draft=${Date.now()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.querySelector('[data-cu-call-background-preset="water"]').click()
   assert.equal(document.querySelector('#cuCallBackgroundPreview').dataset.callBackground, "water")
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
   document.getElementById("cuModalCancel").click()
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   assert.equal(document.querySelector('#cuCallBackgroundPreview').dataset.callBackground, "water")
   document.querySelector('[data-cu-call-background-preset="rose"]').click()
   document.getElementById("cuModalSave").click()
@@ -1293,7 +1304,7 @@ test("all non-Save call background dismissals preserve raw storage", async t => 
   ]
 
   for (const dismissal of dismissalCases) {
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     assert.equal(document.querySelector("#cuCallBackgroundPreview").dataset.callBackground, "rose")
     document.querySelector('[data-cu-call-background-preset="water"]').click()
     assert.equal(document.querySelector("#cuCallBackgroundPreview").dataset.callBackground, "water")
@@ -1303,7 +1314,7 @@ test("all non-Save call background dismissals preserve raw storage", async t => 
     assert.equal(document.querySelector(".cu-modal-overlay"), null, `${dismissal.name} closes the modal`)
     assert.equal(localStorage.getItem("moirain_phoneCustom"), originalRaw, `${dismissal.name} preserves storage`)
 
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     assert.equal(document.querySelector("#cuCallBackgroundPreview").dataset.callBackground, "water")
     document.querySelector('[data-cu-call-background-preset="rose"]').click()
     dismissal.dismiss()
@@ -1325,7 +1336,7 @@ test("Restore Default changes only the call background draft", async t => {
   const beforeRaw = localStorage.getItem("moirain_phoneCustom")
   await import(`../reader/reader.js?call-background-restore=${Date.now()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   document.getElementById("cuCallBackgroundRestore").click()
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
   assert.equal(document.querySelector('#cuCallBackgroundPreview').dataset.callBackground, "plain")
@@ -1359,7 +1370,7 @@ for (const [mime, dataUrl] of staticRasterCases) {
     installImageDecoder(t)
     await import(`../reader/reader.js?call-background-upload-success=${encodeURIComponent(mime)}-${Date.now()}-${Math.random()}`)
 
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     const save = document.getElementById("cuModalSave")
     setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
       name: `background.${mime.split("/")[1]}`,
@@ -1405,7 +1416,7 @@ for (const rejectedFile of rejectedBeforeRead) {
     const decoder = installImageDecoder(t, { controlled: true })
     await import(`../reader/reader.js?call-background-before-read=${encodeURIComponent(rejectedFile.name)}-${Date.now()}-${Math.random()}`)
 
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     setInputFiles(document.getElementById("cuCallBackgroundFile"), [rejectedFile])
     await flushAsyncImageWork()
     await flushAsyncImageWork()
@@ -1498,7 +1509,7 @@ for (const scenario of rejectedDataUrlCases) {
     const decoder = installImageDecoder(t, { controlled: true })
     await import(`../reader/reader.js?call-background-data-reject=${encodeURIComponent(scenario.name)}-${Date.now()}-${Math.random()}`)
 
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
       name: "candidate",
       type: scenario.fileType,
@@ -1521,7 +1532,7 @@ test("FileReader errors preserve the current draft and exact storage", async t =
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-file-reader-error=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
     name: "read-error.png",
     type: "image/png",
@@ -1550,7 +1561,7 @@ for (const scenario of decoderFailureCases) {
     installImageDecoder(t, scenario.decoder)
     await import(`../reader/reader.js?call-background-decode-reject=${encodeURIComponent(scenario.name)}-${Date.now()}-${Math.random()}`)
 
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
       name: "decode.png",
       type: "image/png",
@@ -1578,7 +1589,7 @@ test("persisted images stay preset-only until canonical current-session decode s
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-persisted-pending=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const save = document.getElementById("cuModalSave")
   let preview = document.getElementById("cuCallBackgroundPreview")
   assert.equal(decoder.pending.length, 1)
@@ -1598,7 +1609,7 @@ test("persisted images stay preset-only until canonical current-session decode s
   assert.equal(localStorage.getItem("moirain_phoneCustom"), beforeRaw)
 
   document.getElementById("cuModalCancel").click()
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   preview = document.getElementById("cuCallBackgroundPreview")
   assert.equal(decoder.pending.length, 1, "verified canonical URL is reused from the session Set")
   assert.equal(document.getElementById("cuModalSave").disabled, true)
@@ -1627,7 +1638,7 @@ for (const [name, dataUrl] of invalidPersistedCandidates) {
     const decoder = installImageDecoder(t, { controlled: true })
     await import(`../reader/reader.js?call-background-persisted-invalid=${encodeURIComponent(name)}-${Date.now()}-${Math.random()}`)
 
-    openNamedAppSettings("messages")
+    await openNamedAppSettings("messages")
     await flushAsyncImageWork()
     await flushAsyncImageWork()
 
@@ -1658,7 +1669,7 @@ test("persisted Image failure keeps storage exact and leaves a usable safe-prese
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-persisted-decode-error=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   assert.equal(document.getElementById("cuModalSave").disabled, true)
   decoder.reject()
   await flushAsyncImageWork()
@@ -1686,7 +1697,7 @@ test("a preset selection invalidates never-settling persisted verification", asy
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-persisted-stale=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const save = document.getElementById("cuModalSave")
   assert.equal(save.disabled, true)
   document.querySelector('[data-cu-call-background-preset="cream"]').click()
@@ -1708,7 +1719,7 @@ test("Restore Default invalidates a pending upload and re-enables Save", async t
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-upload-restore-race=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
     name: "pending.png",
     type: "image/png",
@@ -1746,7 +1757,7 @@ test("failed replacement upload cannot expose an unverified persisted image to S
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-persisted-upload-failure=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   assert.equal(decoder.pending.length, 1, "persisted decode is pending")
   assert.equal(document.getElementById("cuCallBackgroundPreview").dataset.callBackground, "water")
   assert.equal(document.getElementById("cuModalSave").disabled, true)
@@ -1789,7 +1800,7 @@ test("invalidating a pending upload still permits immediate same-file retry", as
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-same-file-retry=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const input = document.getElementById("cuCallBackgroundFile")
   Object.defineProperty(input, "value", {
     configurable: true,
@@ -1831,7 +1842,7 @@ test("only the latest upload may replace the draft when decodes finish out of or
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-upload-order=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   const input = document.getElementById("cuCallBackgroundFile")
   setInputFiles(input, [{ name: "first.jpg", type: "image/jpeg", size: 100 }])
   await flushAsyncImageWork()
@@ -1862,7 +1873,7 @@ test("a dismissed modal ignores a late successful upload", async t => {
   const decoder = installImageDecoder(t, { controlled: true })
   await import(`../reader/reader.js?call-background-upload-dismissed=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
     name: "late.png",
     type: "image/png",
@@ -1888,7 +1899,7 @@ test("call image storage failure keeps the same modal, draft, raw storage, and r
   installImageDecoder(t)
   await import(`../reader/reader.js?call-background-storage-retry=${Date.now()}-${Math.random()}`)
 
-  openNamedAppSettings("messages")
+  await openNamedAppSettings("messages")
   setInputFiles(document.getElementById("cuCallBackgroundFile"), [{
     name: "valid.png",
     type: "image/png",

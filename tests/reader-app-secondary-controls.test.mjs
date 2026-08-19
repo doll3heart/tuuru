@@ -110,6 +110,7 @@ test("reader App lists and shopping tabs use native controls with focus continui
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-secondary-controls=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -188,6 +189,7 @@ test("reader shopping uses the shared compact shell and a useful empty state", a
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-shopping-empty-state=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="shopping"]').click()
@@ -260,6 +262,7 @@ test("reader forum keeps pinned posts first and shows authored post states", asy
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-forum-post-states=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="forum"]').click()

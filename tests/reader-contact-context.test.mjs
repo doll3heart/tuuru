@@ -133,6 +133,7 @@ test("legacy contact-scoped reader Apps use the access page instead of an in-App
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-contact-context=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -162,6 +163,7 @@ test("configured locked Apps require reader confirmation and keep the authored s
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-authored-character-access=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -210,6 +212,7 @@ test("a confirmed phone source opens directly when the same slot revisits it", a
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-remembers-character-access=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="memo"]').click()
@@ -237,6 +240,7 @@ test("reader can decline a configured character connection without seeing its co
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-declines-character-access=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="memo"]').click()
@@ -261,6 +265,7 @@ test("a configured connection to a deleted character fails closed", async t => {
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-missing-character-access=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="memo"]').click()
@@ -287,6 +292,7 @@ test("a configured connection with an ambiguous character id fails closed", asyn
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-ambiguous-character-access=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="memo"]').click()
@@ -309,6 +315,7 @@ test("contact-scoped reader Apps keep legacy content without contacts", async t 
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-contact-context-legacy=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -334,6 +341,7 @@ test("a single contact still confirms access before showing the App", async t =>
   seedPhoneWork(work)
 
   await import(`../reader/reader.js?reader-contact-context-single=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 

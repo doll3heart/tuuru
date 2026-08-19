@@ -247,6 +247,7 @@ test("phone runtime fixture opens every App and its authored secondary navigatio
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?acceptance-phone=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -370,6 +371,7 @@ test("article sample unlocks, substitutes the reader name, follows a complete br
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?acceptance-article=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdPwdInput").value = "2468"
   document.querySelector('[data-ph-id="placeholder-name"]').value = "阿雾"

@@ -77,6 +77,7 @@ function seedArticleWork() {
 }
 
 function openArticle() {
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 }

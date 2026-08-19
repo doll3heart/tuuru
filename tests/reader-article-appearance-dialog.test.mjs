@@ -199,6 +199,7 @@ test("saved article appearance applies below content when a cached work opens", 
   }))
 
   await import(`../reader/reader.js?reader-article-appearance-apply=${Date.now()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector("[data-reader-recent-index]").click()
   document.getElementById("rdStartBtn").click()
   await new Promise(resolve => setTimeout(resolve, 20))
@@ -278,6 +279,7 @@ test("authored paragraph indentation is the reader default until the reader over
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?reader-authored-indent=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector("[data-reader-recent-index]").click()
   document.getElementById("rdStartBtn").click()
 

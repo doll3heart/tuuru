@@ -119,6 +119,7 @@ test("camera work asks at entry and denied permission uses the authored fallback
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
   await import(`../reader/reader.js?interactive-runtime=${Date.now()}-${Math.random()}`)
 
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   assert.match(document.querySelector(".rd-camera-preflight").textContent, /不录制、不保存、不上传/)
   document.getElementById("rdStartBtn").click()

@@ -92,6 +92,7 @@ test("an interactive start node explores its hotspot before dialogue advances to
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?interactive-node=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -221,6 +222,7 @@ test("one chapter renders branch prose, an interactive page, and following prose
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
 
   await import(`../reader/reader.js?interactive-separator=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 
@@ -386,6 +388,7 @@ test("only the interactive choice splits a seven-node chapter while its required
 
     try {
       await import(`../reader/reader.js?seven-node=${Date.now()}-${Math.random()}`)
+      document.querySelector('[data-tab="library"]').click()
       document.querySelector(".rd-recent-item").click()
       document.getElementById("rdStartBtn").click()
 

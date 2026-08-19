@@ -78,6 +78,7 @@ async function openVoiceChat(t, key) {
   installDom(t)
   seedVoiceWork()
   await import(`../reader/reader.js?${key}=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()

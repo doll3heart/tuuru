@@ -86,6 +86,7 @@ function seedWork() {
 }
 
 function openArticle() {
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.querySelector('[data-ph-id="reader-name"]').value = "阿雾"
   document.getElementById("rdStartBtn").click()

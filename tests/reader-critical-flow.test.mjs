@@ -40,6 +40,7 @@ function seedWork(work) {
 async function startWork(work, key) {
   seedWork(work)
   await import(`../reader/reader.js?${key}=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   document.getElementById("rdStartBtn").click()
 }
@@ -799,6 +800,7 @@ test("reader blocks forbidden placeholder values before entering a phone work", 
   work.placeholders = [{ id:"reader-name", label:"读者名字", key:"{{reader}}", prompt:"填写名字", forbidden:["偷吃"] }]
   seedWork(work)
   await import(`../reader/reader.js?forbidden=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
   const input = document.querySelector('[data-ph-id="reader-name"]')
   input.value = "禁止偷吃"
@@ -822,6 +824,7 @@ test("reader applies one global forbidden word list to every placeholder", async
   work.globalForbidden = ["老公"]
   seedWork(work)
   await import(`../reader/reader.js?global-forbidden=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
 
   const name = document.querySelector('[data-ph-id="reader-name"]')
@@ -854,6 +857,7 @@ test("reader exact forbidden words reject only the complete trimmed value", asyn
   work.globalExactForbidden = ["MOMO"]
   seedWork(work)
   await import(`../reader/reader.js?exact-forbidden=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
   document.querySelector(".rd-recent-item").click()
 
   const input = document.querySelector('[data-ph-id="reader-name"]')
