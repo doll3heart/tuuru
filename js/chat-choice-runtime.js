@@ -1,4 +1,4 @@
-import { chatReplyTypingDuration } from "./chat-reply-pace.js"
+import { chatReplyTypingDuration, normalizeChatReplyPace } from "./chat-reply-pace.js"
 import { normalizeChatFollowUpDeliveryState } from "./chat-follow-up.js"
 
 function cloneValue(value) {
@@ -70,10 +70,11 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
   const followUpMessages = Array.isArray(choice.followUpMessages)
     ? choice.followUpMessages
     : []
+  const defaultReplyPace = normalizeChatReplyPace(choice.replyPace, "normal")
 
   for (const followUpMessage of followUpMessages) {
     const followUpSenderId = followUpMessage?.senderId || followUpMessage?.contactId || ""
-    const typingDuration = chatReplyTypingDuration(followUpMessage?.replyPace ?? choice.replyPace)
+    const typingDuration = chatReplyTypingDuration(followUpMessage?.replyPace ?? defaultReplyPace)
     if (typingDuration > 0 && followUpSenderId && followUpSenderId !== "self") {
       generatedMessages.push({
         id: options.idFactory(),
@@ -100,6 +101,9 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
         originalText: typeof messageTemplate.text === "string" ? messageTemplate.text : "",
         allowReveal: false,
         recalledMessage: messageTemplate,
+        ...(Object.hasOwn(messageTemplate, "delayBeforeMs")
+          ? { delayBeforeMs: messageTemplate.delayBeforeMs }
+          : {}),
       }
     } else {
       generatedMessage = messageTemplate

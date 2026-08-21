@@ -55,6 +55,7 @@ function choiceWork() {
               choices: [
                 {
                   id: "choice-a",
+                  replyPace: "instant",
                   text: "好，我会准时到。",
                   replyText: "好，我会准时到。",
                   followUpMessages: [{
@@ -66,6 +67,7 @@ function choiceWork() {
                 },
                 {
                   id: "choice-b",
+                  replyPace: "instant",
                   text: "今晚不太方便，改天好吗？",
                   replyText: "今晚不太方便，改天好吗？",
                   followUpMessages: [{
@@ -237,6 +239,104 @@ test("an instant silent choice still streams every follow-up one bubble at a tim
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("甲乙"))
   assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /丙丁/)
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("丙丁"))
+})
+
+test("authored stream mode still types on devices that request reduced motion", async t => {
+  const work = choiceWork()
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices[0].silent = true
+  owner.choices[0].replyText = ""
+  owner.choices[0].replyPace = "instant"
+  owner.choices[0].followUpMessages = [{
+    id:"reduced-motion-stream",
+    type:"text",
+    senderId:"contact-1",
+    text:"ABCD",
+    revealMode:"stream",
+    delayBeforeMs:0,
+  }]
+  work.phoneData.chats[0].rounds[0].messages = [owner]
+
+  await openSeededChat(t, work)
+  const previousMatchMedia = globalThis.matchMedia
+  globalThis.matchMedia = query => ({ matches:String(query).includes("prefers-reduced-motion") })
+  t.after(() => {
+    if (previousMatchMedia === undefined) delete globalThis.matchMedia
+    else globalThis.matchMedia = previousMatchMedia
+  })
+
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  const stream = await waitFor(() => document.querySelector(".rd-flow-stream-text"))
+  assert.equal(stream.textContent, "")
+  await new Promise(resolve => setTimeout(resolve, 180))
+  assert.ok(stream.textContent.length > 0 && stream.textContent.length < 4)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("ABCD"))
+})
+
+test("a silent choice applies the default wait before its first NPC response", async t => {
+  const work = choiceWork()
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices[0].silent = true
+  owner.choices[0].replyText = ""
+  owner.choices[0].replyPace = "instant"
+  owner.choices[0].followUpMessages = [{
+    id:"default-first-delay",
+    type:"text",
+    senderId:"contact-1",
+    text:"DEFAULT_WAIT_DONE",
+    revealMode:"instant",
+  }]
+  work.phoneData.chats[0].rounds[0].messages = [owner]
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /DEFAULT_WAIT_DONE/)
+  await new Promise(resolve => setTimeout(resolve, 500))
+  assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /DEFAULT_WAIT_DONE/)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("DEFAULT_WAIT_DONE"), 1600)
+})
+
+test("a mid-stream chat render resumes from its saved character prefix", async t => {
+  const work = choiceWork()
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices[0].silent = true
+  owner.choices[0].replyText = ""
+  owner.choices[0].replyPace = "instant"
+  owner.choices[0].followUpMessages = [{
+    id:"rerender-stream",
+    type:"text",
+    senderId:"contact-1",
+    text:"ABCDEFGHIJK",
+    revealMode:"stream",
+    delayBeforeMs:0,
+  }]
+  work.phoneData.chats[0].rounds[0].messages = [{
+    id:"earlier-reaction",
+    type:"system-event",
+    eventKind:"reaction",
+    senderId:"system",
+    actorContactId:"contact-1",
+    reaction:"♡",
+  }, owner]
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+
+  const stream = await waitFor(() => {
+    const candidate = document.querySelector(".rd-flow-stream-text")
+    return candidate && candidate.textContent.length >= 2 ? candidate : null
+  })
+  const prefix = stream.textContent
+  document.querySelector("[data-story-reaction]").click()
+  const resumed = document.querySelector(".rd-flow-stream-text")
+  assert.ok(resumed)
+  assert.equal(resumed.textContent, prefix)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("ABCDEFGHIJK"))
 })
 
 test("a system notice before a choice does not disappear while its branch streams", async t => {

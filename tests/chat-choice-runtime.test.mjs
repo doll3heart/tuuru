@@ -29,6 +29,7 @@ function fixtureRound() {
             id: "choice-1",
             text: "Answer",
             replyText: "My answer",
+            replyPace: "instant",
             followUpMessages: [
               {
                 id: "follow-template-1",
@@ -49,6 +50,7 @@ function fixtureRound() {
             id: "choice-2",
             text: "Stay quiet",
             replyText: "",
+            replyPace: "instant",
             followUpMessages: [
               {
                 id: "silent-template",
@@ -216,6 +218,29 @@ test("a paced character reply inserts a temporary typing event before follow-ups
   assert.deepEqual(result.run.generatedMessageIds, ["paced-1", "paced-2", "paced-3", "paced-4", "paced-5"])
 })
 
+test("legacy choices without a reply pace use the current normal default", () => {
+  const round = fixtureRound()
+  const choice = round.messages[1].choices[1]
+  delete choice.replyPace
+  let sequence = 0
+
+  const result = callApply(round, "owner", 1, {
+    idFactory: () => `legacy-paced-${++sequence}`,
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.round.messages[2], {
+    id:"legacy-paced-1",
+    type:"system-event",
+    eventKind:"typing",
+    senderId:"system",
+    actorContactId:"contact-1",
+    durationMs:1600,
+    transientTyping:true,
+  })
+  assert.equal(result.round.messages[3].text, "The silence is an answer.")
+})
+
 test("each character follow-up can override pace and render as failed or recalled", () => {
   const round = fixtureRound()
   const choice = round.messages[1].choices[0]
@@ -237,6 +262,7 @@ test("each character follow-up can override pace and render as failed or recalle
       type:"text",
       replyPace:"delayed",
       deliveryState:"recalled",
+      delayBeforeMs:1250,
     },
     {
       id:"inherited-template",
@@ -280,11 +306,13 @@ test("each character follow-up can override pace and render as failed or recalle
     actorContactId:"contact-2",
     originalText:"This one is recalled.",
     allowReveal:false,
+    delayBeforeMs:1250,
     recalledMessage:{
       id:"recalled-template",
       senderId:"contact-2",
       text:"This one is recalled.",
       type:"text",
+      delayBeforeMs:1250,
     },
   })
   assert.deepEqual(result.round.messages[5], {

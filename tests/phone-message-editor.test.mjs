@@ -1327,7 +1327,7 @@ test("author choice buttons edit their owner instead of executing a reader branc
     )
     const pace = editor.querySelector(".thread-choice-reply-pace")
     assert.ok(pace)
-    assert.equal(pace.value, "instant")
+    assert.equal(pace.value, "normal")
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
 
     editor.querySelectorAll(".thread-choice-text")[0].value = "改过的第一句"
@@ -1502,7 +1502,7 @@ test("group chat reply branches let every follow-up choose its sender", async ()
       saved.followUpMessages.map(message => message.replyPace),
       ["instant", undefined, "quick"],
     )
-    assert.deepEqual(saved.followUpMessages.map(message => message.revealMode), [undefined, undefined, "instant"])
+    assert.deepEqual(saved.followUpMessages.map(message => message.revealMode), ["stream", "stream", "instant"])
     assert.deepEqual(saved.followUpMessages.map(message => message.type), ["text", "text", "text"])
     assert.deepEqual(saved.followUpMessages.map(message => message.delayBeforeMs), [1250, undefined, 2400])
     assert.equal(Object.hasOwn(saved.followUpMessages[0], "failed"), false)
@@ -1531,6 +1531,7 @@ test("message context menus expose a dedicated per-choice reply pace editor", as
     choices:[
       { id:"pace-a", text:"马上回答", replyText:"好", replyPace:"instant", followUpMessages:[] },
       { id:"pace-b", text:"再想一下", replyText:"让我想想", replyPace:"delayed", followUpMessages:[] },
+      { id:"pace-legacy", text:"旧版选项", replyText:"好", followUpMessages:[] },
     ],
   })
   const fixture = await openSingleChat("message-reply-pace-context-menu", phoneData)
@@ -1553,9 +1554,10 @@ test("message context menus expose a dedicated per-choice reply pace editor", as
     const paceEditor = document.querySelector(".chat-reply-pace-editor")
     assert.ok(paceEditor)
     const selects = paceEditor.querySelectorAll(".chat-reply-pace-select")
-    assert.equal(selects.length, 2)
+    assert.equal(selects.length, 3)
     assert.equal(selects[0].value, "instant")
     assert.equal(selects[1].value, "delayed")
+    assert.equal(selects[2].value, "normal")
 
     selects[0].value = "quick"
     document.getElementById("chatReplyPaceSave").click()
@@ -1564,6 +1566,7 @@ test("message context menus expose a dedicated per-choice reply pace editor", as
     assert.equal(savedChoices[0].id, "pace-a")
     assert.equal(savedChoices[0].replyPace, "quick")
     assert.equal(savedChoices[1].replyPace, "delayed")
+    assert.equal(savedChoices[2].replyPace, "normal")
   } finally {
     closeFixture(fixture)
   }

@@ -4,7 +4,12 @@ import { workReleaseFingerprintMatches } from '../js/work-release.js'
 import { substitutePlaceholders } from '../js/placeholders.js'
 import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml } from '../js/sanitize.js'
 import { shouldUseMotion } from '../js/motion-preference.js'
-import { normalizeChatMessageRevealMode } from '../js/chat-message-reveal.js'
+import {
+  advanceChatTextPlayback,
+  chatMessageUsesTextStream,
+  chatPlaybackInitialDelayMs,
+  chatTextPlaybackSnapshot,
+} from '../js/chat-playback-state.js'
 import { readSteganoPayload } from '../js/stegano.js'
 import { MAX_WORK_PNG_FILE_BYTES, pngBytesFromDataUrl, readPngPayload } from '../js/png-payload.js'
 import {
@@ -7765,6 +7770,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       chat: JSON.parse(JSON.stringify(ch)),
       choiceRuns: new Map(),
       flowTypedMessageIds: new Set(),
+      flowTextProgress: new Map(),
       claimedMessageIds: new Set(),
       endedCallIds: new Set(),
       voicePlaybacks: new Map(),
@@ -7781,6 +7787,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     phoneChoiceSession.chats.set(chatSessionKey, chatSession)
   }
   if (!(chatSession.flowTypedMessageIds instanceof Set)) chatSession.flowTypedMessageIds = new Set()
+  if (!(chatSession.flowTextProgress instanceof Map)) chatSession.flowTextProgress = new Map()
   if (!(chatSession.claimedMessageIds instanceof Set)) chatSession.claimedMessageIds = new Set()
   if (!(chatSession.endedCallIds instanceof Set)) chatSession.endedCallIds = new Set()
   if (!(chatSession.voicePlaybacks instanceof Map)) chatSession.voicePlaybacks = new Map()
@@ -7870,6 +7877,12 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       var unsequencedPlaybackIds = unsequencedPlayback && Array.isArray(unsequencedPlayback.ids)
         ? unsequencedPlayback.ids.map(String)
         : []
+      var waitingPlaybackRun = unsequencedPlayback?.index < 0
+        ? choiceRuns.get(unsequencedPlayback.runKey)
+        : null
+      var waitingPlaybackOwnerId = waitingPlaybackRun?.run?.ownerMessageId == null
+        ? null
+        : String(waitingPlaybackRun.run.ownerMessageId)
       var unsequencedChoiceGateActive = false
       var unsequencedPlaybackGateActive = false
       var endedRoundGeneratedIds = null
@@ -7892,6 +7905,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
             continue
           }
           unsequencedVisible.add(String(message.id))
+          if (waitingPlaybackOwnerId != null && String(message.id) === waitingPlaybackOwnerId) {
+            unsequencedPlaybackGateActive = true
+            continue
+          }
           if (activeUnsequencedId != null && String(message.id) === String(activeUnsequencedId)) {
             unsequencedPlaybackGateActive = true
             continue
@@ -8759,9 +8776,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
             var quotedSummary = msg.quoteText || chatMessageQuoteSummary(quotedSourceMessage)
             h += '<button type="button" class="chat-quote-preview" data-quote-target="' + escapeHtmlAttribute(msg.quoteId) + '"><span>' + esc(msg.quoteSenderName || '引用消息') + '</span><strong>' + esc(quotedSummary.substring(0, 54)) + '</strong></button>'
           }
-          var streamsCurrentText = isFlowTargetMessage(msg, round) && !chatSession.flowTypedMessageIds.has(String(msg.id)) && normalizeChatMessageRevealMode(msg.revealMode) === 'stream'
+          var streamsCurrentText = isFlowTargetMessage(msg, round) && !chatSession.flowTypedMessageIds.has(String(msg.id)) && chatMessageUsesTextStream(msg)
           if (streamsCurrentText) {
-            h += '<span class="rd-flow-stream-text" aria-live="polite" aria-atomic="true"></span>'
+            var savedTextPlayback = chatTextPlaybackSnapshot(
+              readerPhoneText(msg.text),
+              chatSession.flowTextProgress.get(String(msg.id)),
+            )
+            h += '<span class="rd-flow-stream-text" aria-live="polite" aria-atomic="true">' + esc(savedTextPlayback.visibleText) + '</span>'
           } else {
             h += renderReaderMentionText(readerPhoneText(msg.text), chatMentionNames)
           }
@@ -9274,6 +9295,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     }
 
     function finishCurrentChatFlowMessage(messageId) {
+      chatSession.flowTextProgress.delete(String(messageId))
       chatSession.flowTypedMessageIds.add(String(messageId))
       var completedMessage = findFlowPlaybackMessage(messageId)
       if (completedMessage && messageRequiresAction(completedMessage) && !messageActionIsComplete(completedMessage)) {
@@ -9307,8 +9329,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           stream = element.querySelector('.rd-flow-stream-text')
         }
       })
-      var streamsText = (!message.type || message.type === 'text') && message.failed !== true && normalizeChatMessageRevealMode(message.revealMode) === 'stream'
+      var streamsText = chatMessageUsesTextStream(message)
       if (!streamsText || !stream) {
+        chatSession.flowTextProgress.delete(String(messageId))
         chatSession.flowTypedMessageIds.add(String(messageId))
         if (messageRequiresAction(message) && !messageActionIsComplete(message)) {
           setChoiceAvailability(false)
@@ -9325,22 +9348,26 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         return
       }
 
-      var characters = Array.from(readerPhoneText(message.text))
-      if (!shouldUseMotion(true) || characters.length === 0) {
-        stream.textContent = characters.join('')
+      var playbackText = readerPhoneText(message.text)
+      var playbackState = chatTextPlaybackSnapshot(
+        playbackText,
+        chatSession.flowTextProgress.get(String(messageId)),
+      )
+      stream.textContent = playbackState.visibleText
+      if (playbackState.complete) {
         stream.classList.add('is-complete')
         scheduleChatBottom()
         finishCurrentChatFlowMessage(messageId)
         return
       }
 
-      var characterIndex = 0
       function typeNextCharacter() {
         if (!renderedChatFlowIsCurrent()) return
-        stream.textContent += characters[characterIndex]
-        characterIndex += 1
+        playbackState = advanceChatTextPlayback(playbackText, playbackState.index)
+        chatSession.flowTextProgress.set(String(messageId), playbackState.index)
+        stream.textContent = playbackState.visibleText
         scheduleChatBottom()
-        if (characterIndex >= characters.length) {
+        if (playbackState.complete) {
           stream.classList.add('is-complete')
           finishCurrentChatFlowMessage(messageId)
           return
@@ -9379,9 +9406,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       )
       var playbackIds = generatedIds.concat(continuationIds)
       var firstPlaybackMessage = playbackIds.length ? findFlowPlaybackMessage(playbackIds[0]) : null
-      var firstPlaybackDelay = firstPlaybackMessage && Object.hasOwn(firstPlaybackMessage, 'delayBeforeMs')
-        ? chatMessageDelayBeforeMs(firstPlaybackMessage, 0)
-        : 0
+      var firstPlaybackDelay = chatPlaybackInitialDelayMs(firstPlaybackMessage, CHAT_FLOW_MESSAGE_GAP)
       chatSession.flowGeneratedPlayback = playbackIds.length > 0
         ? { runKey: runKey, ids: playbackIds, index:firstPlaybackDelay > 0 ? -1 : 0 }
         : null
@@ -9428,6 +9453,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           ;(entry.run.generatedMessageIds || []).forEach(function(id) {
             var messageId = String(id)
             chatSession.flowTypedMessageIds.delete(messageId)
+            chatSession.flowTextProgress.delete(messageId)
             chatSession.claimedMessageIds.delete(messageId)
             chatSession.endedCallIds.delete(messageId)
             chatSession.voicePlaybacks.delete(messageId)

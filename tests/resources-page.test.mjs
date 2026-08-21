@@ -434,6 +434,7 @@ test("the message tutorial explains the distilled composer and multi-select forw
   assert.match(source, /消息状态[^。]*单条节奏[^。]*出现方式[^。]*发送间隔[^。]*【发送设置】/)
   assert.match(source, /文字消息出现方式/)
   assert.match(source, /逐字出现[^。]*整条出现/)
+  assert.match(source, /减少动态效果[^。]*保留逐字播放/)
   assert.match(source, /文字、图片、系统消息和特殊卡片[^。]*原顺序逐条播放/)
   assert.match(source, /同一组里的多个选项按【或】判断[^。]*【添加且条件】/)
   assert.match(source, /上一级评论未解锁时[^。]*全部楼中楼也一起隐藏/)
@@ -462,6 +463,7 @@ test("the phone tutorial covers group-wide mentions, contact-card friendship, an
   assert.match(source, /0 到 60 秒[^。]*0\.1 秒/)
   assert.match(source, /当前消息发送前的等待时间/)
   assert.match(source, /发送间隔只决定气泡何时出现[^。]*不会自动显示“正在输入”/)
+  assert.match(source, /选择沉默后[^。]*第一条角色消息[^。]*默认 0\.8 秒/)
 })
 
 test("the phone tutorial explains group sender labels, direct character apps, and safe deletion", () => {

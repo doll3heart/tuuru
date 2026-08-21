@@ -14,7 +14,8 @@ test("reader phone messages resolve author placeholders for bubbles and streamed
 
   assert.match(source, /function readerPhoneText\(value\)/)
   assert.match(source, /renderReaderMentionText\(readerPhoneText\(msg\.text\),\s*chatMentionNames\)/)
-  assert.match(source, /Array\.from\(readerPhoneText\(message\.text\)\)/)
+  assert.match(source, /var playbackText = readerPhoneText\(message\.text\)/)
+  assert.match(source, /advanceChatTextPlayback\(playbackText, playbackState\.index\)/)
   assert.match(source, /\['全体成员'\]\.concat\(/)
 })
 

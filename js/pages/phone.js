@@ -422,7 +422,7 @@ function openThreadReplyChoiceEditor(owner, options) {
       imageUrl: typeof choice.imageUrl === 'string' ? choice.imageUrl : '',
       silent: choice.silent === true,
       endRound: choice.endRound === true,
-      replyPace: normalizeChatReplyPace(choice.replyPace),
+      replyPace: normalizeChatReplyPace(choice.replyPace, 'normal'),
       replyLikes: nonnegativeCount(choice.replyLikes),
       followUps: Array.isArray(choice.followUpMessages)
         ? choice.followUpMessages.map(function(message) {
@@ -773,8 +773,7 @@ function openThreadReplyChoiceEditor(owner, options) {
           else nextMessage.deliveryState = deliveryState
           if (followUp.replyPace === 'inherit') delete nextMessage.replyPace
           else nextMessage.replyPace = normalizeChatReplyPace(followUp.replyPace)
-          if (normalizeChatMessageRevealMode(followUp.revealMode) === 'instant') nextMessage.revealMode = 'instant'
-          else delete nextMessage.revealMode
+          nextMessage.revealMode = normalizeChatMessageRevealMode(followUp.revealMode)
         }
         if (followUp.delayBeforeMs == null) delete nextMessage.delayBeforeMs
         else nextMessage.delayBeforeMs = normalizeChatMessageDelayMs(followUp.delayBeforeMs)
@@ -7345,7 +7344,7 @@ function openChatEditor(frame, wid, chatId, pd) {
         body += '<label for="chatReplyPace' + index + '"><span>选择“' + esc(choiceLabel) + '”后</span><small>角色回复节奏</small></label>'
         body += '<select id="chatReplyPace' + index + '" class="chat-reply-pace-select form-select" data-reply-pace-index="' + index + '">'
         body += CHAT_REPLY_PACES.map(function(option) {
-          return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(choice.replyPace) ? ' selected' : '') + '>' + option.label + '</option>'
+          return '<option value="' + option.value + '"' + (option.value === normalizeChatReplyPace(choice.replyPace, 'normal') ? ' selected' : '') + '>' + option.label + '</option>'
         }).join('')
         body += '</select></div>'
       })
@@ -7389,8 +7388,7 @@ function openChatEditor(frame, wid, chatId, pd) {
       var ov = modal('设置出现方式', body, '<button id="chatMessageRevealSave" class="btn btn-primary btn-sm">保存</button><button id="chatMessageRevealCancel" class="btn btn-ghost btn-sm">取消</button>')
       var select = ov.querySelector('#chatMessageRevealMode')
       ov.querySelector('#chatMessageRevealSave').onclick = function() {
-        if (normalizeChatMessageRevealMode(select.value) === 'instant') message.revealMode = 'instant'
-        else delete message.revealMode
+        message.revealMode = normalizeChatMessageRevealMode(select.value)
         save()
         ov.remove()
         renderChat()
