@@ -1,3 +1,9 @@
+import {
+  isPhoneStoryChoiceSelectionKey,
+  phoneStoryChatSelectionScope,
+  phoneStoryScopedChoiceSelectionKey,
+} from "../js/phone-story-state.js"
+
 export const READER_LIBRARY_VERSION = 1
 export const READER_LIBRARY_STORAGE_KEY = "moirain_readerLibrary"
 
@@ -8,6 +14,8 @@ const MAX_CHECKPOINTS = 8
 const MAX_BOOKMARKS = 30
 const MAX_PATH_LENGTH = 256
 const MAX_TEXT_LENGTH = 500
+const MAX_PHONE_CHOICE_SELECTIONS = 1000
+const MAX_PHONE_STORY_EFFECT_KEY_LENGTH = 4096
 
 function ownData(record, key) {
   if (!record || typeof record !== "object") return undefined
@@ -142,25 +150,550 @@ function normalizedContactCardResponses(value) {
 }
 
 function normalizedContactFriendships(value) {
-  return normalizedContactCardResponses(value)
+  if (!plainRecord(value)) return {}
+  const entries = []
+  const contactIds = Object.keys(value)
+  for (let index = contactIds.length - 1; index >= 0; index -= 1) {
+    const contactId = contactIds[index]
+    if (
+      !exactId(contactId)
+      || contactId === "__proto__"
+      || contactId === "prototype"
+      || contactId === "constructor"
+    ) continue
+    const status = ownData(value, contactId)
+    if (status !== "accepted" && status !== "declined" && status !== "pending") continue
+    entries.push([contactId, status])
+    if (entries.length >= 1000) break
+  }
+  const result = {}
+  entries.reverse().forEach(([contactId, status]) => { result[contactId] = status })
+  return result
 }
 
-function normalizedPhoneChoiceSelections(value) {
-  if (!plainRecord(value)) return {}
+function normalizedContactFriendshipSources(value, contactFriendships) {
+  if (!plainRecord(value) || !plainRecord(contactFriendships)) return {}
   const result = {}
-  for (const ownerMessageId of Object.keys(value)) {
+  for (const contactId of Object.keys(contactFriendships)) {
+    const source = ownData(value, contactId)
     if (
-      !exactId(ownerMessageId)
+      !exactId(contactId)
+      || contactId === "__proto__"
+      || contactId === "prototype"
+      || contactId === "constructor"
+      || typeof source !== "string"
+      || source.length === 0
+      || source.length > 4096
+      || source.trim() !== source
+    ) continue
+    result[contactId] = source
+  }
+  return result
+}
+
+function normalizedPhoneChoiceSelectionState(value, orderValue) {
+  if (!plainRecord(value)) {
+    return { selections:{}, order:[], explicitOrder:Array.isArray(orderValue) }
+  }
+  const ownerMessageIds = []
+  const seen = new Set()
+  if (Array.isArray(orderValue)) {
+    for (const candidate of orderValue) {
+      if (
+        (!exactId(candidate) && !isPhoneStoryChoiceSelectionKey(candidate))
+        || seen.has(candidate)
+        || !Object.hasOwn(value, candidate)
+      ) continue
+      seen.add(candidate)
+      ownerMessageIds.push(candidate)
+    }
+  }
+  for (const ownerMessageId of Object.keys(value)) {
+    if (seen.has(ownerMessageId)) continue
+    seen.add(ownerMessageId)
+    ownerMessageIds.push(ownerMessageId)
+  }
+  const entries = []
+  for (const ownerMessageId of ownerMessageIds) {
+    if (
+      (!exactId(ownerMessageId) && !isPhoneStoryChoiceSelectionKey(ownerMessageId))
       || ownerMessageId === "__proto__"
       || ownerMessageId === "prototype"
       || ownerMessageId === "constructor"
     ) continue
     const choiceId = ownData(value, ownerMessageId)
     if (!exactId(choiceId)) continue
-    result[ownerMessageId] = choiceId
-    if (Object.keys(result).length >= 500) break
+    entries.push([ownerMessageId, choiceId])
   }
+  const retainedEntries = entries.slice(-MAX_PHONE_CHOICE_SELECTIONS)
+  const result = {}
+  retainedEntries.forEach(([ownerMessageId, choiceId]) => { result[ownerMessageId] = choiceId })
+  return {
+    selections:result,
+    order:retainedEntries.map(([ownerMessageId]) => ownerMessageId),
+    explicitOrder:Array.isArray(orderValue),
+  }
+}
+
+function normalizedCompletedMessageActionKeys(value) {
+  if (!Array.isArray(value)) return []
+  const result = []
+  const seen = new Set()
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const candidate = value[index]
+    if (
+      typeof candidate !== "string"
+      || candidate.length === 0
+      || candidate.length > 4096
+      || candidate.trim() !== candidate
+      || seen.has(candidate)
+    ) continue
+    seen.add(candidate)
+    result.push(candidate)
+    if (result.length >= 1000) break
+  }
+  return result.reverse()
+}
+
+function normalizedMessageActionResponses(value) {
+  if (!plainRecord(value)) return {}
+  const entries = []
+  const actionKeys = Object.keys(value)
+  for (let index = actionKeys.length - 1; index >= 0; index -= 1) {
+    const actionKey = actionKeys[index]
+    if (
+      typeof actionKey !== "string"
+      || actionKey.length === 0
+      || actionKey.length > 4096
+      || actionKey.trim() !== actionKey
+      || actionKey === "__proto__"
+      || actionKey === "prototype"
+      || actionKey === "constructor"
+    ) continue
+    const response = ownData(value, actionKey)
+    if (response !== "accepted" && response !== "declined") continue
+    entries.push([actionKey, response])
+    if (entries.length >= 1000) break
+  }
+  const result = {}
+  entries.reverse().forEach(([actionKey, response]) => { result[actionKey] = response })
   return result
+}
+
+function normalizedPhoneStoryEffectOrder(value) {
+  if (!Array.isArray(value)) return { order:[], explicitOrder:false }
+  const retained = []
+  const seen = new Set()
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const candidate = value[index]
+    if (
+      typeof candidate !== "string"
+      || candidate.length === 0
+      || candidate.length > MAX_PHONE_STORY_EFFECT_KEY_LENGTH
+      || candidate.trim() !== candidate
+      || seen.has(candidate)
+    ) continue
+    seen.add(candidate)
+    retained.push(candidate)
+  }
+  return { order:retained.reverse(), explicitOrder:true }
+}
+
+function normalizedPhonePendingChoicePlaybacks(value, selections) {
+  if (!plainRecord(value) || !plainRecord(selections)) return {}
+  const entries = []
+  const keys = Object.keys(value)
+  for (let index = keys.length - 1; index >= 0; index -= 1) {
+    const key = keys[index]
+    const state = ownData(value, key)
+    if (
+      typeof key !== "string"
+      || key.length === 0
+      || key.length > 4096
+      || key.trim() !== key
+      || key === "__proto__"
+      || key === "prototype"
+      || key === "constructor"
+      || !plainRecord(state)
+    ) continue
+    const chatPersistenceKey = ownData(state, "chatPersistenceKey")
+    const ownerMessageId = ownData(state, "ownerMessageId")
+    const selectedChoiceId = ownData(state, "selectedChoiceId")
+    const playbackSignature = ownData(state, "playbackSignature")
+    const nextIndex = ownData(state, "nextIndex")
+    const phase = ownData(state, "phase")
+    const textIndex = ownData(state, "textIndex")
+    const advanceDeadline = ownData(state, "advanceDeadline")
+    const scopedSelectionKey = phoneStoryScopedChoiceSelectionKey(chatPersistenceKey, ownerMessageId)
+    const expectedPlaybackKey = JSON.stringify([
+      "choice-playback",
+      chatPersistenceKey,
+      ownerMessageId,
+    ])
+    if (
+      !exactId(chatPersistenceKey)
+      || !exactId(ownerMessageId)
+      || !exactId(selectedChoiceId)
+      || (
+        ownData(selections, scopedSelectionKey) !== selectedChoiceId
+        && ownData(selections, ownerMessageId) !== selectedChoiceId
+      )
+      || key !== expectedPlaybackKey
+      || typeof playbackSignature !== "string"
+      || playbackSignature.length === 0
+      || playbackSignature.length > 128
+      || !Number.isInteger(nextIndex)
+      || nextIndex < 0
+      || nextIndex > 10_000
+      || !["waiting", "active", "action", "finishing"].includes(phase)
+    ) continue
+    entries.push([key, {
+      chatPersistenceKey,
+      ownerMessageId,
+      selectedChoiceId,
+      playbackSignature,
+      nextIndex,
+      phase,
+      textIndex:Number.isInteger(textIndex) && textIndex >= 0
+        ? Math.min(textIndex, 1_000_000)
+        : 0,
+      advanceDeadline:Number.isFinite(advanceDeadline) && advanceDeadline >= 0
+        ? Math.floor(advanceDeadline)
+        : 0,
+    }])
+    if (entries.length >= MAX_PHONE_CHOICE_SELECTIONS) break
+  }
+  const result = {}
+  entries.reverse().forEach(([key, state]) => { result[key] = state })
+  return result
+}
+
+const PHONE_ACTIONABLE_MESSAGE_TYPES = new Set([
+  "link",
+  "redpacket",
+  "transfer",
+  "familycard",
+  "takeaway",
+  "location",
+  "contact-card",
+  "file",
+  "music",
+  "forward",
+  "schedule",
+])
+
+const PHONE_ACTION_FINGERPRINT_OMITTED_FIELDS = new Set([
+  "id",
+  "delayBeforeMs",
+  "replyPace",
+  "revealMode",
+  "__readerAuthoredActionFingerprint",
+  "__readerAuthoredMessageSourceKey",
+  "__readerAuthoredChatSourceKey",
+])
+
+function phoneActionCanonicalValue(value, key = "") {
+  if (PHONE_ACTION_FINGERPRINT_OMITTED_FIELDS.has(String(key))) return undefined
+  if (Array.isArray(value)) {
+    return value.map(item => {
+      const normalized = phoneActionCanonicalValue(item)
+      return normalized === undefined ? null : normalized
+    })
+  }
+  if (value && typeof value === "object") {
+    const result = {}
+    Object.keys(value).sort().forEach(childKey => {
+      const child = phoneActionCanonicalValue(value[childKey], childKey)
+      if (child !== undefined) result[childKey] = child
+    })
+    return result
+  }
+  if (
+    value === null
+    || typeof value === "string"
+    || typeof value === "boolean"
+    || (typeof value === "number" && Number.isFinite(value))
+  ) return value
+  return undefined
+}
+
+function phoneActionFingerprint(message) {
+  return JSON.stringify(phoneActionCanonicalValue(message) || {})
+}
+
+function phoneMessageRequiresAction(message) {
+  if (message?.type === "contact-event" && message?.eventKind === "friend-request") return true
+  return message?.actionRequired === true
+    && PHONE_ACTIONABLE_MESSAGE_TYPES.has(String(message?.type || ""))
+}
+
+function phoneContactCardEffect(message) {
+  if (message?.type !== "contact-card") return null
+  const targetContactId = String(message?.targetContactId || "").trim()
+  const action = message?.contactAction === "direct"
+    ? "direct"
+    : (message?.contactAction === "request" ? "request" : "view")
+  if (!targetContactId || action === "view") return null
+  const requestedOutcome = message?.contactRequestOutcome
+  const outcome = requestedOutcome === "declined" || requestedOutcome === "pending"
+    ? requestedOutcome
+    : "accepted"
+  return {
+    targetContactId,
+    status:action === "direct" ? "accepted" : outcome,
+  }
+}
+
+function addPhoneActionDescriptor(map, key, descriptor) {
+  if (!key) return
+  const entries = map.get(key) || []
+  entries.push(descriptor)
+  map.set(key, entries)
+}
+
+function phoneChoiceFollowUpSources(followUps) {
+  const idCounts = new Map()
+  for (const followUp of followUps) {
+    const authoredId = exactId(followUp?.id) ? followUp.id : ""
+    if (authoredId) idCounts.set(authoredId, (idCounts.get(authoredId) || 0) + 1)
+  }
+  const occurrences = new Map()
+  return followUps.map((followUp, index) => {
+    const authoredId = exactId(followUp?.id) ? followUp.id : ""
+    if (authoredId && idCounts.get(authoredId) === 1) return `follow-up:${authoredId}`
+    if (authoredId) {
+      const occurrence = occurrences.get(authoredId) || 0
+      occurrences.set(authoredId, occurrence + 1)
+      return `follow-up:${authoredId}#${occurrence}`
+    }
+    return `follow-up:follow-up#${index}`
+  })
+}
+
+function registerPhoneAuthoredAction(catalog, message, identityParts) {
+  if (!message || typeof message !== "object" || !exactId(message.id)) return
+  const fingerprint = phoneActionFingerprint(message)
+  const messageId = message.id
+  let progressIdentity = ""
+  if (phoneMessageRequiresAction(message)) {
+    progressIdentity = JSON.stringify(identityParts)
+    addPhoneActionDescriptor(catalog.progress, progressIdentity, {
+      identity:progressIdentity,
+      fingerprint,
+      messageId,
+    })
+  }
+  if (message.type === "contact-event" && message.eventKind === "friend-request") {
+    const identity = progressIdentity || JSON.stringify(identityParts)
+    addPhoneActionDescriptor(catalog.friendRequest, messageId, {
+      identity,
+      fingerprint,
+      messageId,
+    })
+  }
+  const contactEffect = phoneContactCardEffect(message)
+  if (!contactEffect) return
+  let effectIdentity = progressIdentity
+  if (!effectIdentity) {
+    const effectParts = identityParts.slice()
+    if (effectParts[0] === "choice") effectParts[0] = "choice-contact"
+    effectIdentity = JSON.stringify(effectParts)
+    addPhoneActionDescriptor(catalog.progress, effectIdentity, {
+      identity:effectIdentity,
+      fingerprint,
+      messageId,
+    })
+  }
+  addPhoneActionDescriptor(catalog.contactCard, messageId, {
+    identity:effectIdentity,
+    fingerprint,
+    messageId,
+    ...contactEffect,
+  })
+}
+
+function registerPhoneMessageChoices(catalog, chatScope, message) {
+  if (!exactId(message?.id) || !Array.isArray(message?.choices)) return
+  message.choices.forEach((choice, choiceIndex) => {
+    if (!choice || typeof choice !== "object") return
+    const selectedChoiceId = exactId(choice.id) ? choice.id : String(choiceIndex)
+    const followUps = Array.isArray(choice.followUpMessages) ? choice.followUpMessages : []
+    const sources = phoneChoiceFollowUpSources(followUps)
+    followUps.forEach((followUp, followUpIndex) => {
+      registerPhoneAuthoredAction(catalog, followUp, [
+        "choice",
+        chatScope,
+        message.id,
+        selectedChoiceId,
+        sources[followUpIndex],
+      ])
+    })
+  })
+}
+
+function phoneAuthoredContinuationIdentities(chatScope, rounds) {
+  const identities = new Map()
+  rounds.forEach((round, roundIndex) => {
+    const ownerMessages = Array.isArray(round?.messages) ? round.messages : []
+    ownerMessages.forEach((owner, ownerIndex) => {
+      if (!exactId(owner?.id) || !Array.isArray(owner?.choices) || owner.choices.length === 0) return
+      owner.choices.forEach((choice, choiceIndex) => {
+        const selectedChoiceId = exactId(choice?.id) ? choice.id : String(choiceIndex)
+        continuationScan:
+        for (let continuationRoundIndex = roundIndex; continuationRoundIndex < rounds.length; continuationRoundIndex += 1) {
+          if (continuationRoundIndex === roundIndex && choice?.endRound === true) continue
+          const messages = Array.isArray(rounds[continuationRoundIndex]?.messages)
+            ? rounds[continuationRoundIndex].messages
+            : []
+          const startIndex = continuationRoundIndex === roundIndex ? ownerIndex + 1 : 0
+          for (let index = startIndex; index < messages.length; index += 1) {
+            const message = messages[index]
+            if (Array.isArray(message?.choices) && message.choices.length > 0) break continuationScan
+            if (!exactId(message?.id)) continue
+            const messageIdentities = identities.get(message) || []
+            messageIdentities.push([
+              "choice",
+              chatScope,
+              owner.id,
+              selectedChoiceId,
+              `authored:${message.id}`,
+            ])
+            identities.set(message, messageIdentities)
+          }
+        }
+      })
+    })
+  })
+  return identities
+}
+
+function phoneAuthoredActionCatalog(phoneData) {
+  const catalog = {
+    progress:new Map(),
+    friendRequest:new Map(),
+    contactCard:new Map(),
+  }
+  const chats = Array.isArray(phoneData?.chats) ? phoneData.chats : []
+  chats.forEach((chat, chatIndex) => {
+    const chatScope = phoneStoryChatSelectionScope(chat, chatIndex, phoneData)
+    const legacyMessages = Array.isArray(chat?.messages) ? chat.messages : []
+    const sourceRounds = Array.isArray(chat?.rounds) ? chat.rounds : []
+    const authoredRounds = sourceRounds.length
+      ? sourceRounds.map((round, roundIndex) => (
+          roundIndex === sourceRounds.length - 1 && legacyMessages.length
+            ? {
+                ...(round && typeof round === "object" ? round : {}),
+                messages:[
+                  ...(Array.isArray(round?.messages) ? round.messages : []),
+                  ...legacyMessages,
+                ],
+              }
+            : round
+        ))
+      : [{ messages:legacyMessages }]
+    const continuationIdentities = phoneData?.readingFlow?.enabled === true
+      ? new Map()
+      : phoneAuthoredContinuationIdentities(chatScope, authoredRounds)
+    authoredRounds.forEach(round => {
+      const messages = Array.isArray(round?.messages) ? round.messages : []
+      messages.forEach(message => {
+        if (!exactId(message?.id)) return
+        const identities = continuationIdentities.get(message)
+        if (identities?.length) {
+          identities.forEach(identity => registerPhoneAuthoredAction(catalog, message, identity))
+        } else {
+          registerPhoneAuthoredAction(catalog, message, ["message", chatScope, message.id])
+        }
+        registerPhoneMessageChoices(catalog, chatScope, message)
+      })
+    })
+  })
+  return catalog
+}
+
+function parsedPhoneActionProgressIdentity(value) {
+  if (typeof value !== "string") return ""
+  try {
+    const parts = JSON.parse(value)
+    if (!Array.isArray(parts)) return ""
+    if (parts[0] === "message" && (parts.length === 3 || parts.length === 4)) {
+      return JSON.stringify(parts.slice(0, 3))
+    }
+    if (
+      (parts[0] === "choice" || parts[0] === "choice-contact")
+      && (parts.length === 5 || parts.length === 6)
+    ) return JSON.stringify(parts.slice(0, 5))
+  } catch {}
+  return ""
+}
+
+function matchingPhoneAuthoredAction(previousCatalog, incomingCatalog, kind, key) {
+  const previous = previousCatalog[kind].get(key) || []
+  const incoming = incomingCatalog[kind].get(key) || []
+  return previous.length === 1
+    && incoming.length === 1
+    && previous[0].identity === incoming[0].identity
+    && previous[0].fingerprint === incoming[0].fingerprint
+}
+
+function phoneActionProgressSurvives(previousCatalog, incomingCatalog, actionKey) {
+  const identity = parsedPhoneActionProgressIdentity(actionKey)
+  if (!identity) return true
+  return matchingPhoneAuthoredAction(previousCatalog, incomingCatalog, "progress", identity)
+}
+
+function reconciledRawPhoneActionResponses(
+  responses,
+  previousCatalog,
+  incomingCatalog,
+  kind,
+) {
+  return Object.fromEntries(Object.entries(responses || {}).filter(([messageId, response]) => {
+    if (!matchingPhoneAuthoredAction(previousCatalog, incomingCatalog, kind, messageId)) return false
+    if (kind !== "contactCard") return true
+    const descriptor = incomingCatalog.contactCard.get(messageId)[0]
+    return descriptor.status === response
+  }))
+}
+
+function reconcilePhoneActionProgress(progress, previousPhoneData, incomingPhoneData) {
+  if (!progress || progress.kind !== "phone") return progress
+  const previousCatalog = phoneAuthoredActionCatalog(previousPhoneData)
+  const incomingCatalog = phoneAuthoredActionCatalog(incomingPhoneData)
+  const completedMessageActionKeys = (progress.completedMessageActionKeys || [])
+    .filter(key => phoneActionProgressSurvives(previousCatalog, incomingCatalog, key))
+  const messageActionResponses = Object.fromEntries(
+    Object.entries(progress.messageActionResponses || {})
+      .filter(([key]) => phoneActionProgressSurvives(previousCatalog, incomingCatalog, key)),
+  )
+  const friendRequestResponses = reconciledRawPhoneActionResponses(
+    progress.friendRequestResponses,
+    previousCatalog,
+    incomingCatalog,
+    "friendRequest",
+  )
+  const contactCardResponses = reconciledRawPhoneActionResponses(
+    progress.contactCardResponses,
+    previousCatalog,
+    incomingCatalog,
+    "contactCard",
+  )
+  const contactFriendships = { ...(progress.contactFriendships || {}) }
+  const contactFriendshipSources = { ...(progress.contactFriendshipSources || {}) }
+  Object.entries(contactFriendshipSources).forEach(([contactId, source]) => {
+    if (phoneActionProgressSurvives(previousCatalog, incomingCatalog, source)) return
+    delete contactFriendshipSources[contactId]
+    delete contactFriendships[contactId]
+  })
+  return normalizedProgress({
+    ...progress,
+    friendRequestResponses,
+    contactCardResponses,
+    contactFriendships,
+    contactFriendshipSources,
+    completedMessageActionKeys,
+    messageActionResponses,
+  })
 }
 
 function normalizedContactRemarks(value) {
@@ -308,14 +841,48 @@ function normalizedProgress(value) {
   const kind = ownData(value, "kind")
   if (kind === "phone") {
     const flowIndex = ownData(value, "flowIndex")
+    const phoneChoiceSelectionState = normalizedPhoneChoiceSelectionState(
+      ownData(value, "phoneChoiceSelections"),
+      ownData(value, "phoneChoiceSelectionOrder"),
+    )
+    const contactFriendships = normalizedContactFriendships(ownData(value, "contactFriendships"))
+    const contactFriendshipSources = normalizedContactFriendshipSources(
+      ownData(value, "contactFriendshipSources"),
+      contactFriendships,
+    )
+    const completedMessageActionKeys = normalizedCompletedMessageActionKeys(
+      ownData(value, "completedMessageActionKeys"),
+    )
+    const messageActionResponses = normalizedMessageActionResponses(
+      ownData(value, "messageActionResponses"),
+    )
+    const phoneStoryEffectOrder = normalizedPhoneStoryEffectOrder(
+      ownData(value, "phoneStoryEffectOrder"),
+    )
+    const phonePendingChoicePlaybacks = normalizedPhonePendingChoicePlaybacks(
+      ownData(value, "phonePendingChoicePlaybacks"),
+      phoneChoiceSelectionState.selections,
+    )
     return {
       kind:"phone",
       flowIndex:Number.isInteger(flowIndex) && flowIndex >= 0 ? Math.min(flowIndex, 10_000) : 0,
       friendRequestResponses:normalizedFriendRequestResponses(ownData(value, "friendRequestResponses")),
       contactCardResponses:normalizedContactCardResponses(ownData(value, "contactCardResponses")),
-      contactFriendships:normalizedContactFriendships(ownData(value, "contactFriendships")),
-      phoneChoiceSelections:normalizedPhoneChoiceSelections(ownData(value, "phoneChoiceSelections")),
+      contactFriendships,
+      contactFriendshipSources,
+      phoneChoiceSelections:phoneChoiceSelectionState.selections,
+      ...(phoneChoiceSelectionState.explicitOrder
+        ? { phoneChoiceSelectionOrder:phoneChoiceSelectionState.order }
+        : {}),
       contactRemarks:normalizedContactRemarks(ownData(value, "contactRemarks")),
+      ...(completedMessageActionKeys.length ? { completedMessageActionKeys } : {}),
+      ...(Object.keys(messageActionResponses).length ? { messageActionResponses } : {}),
+      ...(phoneStoryEffectOrder.explicitOrder
+        ? { phoneStoryEffectOrder:phoneStoryEffectOrder.order }
+        : {}),
+      ...(Object.keys(phonePendingChoicePlaybacks).length
+        ? { phonePendingChoicePlaybacks }
+        : {}),
       readingPosition:normalizedReadingPosition(ownData(value, "readingPosition"), "phone"),
       savedAt:timestamp(ownData(value, "savedAt")),
     }
@@ -1056,6 +1623,7 @@ export function reconcileReaderWorkUpdate(
   }
   const previousDefinitions = normalizedDefinitions(ownData(previousWork, "placeholders"))
   const incomingDefinitions = normalizedDefinitions(ownData(incomingWork, "placeholders"))
+  const reconcilePhoneProgress = ownData(incomingWork, "type") === "phone"
   const updatedAt = timestamp(options.now, Date.now())
   return withBooks(current, current.books.map(book => {
     if (book.id !== workId) return book
@@ -1069,6 +1637,13 @@ export function reconcileReaderWorkUpdate(
       bookmarks:slot.bookmarks.map(bookmark => (
         repairBookmarkForWork(bookmark, previousWork, incomingWork)
       )),
+      progress:reconcilePhoneProgress
+        ? reconcilePhoneActionProgress(
+            slot.progress,
+            ownData(previousWork, "phoneData"),
+            ownData(incomingWork, "phoneData"),
+          )
+        : slot.progress,
     }))
     const nextBook = {
       ...book,

@@ -195,6 +195,7 @@ function showModalInlineError(overlay, field, message) {
 }
 
 const PHONE_GROUP_WIDE_MENTION = '全体成员'
+const PHONE_STORY_CONDITION_CANDIDATE_LIMIT = 80
 
 function phoneStoryConditionSummary(phoneData, item) {
   var condition = normalizePhoneStoryDisplayCondition(item)
@@ -235,13 +236,35 @@ function phoneStoryConditionDraft(item) {
 
 function openPhoneStoryConditionEditor(phoneData, item, options) {
   options = options || {}
-  var catalog = phoneStoryChoiceCatalog(phoneData)
+  var catalog = phoneStoryChoiceCatalog(phoneData, { includeSearchText:true })
   var groups = normalizePhoneStoryDisplayCondition(item).all.map(function(group) { return group.anyChoiceIds.slice() })
   if (!groups.length) groups = [[]]
+  var queries = groups.map(function() { return '' })
 
   function choiceById(choiceId) {
     var matches = catalog.filter(function(choice) { return choice.id === choiceId })
     return matches.length === 1 ? matches[0] : null
+  }
+
+  function choiceCandidatesHtml(groupIndex, query) {
+    var choiceIds = groups[groupIndex] || []
+    var normalizedQuery = String(query || '').trim().toLocaleLowerCase()
+    var matchingCandidates = catalog.filter(function(choice) {
+      if (choiceIds.includes(choice.id)) return false
+      var searchable = choice.searchText || [choice.label, choice.detail, choice.id].join(' ')
+      return !normalizedQuery || searchable.toLocaleLowerCase().includes(normalizedQuery)
+    })
+    var candidates = matchingCandidates.slice(0, PHONE_STORY_CONDITION_CANDIDATE_LIMIT)
+    var html = ''
+    candidates.forEach(function(choice) {
+      var disabled = choice.ambiguous || choice.ownerMessageId === options.excludeOwnerMessageId
+      html += '<button type="button" class="condition-choice-result" data-phone-condition-add-choice="' + escapeHtmlAttribute(choice.id) + '" data-phone-condition-group="' + groupIndex + '"' + (disabled ? ' disabled' : '') + '><span>' + esc(choice.label) + '</span><small>' + esc(choice.detail) + (choice.ambiguous ? ' · 选项 ID 重复' : '') + '</small></button>'
+    })
+    if (!candidates.length) return '<p class="condition-empty" role="status">没有匹配的回复选项</p>'
+    if (matchingCandidates.length > PHONE_STORY_CONDITION_CANDIDATE_LIMIT) {
+      html += '<p class="condition-empty condition-choice-limit" role="status">仅显示前 ' + PHONE_STORY_CONDITION_CANDIDATE_LIMIT + ' 项结果，请继续输入以缩小范围</p>'
+    }
+    return html
   }
 
   var ov = modal(options.title || '设置剧情显示条件', '<div class="phone-story-condition-editor"></div>',
@@ -262,15 +285,26 @@ function openPhoneStoryConditionEditor(phoneData, item, options) {
         html += '<span class="condition-reference' + (!choice || choice.ambiguous ? ' is-invalid' : '') + '"><span>' + esc(choice ? choice.label : '失效选项 · ' + choiceId) + '</span><button type="button" data-phone-condition-remove-choice="' + escapeHtmlAttribute(choiceId) + '" data-phone-condition-group="' + groupIndex + '" aria-label="移除条件">×</button></span>'
       })
       if (!choiceIds.length) html += '<span class="condition-empty">尚未选择回复选项</span>'
-      html += '</div><div class="condition-choice-results">'
-      catalog.forEach(function(choice) {
-        var disabled = choice.ambiguous || choice.ownerMessageId === options.excludeOwnerMessageId || choiceIds.includes(choice.id)
-        html += '<button type="button" class="condition-choice-result" data-phone-condition-add-choice="' + escapeHtmlAttribute(choice.id) + '" data-phone-condition-group="' + groupIndex + '"' + (disabled ? ' disabled' : '') + '><span>' + esc(choice.label) + '</span><small>' + esc(choice.detail) + (choice.ambiguous ? ' · 选项 ID 重复' : '') + '</small></button>'
-      })
+      var query = queries[groupIndex] || ''
+      html += '</div><label class="condition-search" for="phoneStoryConditionSearch-' + groupIndex + '"><span>搜索回复选项</span><input type="search" id="phoneStoryConditionSearch-' + groupIndex + '" data-phone-condition-search="' + groupIndex + '" aria-label="搜索第 ' + (groupIndex + 1) + ' 组条件选项" autocomplete="off" value="' + escapeHtmlAttribute(query) + '" placeholder="选项、会话、轮次、原消息或 ID"></label><div class="condition-choice-results">'
+      html += choiceCandidatesHtml(groupIndex, query)
       html += '</div></section>'
     })
     html += '<button type="button" class="btn btn-outline btn-sm phone-story-condition-add-group" data-phone-condition-add-group>+ 添加且条件</button>'
     editor.innerHTML = html
+  }
+
+  function focusGroupSearch(groupIndex) {
+    var search = editor.querySelector('[data-phone-condition-search="' + groupIndex + '"]')
+    if (!search) return
+    try { search.focus({ preventScroll:true }) } catch { search.focus() }
+    var cursor = search.value.length
+    search.setSelectionRange?.(cursor, cursor)
+  }
+
+  function renderAndFocus(groupIndex) {
+    render()
+    focusGroupSearch(groupIndex)
   }
 
   editor.onclick = function(event) {
@@ -279,28 +313,42 @@ function openPhoneStoryConditionEditor(phoneData, item, options) {
       var addGroupIndex = Number(addChoice.dataset.phoneConditionGroup)
       var choiceId = addChoice.dataset.phoneConditionAddChoice
       if (groups[addGroupIndex] && !groups[addGroupIndex].includes(choiceId) && !addChoice.disabled) groups[addGroupIndex].push(choiceId)
-      render()
+      renderAndFocus(addGroupIndex)
       return
     }
     var removeChoice = event.target.closest('[data-phone-condition-remove-choice]')
     if (removeChoice) {
       var removeGroupIndex = Number(removeChoice.dataset.phoneConditionGroup)
       groups[removeGroupIndex] = (groups[removeGroupIndex] || []).filter(function(choiceId) { return choiceId !== removeChoice.dataset.phoneConditionRemoveChoice })
-      render()
+      renderAndFocus(removeGroupIndex)
       return
     }
     var removeGroup = event.target.closest('[data-phone-condition-remove-group]')
     if (removeGroup) {
       var index = Number(removeGroup.dataset.phoneConditionRemoveGroup)
       if (groups.length === 1) groups[0] = []
-      else groups.splice(index, 1)
-      render()
+      else {
+        groups.splice(index, 1)
+        queries.splice(index, 1)
+      }
+      renderAndFocus(Math.min(index, groups.length - 1))
       return
     }
     if (event.target.closest('[data-phone-condition-add-group]')) {
       groups.push([])
-      render()
+      queries.push('')
+      renderAndFocus(groups.length - 1)
     }
+  }
+  editor.oninput = function(event) {
+    var search = event.target.closest('[data-phone-condition-search]')
+    if (!search) return
+    var groupIndex = Number(search.dataset.phoneConditionSearch)
+    if (!Number.isInteger(groupIndex) || !groups[groupIndex]) return
+    queries[groupIndex] = search.value
+    var groupCard = search.closest('[data-phone-condition-group-card]')
+    var results = groupCard?.querySelector('.condition-choice-results')
+    if (results) results.innerHTML = choiceCandidatesHtml(groupIndex, search.value)
   }
   ov.querySelector('#phoneStoryConditionClear').onclick = function() {
     applyPhoneStoryDisplayCondition(item, [])
@@ -537,7 +585,7 @@ function openThreadReplyChoiceEditor(owner, options) {
       html += '<div class="thread-choice-image-field"><label class="form-label" for="threadChoiceImage-' + index + '">回复图片</label><div class="thread-choice-image-controls"><input id="threadChoiceImage-' + index + '" class="thread-choice-image-url form-input" value="' + escapeHtmlAttribute(group.imageUrl || '') + '" placeholder="粘贴图片链接"><label class="thread-choice-image-file-button btn btn-outline btn-sm">选择图片<input class="thread-choice-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden></label><button type="button" class="thread-choice-image-clear btn btn-ghost btn-sm">清除</button></div><div class="form-hint">有图片时，读者会发送图片；文字只作选项说明。</div><figure class="thread-choice-image-preview"' + (safeChoiceImage ? '' : ' hidden') + '><img' + (safeChoiceImage ? ' src="' + escapeHtmlAttribute(safeChoiceImage) + '"' : '') + ' alt="第 ' + (index + 1) + ' 个选项的图片预览"></figure></div>'
       if (options.allowSilent === true || options.allowEndRound === true) html += '<div class="thread-choice-behavior-list">'
       if (options.allowSilent === true) html += '<label class="thread-choice-behavior"><input type="checkbox" class="thread-choice-silent"' + (group.silent ? ' checked' : '') + '><span><strong>沉默</strong><small>不发送读者气泡，直接触发后续</small></span></label>'
-      if (options.allowEndRound === true) html += '<label class="thread-choice-behavior"><input type="checkbox" class="thread-choice-end-round"' + (group.endRound ? ' checked' : '') + '><span><strong>结束当前话题</strong><small>播完后续后，不再显示本轮普通消息</small></span></label>'
+      if (options.allowEndRound === true) html += '<label class="thread-choice-behavior"><input type="checkbox" class="thread-choice-end-round"' + (group.endRound ? ' checked' : '') + '><span><strong>结束当前话题</strong><small>播完后续后，跳过本轮剩余预设消息（包括系统消息）</small></span></label>'
       if (options.allowSilent === true || options.allowEndRound === true) html += '</div>'
       if (options.showReplyPace === true || options.showLikeCounts === true) html += '<div class="thread-choice-option-fields">'
       if (options.showReplyPace === true) html += '<label><span>默认回复节奏</span><select class="thread-choice-reply-pace form-select" aria-label="第 ' + (index + 1) + ' 组选项的默认角色回复节奏">' + CHAT_REPLY_PACES.map(function(option) { return '<option value="' + option.value + '"' + (option.value === defaultPace ? ' selected' : '') + '>' + option.label + '</option>' }).join('') + '</select></label>'

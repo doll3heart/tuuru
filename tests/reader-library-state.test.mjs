@@ -253,11 +253,29 @@ test("phone reading positions are bounded and legacy progress remains compatible
       "contact-c":"pending",
       "contact-invalid":"later",
     },
+    contactFriendshipSources:{
+      "contact-a":"direct",
+      "contact-b":'["choice-contact","chat-id:chat-a","message-a","choice-yes","authored:card-a","0123456789abcdef"]',
+      "contact-invalid":" padded ",
+    },
     phoneChoiceSelections:{
       "message-a":"choice-yes",
       "message-b":"choice-no",
       "message-invalid":"",
       "constructor":"choice-bad",
+    },
+    completedMessageActionKeys:[
+      '["choice","chat-id:chat-a","message-a","choice-yes",0]',
+      '["choice","chat-id:chat-a","message-a","choice-yes",0]',
+      '',
+      ' padded ',
+      'x'.repeat(4097),
+      42,
+    ],
+    messageActionResponses:{
+      '["choice","chat-id:chat-a","message-a","choice-yes","follow-up:schedule#0"]':"accepted",
+      "declined-action":"declined",
+      "invalid-action":"later",
     },
     contactRemarks:{
       "contact-a":"  阿澈  ",
@@ -299,9 +317,20 @@ test("phone reading positions are bounded and legacy progress remains compatible
     "contact-b":"declined",
     "contact-c":"pending",
   })
+  assert.deepEqual(readerBook(library, "work-a").progress.contactFriendshipSources, {
+    "contact-a":"direct",
+    "contact-b":'["choice-contact","chat-id:chat-a","message-a","choice-yes","authored:card-a","0123456789abcdef"]',
+  })
   assert.deepEqual(readerBook(library, "work-a").progress.phoneChoiceSelections, {
     "message-a":"choice-yes",
     "message-b":"choice-no",
+  })
+  assert.deepEqual(readerBook(library, "work-a").progress.completedMessageActionKeys, [
+    '["choice","chat-id:chat-a","message-a","choice-yes",0]',
+  ])
+  assert.deepEqual(readerBook(library, "work-a").progress.messageActionResponses, {
+    '["choice","chat-id:chat-a","message-a","choice-yes","follow-up:schedule#0"]':"accepted",
+    "declined-action":"declined",
   })
   assert.deepEqual(readerBook(library, "work-a").progress.contactRemarks, {
     "contact-a":"阿澈",
@@ -315,7 +344,10 @@ test("phone reading positions are bounded and legacy progress remains compatible
   assert.deepEqual(readerBook(legacy, "work-a").progress.friendRequestResponses, {})
   assert.deepEqual(readerBook(legacy, "work-a").progress.contactCardResponses, {})
   assert.deepEqual(readerBook(legacy, "work-a").progress.contactFriendships, {})
+  assert.deepEqual(readerBook(legacy, "work-a").progress.contactFriendshipSources, {})
   assert.deepEqual(readerBook(legacy, "work-a").progress.phoneChoiceSelections, {})
+  assert.equal(readerBook(legacy, "work-a").progress.completedMessageActionKeys, undefined)
+  assert.equal(readerBook(legacy, "work-a").progress.messageActionResponses, undefined)
   assert.deepEqual(readerBook(legacy, "work-a").progress.contactRemarks, {})
 
   const invalid = saveReaderProgress(library, "work-a", {
@@ -330,6 +362,695 @@ test("phone reading positions are bounded and legacy progress remains compatible
     },
   }, 130)
   assert.equal(readerBook(invalid, "work-a").progress.readingPosition, null)
+})
+
+test("phone action responses retain long semantic keys and more than two hundred answers", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  const messageActionResponses = Object.fromEntries(
+    Array.from({ length:250 }, (_, index) => [`semantic-action-${index}`, index % 2 ? "declined" : "accepted"]),
+  )
+  const longSemanticKey = JSON.stringify([
+    "choice",
+    `chat-${"c".repeat(180)}`,
+    `owner-${"o".repeat(180)}`,
+    `choice-${"h".repeat(180)}`,
+    `follow-up:${"f".repeat(180)}`,
+    "0123456789abcdef",
+  ])
+  messageActionResponses[longSemanticKey] = "accepted"
+  messageActionResponses["x".repeat(4097)] = "accepted"
+
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    messageActionResponses,
+  }, 110)
+
+  const saved = readerBook(library, "work-a").progress.messageActionResponses
+  assert.equal(Object.keys(saved).length, 251)
+  assert.equal(saved["semantic-action-249"], "declined")
+  assert.equal(saved[longSemanticKey], "accepted")
+  assert.equal(saved["x".repeat(4097)], undefined)
+})
+
+test("phone action progress keeps the newest thousand entries when storage is bounded", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  const completedMessageActionKeys = Array.from(
+    { length:1001 },
+    (_, index) => `completed-action-${index}`,
+  )
+  const messageActionResponses = Object.fromEntries(
+    Array.from({ length:1001 }, (_, index) => [`response-action-${index}`, "accepted"]),
+  )
+  const contactFriendships = Object.fromEntries(
+    Array.from({ length:1001 }, (_, index) => [`contact-${index}`, "accepted"]),
+  )
+  const contactFriendshipSources = Object.fromEntries(
+    Array.from({ length:1001 }, (_, index) => [`contact-${index}`, `source-${index}`]),
+  )
+
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    completedMessageActionKeys,
+    messageActionResponses,
+    contactFriendships,
+    contactFriendshipSources,
+  }, 110)
+
+  const saved = readerBook(library, "work-a").progress
+  assert.equal(saved.completedMessageActionKeys.length, 1000)
+  assert.equal(saved.completedMessageActionKeys.includes("completed-action-0"), false)
+  assert.equal(saved.completedMessageActionKeys.includes("completed-action-1000"), true)
+  assert.equal(Object.keys(saved.messageActionResponses).length, 1000)
+  assert.equal(saved.messageActionResponses["response-action-0"], undefined)
+  assert.equal(saved.messageActionResponses["response-action-1000"], "accepted")
+  assert.equal(Object.keys(saved.contactFriendships).length, 1000)
+  assert.equal(saved.contactFriendships["contact-0"], undefined)
+  assert.equal(saved.contactFriendships["contact-1000"], "accepted")
+  assert.equal(Object.keys(saved.contactFriendshipSources).length, 1000)
+  assert.equal(saved.contactFriendshipSources["contact-0"], undefined)
+  assert.equal(saved.contactFriendshipSources["contact-1000"], "source-1000")
+})
+
+test("phone choice progress keeps the newest thousand selections", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  const phoneChoiceSelections = Object.fromEntries(
+    Array.from({ length:1001 }, (_, index) => [`message-${index}`, `choice-${index}`]),
+  )
+
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    phoneChoiceSelections,
+  }, 110)
+
+  const saved = readerBook(library, "work-a").progress.phoneChoiceSelections
+  assert.equal(Object.keys(saved).length, 1000)
+  assert.equal(saved["message-0"], undefined)
+  assert.equal(saved["message-1000"], "choice-1000")
+})
+
+test("phone choice progress preserves the real recency of numeric-string owner ids", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  const phoneChoiceSelectionOrder = Array.from(
+    { length:1001 },
+    (_, index) => String(1000 - index),
+  )
+  const phoneChoiceSelections = Object.fromEntries(
+    phoneChoiceSelectionOrder.map(ownerMessageId => [ownerMessageId, `choice-${ownerMessageId}`]),
+  )
+
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    phoneChoiceSelections,
+    phoneChoiceSelectionOrder,
+  }, 110)
+
+  const saved = readerBook(library, "work-a").progress
+  assert.equal(Object.keys(saved.phoneChoiceSelections).length, 1000)
+  assert.equal(saved.phoneChoiceSelections["1000"], undefined)
+  assert.equal(saved.phoneChoiceSelections["0"], "choice-0")
+  assert.deepEqual(saved.phoneChoiceSelectionOrder, phoneChoiceSelectionOrder.slice(-1000))
+
+  const storage = memoryStorage()
+  assert.equal(writeReaderLibrary(storage, library), true)
+  const restored = readerBook(readReaderLibrary(storage), "work-a").progress
+  assert.deepEqual(restored.phoneChoiceSelectionOrder, phoneChoiceSelectionOrder.slice(-1000))
+  assert.equal(restored.phoneChoiceSelections["1000"], undefined)
+  assert.equal(restored.phoneChoiceSelections["0"], "choice-0")
+})
+
+test("phone friendship sources stay paired with retained friendship states", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  const contactFriendships = Object.fromEntries(
+    Array.from({ length:1001 }, (_, index) => [`contact-${index}`, "accepted"]),
+  )
+  const contactFriendshipSources = Object.fromEntries(
+    Array.from({ length:1001 }, (_, index) => [`contact-${1000 - index}`, `source-${1000 - index}`]),
+  )
+
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    contactFriendships,
+    contactFriendshipSources,
+  }, 110)
+
+  const saved = readerBook(library, "work-a").progress
+  assert.deepEqual(
+    Object.keys(saved.contactFriendshipSources),
+    Object.keys(saved.contactFriendships),
+  )
+  assert.equal(saved.contactFriendshipSources["contact-0"], undefined)
+  assert.equal(saved.contactFriendshipSources["contact-1000"], "source-1000")
+})
+
+test("phone work updates preserve action progress across unrelated and field-order changes", () => {
+  const previousFriendRequest = {
+    id:"request-a",
+    type:"contact-event",
+    eventKind:"friend-request",
+    actorContactId:"contact-a",
+    originalText:"same request",
+  }
+  const incomingFriendRequest = {
+    originalText:"same request",
+    actorContactId:"contact-a",
+    eventKind:"friend-request",
+    type:"contact-event",
+    id:"request-a",
+  }
+  const previousContactCard = {
+    id:"card-a",
+    type:"contact-card",
+    targetContactId:"contact-b",
+    contactAction:"request",
+    contactRequestOutcome:"accepted",
+    contactAcceptedText:"same reaction",
+  }
+  const incomingContactCard = {
+    contactAcceptedText:"same reaction",
+    contactRequestOutcome:"accepted",
+    contactAction:"request",
+    targetContactId:"contact-b",
+    type:"contact-card",
+    id:"card-a",
+  }
+  const previousWork = work({
+    type:"phone",
+    phoneData:{
+      wallpaper:"old-wallpaper.png",
+      chats:[{ id:"chat-a", rounds:[{ messages:[
+        previousFriendRequest,
+        {
+          id:"owner-a",
+          type:"text",
+          choices:[{
+            id:"choice-a",
+            followUpMessages:[previousContactCard],
+          }],
+        },
+      ] }] }],
+    },
+  })
+  const incomingWork = work({
+    type:"phone",
+    phoneData:{
+      chats:[{ rounds:[{ messages:[
+        incomingFriendRequest,
+        {
+          choices:[{
+            followUpMessages:[incomingContactCard],
+            id:"choice-a",
+          }],
+          type:"text",
+          id:"owner-a",
+        },
+      ] }], id:"chat-a" }],
+      wallpaper:"new-wallpaper.png",
+    },
+  })
+  const legacyMessageKey = JSON.stringify(["message", "chat-id:chat-a", "request-a"])
+  const legacyContactKey = JSON.stringify([
+    "choice-contact",
+    "chat-id:chat-a",
+    "owner-a",
+    "choice-a",
+    "follow-up:card-a",
+  ])
+  const semanticMessageKey = JSON.stringify([
+    "message",
+    "chat-id:chat-a",
+    "request-a",
+    "rendered-placeholder-fingerprint-a",
+  ])
+  const semanticContactKey = JSON.stringify([
+    "choice-contact",
+    "chat-id:chat-a",
+    "owner-a",
+    "choice-a",
+    "follow-up:card-a",
+    "rendered-placeholder-fingerprint-b",
+  ])
+  let library = rememberReaderWork(emptyReaderLibrary(), previousWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    friendRequestResponses:{ "request-a":"declined" },
+    contactCardResponses:{ "card-a":"accepted" },
+    contactFriendships:{ "contact-b":"accepted" },
+    contactFriendshipSources:{ "contact-b":semanticContactKey },
+    completedMessageActionKeys:[
+      legacyMessageKey,
+      legacyContactKey,
+      semanticMessageKey,
+      semanticContactKey,
+    ],
+    messageActionResponses:{
+      [legacyMessageKey]:"declined",
+      [legacyContactKey]:"accepted",
+      [semanticMessageKey]:"declined",
+      [semanticContactKey]:"accepted",
+    },
+  }, 110)
+
+  const reconciled = reconcileReaderWorkUpdate(library, previousWork, incomingWork, { now:120 })
+  const progress = readerBook(reconciled, "work-a").progress
+
+  assert.deepEqual(progress.friendRequestResponses, { "request-a":"declined" })
+  assert.deepEqual(progress.contactCardResponses, { "card-a":"accepted" })
+  assert.deepEqual(progress.contactFriendships, { "contact-b":"accepted" })
+  assert.deepEqual(progress.contactFriendshipSources, { "contact-b":semanticContactKey })
+  assert.deepEqual(progress.completedMessageActionKeys, [
+    legacyMessageKey,
+    legacyContactKey,
+    semanticMessageKey,
+    semanticContactKey,
+  ])
+  assert.deepEqual(progress.messageActionResponses, {
+    [legacyMessageKey]:"declined",
+    [legacyContactKey]:"accepted",
+    [semanticMessageKey]:"declined",
+    [semanticContactKey]:"accepted",
+  })
+})
+
+test("phone work updates discard changed friend-request and contact-card action identities", () => {
+  const previousWork = work({
+    type:"phone",
+    phoneData:{ chats:[{ id:"chat-a", rounds:[{ messages:[
+      {
+        id:"request-a",
+        type:"contact-event",
+        eventKind:"friend-request",
+        actorContactId:"contact-a",
+        originalText:"old request",
+      },
+      {
+        id:"owner-a",
+        type:"text",
+        choices:[{
+          id:"choice-a",
+          followUpMessages:[{
+            id:"card-a",
+            type:"contact-card",
+            targetContactId:"contact-b",
+            contactAction:"request",
+            contactRequestOutcome:"accepted",
+          }],
+        }],
+      },
+    ] }] }] },
+  })
+  const incomingWork = work({
+    type:"phone",
+    phoneData:{ chats:[{ id:"chat-a", rounds:[{ messages:[
+      {
+        id:"request-a",
+        type:"contact-event",
+        eventKind:"friend-request",
+        actorContactId:"contact-a",
+        originalText:"changed request",
+      },
+      {
+        id:"owner-a",
+        type:"text",
+        choices:[{
+          id:"choice-a",
+          followUpMessages:[{
+            id:"card-a",
+            type:"contact-card",
+            targetContactId:"contact-b",
+            contactAction:"request",
+            contactRequestOutcome:"declined",
+          }],
+        }],
+      },
+    ] }] }] },
+  })
+  const legacyMessageKey = JSON.stringify(["message", "chat-id:chat-a", "request-a"])
+  const semanticMessageKey = JSON.stringify([
+    "message",
+    "chat-id:chat-a",
+    "request-a",
+    "old-rendered-fingerprint",
+  ])
+  const legacyContactKey = JSON.stringify([
+    "choice-contact",
+    "chat-id:chat-a",
+    "owner-a",
+    "choice-a",
+    "follow-up:card-a",
+  ])
+  const semanticContactKey = JSON.stringify([
+    "choice-contact",
+    "chat-id:chat-a",
+    "owner-a",
+    "choice-a",
+    "follow-up:card-a",
+    "old-rendered-fingerprint",
+  ])
+  let library = rememberReaderWork(emptyReaderLibrary(), previousWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    friendRequestResponses:{ "request-a":"accepted" },
+    contactCardResponses:{ "card-a":"accepted" },
+    contactFriendships:{ "contact-b":"accepted" },
+    contactFriendshipSources:{ "contact-b":semanticContactKey },
+    completedMessageActionKeys:[
+      legacyMessageKey,
+      semanticMessageKey,
+      legacyContactKey,
+      semanticContactKey,
+    ],
+    messageActionResponses:{
+      [legacyMessageKey]:"accepted",
+      [semanticMessageKey]:"accepted",
+      [legacyContactKey]:"accepted",
+      [semanticContactKey]:"accepted",
+    },
+  }, 110)
+
+  const reconciled = reconcileReaderWorkUpdate(library, previousWork, incomingWork, { now:120 })
+  const progress = readerBook(reconciled, "work-a").progress
+
+  assert.deepEqual(progress.friendRequestResponses, {})
+  assert.deepEqual(progress.contactCardResponses, {})
+  assert.deepEqual(progress.contactFriendships, {})
+  assert.deepEqual(progress.contactFriendshipSources, {})
+  assert.equal(progress.completedMessageActionKeys, undefined)
+  assert.equal(progress.messageActionResponses, undefined)
+})
+
+test("phone work updates fail closed for ambiguous raw action ids without dropping scoped semantic state", () => {
+  const phoneData = {
+    wallpaper:"old.png",
+    chats:["chat-a", "chat-b"].map(chatId => ({
+      id:chatId,
+      rounds:[{ messages:[{
+        id:"duplicate-request",
+        type:"contact-event",
+        eventKind:"friend-request",
+        actorContactId:`contact-${chatId}`,
+        originalText:"same request",
+      }] }],
+    })),
+  }
+  const previousWork = work({ type:"phone", phoneData })
+  const incomingWork = work({
+    type:"phone",
+    phoneData:{ ...JSON.parse(JSON.stringify(phoneData)), wallpaper:"new.png" },
+  })
+  const scopedKey = JSON.stringify([
+    "message",
+    "chat-id:chat-a",
+    "duplicate-request",
+    "rendered-fingerprint",
+  ])
+  let library = rememberReaderWork(emptyReaderLibrary(), previousWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    friendRequestResponses:{ "duplicate-request":"accepted" },
+    completedMessageActionKeys:[scopedKey],
+    messageActionResponses:{ [scopedKey]:"accepted" },
+  }, 110)
+
+  const progress = readerBook(
+    reconcileReaderWorkUpdate(library, previousWork, incomingWork, { now:120 }),
+    "work-a",
+  ).progress
+
+  assert.deepEqual(progress.friendRequestResponses, {})
+  assert.deepEqual(progress.completedMessageActionKeys, [scopedKey])
+  assert.deepEqual(progress.messageActionResponses, { [scopedKey]:"accepted" })
+})
+
+test("duplicate chat ids preserve independently scoped semantic actions across work updates", () => {
+  const phoneData = {
+    wallpaper:"old.png",
+    chats:[0, 1].map(index => ({
+      id:"duplicate-chat",
+      rounds:[{ messages:[{
+        id:`request-${index}`,
+        type:"contact-event",
+        eventKind:"friend-request",
+        actorContactId:`contact-${index}`,
+        originalText:`request ${index}`,
+      }] }],
+    })),
+  }
+  const previousWork = work({ type:"phone", phoneData })
+  const incomingWork = JSON.parse(JSON.stringify(previousWork))
+  incomingWork.phoneData.wallpaper = "new.png"
+  const scopedKeys = [0, 1].map(index => JSON.stringify([
+    "message",
+    `chat-source:duplicate-chat#${index}`,
+    `request-${index}`,
+    `fingerprint-${index}`,
+  ]))
+  let library = rememberReaderWork(emptyReaderLibrary(), previousWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    completedMessageActionKeys:scopedKeys,
+    messageActionResponses:Object.fromEntries(scopedKeys.map(key => [key, "accepted"])),
+  }, 110)
+
+  const progress = readerBook(
+    reconcileReaderWorkUpdate(library, previousWork, incomingWork, { now:120 }),
+    "work-a",
+  ).progress
+
+  assert.deepEqual(progress.completedMessageActionKeys, scopedKeys)
+  assert.deepEqual(progress.messageActionResponses, Object.fromEntries(
+    scopedKeys.map(key => [key, "accepted"]),
+  ))
+})
+
+test("reimporting unchanged phone content keeps compatible legacy action progress", () => {
+  const phoneWork = work({
+    type:"phone",
+    phoneData:{ chats:[{ id:"chat-a", rounds:[{ messages:[{
+      id:"action-a",
+      type:"contact-event",
+      eventKind:"friend-request",
+      actorContactId:"contact-a",
+      originalText:"same",
+    }] }] }] },
+  })
+  const legacyKey = JSON.stringify(["message", "chat-id:chat-a", "action-a"])
+  let library = rememberReaderWork(emptyReaderLibrary(), phoneWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    friendRequestResponses:{ "action-a":"accepted" },
+    completedMessageActionKeys:[legacyKey],
+    messageActionResponses:{ [legacyKey]:"accepted" },
+  }, 110)
+
+  const reconciled = reconcileReaderWorkUpdate(
+    library,
+    phoneWork,
+    JSON.parse(JSON.stringify(phoneWork)),
+    { now:120 },
+  )
+  const progress = readerBook(reconciled, "work-a").progress
+
+  assert.deepEqual(progress.friendRequestResponses, { "action-a":"accepted" })
+  assert.deepEqual(progress.completedMessageActionKeys, [legacyKey])
+  assert.deepEqual(progress.messageActionResponses, { [legacyKey]:"accepted" })
+})
+
+test("reimporting a mixed rounds and legacy messages chat keeps unchanged action progress", () => {
+  const phoneWork = work({
+    type:"phone",
+    phoneData:{
+      wallpaper:"old.png",
+      chats:[{
+        id:"chat-a",
+        messages:[{
+          id:"legacy-action",
+          type:"contact-event",
+          eventKind:"friend-request",
+          actorContactId:"contact-a",
+          originalText:"same legacy request",
+        }],
+        rounds:[{
+          id:"round-a",
+          messages:[{ id:"round-message", type:"text", text:"round content" }],
+        }],
+      }],
+    },
+  })
+  const incomingWork = JSON.parse(JSON.stringify(phoneWork))
+  incomingWork.phoneData.wallpaper = "new.png"
+  const legacyKey = JSON.stringify(["message", "chat-id:chat-a", "legacy-action"])
+  let library = rememberReaderWork(emptyReaderLibrary(), phoneWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    friendRequestResponses:{ "legacy-action":"accepted" },
+    completedMessageActionKeys:[legacyKey],
+    messageActionResponses:{ [legacyKey]:"accepted" },
+  }, 110)
+
+  const progress = readerBook(
+    reconcileReaderWorkUpdate(library, phoneWork, incomingWork, { now:120 }),
+    "work-a",
+  ).progress
+
+  assert.deepEqual(progress.friendRequestResponses, { "legacy-action":"accepted" })
+  assert.deepEqual(progress.completedMessageActionKeys, [legacyKey])
+  assert.deepEqual(progress.messageActionResponses, { [legacyKey]:"accepted" })
+})
+
+test("phone story effect order round-trips safely without dropping valid effect history", () => {
+  const phoneWork = work({
+    type:"phone",
+    phoneData:{ wallpaper:"old.png", chats:[] },
+  })
+  const effectOrder = Array.from({ length:1005 }, (_, index) => `effect-${index}`)
+  effectOrder.push(
+    "effect-500",
+    " padded-effect ",
+    "",
+    "x".repeat(4097),
+    null,
+  )
+  let library = rememberReaderWork(emptyReaderLibrary(), phoneWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    phoneStoryEffectOrder:effectOrder,
+  }, 110)
+
+  const normalizedOrder = readerBook(library, "work-a").progress.phoneStoryEffectOrder
+  assert.equal(normalizedOrder.length, 1005)
+  assert.equal(normalizedOrder[0], "effect-0")
+  assert.equal(normalizedOrder.at(-1), "effect-500")
+  assert.equal(normalizedOrder.filter(key => key === "effect-500").length, 1)
+  assert.equal(normalizedOrder.includes(" padded-effect "), false)
+
+  const storage = memoryStorage()
+  assert.equal(writeReaderLibrary(storage, library), true)
+  const roundTripped = readReaderLibrary(storage)
+  assert.deepEqual(readerBook(roundTripped, "work-a").progress.phoneStoryEffectOrder, normalizedOrder)
+
+  const incomingWork = JSON.parse(JSON.stringify(phoneWork))
+  incomingWork.phoneData.wallpaper = "new.png"
+  const reconciled = reconcileReaderWorkUpdate(roundTripped, phoneWork, incomingWork, { now:120 })
+  assert.deepEqual(readerBook(reconciled, "work-a").progress.phoneStoryEffectOrder, normalizedOrder)
+})
+
+test("pending phone choice playback round-trips only for the matching selected choice", () => {
+  const phoneWork = work({
+    type:"phone",
+    phoneData:{ wallpaper:"old.png", chats:[] },
+  })
+  const playbackKey = JSON.stringify(["choice-playback", "chat-id:chat-a", "owner-a"])
+  const stalePlaybackKey = JSON.stringify(["choice-playback", "chat-id:chat-a", "owner-b"])
+  let library = rememberReaderWork(emptyReaderLibrary(), phoneWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    phoneChoiceSelections:{ "owner-a":"choice-a", "owner-b":"choice-b" },
+    phonePendingChoicePlaybacks:{
+      [playbackKey]:{
+        chatPersistenceKey:"chat-id:chat-a",
+        ownerMessageId:"owner-a",
+        selectedChoiceId:"choice-a",
+        playbackSignature:"0123456789abcdef",
+        nextIndex:2,
+        phase:"active",
+        textIndex:7,
+        advanceDeadline:1234,
+      },
+      [stalePlaybackKey]:{
+        chatPersistenceKey:"chat-id:chat-a",
+        ownerMessageId:"owner-b",
+        selectedChoiceId:"different-choice",
+        playbackSignature:"fedcba9876543210",
+        nextIndex:0,
+        phase:"waiting",
+        textIndex:0,
+        advanceDeadline:5678,
+      },
+    },
+  }, 110)
+
+  const expected = {
+    [playbackKey]:{
+      chatPersistenceKey:"chat-id:chat-a",
+      ownerMessageId:"owner-a",
+      selectedChoiceId:"choice-a",
+      playbackSignature:"0123456789abcdef",
+      nextIndex:2,
+      phase:"active",
+      textIndex:7,
+      advanceDeadline:1234,
+    },
+  }
+  assert.deepEqual(readerBook(library, "work-a").progress.phonePendingChoicePlaybacks, expected)
+
+  const storage = memoryStorage()
+  assert.equal(writeReaderLibrary(storage, library), true)
+  const roundTripped = readReaderLibrary(storage)
+  assert.deepEqual(readerBook(roundTripped, "work-a").progress.phonePendingChoicePlaybacks, expected)
+
+  const incomingWork = JSON.parse(JSON.stringify(phoneWork))
+  incomingWork.phoneData.wallpaper = "new.png"
+  const reconciled = reconcileReaderWorkUpdate(roundTripped, phoneWork, incomingWork, { now:120 })
+  assert.deepEqual(readerBook(reconciled, "work-a").progress.phonePendingChoicePlaybacks, expected)
+})
+
+test("scoped duplicate-owner choices keep only their own pending playback", () => {
+  const phoneWork = work({
+    type:"phone",
+    phoneData:{ wallpaper:"old.png", chats:[] },
+  })
+  const ownerMessageId = "shared-owner"
+  const chatA = "chat-id:chat-a"
+  const chatB = "chat-id:chat-b"
+  const choiceKeyA = JSON.stringify(["chat-choice", chatA, ownerMessageId])
+  const choiceKeyB = JSON.stringify(["chat-choice", chatB, ownerMessageId])
+  const playbackKeyA = JSON.stringify(["choice-playback", chatA, ownerMessageId])
+  const playbackKeyB = JSON.stringify(["choice-playback", chatB, ownerMessageId])
+  let library = rememberReaderWork(emptyReaderLibrary(), phoneWork, 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone",
+    phoneChoiceSelections:{
+      [choiceKeyA]:"choice-a",
+      [choiceKeyB]:"choice-b",
+    },
+    phoneChoiceSelectionOrder:[choiceKeyA, choiceKeyB],
+    phonePendingChoicePlaybacks:{
+      [playbackKeyA]:{
+        chatPersistenceKey:chatA,
+        ownerMessageId,
+        selectedChoiceId:"choice-a",
+        playbackSignature:"aaaaaaaaaaaaaaaa",
+        nextIndex:0,
+        phase:"waiting",
+        textIndex:0,
+        advanceDeadline:1234,
+      },
+      [playbackKeyB]:{
+        chatPersistenceKey:chatB,
+        ownerMessageId,
+        selectedChoiceId:"wrong-choice",
+        playbackSignature:"bbbbbbbbbbbbbbbb",
+        nextIndex:0,
+        phase:"waiting",
+        textIndex:0,
+        advanceDeadline:5678,
+      },
+    },
+  }, 110)
+
+  const saved = readerBook(library, "work-a").progress
+  assert.deepEqual(saved.phoneChoiceSelectionOrder, [choiceKeyA, choiceKeyB])
+  assert.deepEqual(saved.phoneChoiceSelections, {
+    [choiceKeyA]:"choice-a",
+    [choiceKeyB]:"choice-b",
+  })
+  assert.deepEqual(Object.keys(saved.phonePendingChoicePlaybacks), [playbackKeyA])
+
+  const storage = memoryStorage()
+  assert.equal(writeReaderLibrary(storage, library), true)
+  const restored = readerBook(readReaderLibrary(storage), "work-a").progress
+  assert.deepEqual(restored.phoneChoiceSelections, saved.phoneChoiceSelections)
+  assert.deepEqual(restored.phonePendingChoicePlaybacks, saved.phonePendingChoicePlaybacks)
 })
 
 test("completion, bookmarks, and removal remain detached from cached work bodies", () => {

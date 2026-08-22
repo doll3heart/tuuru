@@ -205,6 +205,7 @@ function removeId(items, value) {
 
 export function applyChatStoryMessage(state, message) {
   const next = nextState(state)
+  if (message?.failed === true || message?.deliveryState === "failed" || message?.deliveryState === "recalled") return next
   if (!message || (message.type !== "system-event" && message.type !== "contact-event")) return next
   const event = normalizedEvent(message)
   const contactId = event.targetContactId

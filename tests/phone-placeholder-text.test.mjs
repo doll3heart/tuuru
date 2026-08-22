@@ -60,3 +60,33 @@ test("reader phone substitution preserves structural and media strings and detac
   assert.equal(rendered.apps[0].color, source.apps[0].color)
   assert.equal(source.contacts[0].id, "contact-某某")
 })
+
+test("reader-internal authored fingerprints are never treated as placeholder prose", () => {
+  const fingerprint = "0123456789abcdef"
+  const messageSource = "0a-message-source"
+  const chatSource = "a0-chat-source"
+  const rendered = substitutePhoneTextData(
+    {
+      message:{
+        __readerAuthoredActionFingerprint:fingerprint,
+        __readerAuthoredMessageSourceKey:messageSource,
+        __readerAuthoredChatSourceKey:chatSource,
+        eventKind:"contact-update",
+        targetContactId:"face-0",
+        text:"0a",
+      },
+    },
+    [
+      { id:"zero", key:"0", values:["X"] },
+      { id:"a", key:"a", values:["Y"] },
+    ],
+    { valuesMap:{ zero:"X", a:"Y" } },
+  )
+
+  assert.equal(rendered.message.__readerAuthoredActionFingerprint, fingerprint)
+  assert.equal(rendered.message.__readerAuthoredMessageSourceKey, messageSource)
+  assert.equal(rendered.message.__readerAuthoredChatSourceKey, chatSource)
+  assert.equal(rendered.message.eventKind, "contact-update")
+  assert.equal(rendered.message.targetContactId, "face-0")
+  assert.equal(rendered.message.text, "XY")
+})

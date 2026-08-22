@@ -20,6 +20,7 @@ function installDom(t) {
   globalThis.requestAnimationFrame = callback => { callback(); return 1 }
   globalThis.alert = () => {}
   t.after(() => dom.window.close())
+  return dom
 }
 
 function crossAppWork(id) {
@@ -69,7 +70,7 @@ function crossAppWork(id) {
 }
 
 async function startWork(t, work, key) {
-  installDom(t)
+  const dom = installDom(t)
   localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
   localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
   await import(`../reader/reader.js?cross-app=${key}-${Date.now()}-${Math.random()}`)
@@ -78,6 +79,17 @@ async function startWork(t, work, key) {
   document.getElementById("rdStartBtn").click()
   document.querySelector('[data-app-type="messages"]').click()
   document.querySelector('.rd-chat-card[data-chat-index="0"]')?.click()
+  return dom
+}
+
+function waitForPopstate(window) {
+  return new Promise(resolve => {
+    const fallback = setTimeout(resolve, 80)
+    window.addEventListener("popstate", () => {
+      clearTimeout(fallback)
+      setTimeout(resolve, 0)
+    }, { once:true })
+  })
 }
 
 function clickMessage(id) {
@@ -112,6 +124,106 @@ test("message cards open real App content and return to the exact source message
   const source = await waitFor(() => document.querySelector('[data-message-id="memo-link"]'))
   assert.equal(source.classList.contains("is-return-target"), true)
   assert.match(source.textContent, /已查看/)
+})
+
+test("browser Back from a linked App returns to the exact source chat", async t => {
+  const work = crossAppWork("cross-app-browser-back-return")
+  const dom = await startWork(t, work, "browser-back-return")
+
+  clickMessage("memo-link")
+  assert.ok(document.querySelector(".rd-phone-app-memo"))
+
+  const popped = waitForPopstate(dom.window)
+  dom.window.history.back()
+  await popped
+
+  const source = await waitFor(() => document.querySelector('[data-message-id="memo-link"]'))
+  assert.ok(document.getElementById("chatBack"), "browser Back must keep the reader in the source chat")
+  assert.equal(source.classList.contains("is-return-target"), true)
+})
+
+test("late image load after browser Back preserves the restored source-chat reading position", async t => {
+  const work = crossAppWork("reader-cross-app-late-image-scroll")
+  work.phoneData.chats[0].rounds[0].messages.unshift({
+    id:"late-image",
+    type:"image",
+    senderId:"contact-1",
+    image:"data:image/png;base64,YQ==",
+  })
+  const dom = await startWork(t, work, "reader-test-cross-app-late-image-scroll")
+
+  let chatScrollHeight = 1000
+  const previousScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight")
+  const previousClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight")
+  const previousRect = dom.window.HTMLElement.prototype.getBoundingClientRect
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
+    configurable:true,
+    get() { return this.id === "chatMsgArea" ? chatScrollHeight : 0 },
+  })
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable:true,
+    get() { return this.id === "chatMsgArea" ? 200 : 0 },
+  })
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function() {
+    if (this.id === "chatMsgArea") {
+      return { top:0, bottom:200, left:0, right:320, width:320, height:200, x:0, y:0 }
+    }
+    if (this.matches?.("[data-message-id]")) {
+      const top = 200 - (document.getElementById("chatMsgArea")?.scrollTop || 0)
+      return { top, bottom:top + 50, left:0, right:300, width:300, height:50, x:0, y:top }
+    }
+    return previousRect.call(this)
+  }
+  t.after(() => {
+    if (previousScrollHeight) Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", previousScrollHeight)
+    else delete dom.window.HTMLElement.prototype.scrollHeight
+    if (previousClientHeight) Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", previousClientHeight)
+    else delete dom.window.HTMLElement.prototype.clientHeight
+    dom.window.HTMLElement.prototype.getBoundingClientRect = previousRect
+  })
+
+  const sourceArea = document.getElementById("chatMsgArea")
+  sourceArea.scrollTop = 100
+  sourceArea.dispatchEvent(new dom.window.Event("scroll"))
+  clickMessage("memo-link")
+
+  const rafQueue = []
+  const previousRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = callback => { rafQueue.push(callback); return rafQueue.length }
+  t.after(() => { globalThis.requestAnimationFrame = previousRaf })
+
+  const popped = waitForPopstate(dom.window)
+  dom.window.history.back()
+  await popped
+  const returnedArea = await waitFor(() => document.getElementById("chatMsgArea"))
+  while (rafQueue.length) rafQueue.shift()()
+  assert.equal(returnedArea.scrollTop, 100)
+
+  chatScrollHeight = 1200
+  returnedArea.querySelector('[data-message-id="late-image"] img')
+    .dispatchEvent(new dom.window.Event("load"))
+  while (rafQueue.length) rafQueue.shift()()
+  assert.equal(
+    returnedArea.scrollTop,
+    100,
+    "late media growth must not snap a restored reading position to the bottom",
+  )
+})
+
+test("browser Back from a linked forum post returns to the exact source chat", async t => {
+  const work = crossAppWork("cross-app-forum-browser-back-return")
+  const dom = await startWork(t, work, "forum-browser-back-return")
+
+  clickMessage("forum-link")
+  assert.ok(document.querySelector(".rd-forum-detail"))
+
+  const popped = waitForPopstate(dom.window)
+  dom.window.history.back()
+  await popped
+
+  const source = await waitFor(() => document.querySelector('[data-message-id="forum-link"]'))
+  assert.ok(document.getElementById("chatBack"), "browser Back must keep the reader in the source chat")
+  assert.equal(source.classList.contains("is-return-target"), true)
 })
 
 test("forum, shopping, and contact cards land on the authored item", async t => {
@@ -196,4 +308,48 @@ test("a required cross-App card resumes the flow only after returning to chat", 
 
   document.querySelector(".rd-phone-app-memo .rd-back-btn").click()
   await waitFor(() => document.querySelector('[data-message-id="after-memo"]'), 1800)
+})
+
+test("opening a linked App pauses an unsequenced choice branch until chat resumes", async t => {
+  const work = crossAppWork("cross-app-choice-playback-pause")
+  work.phoneData.chats[0].rounds[0].messages = [
+    { id:"memo-link", type:"link", senderId:"contact-1", linkTitle:"花盆下的钥匙", targetApp:"memo", targetItemId:"memo-1", targetContactId:"contact-1" },
+    {
+      id:"choice-owner",
+      type:"text",
+      senderId:"contact-1",
+      text:"要现在去看吗？",
+      choices:[{
+        id:"choice-open",
+        text:"先去看看",
+        replyText:"",
+        silent:true,
+        replyPace:"instant",
+        followUpMessages:[{
+          id:"delayed-follow-up",
+          type:"text",
+          senderId:"contact-1",
+          text:"看完再回来告诉我。",
+          revealMode:"instant",
+          delayBeforeMs:900,
+        }],
+      }],
+    },
+  ]
+  await startWork(t, work, "choice-playback-pause")
+
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  clickMessage("memo-link")
+  assert.ok(document.querySelector(".rd-phone-app-memo"))
+
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  assert.ok(
+    document.querySelector(".rd-phone-app-memo"),
+    "a pending chat timer must not replace the linked App or advance the branch in the background",
+  )
+
+  document.querySelector(".rd-phone-app-memo .rd-back-btn").click()
+  assert.equal(document.querySelector('[data-message-id="delayed-follow-up"]'), null)
+  await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("看完再回来告诉我。"), 2200)
 })

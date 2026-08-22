@@ -174,7 +174,8 @@ test("friend request notifications wait for a response and persist it with phone
   await new Promise(resolve => setTimeout(resolve, 900))
   saved = JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.find(book => book.id === work.id)
   assert.equal(saved.progress.flowIndex, 1)
-  assert.equal(saved.progress.friendRequestResponses["friend-1"], "accepted")
+  assert.equal(Object.values(saved.progress.messageActionResponses || {}).includes("accepted"), true)
+  assert.equal(saved.progress.friendRequestResponses["friend-1"], undefined)
 })
 
 test("failed and recalled messages settle into different reader history states", async t => {
@@ -260,8 +261,9 @@ test("reader contact-card friendship actions persist and cannot be submitted twi
   settledAction.click()
 
   const saved = JSON.parse(localStorage.getItem("moirain_readerLibrary")).books.find(book => book.id === work.id)
-  assert.equal(saved.progress.contactCardResponses["contact-card-request"], "accepted")
+  assert.equal(saved.progress.contactCardResponses["contact-card-request"], undefined)
   assert.equal(saved.progress.contactFriendships["contact-2"], "accepted")
+  assert.match(saved.progress.contactFriendshipSources["contact-2"], /^\[/)
 })
 
 test("reader Contacts can search authored contacts and direct-add or send a friend request", async t => {
@@ -434,4 +436,115 @@ test("an unsequenced reply branch also honors the first follow-up bubble delay",
   await new Promise(resolve => setTimeout(resolve, 70))
   assert.doesNotMatch(document.querySelector("#chatMsgArea").textContent, /那我说了/)
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("那我说了"))
+})
+
+test("exporting chat snapshots cannot apply a future contact update to live reading state", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-export-future-contact-update"
+  work.phoneData.contacts = [{ id:"contact-1", name:"OLD_NAME", avatarUrl:"" }]
+  work.phoneData.chats = [{
+    id:"chat-1",
+    type:"single",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"round-1",
+      messages:[
+        { id:"current-message", type:"text", senderId:"contact-1", text:"CURRENT", revealMode:"instant" },
+        { id:"future-rename", type:"contact-event", eventKind:"contact-update", targetContactId:"contact-1", newName:"FUTURE_NAME" },
+      ],
+    }],
+  }]
+  work.phoneData.readingFlow = {
+    enabled:true,
+    sequence:[
+      { type:"messages", itemId:"current-message", chatId:"chat-1", roundId:"round-1", label:"current" },
+      { type:"messages", itemId:"future-rename", chatId:"chat-1", roundId:"round-1", label:"future" },
+    ],
+  }
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?reader-export-story-isolation=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
+  document.querySelector(".rd-recent-item").click()
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('[data-reader-phone-control="export"]').click()
+  document.querySelector("#cuModalSave").click()
+  await waitFor(() => {
+    const state = document.querySelector("#readerPhoneExportProgress")?.dataset.state
+    return ["done", "warning", "error"].includes(state) && !document.querySelector(".rd-phone-export-render-shell")
+  })
+  document.querySelector("#cuModalCancel")?.click()
+
+  document.querySelector('[data-tab="library"]').click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="messages"]')?.click()
+  const header = await waitFor(() => document.querySelector(".chat-round-title strong"))
+  assert.match(header.textContent, /OLD_NAME/)
+  assert.doesNotMatch(document.body.textContent, /FUTURE_NAME/)
+})
+
+test("exporting chat snapshots cannot apply a future group update to the captured header or live state", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-export-future-group-update"
+  work.phoneData.contacts = [{ id:"contact-1", name:"CONTACT", avatarUrl:"" }]
+  work.phoneData.chats = [{
+    id:"chat-1",
+    type:"group",
+    groupName:"BASE_GROUP",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"round-1",
+      messages:[
+        { id:"current-message", type:"text", senderId:"contact-1", text:"CURRENT", revealMode:"instant" },
+        { id:"future-rename", type:"system-event", eventKind:"group-rename", senderId:"system", newName:"FUTURE_GROUP" },
+      ],
+    }],
+  }]
+  work.phoneData.readingFlow = {
+    enabled:true,
+    sequence:[
+      { type:"messages", itemId:"current-message", chatId:"chat-1", roundId:"round-1", label:"current" },
+      { type:"messages", itemId:"future-rename", chatId:"chat-1", roundId:"round-1", label:"future" },
+    ],
+  }
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?reader-export-group-story-isolation=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
+  document.querySelector(".rd-recent-item").click()
+
+  const exportedHeaders = []
+  const observer = new MutationObserver(() => {
+    const header = document.querySelector(".rd-phone-export-render-shell .chat-round-title strong")
+    if (header) exportedHeaders.push(header.textContent)
+  })
+  observer.observe(document.body, { subtree:true, childList:true, characterData:true })
+  t.after(() => observer.disconnect())
+
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('[data-reader-phone-control="export"]').click()
+  document.querySelector("#cuModalSave").click()
+  await waitFor(() => {
+    const state = document.querySelector("#readerPhoneExportProgress")?.dataset.state
+    return ["done", "warning", "error"].includes(state) && !document.querySelector(".rd-phone-export-render-shell")
+  })
+  observer.disconnect()
+
+  assert.ok(exportedHeaders.length > 0, "the export renderer must expose the captured group header")
+  assert.deepEqual([...new Set(exportedHeaders)], ["BASE_GROUP"])
+  const savedAfterExport = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+    .books.find(book => book.id === work.id)
+  assert.deepEqual(savedAfterExport?.progress?.phoneStoryEffectOrder || [], [])
+  document.querySelector("#cuModalCancel")?.click()
+
+  document.querySelector('[data-tab="library"]').click()
+  document.getElementById("rdStartBtn").click()
+  document.querySelector('[data-app-type="messages"]')?.click()
+  const header = await waitFor(() => document.querySelector(".chat-round-title strong"))
+  assert.match(header.textContent, /BASE_GROUP/)
+  assert.doesNotMatch(header.textContent, /FUTURE_GROUP/)
 })

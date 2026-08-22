@@ -50,7 +50,7 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
   const replyImage = typeof choice.imageUrl === "string" ? choice.imageUrl.trim() : ""
 
   if (choice.silent !== true && replyImage) {
-    replyMessageId = options.idFactory()
+    replyMessageId = options.idFactory("reader-reply")
     generatedMessages.push({
       id: replyMessageId,
       senderId: "self",
@@ -58,7 +58,7 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
       type: "image",
     })
   } else if (choice.silent !== true && typeof choice.replyText === "string" && choice.replyText.length > 0) {
-    replyMessageId = options.idFactory()
+    replyMessageId = options.idFactory("reader-reply")
     generatedMessages.push({
       id: replyMessageId,
       senderId: "self",
@@ -70,14 +70,34 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
   const followUpMessages = Array.isArray(choice.followUpMessages)
     ? choice.followUpMessages
     : []
+  const followUpIdCounts = new Map()
+  for (const followUpMessage of followUpMessages) {
+    const authoredId = typeof followUpMessage?.id === "string" && followUpMessage.id
+      ? followUpMessage.id
+      : ""
+    if (authoredId) followUpIdCounts.set(authoredId, (followUpIdCounts.get(authoredId) || 0) + 1)
+  }
+  const followUpIdOccurrences = new Map()
   const defaultReplyPace = normalizeChatReplyPace(choice.replyPace, "normal")
 
-  for (const followUpMessage of followUpMessages) {
+  for (let followUpIndex = 0; followUpIndex < followUpMessages.length; followUpIndex += 1) {
+    const followUpMessage = followUpMessages[followUpIndex]
+    const authoredFollowUpId = typeof followUpMessage?.id === "string" && followUpMessage.id
+      ? followUpMessage.id
+      : ""
+    let followUpSource = `follow-up#${followUpIndex}`
+    if (authoredFollowUpId && followUpIdCounts.get(authoredFollowUpId) === 1) {
+      followUpSource = authoredFollowUpId
+    } else if (authoredFollowUpId) {
+      const occurrence = followUpIdOccurrences.get(authoredFollowUpId) || 0
+      followUpIdOccurrences.set(authoredFollowUpId, occurrence + 1)
+      followUpSource = `${authoredFollowUpId}#${occurrence}`
+    }
     const followUpSenderId = followUpMessage?.senderId || followUpMessage?.contactId || ""
     const typingDuration = chatReplyTypingDuration(followUpMessage?.replyPace ?? defaultReplyPace)
     if (typingDuration > 0 && followUpSenderId && followUpSenderId !== "self") {
       generatedMessages.push({
-        id: options.idFactory(),
+        id: options.idFactory(`typing:${followUpSource}`),
         type: "system-event",
         eventKind: "typing",
         senderId: "system",
@@ -93,7 +113,7 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
     let generatedMessage
     if (deliveryState === "recalled") {
       generatedMessage = {
-        id: options.idFactory(),
+        id: options.idFactory(`follow-up:${followUpSource}`),
         type: "system-event",
         eventKind: "recall",
         senderId: "system",
@@ -107,7 +127,7 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
       }
     } else {
       generatedMessage = messageTemplate
-      generatedMessage.id = options.idFactory()
+      generatedMessage.id = options.idFactory(`follow-up:${followUpSource}`)
       if (deliveryState === "failed") generatedMessage.failed = true
     }
     generatedMessages.push(generatedMessage)

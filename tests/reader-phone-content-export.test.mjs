@@ -36,6 +36,45 @@ test("export rendering is isolated from visible reader navigation", () => {
   assert.match(readerSource, /runtimeOptions\?\.exportMode === true/)
 })
 
+test("static export chat rendering never installs bottom-tracking ResizeObserver", () => {
+  const chatStart = readerSource.indexOf("function openReaderChat(")
+  const chatEnd = readerSource.indexOf("function openReaderForumAccountDialog", chatStart)
+  const chatSource = readerSource.slice(chatStart, chatEnd)
+  assert.match(
+    chatSource,
+    /if \(!exportMode && typeof globalThis\.ResizeObserver === ['"]function['"]\)/,
+  )
+})
+
+test("static export chat rendering cannot advance transient reader state", () => {
+  const chatStart = readerSource.indexOf("function openReaderChat(")
+  const chatEnd = readerSource.indexOf("function openReaderForumAccountDialog", chatStart)
+  const chatSource = readerSource.slice(chatStart, chatEnd)
+  assert.match(chatSource, /if \(exportMode\) return \{ key:key, settled:kind === ['"]recall['"] \}/)
+  assert.match(chatSource, /if \(!exportMode\) transientRowsToSchedule\.forEach/)
+  assert.match(chatSource, /if \(!exportMode\) startCurrentChatFlowMessage\(\)/)
+  assert.match(chatSource, /cloneReaderPhoneChoiceSessionForExport/)
+})
+
+test("static export uses detached moments and forum sessions", () => {
+  const cloneStart = readerSource.indexOf("function cloneReaderPhoneChoiceSessionForExport(")
+  const cloneEnd = readerSource.indexOf("function readerPhoneStoryChoiceIds", cloneStart)
+  const cloneSource = readerSource.slice(cloneStart, cloneEnd)
+  assert.match(cloneSource, /moments:session\?\.moments === null/)
+  assert.match(cloneSource, /cloneReaderThreadItems\(session\?\.moments \|\| \[\]\)/)
+  assert.match(cloneSource, /forumPosts:new Map\(\)/)
+
+  const appStart = readerSource.indexOf("function openReaderApp(")
+  const appEnd = readerSource.indexOf("function openReaderChat(", appStart)
+  const appSource = readerSource.slice(appStart, appEnd)
+  assert.match(appSource, /phoneChoiceSession = exportMode\s*\? cloneReaderPhoneChoiceSessionForExport\(livePhoneChoiceSession\)/)
+
+  const forumStart = readerSource.indexOf("function openReaderForumPost(")
+  const forumEnd = readerSource.indexOf("function openReaderForumAccountDialog", forumStart)
+  const forumSource = readerSource.slice(forumStart, forumEnd)
+  assert.match(forumSource, /phoneChoiceSession = exportMode\s*\? cloneReaderPhoneChoiceSessionForExport\(livePhoneChoiceSession\)/)
+})
+
 test("phone screenshot dependencies are production dependencies", () => {
   assert.equal(packageJson.dependencies["html-to-image"], "^1.11.13")
   assert.equal(packageJson.dependencies.fflate, "^0.8.3")

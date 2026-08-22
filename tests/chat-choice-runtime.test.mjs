@@ -116,6 +116,38 @@ test("inserts the reply and deep-cloned follow-ups directly after their owner", 
   assert.deepEqual(round, snapshot)
 })
 
+test("a unique authored follow-up id keeps its source identity when another message is inserted", () => {
+  function generatedSources(followUpMessages) {
+    const round = fixtureRound()
+    const choice = round.messages[1].choices[0]
+    choice.silent = true
+    choice.replyText = ""
+    choice.followUpMessages = followUpMessages
+    const sources = []
+    const result = callApply(round, "owner", 0, {
+      idFactory: source => {
+        sources.push(source)
+        return `generated-${sources.length}`
+      },
+    })
+    assert.equal(result.ok, true)
+    return sources
+  }
+
+  const stableAction = {
+    id:"stable-action",
+    type:"schedule",
+    senderId:"contact-1",
+    scheduleTitle:"Dinner",
+    actionRequired:true,
+  }
+  assert.deepEqual(generatedSources([stableAction]), ["follow-up:stable-action"])
+  assert.deepEqual(generatedSources([
+    { id:"inserted-message", type:"text", senderId:"contact-1", text:"Before" },
+    stableAction,
+  ]), ["follow-up:inserted-message", "follow-up:stable-action"])
+})
+
 test("does not create a reply message or consume its id when replyText is empty", () => {
   const round = fixtureRound()
   let calls = 0

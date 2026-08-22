@@ -135,9 +135,12 @@ import {
   resolvePhoneReadingFlowStep,
 } from '../js/phone-reading-flow.js'
 import {
+  phoneStoryChatSelectionScope,
+  phoneStoryChoiceSelectionKey,
   phoneStoryItemHasValidConditionReferences,
   phoneStoryItemIsVisible,
   phoneStoryMessageBlockedByEndedRound,
+  phoneStorySelectedChoiceId,
   prunePhoneStoryChoiceSelections,
   selectedPhoneStoryChoiceIds,
 } from '../js/phone-story-state.js'
@@ -525,10 +528,74 @@ function formatReaderCallDuration(seconds) {
 }
 
 function readerPhoneData(phoneData) {
-  return substitutePhoneTextData(phoneData, _work && _work.placeholders || [], {
+  var fingerprintedPhoneData = readerPhoneDataWithAuthoredActionFingerprints(phoneData)
+  return substitutePhoneTextData(fingerprintedPhoneData, _work && _work.placeholders || [], {
     valuesMap: _work && _work.readerPhValues || {},
     usePlaceholderMode: false,
   })
+}
+
+var READER_AUTHORED_ACTION_FINGERPRINT_FIELD = '__readerAuthoredActionFingerprint'
+var READER_AUTHORED_MESSAGE_SOURCE_FIELD = '__readerAuthoredMessageSourceKey'
+var READER_AUTHORED_CHAT_SOURCE_FIELD = '__readerAuthoredChatSourceKey'
+
+function readerPhoneDataWithAuthoredActionFingerprints(phoneData) {
+  function annotateMessage(message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) return message
+    var next = Object.assign({}, message)
+    next[READER_AUTHORED_ACTION_FINGERPRINT_FIELD] = readerChatActionFingerprint(message)
+    if (Array.isArray(message.choices)) {
+      next.choices = message.choices.map(function(choice) {
+        if (!choice || typeof choice !== 'object' || Array.isArray(choice)) return choice
+        var nextChoice = Object.assign({}, choice)
+        if (Array.isArray(choice.followUpMessages)) {
+          nextChoice.followUpMessages = choice.followUpMessages.map(annotateMessage)
+        }
+        return nextChoice
+      })
+    }
+    return next
+  }
+
+  if (!phoneData || typeof phoneData !== 'object' || Array.isArray(phoneData)) return phoneData
+  var nextPhoneData = Object.assign({}, phoneData)
+  var authoredChats = Array.isArray(phoneData.chats) ? phoneData.chats : []
+  var chatIdCounts = new Map()
+  authoredChats.forEach(function(chat) {
+    var authoredId = typeof chat?.id === 'string' && chat.id ? chat.id : ''
+    if (authoredId) chatIdCounts.set(authoredId, (chatIdCounts.get(authoredId) || 0) + 1)
+  })
+  var chatIdOccurrences = new Map()
+  nextPhoneData.chats = authoredChats.map(function(chat, chatIndex) {
+    if (!chat || typeof chat !== 'object' || Array.isArray(chat)) return chat
+    var nextChat = Object.assign({}, chat)
+    var authoredChatId = typeof chat.id === 'string' && chat.id ? chat.id : ''
+    var chatSourceKey = 'chat#' + chatIndex
+    if (authoredChatId && chatIdCounts.get(authoredChatId) === 1) {
+      chatSourceKey = authoredChatId
+    } else if (authoredChatId) {
+      var chatOccurrence = chatIdOccurrences.get(authoredChatId) || 0
+      chatIdOccurrences.set(authoredChatId, chatOccurrence + 1)
+      chatSourceKey = authoredChatId + '#' + chatOccurrence
+    }
+    nextChat[READER_AUTHORED_CHAT_SOURCE_FIELD] = chatSourceKey
+    if (Array.isArray(chat.messages)) nextChat.messages = chat.messages.map(annotateMessage)
+    if (Array.isArray(chat.rounds)) {
+      nextChat.rounds = chat.rounds.map(function(round) {
+        if (!round || typeof round !== 'object' || Array.isArray(round)) return round
+        var nextRound = Object.assign({}, round)
+        if (Array.isArray(round.messages)) nextRound.messages = round.messages.map(annotateMessage)
+        return nextRound
+      })
+    }
+    readerPhoneChatMessageSourceEntries(nextChat).forEach(function(entry) {
+      if (entry?.message && typeof entry.message === 'object') {
+        entry.message[READER_AUTHORED_MESSAGE_SOURCE_FIELD] = entry.sourceKey
+      }
+    })
+    return nextChat
+  })
+  return nextPhoneData
 }
 
 function readerPlaceholderMentionNames() {
@@ -546,6 +613,106 @@ function renderReaderMentionText(value, names) {
   }).join('')
 }
 
+function readerPhoneLegacyActionCatalog(phoneData) {
+  var catalog = {
+    friendRequest:new Map(),
+    contactCard:new Map(),
+  }
+  function add(kind, messageId, descriptor) {
+    if (!messageId) return
+    var entries = catalog[kind].get(messageId) || []
+    entries.push(descriptor)
+    catalog[kind].set(messageId, entries)
+  }
+  function scanMessage(chatActionPersistenceKey, message, ownerMessageId) {
+    if (!message || typeof message !== 'object') return
+    var messageId = typeof message.id === 'string' ? message.id : ''
+    if (messageId && message.type === 'contact-event' && message.eventKind === 'friend-request') {
+      add('friendRequest', messageId, {
+        chatActionPersistenceKey:chatActionPersistenceKey,
+        message:message,
+        ownerMessageId:String(ownerMessageId || ''),
+      })
+    }
+    var normalized = normalizeChatStoryMessage(message)
+    if (
+      messageId
+      && normalized.type === 'contact-card'
+      && normalized.contactAction !== 'view'
+      && normalized.targetContactId
+    ) {
+      add('contactCard', messageId, {
+        chatActionPersistenceKey:chatActionPersistenceKey,
+        message:message,
+        ownerMessageId:String(ownerMessageId || ''),
+        targetContactId:String(normalized.targetContactId),
+        status:normalized.contactAction === 'direct' ? 'accepted' : normalized.contactRequestOutcome,
+      })
+    }
+    ;(Array.isArray(message.choices) ? message.choices : []).forEach(function(choice) {
+      ;(Array.isArray(choice?.followUpMessages) ? choice.followUpMessages : []).forEach(function(followUp) {
+        scanMessage(chatActionPersistenceKey, followUp, messageId)
+      })
+    })
+  }
+  ;(Array.isArray(phoneData?.chats) ? phoneData.chats : []).forEach(function(chat, chatIndex) {
+    var chatActionPersistenceKey = phoneStoryChatSelectionScope(chat, chatIndex, phoneData)
+    ;(Array.isArray(chat?.messages) ? chat.messages : []).forEach(function(message) {
+      scanMessage(chatActionPersistenceKey, message, '')
+    })
+    ;(Array.isArray(chat?.rounds) ? chat.rounds : []).forEach(function(round) {
+      ;(Array.isArray(round?.messages) ? round.messages : []).forEach(function(message) {
+        scanMessage(chatActionPersistenceKey, message, '')
+      })
+    })
+  })
+  return catalog
+}
+
+function readerPhoneLegacyActionDescriptor(session, kind, messageId, chatActionPersistenceKey, message) {
+  var entries = session?.legacyActionCatalog?.[kind]?.get?.(String(messageId || '')) || []
+  if (entries.length !== 1) return null
+  var descriptor = entries[0]
+  if (descriptor.chatActionPersistenceKey !== String(chatActionPersistenceKey || '')) return null
+  if (readerChatActionFingerprint(descriptor.message) !== readerChatStableActionFingerprint(message)) return null
+  return descriptor
+}
+
+function sanitizeReaderLegacyActionResponses(session) {
+  ;[
+    ['friendRequest', session?.friendRequestResponses],
+    ['contactCard', session?.contactCardResponses],
+  ].forEach(function(entry) {
+    var kind = entry[0]
+    var responses = entry[1]
+    if (!(responses instanceof Map)) return
+    Array.from(responses.entries()).forEach(function(responseEntry) {
+      var messageId = String(responseEntry[0] || '')
+      var status = responseEntry[1]
+      var descriptors = session?.legacyActionCatalog?.[kind]?.get?.(messageId) || []
+      if (descriptors.length !== 1) {
+        responses.delete(messageId)
+        return
+      }
+      if (kind !== 'contactCard') return
+      var descriptor = descriptors[0]
+      var friendshipStatus = session.contactFriendships?.get?.(descriptor.targetContactId)
+      if (status !== descriptor.status || (friendshipStatus && friendshipStatus !== status)) {
+        responses.delete(messageId)
+      }
+    })
+  })
+}
+
+function setReaderContactFriendship(session, contactId, status, source) {
+  var normalizedContactId = String(contactId || '')
+  if (!normalizedContactId) return
+  session.contactFriendships.delete(normalizedContactId)
+  session.contactFriendshipSources.delete(normalizedContactId)
+  session.contactFriendships.set(normalizedContactId, status)
+  session.contactFriendshipSources.set(normalizedContactId, source)
+}
+
 function resetReaderPhoneChoiceSession(work) {
   _readerPhoneChoiceSession = {
     workId: String(work && work.id || ''),
@@ -554,12 +721,19 @@ function resetReaderPhoneChoiceSession(work) {
     chats: new Map(),
     forumPosts: new Map(),
     storyContactOverrides: new Map(),
+    storyContactOverrideSources: new Map(),
+    phoneStoryEffectOrder: [],
     storyGroupOverrides: new Map(),
     friendRequestResponses: new Map(),
     contactCardResponses: new Map(),
     contactFriendships: new Map(),
+    contactFriendshipSources: new Map(),
     contactRemarks: new Map(),
     phoneChoiceSelections: new Map(),
+    phonePendingChoicePlaybacks: new Map(),
+    completedMessageActionKeys: new Set(),
+    messageActionResponses: new Map(),
+    legacyActionCatalog:readerPhoneLegacyActionCatalog(work?.phoneData),
   }
   return _readerPhoneChoiceSession
 }
@@ -578,13 +752,70 @@ function readerPhoneChoiceSession(work) {
   if (!(_readerPhoneChoiceSession.contactFriendships instanceof Map)) {
     _readerPhoneChoiceSession.contactFriendships = new Map()
   }
+  if (!(_readerPhoneChoiceSession.contactFriendshipSources instanceof Map)) {
+    _readerPhoneChoiceSession.contactFriendshipSources = new Map()
+  }
   if (!(_readerPhoneChoiceSession.contactRemarks instanceof Map)) {
     _readerPhoneChoiceSession.contactRemarks = new Map()
   }
   if (!(_readerPhoneChoiceSession.phoneChoiceSelections instanceof Map)) {
     _readerPhoneChoiceSession.phoneChoiceSelections = new Map()
   }
+  if (!(_readerPhoneChoiceSession.phonePendingChoicePlaybacks instanceof Map)) {
+    _readerPhoneChoiceSession.phonePendingChoicePlaybacks = new Map()
+  }
+  if (!(_readerPhoneChoiceSession.completedMessageActionKeys instanceof Set)) {
+    _readerPhoneChoiceSession.completedMessageActionKeys = new Set()
+  }
+  if (!(_readerPhoneChoiceSession.messageActionResponses instanceof Map)) {
+    _readerPhoneChoiceSession.messageActionResponses = new Map()
+  }
+  if (!(_readerPhoneChoiceSession.storyContactOverrides instanceof Map)) {
+    _readerPhoneChoiceSession.storyContactOverrides = new Map()
+  }
+  if (!(_readerPhoneChoiceSession.storyContactOverrideSources instanceof Map)) {
+    _readerPhoneChoiceSession.storyContactOverrideSources = new Map()
+  }
+  if (!Array.isArray(_readerPhoneChoiceSession.phoneStoryEffectOrder)) {
+    _readerPhoneChoiceSession.phoneStoryEffectOrder = []
+  }
+  if (!(_readerPhoneChoiceSession.storyGroupOverrides instanceof Map)) {
+    _readerPhoneChoiceSession.storyGroupOverrides = new Map()
+  }
+  if (!_readerPhoneChoiceSession.legacyActionCatalog) {
+    _readerPhoneChoiceSession.legacyActionCatalog = readerPhoneLegacyActionCatalog(work?.phoneData)
+  }
   return _readerPhoneChoiceSession
+}
+
+function cloneReaderPhoneChoiceSessionForExport(session) {
+  return {
+    ...session,
+    moments:session?.moments === null
+      ? null
+      : cloneReaderThreadItems(session?.moments || []),
+    momentChoiceRuns:new Map(session?.momentChoiceRuns || []),
+    chats:new Map(),
+    forumPosts:new Map(),
+    storyContactOverrides:new Map(session?.storyContactOverrides || []),
+    storyContactOverrideSources:new Map(session?.storyContactOverrideSources || []),
+    phoneStoryEffectOrder:Array.isArray(session?.phoneStoryEffectOrder)
+      ? session.phoneStoryEffectOrder.slice()
+      : [],
+    storyGroupOverrides:new Map(session?.storyGroupOverrides || []),
+    friendRequestResponses:new Map(session?.friendRequestResponses || []),
+    contactCardResponses:new Map(session?.contactCardResponses || []),
+    contactFriendships:new Map(session?.contactFriendships || []),
+    contactFriendshipSources:new Map(session?.contactFriendshipSources || []),
+    contactRemarks:new Map(session?.contactRemarks || []),
+    phoneChoiceSelections:new Map(session?.phoneChoiceSelections || []),
+    phonePendingChoicePlaybacks:new Map(Array.from(
+      session?.phonePendingChoicePlaybacks || [],
+      function(entry) { return [entry[0], Object.assign({}, entry[1] || {})] },
+    )),
+    completedMessageActionKeys:new Set(session?.completedMessageActionKeys || []),
+    messageActionResponses:new Map(session?.messageActionResponses || []),
+  }
 }
 
 function readerPhoneStoryChoiceIds(work) {
@@ -597,16 +828,628 @@ function readerPhoneStoryItemVisible(work, item, phoneData) {
   return phoneStoryItemIsVisible(item, readerPhoneStoryChoiceIds(work))
 }
 
+function readerChatChoiceRunPlaybackIds(entry) {
+  var ids = new Set()
+  ;(entry?.run?.generatedMessageIds || []).forEach(function(id) { ids.add(String(id)) })
+  ;(entry?.playbackMessageIds || []).forEach(function(id) { ids.add(String(id)) })
+  return ids
+}
+
+function readerPhoneChoicePlaybackPersistenceKey(chatPersistenceKey, ownerMessageId) {
+  if (!chatPersistenceKey || !ownerMessageId) return ''
+  return JSON.stringify([
+    'choice-playback',
+    String(chatPersistenceKey),
+    String(ownerMessageId),
+  ])
+}
+
+var READER_CHAT_ACTION_FINGERPRINT_OMITTED_FIELDS = new Set([
+  'id',
+  'delayBeforeMs',
+  'replyPace',
+  'revealMode',
+  READER_AUTHORED_ACTION_FINGERPRINT_FIELD,
+  READER_AUTHORED_MESSAGE_SOURCE_FIELD,
+  READER_AUTHORED_CHAT_SOURCE_FIELD,
+])
+
+function readerChatActionCanonicalValue(value, key) {
+  if (READER_CHAT_ACTION_FINGERPRINT_OMITTED_FIELDS.has(String(key || ''))) return undefined
+  if (Array.isArray(value)) {
+    return value.map(function(item) {
+      var normalized = readerChatActionCanonicalValue(item, '')
+      return normalized === undefined ? null : normalized
+    })
+  }
+  if (value && typeof value === 'object') {
+    var result = {}
+    Object.keys(value).sort().forEach(function(childKey) {
+      var child = readerChatActionCanonicalValue(value[childKey], childKey)
+      if (child !== undefined) result[childKey] = child
+    })
+    return result
+  }
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))
+  ) return value
+  return undefined
+}
+
+function readerChatActionFingerprint(message) {
+  var serialized = JSON.stringify(readerChatActionCanonicalValue(message, '') || {})
+  var primary = 0x811c9dc5
+  var secondary = 0x9e3779b9
+  for (var index = 0; index < serialized.length; index++) {
+    var code = serialized.charCodeAt(index)
+    primary = Math.imul(primary ^ code, 0x01000193)
+    secondary = Math.imul(secondary ^ (code + index), 0x85ebca6b)
+  }
+  return (primary >>> 0).toString(16).padStart(8, '0')
+    + (secondary >>> 0).toString(16).padStart(8, '0')
+}
+
+function readerChatStableActionFingerprint(message) {
+  var authoredFingerprint = message?.[READER_AUTHORED_ACTION_FINGERPRINT_FIELD]
+    || message?.recalledMessage?.[READER_AUTHORED_ACTION_FINGERPRINT_FIELD]
+  return typeof authoredFingerprint === 'string' && authoredFingerprint
+    ? authoredFingerprint
+    : readerChatActionFingerprint(message || {})
+}
+
+function readerPhoneChatPersistenceKey(chat, chatIndex) {
+  return phoneStoryChatSelectionScope(chat, chatIndex)
+}
+
+function readerPhoneChatMessageSourceEntries(chat) {
+  var normalizedRounds = (Array.isArray(chat?.rounds) ? chat.rounds : []).map(function(round) {
+    return Array.isArray(round?.messages) ? round.messages.slice() : []
+  })
+  var legacyMessages = Array.isArray(chat?.messages) ? chat.messages : []
+  if (normalizedRounds.length === 0 && legacyMessages.length) {
+    normalizedRounds.push(legacyMessages.slice())
+  } else if (normalizedRounds.length > 0 && legacyMessages.length) {
+    normalizedRounds[normalizedRounds.length - 1].push(...legacyMessages)
+  }
+  var entries = []
+  normalizedRounds.forEach(function(roundMessages, roundIndex) {
+    roundMessages.forEach(function(message, messageIndex) {
+      entries.push({
+        message:message,
+        roundIndex:roundIndex,
+        messageIndex:messageIndex,
+        roundMessages:roundMessages,
+      })
+    })
+  })
+  var idCounts = new Map()
+  entries.forEach(function(entry) {
+    var message = entry.message
+    var authoredId = typeof message?.id === 'string' && message.id ? message.id : ''
+    if (authoredId) idCounts.set(authoredId, (idCounts.get(authoredId) || 0) + 1)
+  })
+  var occurrences = new Map()
+  return entries.map(function(entry, index) {
+    var message = entry.message
+    var stableSourceKey = typeof message?.[READER_AUTHORED_MESSAGE_SOURCE_FIELD] === 'string'
+      ? message[READER_AUTHORED_MESSAGE_SOURCE_FIELD]
+      : ''
+    var authoredId = typeof message?.id === 'string' && message.id ? message.id : ''
+    var sourceKey = 'message#' + index
+    if (stableSourceKey) {
+      sourceKey = stableSourceKey
+    } else if (authoredId && idCounts.get(authoredId) === 1) {
+      sourceKey = authoredId
+    } else if (authoredId) {
+      var occurrence = occurrences.get(authoredId) || 0
+      occurrences.set(authoredId, occurrence + 1)
+      sourceKey = authoredId + '#' + occurrence
+    }
+    return Object.assign({}, entry, { sourceKey:sourceKey })
+  })
+}
+
+var READER_PHONE_GROUP_STORY_EFFECT_KINDS = new Set([
+  'group-join',
+  'group-leave',
+  'group-invite',
+  'group-remove',
+  'owner-transfer',
+  'admin-change',
+  'group-rename',
+  'group-avatar',
+  'group-title',
+])
+
+function readerPhoneStoryEffectScope(message) {
+  if (message?.type === 'contact-event' && message?.eventKind === 'contact-update') return 'contact'
+  if (
+    (message?.type === 'system-event' || message?.type === 'contact-event')
+    && READER_PHONE_GROUP_STORY_EFFECT_KINDS.has(message?.eventKind)
+  ) return 'group'
+  return ''
+}
+
+function readerPhoneDirectStoryEffectKey(chatPersistenceKey, message, messageSourceKey) {
+  var effectScope = readerPhoneStoryEffectScope(message)
+  if (!effectScope || !messageSourceKey) return ''
+  return JSON.stringify([
+    effectScope === 'contact' ? 'contact-update' : 'group-event',
+    'message',
+    String(chatPersistenceKey || ''),
+    String(messageSourceKey),
+    readerChatStableActionFingerprint(message),
+  ])
+}
+
+function readerPhoneChoiceStoryEffectKey(chatPersistenceKey, entry, sourceKey, message) {
+  var effectScope = readerPhoneStoryEffectScope(message)
+  var ownerMessageId = String(entry?.run?.ownerMessageId || entry?.run?.ownerItemId || '')
+  var selectedChoiceId = String(
+    entry?.selectedChoiceId
+      || (Number.isInteger(entry?.run?.choiceIndex) ? entry.run.choiceIndex : ''),
+  )
+  if (!effectScope || !ownerMessageId || !selectedChoiceId || !sourceKey) return ''
+  return JSON.stringify([
+    effectScope === 'contact' ? 'contact-update' : 'group-event',
+    'choice',
+    String(chatPersistenceKey || ''),
+    ownerMessageId,
+    selectedChoiceId,
+    String(sourceKey),
+    readerChatStableActionFingerprint(message),
+  ])
+}
+
+function readerPhoneChoiceFollowUpSourceKeys(followUps) {
+  var messages = Array.isArray(followUps) ? followUps : []
+  var idCounts = new Map()
+  messages.forEach(function(message) {
+    var authoredId = typeof message?.id === 'string' && message.id ? message.id : ''
+    if (authoredId) idCounts.set(authoredId, (idCounts.get(authoredId) || 0) + 1)
+  })
+  var occurrences = new Map()
+  return messages.map(function(message, index) {
+    var authoredId = typeof message?.id === 'string' && message.id ? message.id : ''
+    var source = 'follow-up#' + index
+    if (authoredId && idCounts.get(authoredId) === 1) {
+      source = authoredId
+    } else if (authoredId) {
+      var occurrence = occurrences.get(authoredId) || 0
+      occurrences.set(authoredId, occurrence + 1)
+      source = authoredId + '#' + occurrence
+    }
+    return 'follow-up:' + source
+  })
+}
+
+function readerPhoneStoryEffectCatalog(renderedPhoneData) {
+  var catalog = new Map()
+  function register(key, descriptor) {
+    if (!key) return
+    var matches = catalog.get(key) || []
+    matches.push(descriptor)
+    catalog.set(key, matches)
+  }
+  function registerDirect(chatPersistenceKey, messageEntry) {
+    var message = messageEntry?.message
+    var effectScope = readerPhoneStoryEffectScope(message)
+    if (!effectScope) return
+    if (message?.failed === true || message?.deliveryState === 'failed' || message?.deliveryState === 'recalled') return
+    var key = readerPhoneDirectStoryEffectKey(chatPersistenceKey, message, messageEntry?.sourceKey)
+    register(key, {
+      key:key,
+      effectScope:effectScope,
+      chatPersistenceKey:String(chatPersistenceKey || ''),
+      message:message,
+      messageId:String(message?.id || ''),
+      ownerMessageId:'',
+      selectedChoiceId:'',
+      targetContactId:String(message?.targetContactId || ''),
+      roundMessages:messageEntry?.roundMessages,
+      messageIndex:messageEntry?.messageIndex,
+    })
+  }
+  function scanMessage(chatPersistenceKey, messageEntry) {
+    var message = messageEntry?.message
+    if (!message || typeof message !== 'object') return
+    registerDirect(chatPersistenceKey, messageEntry)
+    ;(Array.isArray(message.choices) ? message.choices : []).forEach(function(choice, choiceIndex) {
+      var followUps = Array.isArray(choice?.followUpMessages) ? choice.followUpMessages : []
+      var sourceKeys = readerPhoneChoiceFollowUpSourceKeys(followUps)
+      followUps.forEach(function(followUp, followUpIndex) {
+        if (
+          !readerPhoneStoryEffectScope(followUp)
+          || followUp?.deliveryState === 'failed'
+          || followUp?.deliveryState === 'recalled'
+        ) return
+        var entry = {
+          run:{ ownerMessageId:String(message?.id || ''), choiceIndex:choiceIndex },
+          selectedChoiceId:String(choice?.id || choiceIndex),
+        }
+        var effectScope = readerPhoneStoryEffectScope(followUp)
+        var key = readerPhoneChoiceStoryEffectKey(
+          chatPersistenceKey,
+          entry,
+          sourceKeys[followUpIndex],
+          followUp,
+        )
+        register(key, {
+          key:key,
+          effectScope:effectScope,
+          chatPersistenceKey:String(chatPersistenceKey || ''),
+          message:followUp,
+          messageId:String(followUp?.id || ''),
+          ownerMessageId:String(message?.id || ''),
+          selectedChoiceId:String(choice?.id || choiceIndex),
+          targetContactId:String(followUp?.targetContactId || ''),
+        })
+      })
+    })
+  }
+
+  ;(Array.isArray(renderedPhoneData?.chats) ? renderedPhoneData.chats : []).forEach(function(chat, chatIndex) {
+    var chatPersistenceKey = readerPhoneChatPersistenceKey(chat, chatIndex)
+    readerPhoneChatMessageSourceEntries(chat).forEach(function(entry) {
+      scanMessage(chatPersistenceKey, entry)
+    })
+  })
+  return catalog
+}
+
+function readerPhoneCompletedFlowStoryEffectOrder(work, completedFlowIndex, selections) {
+  if (!work || work.type !== 'phone' || !Number.isInteger(completedFlowIndex) || completedFlowIndex <= 0) return []
+  var renderedPhoneData = readerPhoneData(work.phoneData)
+  var normalizedFlow = normalizePhoneReadingFlow(renderedPhoneData)
+  if (!normalizedFlow.enabled) return []
+  var selectedChoiceIds = selectedPhoneStoryChoiceIds(selections)
+  var orderedKeys = []
+  var seen = new Set()
+
+  function appendEffectKey(effectKey) {
+    if (!effectKey || seen.has(effectKey)) return
+    seen.add(effectKey)
+    orderedKeys.push(effectKey)
+  }
+
+  function messageCanApply(message) {
+    return !!readerPhoneStoryEffectScope(message)
+      && message?.failed !== true
+      && message?.deliveryState !== 'failed'
+      && message?.deliveryState !== 'recalled'
+      && phoneStoryItemHasValidConditionReferences(renderedPhoneData, message)
+      && phoneStoryItemIsVisible(message, selectedChoiceIds)
+  }
+
+  var completedCount = Math.min(completedFlowIndex, normalizedFlow.sequence.length)
+  for (var stepIndex = 0; stepIndex < completedCount; stepIndex++) {
+    var step = normalizedFlow.sequence[stepIndex]
+    if (step?.type !== 'messages') continue
+    var target = resolvePhoneReadingFlowStep(renderedPhoneData, step)
+    if (!target || target.kind !== 'message' || !target.chat || !target.message) continue
+    var chatIndex = (renderedPhoneData.chats || []).indexOf(target.chat)
+    if (chatIndex < 0) continue
+    var chatPersistenceKey = readerPhoneChatPersistenceKey(target.chat, chatIndex)
+    var messageEntries = readerPhoneChatMessageSourceEntries(target.chat)
+    var targetEntry = messageEntries.find(function(entry) {
+      return entry.message === target.message
+    })
+    if (!targetEntry) continue
+    if (
+      messageCanApply(target.message)
+      && !readerPhoneStoryEffectBlockedByEndedRound(targetEntry, selections)
+    ) {
+      appendEffectKey(readerPhoneDirectStoryEffectKey(
+        chatPersistenceKey,
+        target.message,
+        targetEntry.sourceKey,
+      ))
+    }
+
+    var selectedChoiceId = phoneStorySelectedChoiceId(
+      selections,
+      chatPersistenceKey,
+      String(target.message.id || ''),
+    )
+    if (!selectedChoiceId) continue
+    var selectedChoices = (Array.isArray(target.message.choices) ? target.message.choices : []).filter(function(choice) {
+      return String(choice?.id || '') === String(selectedChoiceId)
+    })
+    if (selectedChoices.length !== 1) continue
+    var selectedChoice = selectedChoices[0]
+    var selectedChoiceIndex = target.message.choices.indexOf(selectedChoice)
+    var followUps = Array.isArray(selectedChoice.followUpMessages)
+      ? selectedChoice.followUpMessages
+      : []
+    var sourceKeys = readerPhoneChoiceFollowUpSourceKeys(followUps)
+    followUps.forEach(function(followUp, followUpIndex) {
+      if (!messageCanApply(followUp)) return
+      appendEffectKey(readerPhoneChoiceStoryEffectKey(
+        chatPersistenceKey,
+        {
+          run:{ ownerMessageId:String(target.message.id || ''), choiceIndex:selectedChoiceIndex },
+          selectedChoiceId:String(selectedChoiceId),
+        },
+        sourceKeys[followUpIndex],
+        followUp,
+      ))
+    })
+  }
+  return orderedKeys
+}
+
+function readerPhoneStoryEffectBlockedByEndedRound(descriptor, selections) {
+  var messages = Array.isArray(descriptor?.roundMessages) ? descriptor.roundMessages : null
+  var messageIndex = Number(descriptor?.messageIndex)
+  if (!messages || !Number.isInteger(messageIndex) || messageIndex < 0) return false
+  for (var index = 0; index < messageIndex; index++) {
+    var owner = messages[index]
+    var selectedChoiceId = phoneStorySelectedChoiceId(
+      selections,
+      descriptor?.chatPersistenceKey,
+      String(owner?.id || ''),
+    )
+    if (!selectedChoiceId) continue
+    var selected = (Array.isArray(owner?.choices) ? owner.choices : []).filter(function(choice) {
+      return String(choice?.id || '') === String(selectedChoiceId)
+    })
+    if (selected.length === 1 && selected[0].endRound === true) return true
+  }
+  return false
+}
+
+function rebuildReaderPhoneStoryProjection(work, session) {
+  if (!work || work.type !== 'phone' || !session) return false
+  var previousOrder = Array.isArray(session.phoneStoryEffectOrder)
+    ? session.phoneStoryEffectOrder.slice()
+    : []
+  var renderedPhoneData = readerPhoneData(work.phoneData)
+  var baseContacts = cloneReaderThreadItems(renderedPhoneData?.contacts || [])
+  var catalog = readerPhoneStoryEffectCatalog(renderedPhoneData)
+  var baseGroups = new Map()
+  ;(Array.isArray(renderedPhoneData?.chats) ? renderedPhoneData.chats : []).forEach(function(chat, chatIndex) {
+    if (chat?.type !== 'group') return
+    baseGroups.set(readerPhoneChatPersistenceKey(chat, chatIndex), cloneReaderThreadItems(chat))
+  })
+  var selectedChoiceIds = selectedPhoneStoryChoiceIds(session.phoneChoiceSelections)
+  var retainedOrder = []
+  var seen = new Set()
+  var contactStoryState = createChatStoryState({ contacts:baseContacts }, {})
+  var groupStoryStates = new Map()
+  baseGroups.forEach(function(group, chatPersistenceKey) {
+    groupStoryStates.set(chatPersistenceKey, createChatStoryState({ contacts:[] }, group))
+  })
+  var sourceByContactId = new Map()
+
+  previousOrder.forEach(function(effectKey) {
+    if (typeof effectKey !== 'string' || !effectKey || seen.has(effectKey)) return
+    seen.add(effectKey)
+    var matches = catalog.get(effectKey) || []
+    if (matches.length !== 1) return
+    var descriptor = matches[0]
+    if (
+      descriptor.ownerMessageId
+      && phoneStorySelectedChoiceId(
+        session.phoneChoiceSelections,
+        descriptor.chatPersistenceKey,
+        descriptor.ownerMessageId,
+      ) !== descriptor.selectedChoiceId
+    ) return
+    if (!phoneStoryItemHasValidConditionReferences(renderedPhoneData, descriptor.message)) return
+    if (!phoneStoryItemIsVisible(descriptor.message, selectedChoiceIds)) return
+    if (
+      !descriptor.ownerMessageId
+      && (
+        readerPhoneStoryEffectBlockedByEndedRound(descriptor, session.phoneChoiceSelections)
+        || (
+          (!Array.isArray(descriptor.roundMessages) || !Number.isInteger(descriptor.messageIndex))
+          && phoneStoryMessageBlockedByEndedRound(
+            renderedPhoneData,
+            descriptor.messageId,
+            session.phoneChoiceSelections,
+            { chatPersistenceKey:descriptor.chatPersistenceKey },
+          )
+        )
+      )
+    ) return
+    if (descriptor.effectScope === 'contact') {
+      if (!contactStoryState.contacts.some(function(contact) {
+        return String(contact?.id || '') === descriptor.targetContactId
+      })) return
+      contactStoryState = applyChatStoryMessage(contactStoryState, descriptor.message)
+      sourceByContactId.set(descriptor.targetContactId, effectKey)
+    } else if (descriptor.effectScope === 'group') {
+      var groupStoryState = groupStoryStates.get(descriptor.chatPersistenceKey)
+      if (!groupStoryState) return
+      groupStoryStates.set(
+        descriptor.chatPersistenceKey,
+        applyChatStoryMessage(groupStoryState, descriptor.message),
+      )
+    } else {
+      return
+    }
+    retainedOrder.push(effectKey)
+  })
+
+  var baseById = new Map(baseContacts.map(function(contact) {
+    return [String(contact?.id || ''), contact]
+  }))
+  var overrides = new Map()
+  contactStoryState.contacts.forEach(function(contact) {
+    var contactId = String(contact?.id || '')
+    var baseline = baseById.get(contactId)
+    if (!contactId || !baseline) return
+    var override = {
+      name:contact?.name || '',
+      avatarUrl:contact?.avatarUrl || '',
+      messageAvatarUrl:contact?.messageAvatarUrl || '',
+      note:contact?.note || '',
+    }
+    var baselineOverride = {
+      name:baseline?.name || '',
+      avatarUrl:baseline?.avatarUrl || '',
+      messageAvatarUrl:baseline?.messageAvatarUrl || '',
+      note:baseline?.note || '',
+    }
+    if (JSON.stringify(override) !== JSON.stringify(baselineOverride)) {
+      overrides.set(contactId, override)
+    }
+  })
+  var groupOverrides = new Map()
+  groupStoryStates.forEach(function(groupStoryState, chatPersistenceKey) {
+    var baseline = baseGroups.get(chatPersistenceKey)
+    if (!baseline) return
+    var group = groupStoryState.group || {}
+    var override = {
+      groupName:group.groupName || '',
+      groupAvatarUrl:group.groupAvatarUrl || '',
+      contactIds:Array.isArray(group.contactIds) ? group.contactIds.slice() : [],
+      groupOwnerId:group.groupOwnerId || '',
+      groupAdminIds:Array.isArray(group.groupAdminIds) ? group.groupAdminIds.slice() : [],
+      groupTitles:Object.assign({}, group.groupTitles || {}),
+    }
+    var baselineOverride = {
+      groupName:baseline.groupName || '',
+      groupAvatarUrl:baseline.groupAvatarUrl || '',
+      contactIds:Array.isArray(baseline.contactIds) ? baseline.contactIds.slice() : [],
+      groupOwnerId:baseline.groupOwnerId || '',
+      groupAdminIds:Array.isArray(baseline.groupAdminIds) ? baseline.groupAdminIds.slice() : [],
+      groupTitles:Object.assign({}, baseline.groupTitles || {}),
+    }
+    if (JSON.stringify(override) !== JSON.stringify(baselineOverride)) {
+      groupOverrides.set(chatPersistenceKey, override)
+    }
+  })
+  session.phoneStoryEffectOrder = retainedOrder
+  session.storyContactOverrides = overrides
+  session.storyContactOverrideSources = sourceByContactId
+  session.storyGroupOverrides = groupOverrides
+  return JSON.stringify(previousOrder) !== JSON.stringify(session.phoneStoryEffectOrder)
+}
+
+function recordReaderPhoneStoryEffect(session, effectKey) {
+  if (!effectKey || !session || !Array.isArray(session.phoneStoryEffectOrder)) return false
+  if (session.phoneStoryEffectOrder.includes(effectKey)) return false
+  session.phoneStoryEffectOrder.push(effectKey)
+  return true
+}
+
+function readerChatChoiceProgressIdentity(actionProgressKey) {
+  try {
+    var parts = JSON.parse(String(actionProgressKey || ''))
+    if (
+      Array.isArray(parts)
+      && (parts[0] === 'choice' || parts[0] === 'choice-contact')
+    ) {
+      return {
+        chatPersistenceKey:String(parts[1] || ''),
+        ownerMessageId:String(parts[2] || ''),
+        selectedChoiceId:String(parts[3] || ''),
+      }
+    }
+  } catch {}
+  return null
+}
+
+function readerChatMessageActionProgressKey(chatSession, entry, messageId, message) {
+  var normalizedMessageId = String(messageId || '')
+  var generatedActionKey = entry?.actionCompletionKeys?.get?.(normalizedMessageId)
+  if (generatedActionKey) return generatedActionKey
+  return JSON.stringify([
+    'message',
+    String(chatSession?.actionPersistenceKey || ''),
+    normalizedMessageId,
+    readerChatStableActionFingerprint(message || {}),
+  ])
+}
+
+function readerChatContactEffectProgressKey(chatSession, entry, messageId, message) {
+  var normalizedMessageId = String(messageId || '')
+  return entry?.contactEffectKeys?.get?.(normalizedMessageId)
+    || readerChatMessageActionProgressKey(chatSession, entry, normalizedMessageId, message)
+}
+
+function clearReaderChatMessageRuntime(chatSession, messageIds, entry) {
+  ;(messageIds || []).forEach(function(id) {
+    var messageId = String(id)
+    var actionProgressKey = readerChatMessageActionProgressKey(chatSession, entry, messageId)
+    var contactEffectProgressKey = readerChatContactEffectProgressKey(chatSession, entry, messageId)
+    var contactEffect = entry?.contactEffects?.get?.(messageId)
+    var contactEffectSource = contactEffect
+      ? chatSession.contactFriendshipSources?.get?.(contactEffect.targetContactId)
+      : ''
+    var contactEffectWasApplied = chatSession.completedMessageActionKeys?.has?.(contactEffectProgressKey)
+      || chatSession.contactCardResponses?.has?.(messageId)
+      || contactEffectSource === contactEffectProgressKey
+    if (contactEffect && contactEffectWasApplied) {
+      chatSession.contactCardResponses?.delete?.(messageId)
+      if (
+        contactEffectSource === contactEffectProgressKey
+        || (
+          !contactEffectSource
+          && chatSession.contactFriendships?.get?.(contactEffect.targetContactId) === contactEffect.status
+        )
+      ) {
+        chatSession.contactFriendships.delete(contactEffect.targetContactId)
+        chatSession.contactFriendshipSources?.delete?.(contactEffect.targetContactId)
+      }
+    }
+    ;[
+      chatSession.flowTypedMessageIds,
+      chatSession.flowTextProgress,
+      chatSession.claimedMessageIds,
+      chatSession.endedCallIds,
+      chatSession.voicePlaybacks,
+      chatSession.revealedEventIds,
+      chatSession.retriedEventIds,
+      chatSession.burnedEventIds,
+      chatSession.reactedEventIds,
+      chatSession.eventResponses,
+      chatSession.completedActionIds,
+    ].forEach(function(collection) { collection?.delete?.(messageId) })
+    chatSession.friendRequestResponses?.delete?.(messageId)
+    ;['failed:' + messageId, 'recall:' + messageId].forEach(function(transientKey) {
+      chatSession.transientMessageStartedAt?.delete?.(transientKey)
+      chatSession.settledTransientMessageIds?.delete?.(transientKey)
+    })
+    chatSession.completedMessageActionKeys?.delete?.(actionProgressKey)
+    chatSession.completedMessageActionKeys?.delete?.(contactEffectProgressKey)
+    chatSession.messageActionResponses?.delete?.(actionProgressKey)
+  })
+}
+
 function reconcileReaderPhoneStorySelections(work, phoneData) {
   var session = readerPhoneChoiceSession(work)
   var previousSelections = session.phoneChoiceSelections
   var nextSelections = prunePhoneStoryChoiceSelections(phoneData, previousSelections)
-  var removedOwnerIds = new Set()
-  previousSelections.forEach(function(choiceId, ownerMessageId) {
-    if (nextSelections.get(ownerMessageId) !== choiceId) removedOwnerIds.add(String(ownerMessageId))
+  var removedSelectionKeys = new Set()
+  previousSelections.forEach(function(choiceId, selectionKey) {
+    if (nextSelections.get(selectionKey) !== choiceId && !Array.from(nextSelections.values()).includes(choiceId)) {
+      removedSelectionKeys.add(String(selectionKey))
+    }
   })
   session.phoneChoiceSelections = nextSelections
-  if (removedOwnerIds.size === 0) return removedOwnerIds
+  if (session.phonePendingChoicePlaybacks instanceof Map) {
+    Array.from(session.phonePendingChoicePlaybacks.entries()).forEach(function(entry) {
+      var state = entry[1]
+      var ownerMessageId = String(state?.ownerMessageId || '')
+      var selectedChoiceId = String(state?.selectedChoiceId || '')
+      if (
+        !ownerMessageId
+        || phoneStorySelectedChoiceId(
+          session.phoneChoiceSelections,
+          String(state?.chatPersistenceKey || ''),
+          ownerMessageId,
+        ) !== selectedChoiceId
+      ) {
+        session.phonePendingChoicePlaybacks.delete(entry[0])
+      }
+    })
+  }
+  rebuildReaderPhoneStoryProjection(work, session)
 
   session.chats.forEach(function(chatSession) {
     if (!(chatSession?.choiceRuns instanceof Map) || !chatSession.chat) return
@@ -615,37 +1458,95 @@ function reconcileReaderPhoneStorySelections(work, phoneData) {
       var runKey = runEntry[0]
       var entry = runEntry[1]
       var ownerMessageId = String(entry?.run?.ownerMessageId || entry?.run?.ownerItemId || '')
-      if (!removedOwnerIds.has(ownerMessageId)) return
+      if (
+        phoneStorySelectedChoiceId(
+          session.phoneChoiceSelections,
+          String(chatSession.actionPersistenceKey || ''),
+          ownerMessageId,
+        ) === String(entry?.selectedChoiceId || '')
+      ) return
       var roundIndex = Number(entry?.roundIndex)
       if (Number.isInteger(roundIndex) && Array.isArray(chatSession.chat.rounds?.[roundIndex]?.messages)) {
         chatSession.chat.rounds[roundIndex] = rollbackChatChoice(chatSession.chat.rounds[roundIndex], entry.run)
       }
-      ;(entry?.run?.generatedMessageIds || []).forEach(function(id) {
-        var messageId = String(id)
-        ;[
-          chatSession.flowTypedMessageIds,
-          chatSession.claimedMessageIds,
-          chatSession.endedCallIds,
-          chatSession.revealedEventIds,
-          chatSession.retriedEventIds,
-          chatSession.burnedEventIds,
-          chatSession.reactedEventIds,
-          chatSession.completedActionIds,
-        ].forEach(function(collection) { collection?.delete?.(messageId) })
-        ;[
-          chatSession.voicePlaybacks,
-          chatSession.eventResponses,
-        ].forEach(function(collection) { collection?.delete?.(messageId) })
-        ;['failed:' + messageId, 'recall:' + messageId].forEach(function(transientKey) {
-          chatSession.transientMessageStartedAt?.delete?.(transientKey)
-          chatSession.settledTransientMessageIds?.delete?.(transientKey)
-        })
-      })
-      if (chatSession.flowGeneratedPlayback?.runKey === runKey) chatSession.flowGeneratedPlayback = null
+      clearReaderChatMessageRuntime(chatSession, readerChatChoiceRunPlaybackIds(entry), entry)
+      if (chatSession.flowGeneratedPlayback?.runKey === runKey) {
+        chatSession.flowGeneratedPlayback = null
+        chatSession.flowAdvanceKey = ''
+        chatSession.flowAdvanceDeadline = 0
+      }
       chatSession.choiceRuns.delete(runKey)
     })
   })
-  return removedOwnerIds
+  ;[
+    session.completedMessageActionKeys,
+    session.messageActionResponses,
+  ].forEach(function(collection) {
+    if (!collection || typeof collection.keys !== 'function') return
+    Array.from(collection.keys()).forEach(function(actionProgressKey) {
+      var identity = readerChatChoiceProgressIdentity(actionProgressKey)
+      if (
+        identity
+        && phoneStorySelectedChoiceId(
+          session.phoneChoiceSelections,
+          identity.chatPersistenceKey,
+          identity.ownerMessageId,
+        ) !== identity.selectedChoiceId
+      ) {
+        collection.delete(actionProgressKey)
+      }
+    })
+  })
+  Array.from(session.contactFriendshipSources.entries()).forEach(function(sourceEntry) {
+    var targetContactId = sourceEntry[0]
+    var actionProgressKey = sourceEntry[1]
+    var identity = readerChatChoiceProgressIdentity(actionProgressKey)
+    if (
+      !identity
+      || phoneStorySelectedChoiceId(
+        session.phoneChoiceSelections,
+        identity.chatPersistenceKey,
+        identity.ownerMessageId,
+      ) === identity.selectedChoiceId
+    ) return
+    session.contactFriendshipSources.delete(targetContactId)
+    session.contactFriendships.delete(targetContactId)
+  })
+  ;[
+    ['friendRequest', session.friendRequestResponses],
+    ['contactCard', session.contactCardResponses],
+  ].forEach(function(entry) {
+    var descriptorsById = session.legacyActionCatalog?.[entry[0]]
+    var responses = entry[1]
+    if (!(responses instanceof Map)) return
+    Array.from(responses.keys()).forEach(function(messageId) {
+      var descriptors = descriptorsById?.get?.(String(messageId)) || []
+      if (
+        descriptors.length === 1
+        && descriptors[0].ownerMessageId
+        && !phoneStorySelectedChoiceId(
+          session.phoneChoiceSelections,
+          descriptors[0].chatActionPersistenceKey,
+          descriptors[0].ownerMessageId,
+        )
+      ) {
+        if (entry[0] === 'contactCard') {
+          var descriptor = descriptors[0]
+          var targetContactId = String(descriptor.targetContactId || '')
+          var legacyStatus = responses.get(messageId)
+          if (
+            targetContactId
+            && !session.contactFriendshipSources.has(targetContactId)
+            && session.contactFriendships.get(targetContactId) === legacyStatus
+          ) {
+            session.contactFriendships.delete(targetContactId)
+          }
+        }
+        responses.delete(messageId)
+      }
+    })
+  })
+  return removedSelectionKeys
 }
 
 function readerContactRemark(contactId) {
@@ -744,8 +1645,8 @@ function readerPhoneDataWithStoryState(phoneData) {
     var override = session.storyContactOverrides.get(String(contact && contact.id || ''))
     return override ? Object.assign({}, contact, override) : contact
   })
-  data.chats = (data.chats || []).map(function(chat) {
-    var override = session.storyGroupOverrides.get(String(chat && chat.id || ''))
+  data.chats = (data.chats || []).map(function(chat, chatIndex) {
+    var override = session.storyGroupOverrides.get(readerPhoneChatPersistenceKey(chat, chatIndex))
     return override ? Object.assign({}, chat, override) : chat
   })
   return data
@@ -827,15 +1728,28 @@ function saveReaderWorkPlaceholders(work, values) {
 function saveCurrentReaderProgress() {
   if (!_readerPersistenceEnabled || !_work || !_work.id) return false
   var readingPosition = currentReaderReadingPosition()
+  var phoneChoiceSession = _work.type === 'phone' ? readerPhoneChoiceSession(_work) : null
   var progress = _work.type === 'phone'
     ? {
       kind:'phone',
       flowIndex:readerPhoneFlowSession(_work).index,
-      friendRequestResponses:Object.fromEntries(readerPhoneChoiceSession(_work).friendRequestResponses),
-      contactCardResponses:Object.fromEntries(readerPhoneChoiceSession(_work).contactCardResponses),
-      contactFriendships:Object.fromEntries(readerPhoneChoiceSession(_work).contactFriendships),
-      contactRemarks:Object.fromEntries(readerPhoneChoiceSession(_work).contactRemarks),
-      phoneChoiceSelections:Object.fromEntries(readerPhoneChoiceSession(_work).phoneChoiceSelections),
+      friendRequestResponses:Object.fromEntries(phoneChoiceSession.friendRequestResponses),
+      contactCardResponses:Object.fromEntries(phoneChoiceSession.contactCardResponses),
+      contactFriendships:Object.fromEntries(phoneChoiceSession.contactFriendships),
+      contactFriendshipSources:Object.fromEntries(phoneChoiceSession.contactFriendshipSources),
+      contactRemarks:Object.fromEntries(phoneChoiceSession.contactRemarks),
+      phoneChoiceSelections:Object.fromEntries(phoneChoiceSession.phoneChoiceSelections),
+      phoneChoiceSelectionOrder:Array.from(phoneChoiceSession.phoneChoiceSelections.keys()),
+      phoneStoryEffectOrder:Array.isArray(phoneChoiceSession.phoneStoryEffectOrder)
+        ? phoneChoiceSession.phoneStoryEffectOrder.slice()
+        : [],
+      phonePendingChoicePlaybacks:Object.fromEntries(
+        Array.from(phoneChoiceSession.phonePendingChoicePlaybacks || [], function(entry) {
+          return [entry[0], Object.assign({}, entry[1] || {})]
+        }),
+      ),
+      completedMessageActionKeys:Array.from(phoneChoiceSession.completedMessageActionKeys),
+      messageActionResponses:Object.fromEntries(phoneChoiceSession.messageActionResponses),
       readingPosition:readingPosition,
     }
     : {
@@ -1078,7 +1992,7 @@ function currentReaderReadingPosition() {
   return null
 }
 
-function restorePhoneReadingScroll(position, container) {
+function restorePhoneReadingScroll(position, container, onRestored) {
   if (!position || !container) return
   requestAnimationFrame(function() {
     var anchor = position.anchorId
@@ -1095,6 +2009,7 @@ function restorePhoneReadingScroll(position, container) {
         - Number(position.anchorOffset || 0)
     }
     container.scrollTop = Math.max(0, nextScrollTop)
+    if (typeof onRestored === 'function') onRestored()
   })
 }
 
@@ -4107,16 +5022,43 @@ function loadWork(work, options) {
     Object.entries(rememberedBook.progress.contactFriendships || {}).forEach(function(entry) {
       phoneChoices.contactFriendships.set(entry[0], entry[1])
     })
+    Object.entries(rememberedBook.progress.contactFriendshipSources || {}).forEach(function(entry) {
+      phoneChoices.contactFriendshipSources.set(entry[0], entry[1])
+    })
     Object.entries(rememberedBook.progress.contactRemarks || {}).forEach(function(entry) {
       phoneChoices.contactRemarks.set(entry[0], entry[1])
     })
-    Object.entries(rememberedBook.progress.phoneChoiceSelections || {}).forEach(function(entry) {
+    var savedPhoneChoiceSelections = rememberedBook.progress.phoneChoiceSelections || {}
+    var restoredPhoneChoiceOwnerIds = new Set()
+    ;(rememberedBook.progress.phoneChoiceSelectionOrder || []).forEach(function(ownerMessageId) {
+      if (!Object.prototype.hasOwnProperty.call(savedPhoneChoiceSelections, ownerMessageId)) return
+      phoneChoices.phoneChoiceSelections.set(ownerMessageId, savedPhoneChoiceSelections[ownerMessageId])
+      restoredPhoneChoiceOwnerIds.add(String(ownerMessageId))
+    })
+    Object.entries(savedPhoneChoiceSelections).forEach(function(entry) {
+      if (restoredPhoneChoiceOwnerIds.has(String(entry[0]))) return
       phoneChoices.phoneChoiceSelections.set(entry[0], entry[1])
     })
+    var renderedPhoneDataForProgress = readerPhoneData(work.phoneData)
     phoneChoices.phoneChoiceSelections = prunePhoneStoryChoiceSelections(
-      work.phoneData,
+      renderedPhoneDataForProgress,
       phoneChoices.phoneChoiceSelections,
     )
+    var hadPersistedPhoneStoryEffectOrder = Array.isArray(rememberedBook.progress.phoneStoryEffectOrder)
+    phoneChoices.phoneStoryEffectOrder = hadPersistedPhoneStoryEffectOrder
+      ? rememberedBook.progress.phoneStoryEffectOrder.slice()
+      : readerPhoneCompletedFlowStoryEffectOrder(work, phoneFlow.index, phoneChoices.phoneChoiceSelections)
+    Object.entries(rememberedBook.progress.phonePendingChoicePlaybacks || {}).forEach(function(entry) {
+      phoneChoices.phonePendingChoicePlaybacks.set(entry[0], Object.assign({}, entry[1] || {}))
+    })
+    ;(rememberedBook.progress.completedMessageActionKeys || []).forEach(function(actionKey) {
+      phoneChoices.completedMessageActionKeys.add(String(actionKey))
+    })
+    Object.entries(rememberedBook.progress.messageActionResponses || {}).forEach(function(entry) {
+      phoneChoices.messageActionResponses.set(entry[0], entry[1])
+    })
+    sanitizeReaderLegacyActionResponses(phoneChoices)
+    reconcileReaderPhoneStorySelections(work, renderedPhoneDataForProgress)
     _readerPendingReadingPosition = rememberedBook.progress.readingPosition
   }
   if (rememberWork) {
@@ -4183,11 +5125,15 @@ function currentReaderPhoneFlowStep(work) {
     var candidate = session.sequence[session.index]
     var phoneData = work && work.type === 'phone' ? readerPhoneDataWithStoryState(work.phoneData) : null
     var target = phoneData ? resolvePhoneReadingFlowStep(phoneData, candidate) : null
+    var targetChatIndex = target?.chat ? (phoneData?.chats || []).indexOf(target.chat) : -1
     var blockedByEndedRound = target?.kind === 'message'
       && phoneStoryMessageBlockedByEndedRound(
         phoneData,
         String(target.message?.id || ''),
         readerPhoneChoiceSession(work).phoneChoiceSelections,
+        targetChatIndex >= 0
+          ? { chatPersistenceKey:readerPhoneChatPersistenceKey(target.chat, targetChatIndex) }
+          : undefined,
       )
     if (!target || (readerPhoneStoryItemVisible(work, target.item, phoneData) && !blockedByEndedRound)) break
     session.index += 1
@@ -6708,6 +7654,9 @@ function hideReaderPhoneOuterBack(phoneFrame, inOverlay) {
 function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, navigationContext) {
   stopActiveReaderVoicePlayback()
   var exportMode = navigationContext?.exportMode === true
+  var appHistoryLayerKey = navigationContext?.origin?.kind === 'chat'
+    ? 'phone-chat-link'
+    : 'phone-app'
   var inOverlay = _work._inOverlay
   var phoneFrame = navigationContext?.exportFrame || document.querySelector('.phone-frame')
   if (!phoneFrame) return
@@ -6809,13 +7758,13 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
     }
   }
   function backToDesktop() {
-    if (readerLayerHistory.has('phone-app')) {
-      readerLayerHistory.close('phone-app')
+    if (readerLayerHistory.has(appHistoryLayerKey)) {
+      readerLayerHistory.close(appHistoryLayerKey)
       return
     }
     returnToPhoneDesktop()
   }
-  if (!exportMode) readerLayerHistory.open('phone-app', returnToPhoneDesktop)
+  if (!exportMode) readerLayerHistory.open(appHistoryLayerKey, returnToPhoneDesktop)
 
   function focusDeepLinkedAppItem() {
     if (navigationContext?.targetApp !== type || !navigationContext.targetItemId) return
@@ -7028,7 +7977,10 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
   }
   if (type === 'messages') {
     var chats = pd.chats || []
-    var phoneChoiceSession = readerPhoneChoiceSession(w)
+    var livePhoneChoiceSession = readerPhoneChoiceSession(w)
+    var phoneChoiceSession = exportMode
+      ? cloneReaderPhoneChoiceSessionForExport(livePhoneChoiceSession)
+      : livePhoneChoiceSession
     if (phoneChoiceSession.moments === null) phoneChoiceSession.moments = cloneReaderThreadItems(pd.moments)
     var moments = phoneChoiceSession.moments
     var momentChoiceRuns = phoneChoiceSession.momentChoiceRuns
@@ -7568,7 +8520,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
         var contact = discoverableContacts.find(function(candidate) { return String(candidate.id) === String(button.dataset.readerContactSubmit) })
         if (!contact) return
         var nextStatus = readerContactAddMode(contact) === 'direct' ? 'accepted' : readerContactAddOutcome(contact)
-        contactChoiceSession.contactFriendships.set(String(contact.id), nextStatus)
+        setReaderContactFriendship(contactChoiceSession, contact.id, nextStatus, 'direct')
         saveCurrentReaderProgress()
         if (nextStatus === 'accepted') {
           openReaderApp('contacts')
@@ -7639,6 +8591,17 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     if (chatFlowAdvanceTimer !== null) clearTimeout(chatFlowAdvanceTimer)
     chatFlowTypingTimer = null
     chatFlowAdvanceTimer = null
+  }
+
+  function resetChatFlowAdvanceDeadline() {
+    if (!chatSession) return
+    chatSession.flowAdvanceKey = ''
+    chatSession.flowAdvanceDeadline = 0
+  }
+
+  function clearTransientMessageTimers() {
+    transientMessageTimers.forEach(function(timer) { clearTimeout(timer) })
+    transientMessageTimers.clear()
   }
 
   function clearChatBottomTracking() {
@@ -7750,6 +8713,14 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     return pip
   }
 
+  function closeOpenChatPip() {
+    if (readerLayerHistory.has('phone-pip')) {
+      readerLayerHistory.close('phone-pip')
+      return
+    }
+    frame.querySelector('.rd-chat-story-pip, .rd-inline-forum-pip')?.remove()
+  }
+
   function isFlowTargetMessage(message, round) {
     var playbackId = currentFlowPlaybackMessageId()
     if (playbackId) return String(message && message.id) === playbackId
@@ -7762,12 +8733,40 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   // Keep reader choices for this reading session without mutating the authored work.
-  var phoneChoiceSession = readerPhoneChoiceSession(w)
+  var livePhoneChoiceSession = readerPhoneChoiceSession(w)
+  var phoneChoiceSession = exportMode
+    ? cloneReaderPhoneChoiceSessionForExport(livePhoneChoiceSession)
+    : livePhoneChoiceSession
+  var authoredPhoneData = readerPhoneData(w?.phoneData)
+  var authoredChats = Array.isArray(authoredPhoneData?.chats) ? authoredPhoneData.chats : []
+  var authoredChatMatches = ch?.id == null
+    ? []
+    : authoredChats.filter(function(candidate) { return String(candidate?.id) === String(ch.id) })
+  var authoredChat = authoredChatMatches.length === 1
+    ? authoredChatMatches[0]
+    : authoredChats[chatIndex]
+  var authoredGroupBaseline = {
+    groupName:authoredChat?.groupName || '',
+    groupAvatarUrl:authoredChat?.groupAvatarUrl || '',
+    contactIds:Array.isArray(authoredChat?.contactIds) ? authoredChat.contactIds.slice() : [],
+    groupOwnerId:authoredChat?.groupOwnerId || '',
+    groupAdminIds:Array.isArray(authoredChat?.groupAdminIds) ? authoredChat.groupAdminIds.slice() : [],
+    groupTitles:Object.assign({}, authoredChat?.groupTitles || {}),
+  }
   var chatSessionKey = String(chatIndex) + '::' + String(ch && ch.id || '')
+  var chatActionPersistenceKey = readerPhoneChatPersistenceKey(ch, chatIndex)
   var chatSession = phoneChoiceSession.chats.get(chatSessionKey)
   if (!chatSession) {
     chatSession = {
       chat: JSON.parse(JSON.stringify(ch)),
+      authoredGroupBaseline:authoredGroupBaseline,
+      actionPersistenceKey:chatActionPersistenceKey,
+      completedMessageActionKeys:phoneChoiceSession.completedMessageActionKeys,
+      messageActionResponses:phoneChoiceSession.messageActionResponses,
+      friendRequestResponses:phoneChoiceSession.friendRequestResponses,
+      contactCardResponses:phoneChoiceSession.contactCardResponses,
+      contactFriendships:phoneChoiceSession.contactFriendships,
+      contactFriendshipSources:phoneChoiceSession.contactFriendshipSources,
       choiceRuns: new Map(),
       flowTypedMessageIds: new Set(),
       flowTextProgress: new Map(),
@@ -7778,11 +8777,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       retriedEventIds: new Set(),
       burnedEventIds: new Set(),
       reactedEventIds: new Set(),
-      eventResponses: new Map(phoneChoiceSession.friendRequestResponses),
+      eventResponses: new Map(),
       completedActionIds: new Set(),
       transientMessageStartedAt: new Map(),
       settledTransientMessageIds: new Set(),
       flowGeneratedPlayback: null,
+      flowAdvanceKey:'',
+      flowAdvanceDeadline:0,
     }
     phoneChoiceSession.chats.set(chatSessionKey, chatSession)
   }
@@ -7799,9 +8800,23 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   if (!(chatSession.completedActionIds instanceof Set)) chatSession.completedActionIds = new Set()
   if (!(chatSession.transientMessageStartedAt instanceof Map)) chatSession.transientMessageStartedAt = new Map()
   if (!(chatSession.settledTransientMessageIds instanceof Set)) chatSession.settledTransientMessageIds = new Set()
+  if (!chatSession.authoredGroupBaseline || typeof chatSession.authoredGroupBaseline !== 'object') {
+    chatSession.authoredGroupBaseline = authoredGroupBaseline
+  }
+  if (typeof chatSession.flowAdvanceKey !== 'string') chatSession.flowAdvanceKey = ''
+  if (!Number.isFinite(chatSession.flowAdvanceDeadline)) chatSession.flowAdvanceDeadline = 0
+  chatSession.actionPersistenceKey = chatActionPersistenceKey
+  chatSession.completedMessageActionKeys = phoneChoiceSession.completedMessageActionKeys
+  chatSession.messageActionResponses = phoneChoiceSession.messageActionResponses
+  chatSession.friendRequestResponses = phoneChoiceSession.friendRequestResponses
+  chatSession.contactCardResponses = phoneChoiceSession.contactCardResponses
+  chatSession.contactFriendships = phoneChoiceSession.contactFriendships
+  chatSession.contactFriendshipSources = phoneChoiceSession.contactFriendshipSources
   ch = chatSession.chat
+  if (exportMode) ch = JSON.parse(JSON.stringify(ch))
   var openedCallScenes = Object.create(null)
   var mayAutoOpenCall = true
+  var autoOpenCallMessageId = ''
   var voicePlaybackTimer = null
   var activeVoiceMessageId = ''
   var voicePlaybackLastTick = 0
@@ -7840,6 +8855,75 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
 
   function choiceRunKey(roundIndex, ownerMessageId) {
     return String(roundIndex) + ':' + String(ownerMessageId)
+  }
+
+  function persistedChoiceSelectionKey(ownerMessageId) {
+    return phoneStoryChoiceSelectionKey(
+      pd,
+      chatSession.actionPersistenceKey,
+      String(ownerMessageId || ''),
+    )
+  }
+
+  function persistedSelectedChoiceId(ownerMessageId) {
+    return phoneStorySelectedChoiceId(
+      phoneChoiceSession.phoneChoiceSelections,
+      chatSession.actionPersistenceKey,
+      String(ownerMessageId || ''),
+    )
+  }
+
+  function choicePlaybackProgressKey(entry) {
+    return readerPhoneChoicePlaybackPersistenceKey(
+      chatSession.actionPersistenceKey,
+      String(entry?.run?.ownerMessageId || entry?.run?.ownerItemId || ''),
+    )
+  }
+
+  function choicePlaybackSignature(entry, rounds) {
+    var signatureParts = (entry?.playbackMessageIds || []).map(function(messageId) {
+      var message = chatMessageById(rounds, messageId)
+      var sourceKey = entry?.generatedSourceKeys?.get?.(String(messageId))
+        || message?.[READER_AUTHORED_MESSAGE_SOURCE_FIELD]
+        || 'authored:' + String(messageId)
+      return [String(sourceKey), readerChatStableActionFingerprint(message || {})]
+    })
+    return readerChatActionFingerprint(signatureParts)
+  }
+
+  function setPendingChoicePlayback(entry, updates, persistNow) {
+    var progressKey = entry?.playbackPersistenceKey || choicePlaybackProgressKey(entry)
+    if (!progressKey || !entry?.playbackSignature) return false
+    var previous = phoneChoiceSession.phonePendingChoicePlaybacks.get(progressKey) || {}
+    var next = Object.assign({
+      chatPersistenceKey:String(chatSession.actionPersistenceKey || ''),
+      ownerMessageId:String(entry?.run?.ownerMessageId || entry?.run?.ownerItemId || ''),
+      selectedChoiceId:String(
+        entry?.selectedChoiceId
+          || (Number.isInteger(entry?.run?.choiceIndex) ? entry.run.choiceIndex : ''),
+      ),
+      playbackSignature:String(entry.playbackSignature),
+      nextIndex:0,
+      phase:'active',
+      textIndex:0,
+      advanceDeadline:0,
+    }, previous, updates || {})
+    if (JSON.stringify(previous) === JSON.stringify(next)) return false
+    phoneChoiceSession.phonePendingChoicePlaybacks.set(progressKey, next)
+    if (persistNow && !exportMode) saveCurrentReaderProgress()
+    return true
+  }
+
+  function clearPendingChoicePlayback(entry, persistNow) {
+    var progressKey = entry?.playbackPersistenceKey || choicePlaybackProgressKey(entry)
+    if (!progressKey || !phoneChoiceSession.phonePendingChoicePlaybacks.delete(progressKey)) return false
+    if (persistNow && !exportMode) saveCurrentReaderProgress()
+    return true
+  }
+
+  function updateActiveChoicePlayback(playback, updates, persistNow) {
+    if (!playback?.runKey) return false
+    return setPendingChoicePlayback(choiceRuns.get(playback.runKey), updates, persistNow)
   }
 
   function activeGeneratedPlaybackId() {
@@ -7885,15 +8969,15 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         : String(waitingPlaybackRun.run.ownerMessageId)
       var unsequencedChoiceGateActive = false
       var unsequencedPlaybackGateActive = false
-      var endedRoundGeneratedIds = null
       unsequencedMessageScan:
       for (var roundIndex = 0; roundIndex < (ch.rounds || []).length; roundIndex++) {
         var messages = Array.isArray(ch.rounds[roundIndex]?.messages) ? ch.rounds[roundIndex].messages : []
+        var endedRoundGeneratedIds = null
         for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
           var message = messages[messageIndex]
           if (message?.id == null) continue
           if (endedRoundGeneratedIds && !endedRoundGeneratedIds.has(String(message.id))) {
-            break unsequencedMessageScan
+            break
           }
           if (!readerPhoneStoryItemVisible(w, message, pd)) continue
           var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
@@ -7962,7 +9046,547 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         pd,
         String(message?.id || ''),
         phoneChoiceSession.phoneChoiceSelections,
+        { chatPersistenceKey:chatSession.actionPersistenceKey },
       )
+  }
+
+  function chatMessageById(rounds, messageId) {
+    for (var roundIndex = 0; roundIndex < rounds.length; roundIndex++) {
+      var messages = Array.isArray(rounds[roundIndex]?.messages) ? rounds[roundIndex].messages : []
+      for (var messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+        if (String(messages[messageIndex]?.id || '') === String(messageId || '')) return messages[messageIndex]
+      }
+    }
+    return null
+  }
+
+  function messageActionIsComplete(message) {
+    var messageId = String(message && message.id || '')
+    if (!messageId) return false
+    if (message?.type === 'music' && !safeMessageCardUrl(message.musicUrl)) return true
+    if (
+      message?.senderId === 'self'
+      && ['redpacket', 'transfer', 'familycard', 'takeaway'].includes(message?.type)
+    ) return true
+    if (chatSession.completedActionIds.has(messageId)) return true
+    if (chatSession.claimedMessageIds.has(messageId)) return true
+    if (message?.type === 'schedule' && chatSession.eventResponses.has(messageId)) return true
+    if (message?.type === 'contact-card' && contactCardStatusForMessage(message)) return true
+    return false
+  }
+
+  function setChoiceRunPlaybackMetadata(entry, rounds, playbackMessageIds, generatedSourceKeys) {
+    entry.playbackMessageIds = (playbackMessageIds || []).map(String)
+    entry.generatedSourceKeys = generatedSourceKeys instanceof Map
+      ? new Map(generatedSourceKeys)
+      : new Map()
+    entry.actionCompletionKeys = new Map()
+    entry.contactEffects = new Map()
+    entry.contactEffectKeys = new Map()
+    var actionOrdinal = 0
+    entry.playbackMessageIds.forEach(function(messageId) {
+      var message = chatMessageById(rounds, messageId)
+      if (!messageRequiresAction(message)) return
+      var sourceKey = entry.generatedSourceKeys.get(String(messageId))
+        || 'authored:' + String(messageId)
+      entry.actionCompletionKeys.set(String(messageId), JSON.stringify([
+        'choice',
+        String(chatSession.actionPersistenceKey || ''),
+        String(entry.run?.ownerMessageId || entry.run?.ownerItemId || ''),
+        String(entry.selectedChoiceId || (Number.isInteger(entry.run?.choiceIndex) ? entry.run.choiceIndex : '')),
+        String(sourceKey || 'action#' + actionOrdinal),
+        readerChatStableActionFingerprint(message),
+      ]))
+      actionOrdinal += 1
+    })
+    var contactOrdinal = 0
+    entry.playbackMessageIds.forEach(function(messageId) {
+      var message = chatMessageById(rounds, messageId)
+      var normalizedMessage = normalizeChatStoryMessage(message)
+      if (
+        normalizedMessage.type === 'contact-card'
+        && normalizedMessage.contactAction !== 'view'
+        && normalizedMessage.targetContactId
+      ) {
+        var contactEffectKey = entry.actionCompletionKeys.get(String(messageId))
+        if (!contactEffectKey) {
+          var contactSourceKey = entry.generatedSourceKeys.get(String(messageId))
+            || 'authored:' + String(messageId)
+          contactEffectKey = JSON.stringify([
+            'choice-contact',
+            String(chatSession.actionPersistenceKey || ''),
+            String(entry.run?.ownerMessageId || entry.run?.ownerItemId || ''),
+            String(entry.selectedChoiceId || (Number.isInteger(entry.run?.choiceIndex) ? entry.run.choiceIndex : '')),
+            String(contactSourceKey || 'contact#' + contactOrdinal),
+            readerChatStableActionFingerprint(message),
+          ])
+        }
+        entry.contactEffectKeys.set(String(messageId), contactEffectKey)
+        entry.contactEffects.set(String(messageId), {
+          targetContactId:String(normalizedMessage.targetContactId),
+          status:normalizedMessage.contactAction === 'direct'
+            ? 'accepted'
+            : normalizedMessage.contactRequestOutcome,
+        })
+        migrateStoredContactEffectIdentity(
+          String(normalizedMessage.targetContactId),
+          contactEffectKey,
+          message,
+        )
+        contactOrdinal += 1
+      }
+    })
+    entry.playbackPersistenceKey = choicePlaybackProgressKey(entry)
+    entry.playbackSignature = choicePlaybackSignature(entry, rounds)
+  }
+
+  function choiceRunEntryForMessage(messageId) {
+    var normalizedMessageId = String(messageId || '')
+    for (var entry of choiceRuns.values()) {
+      if (entry?.actionCompletionKeys?.has?.(normalizedMessageId)) return entry
+      if ((entry?.playbackMessageIds || []).map(String).includes(normalizedMessageId)) return entry
+    }
+    return null
+  }
+
+  function messageActionProgressKey(messageId) {
+    var message = chatMessageById(Array.isArray(ch.rounds) ? ch.rounds : [], messageId)
+    return readerChatMessageActionProgressKey(
+      chatSession,
+      choiceRunEntryForMessage(messageId),
+      messageId,
+      message,
+    )
+  }
+
+  function legacyMessageActionProgressKey(actionProgressKey) {
+    try {
+      var parts = JSON.parse(actionProgressKey)
+      if (!Array.isArray(parts)) return ''
+      if (parts[0] === 'message' && (parts.length === 3 || parts.length === 4)) {
+        return JSON.stringify(parts.slice(0, 3))
+      }
+      if (
+        (parts[0] === 'choice' || parts[0] === 'choice-contact')
+        && (parts.length === 5 || parts.length === 6)
+      ) return JSON.stringify(parts.slice(0, 5))
+    } catch {}
+    return ''
+  }
+
+  function actionProgressFingerprint(actionProgressKey) {
+    try {
+      var parts = JSON.parse(actionProgressKey)
+      if (!Array.isArray(parts)) return ''
+      if (parts[0] === 'message' && parts.length === 4) return String(parts[3] || '')
+      if (
+        (parts[0] === 'choice' || parts[0] === 'choice-contact')
+        && parts.length === 6
+      ) return String(parts[5] || '')
+    } catch {}
+    return ''
+  }
+
+  function storedActionKeyMatchesRenderedMessage(storedKey, message) {
+    var storedFingerprint = actionProgressFingerprint(storedKey)
+    if (!storedFingerprint) return true
+    var renderedFingerprints = new Set([
+      readerChatActionFingerprint(message || {}),
+      readerChatActionFingerprint(normalizeChatStoryMessage(message || {})),
+    ])
+    return renderedFingerprints.has(storedFingerprint)
+  }
+
+  function storedActionIdentityKeys(collection, actionProgressKey, message) {
+    var identityKey = legacyMessageActionProgressKey(actionProgressKey)
+    if (!identityKey || !collection || typeof collection.keys !== 'function') return []
+    return Array.from(collection.keys()).filter(function(storedKey) {
+      return legacyMessageActionProgressKey(storedKey) === identityKey
+        && (!message || storedActionKeyMatchesRenderedMessage(storedKey, message))
+    })
+  }
+
+  function migrateStoredResponseForActionIdentity(actionProgressKey, message) {
+    var matchingKeys = storedActionIdentityKeys(chatSession.messageActionResponses, actionProgressKey, message)
+    if (matchingKeys.length !== 1) return ''
+    var storedKey = matchingKeys[0]
+    var response = chatSession.messageActionResponses.get(storedKey)
+    if (response !== 'accepted' && response !== 'declined') return ''
+    if (storedKey !== actionProgressKey) {
+      chatSession.messageActionResponses.delete(storedKey)
+      chatSession.messageActionResponses.set(actionProgressKey, response)
+    }
+    return response
+  }
+
+  function migrateStoredCompletionForActionIdentity(actionProgressKey, message) {
+    var matchingKeys = storedActionIdentityKeys(chatSession.completedMessageActionKeys, actionProgressKey, message)
+    if (matchingKeys.length !== 1) return false
+    var storedKey = matchingKeys[0]
+    if (storedKey !== actionProgressKey) {
+      chatSession.completedMessageActionKeys.delete(storedKey)
+      chatSession.completedMessageActionKeys.add(actionProgressKey)
+    }
+    return true
+  }
+
+  function migrateStoredContactEffectIdentity(targetContactId, actionProgressKey, message) {
+    var normalizedContactId = String(targetContactId || '')
+    if (!normalizedContactId) return
+    var storedSource = phoneChoiceSession.contactFriendshipSources.get(normalizedContactId)
+    if (
+      !storedSource
+      || storedSource === actionProgressKey
+      || legacyMessageActionProgressKey(storedSource) !== legacyMessageActionProgressKey(actionProgressKey)
+      || !storedActionKeyMatchesRenderedMessage(storedSource, message)
+    ) return
+    phoneChoiceSession.contactFriendshipSources.set(normalizedContactId, actionProgressKey)
+  }
+
+  function hasStoredResponseForActionIdentity(actionProgressKey) {
+    return storedActionIdentityKeys(chatSession.messageActionResponses, actionProgressKey).length > 0
+  }
+
+  function actionProgressKeyOwnsMessageId(actionProgressKey, messageId) {
+    try {
+      var parts = JSON.parse(actionProgressKey)
+      if (!Array.isArray(parts)) return false
+      if (parts[0] === 'message') return String(parts[2] || '') === String(messageId || '')
+      if (parts[0] === 'choice' || parts[0] === 'choice-contact') {
+        return String(parts[4] || '') === 'authored:' + String(messageId || '')
+      }
+    } catch {}
+    return false
+  }
+
+  function hasStoredResponseForMessageId(messageId) {
+    for (var storedKey of chatSession.messageActionResponses.keys()) {
+      if (actionProgressKeyOwnsMessageId(storedKey, messageId)) return true
+    }
+    return false
+  }
+
+  function hasStoredCompletionForActionIdentity(actionProgressKey) {
+    return storedActionIdentityKeys(chatSession.completedMessageActionKeys, actionProgressKey).length > 0
+  }
+
+  function hasStoredCompletionForMessageId(messageId) {
+    for (var storedKey of chatSession.completedMessageActionKeys) {
+      if (actionProgressKeyOwnsMessageId(storedKey, messageId)) return true
+    }
+    return false
+  }
+
+  function contactCardStatusForMessage(message) {
+    var normalizedMessage = normalizeChatStoryMessage(message)
+    if (normalizedMessage.type !== 'contact-card') return ''
+    var messageId = String(message?.id || '')
+    var targetContactId = String(normalizedMessage.targetContactId || '')
+    var friendshipStatus = targetContactId
+      ? phoneChoiceSession.contactFriendships.get(targetContactId)
+      : ''
+    var rawStatus = phoneChoiceSession.contactCardResponses.get(messageId)
+    if (!rawStatus) return friendshipStatus || ''
+    var legacyDescriptor = readerPhoneLegacyActionDescriptor(
+      phoneChoiceSession,
+      'contactCard',
+      messageId,
+      chatSession.actionPersistenceKey,
+      message,
+    )
+    if (
+      !legacyDescriptor
+      || legacyDescriptor.targetContactId !== targetContactId
+      || legacyDescriptor.status !== rawStatus
+      || (friendshipStatus && friendshipStatus !== rawStatus)
+    ) {
+      phoneChoiceSession.contactCardResponses.delete(messageId)
+      return friendshipStatus || ''
+    }
+    var entry = choiceRunEntryForMessage(messageId)
+    var effectProgressKey = readerChatContactEffectProgressKey(
+      chatSession,
+      entry,
+      messageId,
+      message,
+    )
+    function attachLegacyContactEffect() {
+      var source = phoneChoiceSession.contactFriendshipSources.get(targetContactId)
+      if (!friendshipStatus) {
+        setReaderContactFriendship(
+          phoneChoiceSession,
+          targetContactId,
+          rawStatus,
+          effectProgressKey,
+        )
+        friendshipStatus = rawStatus
+      } else if (!source) {
+        phoneChoiceSession.contactFriendshipSources.set(targetContactId, effectProgressKey)
+      }
+    }
+    if (chatSession.completedMessageActionKeys.has(effectProgressKey)) {
+      attachLegacyContactEffect()
+      phoneChoiceSession.contactCardResponses.delete(messageId)
+      return rawStatus
+    }
+    var legacyEffectProgressKey = legacyMessageActionProgressKey(effectProgressKey)
+    if (
+      legacyEffectProgressKey
+      && chatSession.completedMessageActionKeys.has(legacyEffectProgressKey)
+    ) {
+      chatSession.completedMessageActionKeys.add(effectProgressKey)
+      attachLegacyContactEffect()
+      phoneChoiceSession.contactCardResponses.delete(messageId)
+      return rawStatus
+    }
+    if (migrateStoredCompletionForActionIdentity(effectProgressKey, message)) {
+      attachLegacyContactEffect()
+      phoneChoiceSession.contactCardResponses.delete(messageId)
+      return rawStatus
+    }
+    if (
+      hasStoredCompletionForActionIdentity(effectProgressKey)
+      || hasStoredCompletionForMessageId(messageId)
+    ) {
+      phoneChoiceSession.contactCardResponses.delete(messageId)
+      return friendshipStatus || ''
+    }
+    chatSession.completedMessageActionKeys.add(effectProgressKey)
+    attachLegacyContactEffect()
+    phoneChoiceSession.contactCardResponses.delete(messageId)
+    return rawStatus
+  }
+
+  function recordContactEffectProgress(messageId) {
+    var entry = choiceRunEntryForMessage(messageId)
+    var message = chatMessageById(Array.isArray(ch.rounds) ? ch.rounds : [], messageId)
+    var effectProgressKey = readerChatContactEffectProgressKey(chatSession, entry, messageId, message)
+    chatSession.completedMessageActionKeys.add(effectProgressKey)
+    return effectProgressKey
+  }
+
+  function restorePersistedMessageActions(rounds) {
+    rounds.forEach(function(round) {
+      ;(round?.messages || []).forEach(function(message) {
+        if (!messageRequiresAction(message)) return
+        var messageId = String(message.id || '')
+        var actionProgressKey = messageActionProgressKey(messageId)
+        var savedResponse = chatSession.messageActionResponses.get(actionProgressKey)
+        if (!savedResponse) savedResponse = migrateStoredResponseForActionIdentity(actionProgressKey, message)
+        if (
+          !savedResponse
+          && message.type === 'contact-event'
+          && message.eventKind === 'friend-request'
+          && !hasStoredResponseForActionIdentity(actionProgressKey)
+          && !hasStoredResponseForMessageId(messageId)
+          && readerPhoneLegacyActionDescriptor(
+            phoneChoiceSession,
+            'friendRequest',
+            messageId,
+            chatSession.actionPersistenceKey,
+            message,
+          )
+        ) {
+          savedResponse = chatSession.friendRequestResponses.get(messageId)
+          if (savedResponse) {
+            chatSession.messageActionResponses.set(actionProgressKey, savedResponse)
+            chatSession.friendRequestResponses.delete(messageId)
+          }
+        }
+        if (message.type === 'schedule' && savedResponse) {
+          chatSession.eventResponses.set(messageId, savedResponse)
+        }
+        if (
+          message.type === 'contact-event'
+          && message.eventKind === 'friend-request'
+          && savedResponse
+        ) {
+          chatSession.eventResponses.set(messageId, savedResponse)
+        }
+        var actionWasCompleted = chatSession.completedMessageActionKeys.has(actionProgressKey)
+        if (!actionWasCompleted) actionWasCompleted = migrateStoredCompletionForActionIdentity(actionProgressKey, message)
+        if (!actionWasCompleted && !savedResponse) return
+        chatSession.completedActionIds.add(messageId)
+        if (['redpacket', 'transfer', 'familycard', 'takeaway'].includes(message.type)) {
+          chatSession.claimedMessageIds.add(messageId)
+        }
+      })
+    })
+  }
+
+  function restorePendingHydratedPlayback(rounds) {
+    if (chatSession.flowGeneratedPlayback) return
+    var storyEffectCatalog = readerPhoneStoryEffectCatalog(readerPhoneData(w.phoneData))
+    for (var runEntry of choiceRuns.entries()) {
+      var runKey = runEntry[0]
+      var entry = runEntry[1]
+      var playbackIds = Array.isArray(entry?.playbackMessageIds) ? entry.playbackMessageIds : []
+      var ownerMessageId = String(entry.run?.ownerMessageId || entry.run?.ownerItemId || '')
+      var choiceOwnsCurrentFlowStep = !!flowStep && !!flowTarget && (
+        (flowTarget.kind === 'message' && ownerMessageId === String(flowStep.itemId))
+        || (flowTarget.kind === 'round' && String(rounds[entry.roundIndex]?.id || '') === String(flowStep.itemId))
+      )
+      var persistedPlayback = phoneChoiceSession.phonePendingChoicePlaybacks.get(
+        entry.playbackPersistenceKey || choicePlaybackProgressKey(entry),
+      )
+      if (persistedPlayback) {
+        var persistedOwnsEntry = persistedPlayback.chatPersistenceKey === chatSession.actionPersistenceKey
+          && persistedPlayback.ownerMessageId === ownerMessageId
+          && persistedPlayback.selectedChoiceId === String(entry.selectedChoiceId || '')
+        var persistedIsValid = persistedOwnsEntry
+          && persistedPlayback.playbackSignature === entry.playbackSignature
+          && playbackIds.length > 0
+        var nextIndex = Number(persistedPlayback.nextIndex)
+        var phase = String(persistedPlayback.phase || '')
+        if (
+          persistedIsValid
+          && Number.isInteger(nextIndex)
+          && nextIndex >= 0
+          && (
+            (phase === 'finishing' && nextIndex === playbackIds.length)
+            || (phase !== 'finishing' && nextIndex < playbackIds.length)
+          )
+        ) {
+          var restoredIndex = phase === 'waiting'
+            ? nextIndex - 1
+            : (phase === 'finishing' ? playbackIds.length - 1 : nextIndex)
+          chatSession.flowGeneratedPlayback = {
+            runKey:runKey,
+            ids:playbackIds.slice(),
+            index:restoredIndex,
+            advanceFlowIndex:choiceOwnsCurrentFlowStep ? flowSession.index : null,
+            advanceFlowItemId:choiceOwnsCurrentFlowStep ? String(flowStep.itemId) : '',
+          }
+          playbackIds.slice(0, nextIndex).forEach(function(messageId) {
+            chatSession.flowTypedMessageIds.add(String(messageId))
+          })
+          if (phase === 'active') {
+            var activeMessageId = playbackIds[nextIndex]
+            var textIndex = Number(persistedPlayback.textIndex)
+            if (Number.isInteger(textIndex) && textIndex > 0) {
+              chatSession.flowTextProgress.set(String(activeMessageId), textIndex)
+            }
+          } else if (phase === 'action') {
+            chatSession.flowTypedMessageIds.add(String(playbackIds[nextIndex]))
+          } else {
+            chatSession.flowAdvanceKey = JSON.stringify([
+              'playback',
+              String(runKey),
+              Number(restoredIndex),
+              String(playbackIds[restoredIndex + 1] || ''),
+            ])
+            chatSession.flowAdvanceDeadline = Number.isFinite(persistedPlayback.advanceDeadline)
+              ? Math.max(0, persistedPlayback.advanceDeadline)
+              : 0
+            if (phase === 'finishing') {
+              chatSession.flowTypedMessageIds.add(String(playbackIds[playbackIds.length - 1]))
+            }
+          }
+          return
+        }
+        phoneChoiceSession.phonePendingChoicePlaybacks.delete(
+          entry.playbackPersistenceKey || choicePlaybackProgressKey(entry),
+        )
+        if (persistedOwnsEntry && playbackIds.length > 0) {
+          var restartedFirstMessage = chatMessageById(rounds, playbackIds[0])
+          var restartedFirstDelay = chatPlaybackInitialDelayMs(
+            restartedFirstMessage,
+            CHAT_FLOW_MESSAGE_GAP,
+          )
+          chatSession.flowGeneratedPlayback = {
+            runKey:runKey,
+            ids:playbackIds.slice(),
+            index:restartedFirstDelay > 0 ? -1 : 0,
+            advanceFlowIndex:choiceOwnsCurrentFlowStep ? flowSession.index : null,
+            advanceFlowItemId:choiceOwnsCurrentFlowStep ? String(flowStep.itemId) : '',
+          }
+          setPendingChoicePlayback(entry, {
+            nextIndex:0,
+            phase:restartedFirstDelay > 0 ? 'waiting' : 'active',
+            textIndex:0,
+            advanceDeadline:restartedFirstDelay > 0 ? Date.now() + restartedFirstDelay : 0,
+          }, false)
+          return
+        }
+      }
+      var pendingActionIndex = playbackIds.findIndex(function(messageId) {
+        var message = chatMessageById(rounds, messageId)
+        return messageRequiresAction(message) && !messageActionIsComplete(message)
+      })
+      var pendingStoryEffectIndex = playbackIds.findIndex(function(messageId) {
+        var message = chatMessageById(rounds, messageId)
+        if (
+          !readerPhoneStoryEffectScope(message)
+          || message?.failed === true
+          || message?.deliveryState === 'failed'
+          || message?.deliveryState === 'recalled'
+          || !readerPhoneStoryItemVisible(w, message, pd)
+        ) return false
+        var sourceKey = entry?.generatedSourceKeys?.get?.(String(messageId))
+        var effectKey = readerPhoneChoiceStoryEffectKey(
+          chatSession.actionPersistenceKey,
+          entry,
+          sourceKey,
+          message,
+        )
+        if (!effectKey || (storyEffectCatalog.get(effectKey) || []).length !== 1) return false
+        return !phoneChoiceSession.phoneStoryEffectOrder.includes(effectKey)
+      })
+      var pendingIndex = pendingActionIndex
+      var waitBeforePending = false
+      if (pendingStoryEffectIndex >= 0 && (pendingIndex < 0 || pendingStoryEffectIndex < pendingIndex)) {
+        pendingIndex = pendingStoryEffectIndex
+        waitBeforePending = true
+      }
+      if (pendingIndex < 0) continue
+      chatSession.flowGeneratedPlayback = {
+        runKey:runKey,
+        ids:playbackIds.slice(),
+        index:waitBeforePending ? pendingIndex - 1 : pendingIndex,
+        advanceFlowIndex:choiceOwnsCurrentFlowStep ? flowSession.index : null,
+        advanceFlowItemId:choiceOwnsCurrentFlowStep ? String(flowStep.itemId) : '',
+      }
+      setPendingChoicePlayback(entry, {
+        nextIndex:pendingIndex,
+        phase:waitBeforePending ? 'waiting' : 'action',
+        textIndex:0,
+        advanceDeadline:0,
+      }, false)
+      return
+    }
+  }
+
+  function unsequencedAuthoredContinuationIds(rounds, roundIndex, ownerMessageId, generatedIds, endRound) {
+    if (flowEnabled || !rounds[roundIndex]) return []
+    var ownerMessages = Array.isArray(rounds[roundIndex].messages) ? rounds[roundIndex].messages : []
+    var ownerIndex = ownerMessages.findIndex(function(message) {
+      return String(message?.id) === String(ownerMessageId)
+    })
+    if (ownerIndex < 0) return []
+    var generatedIdSet = new Set((generatedIds || []).map(String))
+    var continuationIds = []
+    unsequencedContinuationScan:
+    for (var continuationRoundIndex = roundIndex; continuationRoundIndex < rounds.length; continuationRoundIndex++) {
+      if (continuationRoundIndex === roundIndex && endRound === true) continue
+      var messages = Array.isArray(rounds[continuationRoundIndex]?.messages)
+        ? rounds[continuationRoundIndex].messages
+        : []
+      var startMessageIndex = continuationRoundIndex === roundIndex ? ownerIndex + 1 : 0
+      for (var messageIndex = startMessageIndex; messageIndex < messages.length; messageIndex++) {
+        var message = messages[messageIndex]
+        if (message?.id == null || generatedIdSet.has(String(message.id))) continue
+        if (!readerPhoneStoryItemVisible(w, message, pd)) continue
+        if (phoneStoryMessageBlockedByEndedRound(
+          pd,
+          String(message.id),
+          phoneChoiceSession.phoneChoiceSelections,
+          { chatPersistenceKey:chatSession.actionPersistenceKey },
+        )) break
+        if (Array.isArray(message.choices) && message.choices.length > 0) break unsequencedContinuationScan
+        continuationIds.push(String(message.id))
+      }
+    }
+    return continuationIds
   }
 
   function hydratePersistedChatChoices(rounds) {
@@ -7976,27 +9600,56 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         return { id:message.id, choices:message.choices.slice() }
       })
       owners.forEach(function(owner) {
-        var selectedChoiceId = savedSelections.get(String(owner.id))
+        var selectionKey = persistedChoiceSelectionKey(owner.id)
+        var selectedChoiceId = persistedSelectedChoiceId(owner.id)
         if (!selectedChoiceId) return
         var matches = owner.choices.reduce(function(indexes, choice, choiceIndex) {
           if (String(choice?.id || '') === String(selectedChoiceId)) indexes.push(choiceIndex)
           return indexes
         }, [])
         if (matches.length !== 1) {
-          savedSelections.delete(String(owner.id))
+          savedSelections.delete(selectionKey)
           return
         }
+        var generatedSourceKeys = new Map()
         var result = applyChatChoice(rounds[roundIndex], owner.id, matches[0], {
-          idFactory:nextReaderChoiceMessageId,
+          idFactory:function(sourceKey) {
+            var id = nextReaderChoiceMessageId()
+            generatedSourceKeys.set(String(id), String(sourceKey || ''))
+            return id
+          },
         })
         if (!result.ok) {
-          savedSelections.delete(String(owner.id))
+          savedSelections.delete(selectionKey)
           return
         }
         rounds[roundIndex] = result.round
-        choiceRuns.set(choiceRunKey(roundIndex, owner.id), { roundIndex:roundIndex, run:result.run })
+        var generatedIds = Array.isArray(result.run.generatedMessageIds)
+          ? result.run.generatedMessageIds.slice()
+          : []
+        var continuationIds = unsequencedAuthoredContinuationIds(
+          rounds,
+          roundIndex,
+          owner.id,
+          generatedIds,
+          result.run.endRound,
+        )
+        var choiceRunEntry = {
+          roundIndex:roundIndex,
+          run:result.run,
+          selectedChoiceId:String(selectedChoiceId),
+        }
+        setChoiceRunPlaybackMetadata(
+          choiceRunEntry,
+          rounds,
+          generatedIds.concat(continuationIds),
+          generatedSourceKeys,
+        )
+        choiceRuns.set(choiceRunKey(roundIndex, owner.id), choiceRunEntry)
       })
     })
+    restorePersistedMessageActions(rounds)
+    restorePendingHydratedPlayback(rounds)
   }
 
   function callWasCompletedInFlow(message) {
@@ -8178,9 +9831,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function finishChatFlowStep() {
+    closeOpenChatPip()
     stopVoicePlayback(true)
     clearStoryEventTimers(true)
     clearChatFlowTimers()
+    clearTransientMessageTimers()
+    clearChatBottomTracking()
+    resetChatFlowAdvanceDeadline()
     var nextStep = advanceReaderPhoneFlow(w)
     refreshChatFlowContext()
     if (flowStep && flowTarget) {
@@ -8193,13 +9850,26 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function returnToChatList() {
+    closeOpenChatPip()
     stopVoicePlayback(true)
     clearStoryEventTimers(true)
     clearChatFlowTimers()
+    clearTransientMessageTimers()
     clearChatBottomTracking()
     openReaderApp('messages')
     focusReaderControl(frame, '.rd-chat-card[data-chat-index="' + chatIndex + '"]')
   }
+
+  function suspendChatForLinkedApp() {
+    closeOpenChatPip()
+    stopVoicePlayback(true)
+    clearStoryEventTimers(true)
+    clearChatFlowTimers()
+    clearChatBottomTracking()
+    clearTransientMessageTimers()
+    chatFlowRenderToken += 1
+  }
+
   function backToList() {
     if (readerLayerHistory.has('phone-detail')) {
       readerLayerHistory.close('phone-detail')
@@ -8215,11 +9885,15 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function openCallScene(msg, callKey) {
+    closeOpenChatPip()
     stopVoicePlayback(true)
     clearStoryEventTimers(true)
     clearChatFlowTimers()
+    clearTransientMessageTimers()
     mayAutoOpenCall = false
-    openedCallScenes[callKey] = true
+    var callSceneMessageId = String(msg?.id || callKey)
+    openedCallScenes[callSceneMessageId] = true
+    if (autoOpenCallMessageId === callSceneMessageId) autoOpenCallMessageId = ''
     var caller = contacts.find(function(contact) { return contact.id === msg.senderId })
     var callerIdentity = resolveReaderContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: getChatName() })
     var callerName = callerIdentity.name || getChatName()
@@ -8320,15 +9994,21 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
 
   function renderChat() {
+    closeOpenChatPip()
+    var restoringChatPosition = !exportMode
+      && _readerPendingReadingPosition?.kind === 'phone'
+      && _readerPendingReadingPosition.appType === 'messages'
+      && _readerPendingReadingPosition.view === 'chat'
+      && _readerPendingReadingPosition.itemId === String(ch && ch.id || '')
     var previousChatMessageArea = frame.querySelector('#chatMsgArea')
-    var followChatBottomAfterRender = !previousChatMessageArea || chatAreaIsNearBottom(previousChatMessageArea)
+    var followChatBottomAfterRender = !restoringChatPosition
+      && (!previousChatMessageArea || chatAreaIsNearBottom(previousChatMessageArea))
     var previousChatScrollTop = Number(previousChatMessageArea?.scrollTop || 0)
     stopVoicePlayback(true)
     clearStoryEventTimers(true)
     clearChatFlowTimers()
     clearChatBottomTracking()
-    transientMessageTimers.forEach(function(timer) { clearTimeout(timer) })
-    transientMessageTimers.clear()
+    clearTransientMessageTimers()
     chatFlowRenderToken += 1
     var renderToken = chatFlowRenderToken
     var ast = appStyle('messages')
@@ -8343,27 +10023,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       migrationRound.messages = (Array.isArray(migrationRound.messages) ? migrationRound.messages : []).concat(legacyMessages)
       ch.messages = []
     }
-
-    function messageActionIsComplete(message) {
-      var messageId = String(message && message.id || '')
-      if (!messageId) return false
-      if (message?.type === 'music' && !safeMessageCardUrl(message.musicUrl)) return true
-      if (
-        message?.senderId === 'self'
-        && ['redpacket', 'transfer', 'familycard', 'takeaway'].includes(message?.type)
-      ) return true
-      if (chatSession.completedActionIds.has(messageId)) return true
-      if (chatSession.claimedMessageIds.has(messageId)) return true
-      if (message?.type === 'schedule' && chatSession.eventResponses.has(messageId)) return true
-      if (
-        message?.type === 'contact-card'
-        && (
-          phoneChoiceSession.contactCardResponses.has(messageId)
-          || phoneChoiceSession.contactFriendships.has(String(message?.targetContactId || ''))
-        )
-      ) return true
-      return false
-    }
+    var directStorySourceByMessage = new Map()
+    readerPhoneChatMessageSourceEntries(ch).forEach(function(entry) {
+      directStorySourceByMessage.set(entry.message, entry.sourceKey)
+    })
 
     function messageActionStateHtml(message) {
       var label = messageActionLabel(message, messageActionIsComplete(message))
@@ -8373,45 +10036,54 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     ensureReaderChatMessageIds(rounds)
     hydratePersistedChatChoices(rounds)
     var visibleMessageIds = flowVisibleMessageIds()
-    var storyState = createChatStoryState({ contacts:contacts }, ch)
+    var storyEffectOrderChanged = false
     for (var storyRoundIndex = 0; storyRoundIndex < rounds.length; storyRoundIndex++) {
       var storyMessages = Array.isArray(rounds[storyRoundIndex].messages) ? rounds[storyRoundIndex].messages : []
       for (var storyMessageIndex = 0; storyMessageIndex < storyMessages.length; storyMessageIndex++) {
         var storyMessage = storyMessages[storyMessageIndex]
         if (!isMessageVisible(storyMessage, visibleMessageIds)) continue
-        storyState = applyChatStoryMessage(storyState, storyMessage)
+        if (
+          !exportMode
+          && readerPhoneStoryEffectScope(storyMessage)
+          && storyMessage?.failed !== true
+          && storyMessage?.deliveryState !== 'failed'
+          && storyMessage?.deliveryState !== 'recalled'
+        ) {
+          var storyChoiceRun = choiceRunEntryForMessage(storyMessage.id)
+          var generatedStorySource = storyChoiceRun?.generatedSourceKeys?.get?.(String(storyMessage.id))
+          var storyEffectKey = generatedStorySource
+            ? readerPhoneChoiceStoryEffectKey(
+                chatSession.actionPersistenceKey,
+                storyChoiceRun,
+                generatedStorySource,
+                storyMessage,
+              )
+            : readerPhoneDirectStoryEffectKey(
+                chatSession.actionPersistenceKey,
+                storyMessage,
+                directStorySourceByMessage.get(storyMessage),
+              )
+          if (recordReaderPhoneStoryEffect(phoneChoiceSession, storyEffectKey)) {
+            storyEffectOrderChanged = true
+          }
+        }
       }
     }
-    contacts = storyState.contacts
-    pd.contacts = contacts
-    if (ch.type === 'group') {
-      ch.groupName = storyState.group.groupName
-      ch.groupAvatarUrl = storyState.group.groupAvatarUrl
-      ch.contactIds = storyState.group.contactIds
-      ch.groupOwnerId = storyState.group.groupOwnerId
-      ch.groupAdminIds = storyState.group.groupAdminIds
-      ch.groupTitles = storyState.group.groupTitles
-    }
-    var storySession = readerPhoneChoiceSession(w)
-    if (!(storySession.storyContactOverrides instanceof Map)) storySession.storyContactOverrides = new Map()
-    if (!(storySession.storyGroupOverrides instanceof Map)) storySession.storyGroupOverrides = new Map()
-    contacts.forEach(function(contact) {
-      storySession.storyContactOverrides.set(String(contact && contact.id || ''), {
-        name:contact && contact.name || '',
-        avatarUrl:contact && contact.avatarUrl || '',
-        messageAvatarUrl:contact && contact.messageAvatarUrl || '',
-        note:contact && contact.note || '',
-      })
-    })
-    if (ch.type === 'group') {
-      storySession.storyGroupOverrides.set(String(ch.id || ''), {
-        groupName:ch.groupName || '',
-        groupAvatarUrl:ch.groupAvatarUrl || '',
-        contactIds:(ch.contactIds || []).slice(),
-        groupOwnerId:ch.groupOwnerId || '',
-        groupAdminIds:(ch.groupAdminIds || []).slice(),
-        groupTitles:Object.assign({}, ch.groupTitles || {}),
-      })
+    if (!exportMode) {
+      var projectionOrderChanged = rebuildReaderPhoneStoryProjection(w, phoneChoiceSession)
+      var projectedPhoneData = readerPhoneDataWithStoryState(w.phoneData)
+      contacts = projectedPhoneData.contacts || []
+      pd.contacts = contacts
+      var projectedChat = projectedPhoneData.chats?.[chatIndex]
+      if (ch.type === 'group' && projectedChat) {
+        ch.groupName = projectedChat.groupName || ''
+        ch.groupAvatarUrl = projectedChat.groupAvatarUrl || ''
+        ch.contactIds = Array.isArray(projectedChat.contactIds) ? projectedChat.contactIds.slice() : []
+        ch.groupOwnerId = projectedChat.groupOwnerId || ''
+        ch.groupAdminIds = Array.isArray(projectedChat.groupAdminIds) ? projectedChat.groupAdminIds.slice() : []
+        ch.groupTitles = Object.assign({}, projectedChat.groupTitles || {})
+      }
+      if (storyEffectOrderChanged || projectionOrderChanged) saveCurrentReaderProgress()
     }
     chatMentionNames = ch.type === 'group'
       ? ['全体成员'].concat([readerChatName]).concat((ch.contactIds || []).map(function(contactId) {
@@ -8453,9 +10125,15 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     choiceRuns.forEach(function(entry, key) {
       if (!entry || !entry.run) return
       var generatedIds = Array.isArray(entry.run.generatedMessageIds) ? entry.run.generatedMessageIds : []
+      var generatedAnchorId = generatedIds.find(function(id) {
+        var message = findFlowPlaybackMessage(id)
+        return message
+          && message.transientTyping !== true
+          && !['time', 'system', 'call', 'system-event', 'contact-event'].includes(message.type)
+      })
       var anchorId = entry.run.replyMessageId != null
         ? entry.run.replyMessageId
-        : (generatedIds.length > 0 ? generatedIds[0] : entry.run.ownerMessageId)
+        : (generatedAnchorId != null ? generatedAnchorId : entry.run.ownerMessageId)
       if (anchorId == null) return
       reselectRunsByReply.set(messageLocationKey(entry.roundIndex, anchorId), key)
     })
@@ -8466,6 +10144,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     function transientMessageState(kind, messageId) {
       var key = kind + ':' + String(messageId || '')
       if (chatSession.settledTransientMessageIds.has(key)) return { key:key, settled:true }
+      if (exportMode) return { key:key, settled:kind === 'recall' }
       var now = Date.now()
       var startedAt = Number(chatSession.transientMessageStartedAt.get(key))
       if (!Number.isFinite(startedAt)) {
@@ -8557,6 +10236,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         }
         if (msg.type === 'call') {
           var callKey = ri + '-' + mi
+          var callMessageId = String(msg?.id || callKey)
           var callIdentity = resolveReaderContactIdentity(pd, msg.senderId, { surface: 'messages', authoredName: chatName })
           var callName = callIdentity.name || chatName
           var callLabel = msg.callMode === 'video' ? '视频通话' : '语音通话'
@@ -8565,7 +10245,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           var callEnded = callHasEnded(msg)
           var callDuration = formatReaderCallDuration(estimatedReaderCallDurationSeconds(msg))
           if (!authoredCallOutcome) callMessages.push({ key: callKey, message: msg })
-          if (!authoredCallOutcome && !callEnded && mayAutoOpenCall && !openedCallScenes[callKey] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
+          if (!authoredCallOutcome && !callEnded && mayAutoOpenCall && (!autoOpenCallMessageId || autoOpenCallMessageId === callMessageId) && !openedCallScenes[callMessageId] && !autoCall && (!flowEnabled || isFlowTargetCall(msg, round))) autoCall = { key: callKey, message: msg }
           if (authoredCallOutcome) {
             h += '<div class="rd-call-card rd-call-record rd-call-outcome" style="--rd-call-record-bg:' + sanitizeCssColor(ast.otherBubbleBg, { fallback: '#fff' }) + ';--rd-call-record-ink:' + sanitizeCssColor(ast.otherBubbleText, { fallback: '#333' }) + '" data-message-id="' + escapeHtmlAttribute(msg.id) + '" role="status">'
             h += '<span class="rd-call-record-icon" aria-hidden="true">' + (msg.callMode === 'video' ? '▣' : '☎') + '</span><span class="rd-call-record-copy">' + esc(callLabel) + '<small>' + esc(chatStoryMessageLabel(msg).replace(callLabel + ' · ', '')) + '</small></span></div>'
@@ -8829,7 +10509,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       transientMessageTimers.add(timer)
     }
 
-    transientRowsToSchedule.forEach(function(entry) {
+    if (!exportMode) transientRowsToSchedule.forEach(function(entry) {
       var transientRow = Array.from(frame.querySelectorAll('[data-transient-key]')).find(function(row) {
         return String(row.dataset.transientKey) === String(entry.state.key)
       })
@@ -8885,7 +10565,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       }
       chatMessageArea.addEventListener('load', settleChatMedia, true)
       chatMessageArea.addEventListener('error', settleChatMedia, true)
-      if (typeof globalThis.ResizeObserver === 'function') {
+      if (!exportMode && typeof globalThis.ResizeObserver === 'function') {
         chatBottomResizeObserver = new globalThis.ResizeObserver(function() {
           scheduleChatBottom()
         })
@@ -8905,7 +10585,9 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       && _readerPendingReadingPosition.view === 'chat'
       && _readerPendingReadingPosition.itemId === String(ch && ch.id || '')
     ) {
-      restorePhoneReadingScroll(_readerPendingReadingPosition, chatMessageArea)
+      restorePhoneReadingScroll(_readerPendingReadingPosition, chatMessageArea, function() {
+        followChatBottom = chatAreaIsNearBottom(chatMessageArea)
+      })
       _readerPendingReadingPosition = null
       scheduleReaderPositionSave()
     }
@@ -8985,6 +10667,8 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       var message = storyMessageById(normalizedMessageId)
       if (!message || !messageRequiresAction(message)) return
       chatSession.completedActionIds.add(normalizedMessageId)
+      chatSession.completedMessageActionKeys.add(messageActionProgressKey(normalizedMessageId))
+      saveCurrentReaderProgress()
       frame.querySelectorAll('[data-message-action-state]').forEach(function(state) {
         if (String(state.dataset.messageActionState) !== normalizedMessageId) return
         state.textContent = messageActionLabel(message, true)
@@ -9014,6 +10698,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           return String(contact.id) === targetContactId
         })
         completeMessageAction(messageId, {deferFlowResume:true})
+        suspendChatForLinkedApp()
         openReaderApp(
           card.dataset.targetApp,
           targetContactIndex >= 0 ? targetContactIndex : undefined,
@@ -9109,7 +10794,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         button.onclick = function() {
           var response = button.dataset.storyResponse
           chatSession.eventResponses.set(eventId, response)
-          phoneChoiceSession.friendRequestResponses.set(eventId, response)
+          chatSession.messageActionResponses.set(messageActionProgressKey(eventId), response)
           completeMessageAction(eventId, {deferFlowResume:true})
           saveCurrentReaderProgress()
           renderChat()
@@ -9128,8 +10813,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         var normalizedStoryCard = normalizeChatStoryMessage(message)
         var pendingContactAction = kind === 'contact-card'
           && normalizedStoryCard.contactAction !== 'view'
-          && !phoneChoiceSession.contactCardResponses.has(String(message.id))
-          && !phoneChoiceSession.contactFriendships.has(String(normalizedStoryCard.targetContactId || ''))
+          && !contactCardStatusForMessage(message)
         if (!pendingContactAction) completeMessageAction(message.id)
         if (kind === 'location') {
           var locationHtml = ''
@@ -9143,9 +10827,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           if (contact && contact.avatarUrl) contactHtml += '<img src="' + escapeHtmlAttribute(contact.avatarUrl) + '" alt="">'
           else contactHtml += '<span>' + esc(contactName.charAt(0)) + '</span>'
           contactHtml += '<div><h3>' + esc(contactName) + '</h3><p>' + esc(message.contactNote || (contact && contact.note) || '暂无附言') + '</p></div></div>'
-          var contactCardStatus = phoneChoiceSession.contactCardResponses.get(String(message.id))
-            || phoneChoiceSession.contactFriendships.get(String(normalizedStoryCard.targetContactId || ''))
-            || ''
+          var contactCardStatus = contactCardStatusForMessage(message)
           var contactStatusLabels = { accepted:'已添加', declined:'已拒绝', pending:'申请中' }
           var contactReaction = contactCardStatus === 'accepted'
             ? normalizedStoryCard.contactAcceptedText
@@ -9160,8 +10842,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           var contactActionButton = contactPip.querySelector('[data-contact-card-action]')
           if (contactActionButton && !contactCardStatus) contactActionButton.onclick = function() {
             var nextStatus = normalizedStoryCard.contactAction === 'direct' ? 'accepted' : normalizedStoryCard.contactRequestOutcome
-            phoneChoiceSession.contactCardResponses.set(String(message.id), nextStatus)
-            phoneChoiceSession.contactFriendships.set(String(normalizedStoryCard.targetContactId), nextStatus)
+            var targetContactId = String(normalizedStoryCard.targetContactId)
+            setReaderContactFriendship(
+              phoneChoiceSession,
+              targetContactId,
+              nextStatus,
+              recordContactEffectProgress(message.id),
+            )
             contactActionButton.disabled = true
             contactActionButton.textContent = contactStatusLabels[nextStatus]
             var nextReaction = nextStatus === 'accepted'
@@ -9196,8 +10883,11 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         var card = button.closest('[data-story-message-id]')
         var messageId = String(card && card.dataset.storyMessageId || '')
         if (!messageId) return
-        chatSession.eventResponses.set(messageId, button.dataset.scheduleResponse)
+        var scheduleResponse = button.dataset.scheduleResponse
+        chatSession.eventResponses.set(messageId, scheduleResponse)
+        chatSession.messageActionResponses.set(messageActionProgressKey(messageId), scheduleResponse)
         completeMessageAction(messageId)
+        saveCurrentReaderProgress()
         renderChat()
       }
     })
@@ -9235,26 +10925,6 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       return null
     }
 
-    function unsequencedAuthoredContinuationIds(roundIndex, ownerMessageId, generatedIds, endRound) {
-      if (flowEnabled || endRound === true || !rounds[roundIndex]) return []
-      var messages = Array.isArray(rounds[roundIndex].messages) ? rounds[roundIndex].messages : []
-      var ownerIndex = messages.findIndex(function(message) {
-        return String(message?.id) === String(ownerMessageId)
-      })
-      if (ownerIndex < 0) return []
-      var generatedIdSet = new Set((generatedIds || []).map(String))
-      var continuationIds = []
-      for (var messageIndex = ownerIndex + 1; messageIndex < messages.length; messageIndex++) {
-        var message = messages[messageIndex]
-        if (message?.id == null || generatedIdSet.has(String(message.id))) continue
-        if (Array.isArray(message.choices) && message.choices.length > 0) break
-        if (!readerPhoneStoryItemVisible(w, message, pd)) continue
-        if (phoneStoryMessageBlockedByEndedRound(pd, String(message.id), phoneChoiceSession.phoneChoiceSelections)) break
-        continuationIds.push(String(message.id))
-      }
-      return continuationIds
-    }
-
     function nextChatFlowMessage() {
       var playback = chatSession.flowGeneratedPlayback
       if (playback && Array.isArray(playback.ids) && playback.index + 1 < playback.ids.length) {
@@ -9272,26 +10942,85 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     }
 
     function renderedChatFlowIsCurrent() {
-      return chatFlowRenderToken === renderToken && frame.isConnected
+      return chatFlowRenderToken === renderToken
+        && frame.isConnected
+        && chatMessageArea?.isConnected
+        && frame.querySelector('#chatMsgArea') === chatMessageArea
+    }
+
+    function currentChatFlowAdvanceKey() {
+      var playback = chatSession.flowGeneratedPlayback
+      if (playback && Array.isArray(playback.ids)) {
+        return JSON.stringify([
+          'playback',
+          String(playback.runKey || ''),
+          Number(playback.index),
+          String(playback.ids[playback.index + 1] || ''),
+        ])
+      }
+      return JSON.stringify([
+        'flow',
+        Number(flowSession.index),
+        String(nextChatFlowMessage()?.id || ''),
+      ])
     }
 
     function scheduleNextChatFlowMessage(delayMs) {
       if (!flowStep && !chatSession.flowGeneratedPlayback) return
+      var advanceKey = currentChatFlowAdvanceKey()
+      var requestedDelay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : nextChatFlowDelay()
+      var now = Date.now()
+      if (chatSession.flowAdvanceKey !== advanceKey || chatSession.flowAdvanceDeadline <= 0) {
+        chatSession.flowAdvanceKey = advanceKey
+        chatSession.flowAdvanceDeadline = now + requestedDelay
+      }
+      var scheduledPlayback = chatSession.flowGeneratedPlayback
+      if (scheduledPlayback && Array.isArray(scheduledPlayback.ids)) {
+        var scheduledNextIndex = scheduledPlayback.index + 1
+        updateActiveChoicePlayback(scheduledPlayback, {
+          nextIndex:scheduledNextIndex,
+          phase:scheduledNextIndex < scheduledPlayback.ids.length ? 'waiting' : 'finishing',
+          textIndex:0,
+          advanceDeadline:chatSession.flowAdvanceDeadline,
+        }, true)
+      }
+      var remainingDelay = Math.max(0, chatSession.flowAdvanceDeadline - now)
       chatFlowAdvanceTimer = setTimeout(function() {
         chatFlowAdvanceTimer = null
         if (!renderedChatFlowIsCurrent()) return
+        resetChatFlowAdvanceDeadline()
         var playback = chatSession.flowGeneratedPlayback
+        var completedPlayback = null
         if (playback && Array.isArray(playback.ids)) {
           if (playback.index + 1 < playback.ids.length) {
             playback.index += 1
+            updateActiveChoicePlayback(playback, {
+              nextIndex:playback.index,
+              phase:'active',
+              textIndex:0,
+              advanceDeadline:0,
+            }, true)
             renderChat()
             return
           }
+          completedPlayback = playback
+          clearPendingChoicePlayback(choiceRuns.get(playback.runKey), true)
           chatSession.flowGeneratedPlayback = null
         }
-        if (flowStep) finishChatFlowStep()
+        if (!flowStep) {
+          renderChat()
+          return
+        }
+        if (!completedPlayback) {
+          finishChatFlowStep()
+          return
+        }
+        var playbackOwnsCurrentFlowStep = Number.isInteger(completedPlayback.advanceFlowIndex)
+          && completedPlayback.advanceFlowIndex === flowSession.index
+          && String(completedPlayback.advanceFlowItemId || '') === String(flowStep.itemId || '')
+        if (playbackOwnsCurrentFlowStep) finishChatFlowStep()
         else renderChat()
-      }, Number.isFinite(delayMs) ? Math.max(0, delayMs) : nextChatFlowDelay())
+      }, remainingDelay)
     }
 
     function finishCurrentChatFlowMessage(messageId) {
@@ -9299,6 +11028,12 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       chatSession.flowTypedMessageIds.add(String(messageId))
       var completedMessage = findFlowPlaybackMessage(messageId)
       if (completedMessage && messageRequiresAction(completedMessage) && !messageActionIsComplete(completedMessage)) {
+        updateActiveChoicePlayback(chatSession.flowGeneratedPlayback, {
+          nextIndex:chatSession.flowGeneratedPlayback?.index || 0,
+          phase:'action',
+          textIndex:readerPhoneText(completedMessage.text || '').length,
+          advanceDeadline:0,
+        }, true)
         setChoiceAvailability(false)
         return
       }
@@ -9311,6 +11046,21 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
 
     function startCurrentChatFlowMessage() {
       if ((!flowStep && !chatSession.flowGeneratedPlayback) || autoCall) return
+      var waitingPlayback = chatSession.flowGeneratedPlayback
+      if (waitingPlayback) {
+        if (!Array.isArray(waitingPlayback.ids) || waitingPlayback.ids.length === 0) {
+          chatSession.flowGeneratedPlayback = null
+          if (!flowStep) return
+        } else if (waitingPlayback.index < 0) {
+          if (chatFlowAdvanceTimer === null) {
+            var firstPlaybackMessage = findFlowPlaybackMessage(waitingPlayback.ids[0])
+            scheduleNextChatFlowMessage(
+              chatPlaybackInitialDelayMs(firstPlaybackMessage, CHAT_FLOW_MESSAGE_GAP),
+            )
+          }
+          return
+        }
+      }
       var messageId = currentFlowPlaybackMessageId()
       if (!messageId) return
       var message = findFlowPlaybackMessage(messageId)
@@ -9319,6 +11069,14 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       var actionPending = messageRequiresAction(message) && !messageActionIsComplete(message)
       setChoiceAvailability((!currentFlowChoicePending(rounds) || alreadyComplete) && !actionPending)
       if (alreadyComplete) {
+        if (actionPending) {
+          updateActiveChoicePlayback(chatSession.flowGeneratedPlayback, {
+            nextIndex:chatSession.flowGeneratedPlayback?.index || 0,
+            phase:'action',
+            textIndex:readerPhoneText(message.text || '').length,
+            advanceDeadline:0,
+          }, true)
+        }
         if (!currentFlowChoicePending(rounds) && !actionPending) scheduleNextChatFlowMessage()
         return
       }
@@ -9365,6 +11123,12 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
         if (!renderedChatFlowIsCurrent()) return
         playbackState = advanceChatTextPlayback(playbackText, playbackState.index)
         chatSession.flowTextProgress.set(String(messageId), playbackState.index)
+        updateActiveChoicePlayback(chatSession.flowGeneratedPlayback, {
+          nextIndex:chatSession.flowGeneratedPlayback?.index || 0,
+          phase:'active',
+          textIndex:playbackState.index,
+          advanceDeadline:0,
+        }, false)
         stream.textContent = playbackState.visibleText
         scheduleChatBottom()
         if (playbackState.complete) {
@@ -9382,8 +11146,13 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       var runKey = choiceRunKey(ri, ownerMessageId)
       if (choiceRuns.has(runKey)) return
       if (flowStep && String(flowStep.itemId) === String(ownerMessageId) && !chatSession.flowTypedMessageIds.has(String(ownerMessageId))) return
+      var generatedSourceKeys = new Map()
       var result = applyChatChoice(rounds[ri], ownerMessageId, ci, {
-        idFactory: nextReaderChoiceMessageId,
+        idFactory:function(sourceKey) {
+          var id = nextReaderChoiceMessageId()
+          generatedSourceKeys.set(String(id), String(sourceKey || ''))
+          return id
+        },
       })
       if (!result.ok) return
       var ownerMessage = rounds[ri].messages.find(function(message) {
@@ -9391,35 +11160,65 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       })
       var selectedChoiceId = ownerMessage?.choices?.[ci]?.id
       if (typeof selectedChoiceId === 'string' && selectedChoiceId) {
-        phoneChoiceSession.phoneChoiceSelections.set(String(ownerMessageId), selectedChoiceId)
+        var selectionKey = persistedChoiceSelectionKey(ownerMessageId)
+        if (selectionKey) phoneChoiceSession.phoneChoiceSelections.set(selectionKey, selectedChoiceId)
       }
       rounds[ri] = result.round
-      choiceRuns.set(runKey, { roundIndex: ri, run: result.run })
+      var choiceRunEntry = {
+        roundIndex:ri,
+        run:result.run,
+        selectedChoiceId:String(selectedChoiceId || ''),
+        playbackMessageIds:[],
+      }
+      choiceRuns.set(runKey, choiceRunEntry)
       reconcileReaderPhoneStorySelections(w, pd)
-      saveCurrentReaderProgress()
       var generatedIds = Array.isArray(result.run.generatedMessageIds) ? result.run.generatedMessageIds.slice() : []
       var continuationIds = unsequencedAuthoredContinuationIds(
+        rounds,
         ri,
         ownerMessageId,
         generatedIds,
         result.run.endRound,
       )
       var playbackIds = generatedIds.concat(continuationIds)
+      setChoiceRunPlaybackMetadata(choiceRunEntry, rounds, playbackIds, generatedSourceKeys)
+      resetChatFlowAdvanceDeadline()
+      autoOpenCallMessageId = ''
+      var generatedPendingCall = playbackIds.map(findFlowPlaybackMessage).find(function(message) {
+        return message?.type === 'call' && !callHasEnded(message)
+      })
+      if (generatedPendingCall) {
+        autoOpenCallMessageId = String(generatedPendingCall.id || '')
+        mayAutoOpenCall = true
+      }
       var firstPlaybackMessage = playbackIds.length ? findFlowPlaybackMessage(playbackIds[0]) : null
       var firstPlaybackDelay = chatPlaybackInitialDelayMs(firstPlaybackMessage, CHAT_FLOW_MESSAGE_GAP)
+      var choiceOwnsCurrentFlowStep = !!flowStep && !!flowTarget && (
+        (flowTarget.kind === 'message' && String(ownerMessageId) === String(flowStep.itemId))
+        || (flowTarget.kind === 'round' && String(rounds[ri]?.id || '') === String(flowStep.itemId))
+      )
       chatSession.flowGeneratedPlayback = playbackIds.length > 0
-        ? { runKey: runKey, ids: playbackIds, index:firstPlaybackDelay > 0 ? -1 : 0 }
+        ? {
+            runKey:runKey,
+            ids:playbackIds,
+            index:firstPlaybackDelay > 0 ? -1 : 0,
+            advanceFlowIndex:choiceOwnsCurrentFlowStep ? flowSession.index : null,
+            advanceFlowItemId:choiceOwnsCurrentFlowStep ? String(flowStep.itemId) : '',
+          }
         : null
+      if (playbackIds.length > 0) {
+        setPendingChoicePlayback(choiceRunEntry, {
+          nextIndex:0,
+          phase:firstPlaybackDelay > 0 ? 'waiting' : 'active',
+          textIndex:0,
+          advanceDeadline:firstPlaybackDelay > 0 ? Date.now() + firstPlaybackDelay : 0,
+        }, false)
+      } else {
+        clearPendingChoicePlayback(choiceRunEntry, false)
+      }
+      saveCurrentReaderProgress()
       setChoiceListOpen(false)
       renderChat()
-      if (chatSession.flowGeneratedPlayback && chatSession.flowGeneratedPlayback.index < 0) {
-        chatFlowAdvanceTimer = setTimeout(function() {
-          chatFlowAdvanceTimer = null
-          if (!chatSession.flowGeneratedPlayback) return
-          chatSession.flowGeneratedPlayback.index = 0
-          renderChat()
-        }, firstPlaybackDelay)
-      }
     }
 
     // Input bar toggle
@@ -9450,30 +11249,22 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           var entry = rollbackRuns[rollbackIndex][1]
           if (!entry || !rounds[entry.roundIndex]) continue
           rounds[entry.roundIndex] = rollbackChatChoice(rounds[entry.roundIndex], entry.run)
-          ;(entry.run.generatedMessageIds || []).forEach(function(id) {
-            var messageId = String(id)
-            chatSession.flowTypedMessageIds.delete(messageId)
-            chatSession.flowTextProgress.delete(messageId)
-            chatSession.claimedMessageIds.delete(messageId)
-            chatSession.endedCallIds.delete(messageId)
-            chatSession.voicePlaybacks.delete(messageId)
-            chatSession.revealedEventIds.delete(messageId)
-            chatSession.retriedEventIds.delete(messageId)
-            chatSession.burnedEventIds.delete(messageId)
-            chatSession.reactedEventIds.delete(messageId)
-            chatSession.eventResponses.delete(messageId)
-            chatSession.completedActionIds.delete(messageId)
-            ;['failed:' + messageId, 'recall:' + messageId].forEach(function(transientKey) {
-              chatSession.transientMessageStartedAt.delete(transientKey)
-              chatSession.settledTransientMessageIds.delete(transientKey)
-            })
+          var rollbackPlaybackIds = readerChatChoiceRunPlaybackIds(entry)
+          clearReaderChatMessageRuntime(chatSession, rollbackPlaybackIds, entry)
+          clearPendingChoicePlayback(entry, false)
+          rollbackPlaybackIds.forEach(function(messageId) {
+            delete openedCallScenes[String(messageId)]
           })
+          if (rollbackPlaybackIds.has(autoOpenCallMessageId)) autoOpenCallMessageId = ''
           choiceRuns.delete(rollbackKey)
-          phoneChoiceSession.phoneChoiceSelections.delete(String(entry.run.ownerMessageId || entry.run.ownerItemId || ''))
+          phoneChoiceSession.phoneChoiceSelections.delete(
+            persistedChoiceSelectionKey(entry.run.ownerMessageId || entry.run.ownerItemId || ''),
+          )
         }
         if (chatSession.flowGeneratedPlayback && rollbackKeys.has(chatSession.flowGeneratedPlayback.runKey)) {
           chatSession.flowGeneratedPlayback = null
         }
+        resetChatFlowAdvanceDeadline()
         reconcileReaderPhoneStorySelections(w, pd)
         saveCurrentReaderProgress()
         renderChat()
@@ -9496,7 +11287,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       }
     }
 
-    startCurrentChatFlowMessage()
+    if (!exportMode) startCurrentChatFlowMessage()
   }
 
   renderChat()
@@ -9565,10 +11356,16 @@ function openReaderForumAccountDialog(pd, triggerElement, onSaved) {
 // ---- Forum post viewer ----
 function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext) {
   var exportMode = navigationContext?.exportMode === true
+  var detailHistoryLayerKey = navigationContext?.origin?.kind === 'chat'
+    ? 'phone-chat-link'
+    : 'phone-detail'
   var posts = pd.forumPosts || []
   var sourcePost = posts.find(function(p) { return p.id === postId })
   if (!sourcePost || (!exportMode && !readerPhoneStoryItemVisible(w, sourcePost, pd))) return
-  var phoneChoiceSession = readerPhoneChoiceSession(w)
+  var livePhoneChoiceSession = readerPhoneChoiceSession(w)
+  var phoneChoiceSession = exportMode
+    ? cloneReaderPhoneChoiceSessionForExport(livePhoneChoiceSession)
+    : livePhoneChoiceSession
   var forumSessionKey = String(postIndex) + '::' + String(postId)
   var forumSession = phoneChoiceSession.forumPosts.get(forumSessionKey)
   if (!forumSession) {
@@ -9617,7 +11414,7 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
 
   function returnToForumList() {
     if (navigationContext?.origin?.kind === 'chat') {
-      if (readerLayerHistory.has('phone-app')) readerLayerHistory.close('phone-app')
+      if (readerLayerHistory.has(detailHistoryLayerKey)) readerLayerHistory.close(detailHistoryLayerKey)
       else {
         _readerPendingReadingPosition = {
           kind:'phone',
@@ -9638,13 +11435,13 @@ function openReaderForumPost(frame, w, pd, postId, postIndex, navigationContext)
     focusReaderControl(frame, '.rd-post-card[data-post-index="' + postIndex + '"]')
   }
   function backToList() {
-    if (readerLayerHistory.has('phone-detail')) {
-      readerLayerHistory.close('phone-detail')
+    if (readerLayerHistory.has(detailHistoryLayerKey)) {
+      readerLayerHistory.close(detailHistoryLayerKey)
       return
     }
     returnToForumList()
   }
-  if (!exportMode) readerLayerHistory.open('phone-detail', returnToForumList)
+  if (!exportMode) readerLayerHistory.open(detailHistoryLayerKey, returnToForumList)
 
   function findForumCommentsById(items, serializedId, matches) {
     ;(Array.isArray(items) ? items : []).forEach(function(comment) {

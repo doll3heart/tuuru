@@ -2,14 +2,20 @@ import { substitutePlaceholders } from "./placeholders.js"
 
 const STRUCTURAL_STRING_KEYS = new Set([
   "id", "type", "mode", "platform", "randomMode", "callMode", "surface", "appType",
+  "eventKind", "deliveryState", "revealMode", "replyPace", "callStatus", "contactAction",
+  "contactRequestOutcome", "relationshipState", "roleChange", "targetApp", "sort",
   "contactId", "senderId", "aliasId", "parentId", "ownerId", "groupOwnerId", "forumPostId",
   "quoteId", "albumId", "itemId", "nodeId", "chapterId", "sceneId", "targetNodeId", "messageId",
+  "__readerAuthoredActionFingerprint", "__readerAuthoredMessageSourceKey", "__readerAuthoredChatSourceKey",
 ])
+
+const VISIBLE_TEXT_ID_KEYS = new Set(["readerId", "forumId", "msgId"])
 
 function keepsRawString(key) {
   const normalized = String(key || "")
   if (STRUCTURAL_STRING_KEYS.has(normalized)) return true
   if (/Ids$/.test(normalized)) return true
+  if (/Id$/.test(normalized) && !VISIBLE_TEXT_ID_KEYS.has(normalized)) return true
   if (/(?:url|uri)$/i.test(normalized)) return true
   if (/(?:image|images|avatar|icon|data)$/i.test(normalized)) return true
   if (/(?:color|background)$/i.test(normalized)) return true

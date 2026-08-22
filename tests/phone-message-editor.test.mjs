@@ -78,6 +78,16 @@ function closeFixture({ dom, draft }) {
   dom.window.close()
 }
 
+async function waitFor(check, timeoutMs = 5000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = check()
+    if (value) return value
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw new Error("Timed out waiting for the author message editor")
+}
+
 test("the author message page exposes the demo editor skeleton", async () => {
   const fixture = await openSingleChat("message-editor-skeleton")
   const { overlay } = fixture
@@ -1384,9 +1394,10 @@ test("authors can import one local image for a reader choice", async () => {
     const file = new window.File(["tiny-image"], "choice.png", { type: "image/png" })
     Object.defineProperty(fileInput, "files", { configurable: true, value: [file] })
     fileInput.dispatchEvent(new window.Event("change", { bubbles: true }))
-    await new Promise(resolve => setTimeout(resolve, 20))
-
-    const imageUrl = document.querySelector(".thread-choice-image-url").value
+    const imageUrl = await waitFor(() => {
+      const value = document.querySelector(".thread-choice-image-url").value
+      return /^data:image\/png;base64,/.test(value) ? value : ""
+    })
     assert.match(imageUrl, /^data:image\/png;base64,/)
     assert.equal(document.querySelector(".thread-choice-image-preview").hidden, false)
     document.querySelector("#threadChoiceSave").click()
@@ -1710,6 +1721,74 @@ test("authors can reveal a later message with AND-of-OR stable reader choices", 
       ],
     })
     assert.equal(Object.hasOwn(saved, "visibleAfterChoiceId"), false)
+  } finally {
+    closeFixture(fixture)
+  }
+})
+
+test("story condition candidates search choice source context without hiding selected conditions", async () => {
+  const phoneData = makePhoneData()
+  phoneData.chats[0].rounds[0].messages.push(
+    {
+      id:"search-condition-owner",
+      senderId:"contact-1",
+      type:"text",
+      text:"你愿意参加明天的活动吗？" + "补充".repeat(80) + "长消息末尾关键字",
+      choices:[
+        { id:"search-condition-yes", text:"准备出发", replyText:"愿意", followUpMessages:[] },
+        { id:"search-condition-no", text:"这次不了", replyText:"不了", followUpMessages:[] },
+      ],
+    },
+    { id:"search-condition-target", senderId:"contact-1", type:"text", text:"条件目标。" },
+  )
+  const fixture = await openSingleChat("message-story-condition-search", phoneData)
+  const { overlay } = fixture
+
+  try {
+    overlay.querySelector('[data-message-id="search-condition-target"]').dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true,
+      cancelable:true,
+      clientX:30,
+      clientY:30,
+    }))
+    Array.from(document.querySelectorAll(".chat-ctx-menu-item"))
+      .find(button => button.textContent === "剧情显示条件").click()
+
+    const editor = document.querySelector(".phone-story-condition-editor")
+    const groupSearch = groupIndex => editor.querySelector('[data-phone-condition-search="' + groupIndex + '"]')
+    assert.ok(groupSearch(0))
+    assert.ok(groupSearch(0).getAttribute("aria-label"))
+    const candidateIds = () => [...editor.querySelectorAll(".condition-choice-result")]
+      .map(button => button.dataset.phoneConditionAddChoice)
+    const matches = (query, expected) => {
+      const search = groupSearch(0)
+      search.value = query
+      search.dispatchEvent(new window.Event("input", { bubbles:true }))
+      assert.deepEqual(candidateIds(), expected)
+    }
+
+    matches("准备出发", ["search-condition-yes"])
+    matches("林澈", ["search-condition-yes", "search-condition-no"])
+    matches("第1轮", ["search-condition-yes", "search-condition-no"])
+    matches("明天的活动", ["search-condition-yes", "search-condition-no"])
+    matches("长消息末尾关键字", ["search-condition-yes", "search-condition-no"])
+    matches("search-condition-yes", ["search-condition-yes"])
+
+    const selectedCandidate = editor.querySelector('[data-phone-condition-add-choice="search-condition-yes"]')
+    selectedCandidate.focus()
+    selectedCandidate.click()
+    const rerenderedSearch = editor.querySelector('[data-phone-condition-search="0"]')
+    assert.equal(rerenderedSearch.value, "search-condition-yes")
+    assert.equal(document.activeElement, rerenderedSearch, "adding a condition must return keyboard focus to its group search")
+    assert.match(editor.querySelector(".condition-selected").textContent, /准备出发/)
+    assert.match(editor.querySelector(".condition-choice-results").textContent, /没有匹配的回复选项/)
+
+    editor.querySelector('[data-phone-condition-add-group]').click()
+    const secondGroupSearch = groupSearch(1)
+    secondGroupSearch.value = "这次不了"
+    secondGroupSearch.dispatchEvent(new window.Event("input", { bubbles:true }))
+    assert.deepEqual(candidateIds(), ["search-condition-no"])
+    assert.equal(groupSearch(0).value, "search-condition-yes")
   } finally {
     closeFixture(fixture)
   }

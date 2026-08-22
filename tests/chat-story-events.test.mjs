@@ -146,6 +146,26 @@ test("contact and group events apply to detached runtime state", () => {
   assert.deepEqual(chat, originalChat)
 })
 
+test("failed or recalled story events never apply their side effects", () => {
+  const initial = createChatStoryState(phoneData(), groupChat())
+  const failed = applyChatStoryMessage(initial, {
+    type:"contact-event",
+    eventKind:"contact-update",
+    targetContactId:"contact-1",
+    newName:"FAILED_NAME",
+    failed:true,
+  })
+  const recalled = applyChatStoryMessage(failed, {
+    type:"system-event",
+    eventKind:"group-rename",
+    newName:"RECALLED_GROUP",
+    deliveryState:"recalled",
+  })
+
+  assert.equal(recalled.contacts.find(contact => contact.id === "contact-1").name, phoneData().contacts[0].name)
+  assert.equal(recalled.group.groupName, groupChat().groupName)
+})
+
 test("leaving, removing, ownership, avatar, and titles update group runtime state safely", () => {
   let state = createChatStoryState(phoneData(), {
     ...groupChat(),
