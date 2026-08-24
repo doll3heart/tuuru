@@ -10,6 +10,31 @@ function isImmediatePlaybackItem(message) {
   return message.type === "system-event" && message.eventKind === "typing"
 }
 
+export function chatAuthoredPlaybackMessageIds(messages, completedIds = new Set()) {
+  const source = Array.isArray(messages) ? messages : []
+  const completed = new Set(
+    Array.from(completedIds instanceof Set ? completedIds : (completedIds || []), String),
+  )
+  const start = source.findIndex(message => (
+    message?.id != null
+    && !completed.has(String(message.id))
+    && (
+      (
+        Object.hasOwn(message, "delayBeforeMs")
+        && chatMessageDelayBeforeMs(message, 0) > 0
+      )
+      || (
+        Object.hasOwn(message, "revealMode")
+        && normalizeChatMessageRevealMode(message.revealMode) === "stream"
+      )
+    )
+  ))
+  if (start < 0) return []
+  return source.slice(start)
+    .filter(message => message?.id != null && !completed.has(String(message.id)))
+    .map(message => String(message.id))
+}
+
 export function chatPlaybackInitialDelayMs(message, fallbackMs = DEFAULT_CHAT_MESSAGE_GAP_MS) {
   return chatMessageDelayBeforeMs(message, isImmediatePlaybackItem(message) ? 0 : fallbackMs)
 }

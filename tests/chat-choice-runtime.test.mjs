@@ -148,23 +148,29 @@ test("a unique authored follow-up id keeps its source identity when another mess
   ]), ["follow-up:inserted-message", "follow-up:stable-action"])
 })
 
-test("does not create a reply message or consume its id when replyText is empty", () => {
+test("a non-silent choice with an empty replyText sends its option text", () => {
   const round = fixtureRound()
   let calls = 0
 
   const result = callApply(round, "owner", 1, {
-    idFactory: () => `silent-${++calls}`,
+    idFactory: () => `fallback-${++calls}`,
   })
 
   assert.equal(result.ok, true)
-  assert.equal(calls, 1)
+  assert.equal(calls, 2)
   assert.deepEqual(
     result.round.messages.map(message => message.id),
-    ["before", "owner", "silent-1", "suffix"],
+    ["before", "owner", "fallback-1", "fallback-2", "suffix"],
   )
-  assert.equal(result.round.messages[2].text, "The silence is an answer.")
-  assert.deepEqual(result.run.generatedMessageIds, ["silent-1"])
-  assert.equal(result.run.replyMessageId, null)
+  assert.deepEqual(result.round.messages[2], {
+    id: "fallback-1",
+    senderId: "self",
+    text: "Stay quiet",
+    type: "text",
+  })
+  assert.equal(result.round.messages[3].text, "The silence is an answer.")
+  assert.deepEqual(result.run.generatedMessageIds, ["fallback-1", "fallback-2"])
+  assert.equal(result.run.replyMessageId, "fallback-1")
 })
 
 test("an image choice sends the selected image instead of an extra text reply", () => {
@@ -253,6 +259,7 @@ test("a paced character reply inserts a temporary typing event before follow-ups
 test("legacy choices without a reply pace use the current normal default", () => {
   const round = fixtureRound()
   const choice = round.messages[1].choices[1]
+  choice.silent = true
   delete choice.replyPace
   let sequence = 0
 
@@ -276,6 +283,7 @@ test("legacy choices without a reply pace use the current normal default", () =>
 test("each character follow-up can override pace and render as failed or recalled", () => {
   const round = fixtureRound()
   const choice = round.messages[1].choices[0]
+  choice.silent = true
   choice.replyText = ""
   choice.replyPace = "quick"
   choice.followUpMessages = [
@@ -389,6 +397,7 @@ test("rollback removes exactly the generated ids without mutating round or run",
 
 test("a rolled-back round can run a different choice", () => {
   const original = fixtureRound()
+  original.messages[1].choices[1].silent = true
   let firstId = 0
   const firstRun = callApply(original, "owner", 0, {
     idFactory: () => `first-${++firstId}`,

@@ -2920,6 +2920,7 @@ test("a choice without reader text keeps reselection on its first generated foll
   const choice = work.phoneData.chats[0].rounds[0].messages[0].choices[0]
   choice.text = "Stay silent and listen."
   choice.replyText = ""
+  choice.silent = true
   choice.followUpMessages = [{
     id: "silent-follow-up",
     type: "text",
@@ -3083,14 +3084,14 @@ test("ending a group-chat round plays its follow-ups before an eligible next rou
         type: "system",
         senderId: "system",
         text: "第二轮系统提示。",
-        visibleAfterChoiceId: "choice-a",
+        displayCondition: { all: [{ anyChoiceIds: ["choice-a"] }] },
       },
       {
         id: "round-2-matching",
         type: "text",
         senderId: "contact-1",
         text: "第二轮已经按选择继续。",
-        visibleAfterChoiceId: "choice-a",
+        displayCondition: { all: [{ anyChoiceIds: ["choice-a"] }] },
       },
       {
         id: "round-2-other-branch",
@@ -3622,4 +3623,354 @@ test("separate message choice groups become available in conversation order", as
   assert.equal(document.querySelectorAll(".rd-chat-choice-reselect").length, 0)
   options = [...document.querySelectorAll(".rd-reply-option")]
   assert.deepEqual(options.map(option => option.textContent.trim()), ["Reply to the first message"])
+})
+
+for (const chatType of ["single", "group"]) {
+  test(`an explicitly paced initial ${chatType} message waits without reading flow`, async t => {
+    const work = choiceWork()
+    work.id = `reader-initial-paced-${chatType}`
+    const chat = work.phoneData.chats[0]
+    chat.type = chatType
+    if (chatType === "group") chat.groupName = "Paced group"
+    chat.rounds[0].messages = [{
+      id:"static-history",
+      type:"text",
+      senderId:"contact-1",
+      text:"STATIC_HISTORY",
+    }, {
+      id:"paced-whole-message",
+      type:"text",
+      senderId:"contact-1",
+      text:"PACED_AFTER_WAIT",
+      revealMode:"instant",
+      delayBeforeMs:600,
+    }]
+
+    await openSeededChat(t, work)
+
+    let messageArea = document.querySelector("#chatMsgArea")
+    assert.match(messageArea.textContent, /STATIC_HISTORY/)
+    assert.doesNotMatch(messageArea.textContent, /PACED_AFTER_WAIT/)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.doesNotMatch(messageArea.textContent, /PACED_AFTER_WAIT/)
+    document.getElementById("chatBack").click()
+    document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+    messageArea = document.querySelector("#chatMsgArea")
+    assert.doesNotMatch(messageArea.textContent, /PACED_AFTER_WAIT/)
+
+    const pacedMessage = await waitFor(
+      () => [...document.querySelectorAll("[data-message-id]")]
+        .find(message => message.textContent.includes("PACED_AFTER_WAIT")),
+      2000,
+    )
+    assert.equal(pacedMessage.querySelector(".rd-flow-stream-text"), null)
+
+    document.getElementById("chatBack").click()
+    document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+    assert.match(document.querySelector("#chatMsgArea").textContent, /PACED_AFTER_WAIT/)
+  })
+}
+
+test("legacy unsequenced chat messages remain immediately visible", async t => {
+  const work = choiceWork()
+  work.id = "reader-legacy-static-chat"
+  work.phoneData.chats[0].rounds[0].messages = [{
+    id:"legacy-first",
+    type:"text",
+    senderId:"contact-1",
+    text:"LEGACY_FIRST",
+  }, {
+    id:"legacy-second",
+    type:"text",
+    senderId:"contact-1",
+    text:"LEGACY_SECOND",
+  }]
+
+  await openSeededChat(t, work)
+
+  const messageArea = document.querySelector("#chatMsgArea")
+  assert.match(messageArea.textContent, /LEGACY_FIRST/)
+  assert.match(messageArea.textContent, /LEGACY_SECOND/)
+})
+
+test("a legacy non-silent choice with an empty replyText shows the reader reply", async t => {
+  const work = choiceWork()
+  work.id = "reader-legacy-empty-reply"
+  const owner = work.phoneData.chats[0].rounds[0].messages[0]
+  owner.choices = [{
+    id:"legacy-empty-reply-choice",
+    replyPace:"instant",
+    text:"LEGACY_OPTION_TEXT",
+    replyText:"",
+    followUpMessages:[],
+  }]
+  work.phoneData.chats[0].rounds[0].messages = [owner]
+
+  await openSeededChat(t, work)
+
+  document.getElementById("chatInput").click()
+  document.querySelector(".rd-reply-option").click()
+  let readerReply = await waitFor(() => {
+    const reply = document.querySelector(".rd-chat-message.is-self")
+    return reply?.textContent.includes("LEGACY_OPTION_TEXT") ? reply : null
+  }, 4000)
+  assert.ok(readerReply)
+  assert.match(readerReply.textContent, /LEGACY_OPTION_TEXT/)
+
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  readerReply = document.querySelector(".rd-chat-message.is-self")
+  assert.ok(readerReply)
+  assert.match(readerReply.textContent, /LEGACY_OPTION_TEXT/)
+})
+
+test("a cross-chat condition unlock keeps the target message delay", async t => {
+  const work = choiceWork()
+  work.id = "reader-cross-chat-paced-unlock"
+  work.phoneData.chats.push({
+    id:"chat-2",
+    type:"single",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"target-round",
+      messages:[{
+        id:"cross-chat-paced-message",
+        type:"text",
+        senderId:"contact-1",
+        text:"CROSS_CHAT_AFTER_WAIT",
+        displayCondition:{ all:[{ anyChoiceIds:["choice-a"] }] },
+        revealMode:"instant",
+        delayBeforeMs:240,
+      }],
+    }],
+  })
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+
+  const messageArea = document.querySelector("#chatMsgArea")
+  assert.doesNotMatch(messageArea.textContent, /CROSS_CHAT_AFTER_WAIT/)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.doesNotMatch(messageArea.textContent, /CROSS_CHAT_AFTER_WAIT/)
+  await waitFor(
+    () => document.querySelector("#chatMsgArea")?.textContent.includes("CROSS_CHAT_AFTER_WAIT"),
+    2000,
+  )
+})
+
+test("a hydrated selected choice owner does not replay its authored delay", async t => {
+  const work = choiceWork()
+  work.id = "reader-hydrated-paced-choice-owner"
+  const chat = work.phoneData.chats[0]
+  const owner = chat.rounds[0].messages[0]
+  owner.revealMode = "instant"
+  owner.delayBeforeMs = 180
+  owner.choices = [{
+    id:"paced-owner-choice",
+    replyPace:"instant",
+    text:"OK",
+    replyText:"OK",
+    followUpMessages:[{
+      id:"paced-owner-follow-up",
+      type:"text",
+      senderId:"contact-1",
+      text:"PACED_OWNER_BRANCH_DONE",
+      revealMode:"instant",
+      delayBeforeMs:0,
+    }],
+  }]
+  chat.rounds[0].messages = [owner]
+
+  await openSeededChat(t, work)
+  assert.equal(document.getElementById("chatInput").disabled, true)
+  await waitFor(() => document.getElementById("chatInput")?.disabled === false, 2000)
+  document.getElementById("chatInput").click()
+  document.querySelector(".rd-reply-option").click()
+  await waitFor(
+    () => document.querySelector("#chatMsgArea")?.textContent.includes("PACED_OWNER_BRANCH_DONE"),
+    3000,
+  )
+  await waitFor(() => {
+    const library = JSON.parse(localStorage.getItem("moirain_readerLibrary"))
+    return Object.keys(library.books[0].progress.phonePendingChoicePlaybacks || {}).length === 0
+  }, 2000)
+
+  const persisted = {
+    recent:localStorage.getItem("moirain_recent"),
+    work:localStorage.getItem(`moirain_work_${work.id}`),
+    library:localStorage.getItem("moirain_readerLibrary"),
+  }
+  window.close()
+  await reopenPersistedChat(t, work, persisted, "hydrated-paced-owner")
+
+  const hydratedText = document.querySelector("#chatMsgArea").textContent
+  assert.match(hydratedText, /OK/)
+  assert.match(hydratedText, /PACED_OWNER_BRANCH_DONE/)
+})
+
+test("a cross-chat condition message waits again after its source branch is reselected", async t => {
+  const work = choiceWork()
+  work.id = "reader-cross-chat-paced-reselection"
+  const sourceChat = work.phoneData.chats[0]
+  const owner = sourceChat.rounds[0].messages[0]
+  owner.choices.forEach(choice => {
+    choice.replyText = ""
+    choice.silent = true
+    choice.replyPace = "instant"
+    choice.followUpMessages = []
+  })
+  sourceChat.rounds[0].messages = [owner]
+  work.phoneData.chats.push({
+    id:"chat-2",
+    type:"single",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"target-round",
+      messages:[{
+        id:"reselected-paced-message",
+        type:"text",
+        senderId:"contact-1",
+        text:"RESELECTED_AFTER_WAIT",
+        displayCondition:{ all:[{ anyChoiceIds:["choice-a"] }] },
+        revealMode:"instant",
+        delayBeforeMs:400,
+      }],
+    }],
+  })
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+  await waitFor(
+    () => document.querySelector("#chatMsgArea")?.textContent.includes("RESELECTED_AFTER_WAIT"),
+    2000,
+  )
+
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="1"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+
+  const targetArea = document.querySelector("#chatMsgArea")
+  assert.doesNotMatch(targetArea.textContent, /RESELECTED_AFTER_WAIT/)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.doesNotMatch(targetArea.textContent, /RESELECTED_AFTER_WAIT/)
+  await waitFor(
+    () => document.querySelector("#chatMsgArea")?.textContent.includes("RESELECTED_AFTER_WAIT"),
+    2000,
+  )
+
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="1"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+  await new Promise(resolve => setTimeout(resolve, 150))
+
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="0"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="1"]').click()
+  document.querySelector(".rd-chat-choice-reselect").click()
+  document.querySelector('.rd-reply-option[data-ci="0"]').click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+
+  const restartedTargetArea = document.querySelector("#chatMsgArea")
+  assert.doesNotMatch(restartedTargetArea.textContent, /RESELECTED_AFTER_WAIT/)
+  await new Promise(resolve => setTimeout(resolve, 250))
+  assert.doesNotMatch(restartedTargetArea.textContent, /RESELECTED_AFTER_WAIT/)
+  await waitFor(
+    () => document.querySelector("#chatMsgArea")?.textContent.includes("RESELECTED_AFTER_WAIT"),
+    2000,
+  )
+})
+
+test("an OR condition message stays completed while another matching choice is added", async t => {
+  const work = choiceWork()
+  work.id = "reader-cross-chat-paced-or-remains-visible"
+  const firstSource = work.phoneData.chats[0]
+  const firstOwner = firstSource.rounds[0].messages[0]
+  firstOwner.choices = [{
+    id:"or-choice-a",
+    text:"Choose A",
+    replyText:"",
+    silent:true,
+    replyPace:"instant",
+    followUpMessages:[],
+  }]
+  firstSource.rounds[0].messages = [firstOwner]
+  work.phoneData.chats.push({
+    id:"chat-2",
+    type:"single",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"second-source-round",
+      messages:[{
+        id:"second-source-owner",
+        type:"text",
+        senderId:"contact-1",
+        text:"Choose another source",
+        choices:[{
+          id:"or-choice-b",
+          text:"Choose B",
+          replyText:"",
+          silent:true,
+          replyPace:"instant",
+          followUpMessages:[],
+        }],
+      }],
+    }],
+  }, {
+    id:"chat-3",
+    type:"single",
+    contactIds:["contact-1"],
+    messages:[],
+    rounds:[{
+      id:"or-target-round",
+      messages:[{
+        id:"or-paced-message",
+        type:"text",
+        senderId:"contact-1",
+        text:"OR_MESSAGE_ALREADY_PLAYED",
+        displayCondition:{ all:[{ anyChoiceIds:["or-choice-a", "or-choice-b"] }] },
+        revealMode:"instant",
+        delayBeforeMs:240,
+      }],
+    }],
+  })
+
+  await openSeededChat(t, work)
+  document.getElementById("chatInput").click()
+  document.querySelector(".rd-reply-option").click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="2"]').click()
+  await waitFor(
+    () => document.querySelector("#chatMsgArea")?.textContent.includes("OR_MESSAGE_ALREADY_PLAYED"),
+    2000,
+  )
+
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="1"]').click()
+  document.getElementById("chatInput").click()
+  document.querySelector(".rd-reply-option").click()
+  document.getElementById("chatBack").click()
+  document.querySelector('.rd-chat-card[data-chat-index="2"]').click()
+
+  assert.match(document.querySelector("#chatMsgArea").textContent, /OR_MESSAGE_ALREADY_PLAYED/)
 })

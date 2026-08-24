@@ -1341,6 +1341,7 @@ test("author choice buttons edit their owner instead of executing a reader branc
     assert.equal(draft.snapshot().phoneData.chats[0].rounds[0].messages.length, 1)
 
     editor.querySelectorAll(".thread-choice-text")[0].value = "改过的第一句"
+    editor.querySelectorAll(".thread-choice-reply")[0].value = ""
     imageInput.value = "https://example.invalid/choice-after.png"
     pace.value = "delayed"
     document.querySelector("#threadChoiceSave").click()
@@ -1348,6 +1349,8 @@ test("author choice buttons edit their owner instead of executing a reader branc
     const saved = draft.snapshot().phoneData.chats[0].rounds[0].messages[0]
     assert.equal(saved.choices[0].id, "choice-stable-a")
     assert.equal(saved.choices[0].text, "改过的第一句")
+    assert.equal(saved.choices[0].replyText, "改过的第一句")
+    assert.equal(Object.hasOwn(saved.choices[0], "silent"), false)
     assert.equal(saved.choices[0].imageUrl, "https://example.invalid/choice-after.png")
     assert.equal(saved.choices[0].followUpMessages[0].id, "follow-stable-a")
     assert.equal(saved.choices[0].replyPace, "delayed")

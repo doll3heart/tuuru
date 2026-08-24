@@ -3,10 +3,46 @@ import assert from "node:assert/strict"
 
 import {
   advanceChatTextPlayback,
+  chatAuthoredPlaybackMessageIds,
   chatMessageUsesTextStream,
   chatPlaybackInitialDelayMs,
   chatTextPlaybackSnapshot,
 } from "../js/chat-playback-state.js"
+
+test("explicit authored playback starts at the first paced message", () => {
+  assert.deepEqual(chatAuthoredPlaybackMessageIds([
+    { id:"history", type:"text", text:"Already visible history" },
+    { id:"paced", type:"text", text:"Wait for me", delayBeforeMs:3000, revealMode:"instant" },
+    { id:"after", type:"system", text:"Stay ordered" },
+  ]), ["paced", "after"])
+
+  assert.deepEqual(chatAuthoredPlaybackMessageIds([
+    { id:"legacy-a", type:"text", text:"Old" },
+    { id:"legacy-b", type:"text", text:"Still old" },
+  ]), [])
+})
+
+test("authored playback uses own fields and skips completed messages", () => {
+  const inheritedReveal = Object.create({ revealMode:"stream" })
+  Object.assign(inheritedReveal, { id:"inherited", type:"text", text:"Legacy default" })
+  assert.deepEqual(chatAuthoredPlaybackMessageIds([
+    inheritedReveal,
+    { id:"whole", type:"text", text:"Explicit whole message", revealMode:"instant" },
+    { id:"later", type:"text", text:"Later" },
+  ]), [])
+
+  assert.deepEqual(chatAuthoredPlaybackMessageIds([
+    { id:"history", type:"text", text:"Already visible" },
+    { id:"streamed", type:"text", text:"Type this", revealMode:"stream" },
+    { id:"later", type:"text", text:"Later" },
+  ]), ["streamed", "later"])
+
+  assert.deepEqual(chatAuthoredPlaybackMessageIds([
+    { id:"first", type:"text", text:"Already played", delayBeforeMs:100 },
+    { id:"second", type:"text", text:"Newly paced", delayBeforeMs:200 },
+    { id:"third", type:"text", text:"Ordered suffix" },
+  ], new Set(["first"])), ["second", "third"])
+})
 
 test("initial playback delay keeps reader replies and typing presence immediate", () => {
   assert.equal(chatPlaybackInitialDelayMs({ type:"text", senderId:"self" }), 0)

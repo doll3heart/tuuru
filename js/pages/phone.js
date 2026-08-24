@@ -828,7 +828,7 @@ function openThreadReplyChoiceEditor(owner, options) {
         return nextMessage
       })
       var replyText = group.silent === true ? '' : group.replyText.trim()
-      if (!replyText && options.preserveEmptyReplyText !== true) replyText = text
+      if (group.silent !== true && !replyText && options.preserveEmptyReplyText !== true) replyText = text
       var choicePatch = {
         id: previous?.id || uid(),
         text: text,
@@ -7676,7 +7676,6 @@ function openChatEditor(frame, wid, chatId, pd) {
             allowGroupWideMention:ch.type === 'group',
             allowSilent:true,
             allowEndRound:true,
-            preserveEmptyReplyText:true,
             includeFollowUpIdentityFields:false,
             followUpTimeFactory:function() { return new Date().toLocaleString() },
             onSave:function() {

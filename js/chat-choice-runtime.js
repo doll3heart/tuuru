@@ -48,6 +48,9 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
   const generatedMessages = []
   let replyMessageId = null
   const replyImage = typeof choice.imageUrl === "string" ? choice.imageUrl.trim() : ""
+  const replyText = typeof choice.replyText === "string" && choice.replyText.trim()
+    ? choice.replyText
+    : (typeof choice.text === "string" ? choice.text.trim() : "")
 
   if (choice.silent !== true && replyImage) {
     replyMessageId = options.idFactory("reader-reply")
@@ -57,12 +60,12 @@ export function applyChatChoice(round, ownerMessageId, choiceIndex, options) {
       image: replyImage,
       type: "image",
     })
-  } else if (choice.silent !== true && typeof choice.replyText === "string" && choice.replyText.length > 0) {
+  } else if (choice.silent !== true && replyText.length > 0) {
     replyMessageId = options.idFactory("reader-reply")
     generatedMessages.push({
       id: replyMessageId,
       senderId: "self",
-      text: choice.replyText,
+      text: replyText,
       type: "text",
     })
   }

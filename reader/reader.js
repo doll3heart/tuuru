@@ -6,6 +6,7 @@ import { escapeHtmlAttribute, isSafeImageUrl, sanitizeCssColor, sanitizeIconHtml
 import { shouldUseMotion } from '../js/motion-preference.js'
 import {
   advanceChatTextPlayback,
+  chatAuthoredPlaybackMessageIds,
   chatMessageUsesTextStream,
   chatPlaybackInitialDelayMs,
   chatTextPlaybackSnapshot,
@@ -1400,6 +1401,7 @@ function clearReaderChatMessageRuntime(chatSession, messageIds, entry) {
     ;[
       chatSession.flowTypedMessageIds,
       chatSession.flowTextProgress,
+      chatSession.authoredPlaybackCompletedIds,
       chatSession.claimedMessageIds,
       chatSession.endedCallIds,
       chatSession.voicePlaybacks,
@@ -1418,6 +1420,60 @@ function clearReaderChatMessageRuntime(chatSession, messageIds, entry) {
     chatSession.completedMessageActionKeys?.delete?.(actionProgressKey)
     chatSession.completedMessageActionKeys?.delete?.(contactEffectProgressKey)
     chatSession.messageActionResponses?.delete?.(actionProgressKey)
+  })
+}
+
+function clearReaderAuthoredPlaybackMessageRuntime(chatSession, messageId) {
+  var normalizedMessageId = String(messageId || '')
+  if (!normalizedMessageId) return
+  chatSession.authoredPlaybackCompletedIds?.delete?.(normalizedMessageId)
+  chatSession.flowTypedMessageIds?.delete?.(normalizedMessageId)
+  chatSession.flowTextProgress?.delete?.(normalizedMessageId)
+}
+
+function readerAuthoredPlaybackMessageIsVisible(work, phoneData, session, chatSession, message) {
+  if (!message || !readerPhoneStoryItemVisible(work, message, phoneData)) return false
+  return !phoneStoryMessageBlockedByEndedRound(
+    phoneData,
+    String(message.id || ''),
+    session.phoneChoiceSelections,
+    { chatPersistenceKey:String(chatSession?.actionPersistenceKey || '') },
+  )
+}
+
+function invalidateHiddenReaderAuthoredPlayback(work, phoneData, session) {
+  session.chats.forEach(function(chatSession) {
+    if (!chatSession?.chat) return
+    var messagesById = new Map()
+    readerPhoneChatMessageSourceEntries(chatSession.chat).forEach(function(entry) {
+      if (entry?.message?.id != null) messagesById.set(String(entry.message.id), entry.message)
+    })
+    if (chatSession.authoredPlaybackCompletedIds instanceof Set) {
+      Array.from(chatSession.authoredPlaybackCompletedIds).forEach(function(messageId) {
+        var message = messagesById.get(String(messageId))
+        if (readerAuthoredPlaybackMessageIsVisible(work, phoneData, session, chatSession, message)) return
+        clearReaderAuthoredPlaybackMessageRuntime(chatSession, messageId)
+      })
+    }
+    var playback = chatSession.flowGeneratedPlayback
+    if (playback?.authoredPlayback !== true || !Array.isArray(playback.ids)) return
+    var playbackIsHidden = playback.ids.some(function(messageId) {
+      var message = messagesById.get(String(messageId))
+      return !readerAuthoredPlaybackMessageIsVisible(work, phoneData, session, chatSession, message)
+    })
+    if (!playbackIsHidden) return
+    playback.ids.forEach(function(messageId) {
+      var normalizedMessageId = String(messageId)
+      var message = messagesById.get(normalizedMessageId)
+      if (
+        chatSession.authoredPlaybackCompletedIds?.has?.(normalizedMessageId)
+        && readerAuthoredPlaybackMessageIsVisible(work, phoneData, session, chatSession, message)
+      ) return
+      clearReaderAuthoredPlaybackMessageRuntime(chatSession, messageId)
+    })
+    chatSession.flowGeneratedPlayback = null
+    chatSession.flowAdvanceKey = ''
+    chatSession.flowAdvanceDeadline = 0
   })
 }
 
@@ -1478,6 +1534,7 @@ function reconcileReaderPhoneStorySelections(work, phoneData) {
       chatSession.choiceRuns.delete(runKey)
     })
   })
+  invalidateHiddenReaderAuthoredPlayback(work, phoneData, session)
   ;[
     session.completedMessageActionKeys,
     session.messageActionResponses,
@@ -8770,6 +8827,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       choiceRuns: new Map(),
       flowTypedMessageIds: new Set(),
       flowTextProgress: new Map(),
+      authoredPlaybackCompletedIds: new Set(),
       claimedMessageIds: new Set(),
       endedCallIds: new Set(),
       voicePlaybacks: new Map(),
@@ -8789,6 +8847,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   }
   if (!(chatSession.flowTypedMessageIds instanceof Set)) chatSession.flowTypedMessageIds = new Set()
   if (!(chatSession.flowTextProgress instanceof Map)) chatSession.flowTextProgress = new Map()
+  if (!(chatSession.authoredPlaybackCompletedIds instanceof Set)) chatSession.authoredPlaybackCompletedIds = new Set()
   if (!(chatSession.claimedMessageIds instanceof Set)) chatSession.claimedMessageIds = new Set()
   if (!(chatSession.endedCallIds instanceof Set)) chatSession.endedCallIds = new Set()
   if (!(chatSession.voicePlaybacks instanceof Map)) chatSession.voicePlaybacks = new Map()
@@ -8981,7 +9040,16 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           }
           if (!readerPhoneStoryItemVisible(w, message, pd)) continue
           var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
-          if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) continue
+          if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) {
+            if (
+              unsequencedPlayback?.authoredPlayback === true
+              && unsequencedPlayback.index < 0
+              && playbackMessageIndex === 0
+            ) {
+              unsequencedPlaybackGateActive = true
+            }
+            continue
+          }
           if (unsequencedChoiceGateActive || unsequencedPlaybackGateActive) {
             if (Array.isArray(message.choices) && message.choices.length > 0) {
               break unsequencedMessageScan
@@ -9058,6 +9126,74 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       }
     }
     return null
+  }
+
+  function startUnsequencedAuthoredPlayback(rounds) {
+    if (exportMode || flowEnabled) return
+    var activePlayback = chatSession.flowGeneratedPlayback
+    if (activePlayback?.authoredPlayback === true && Array.isArray(activePlayback.ids)) {
+      var activePlaybackIsStale = activePlayback.ids.some(function(messageId) {
+        var message = chatMessageById(rounds, messageId)
+        return !message || !isMessageVisible(message, null)
+      })
+      if (activePlaybackIsStale) {
+        activePlayback.ids.forEach(function(messageId) {
+          var normalizedMessageId = String(messageId)
+          var message = chatMessageById(rounds, normalizedMessageId)
+          if (
+            chatSession.authoredPlaybackCompletedIds.has(normalizedMessageId)
+            && message
+            && isMessageVisible(message, null)
+          ) return
+          clearReaderAuthoredPlaybackMessageRuntime(chatSession, messageId)
+        })
+        chatSession.flowGeneratedPlayback = null
+        resetChatFlowAdvanceDeadline()
+      }
+    }
+    if (chatSession.flowGeneratedPlayback) return
+    rounds.forEach(function(round) {
+      ;(Array.isArray(round?.messages) ? round.messages : []).forEach(function(message) {
+        var messageId = message?.id == null ? '' : String(message.id)
+        if (!messageId || !chatSession.authoredPlaybackCompletedIds.has(messageId)) return
+        if (isMessageVisible(message, null)) return
+        clearReaderAuthoredPlaybackMessageRuntime(chatSession, messageId)
+      })
+    })
+    var staticVisibleIds = flowVisibleMessageIds()
+    var choicePlaybackIds = new Set()
+    choiceRuns.forEach(function(entry) {
+      var ownerMessageId = entry?.run?.ownerMessageId ?? entry?.run?.ownerItemId
+      if (ownerMessageId != null) choicePlaybackIds.add(String(ownerMessageId))
+      readerChatChoiceRunPlaybackIds(entry).forEach(function(messageId) {
+        choicePlaybackIds.add(String(messageId))
+      })
+    })
+    var visibleAuthoredMessages = []
+    rounds.forEach(function(round) {
+      ;(Array.isArray(round?.messages) ? round.messages : []).forEach(function(message) {
+        if (
+          message?.id == null
+          || choicePlaybackIds.has(String(message.id))
+          || !isMessageVisible(message, staticVisibleIds)
+        ) return
+        visibleAuthoredMessages.push(message)
+      })
+    })
+    var playbackIds = chatAuthoredPlaybackMessageIds(
+      visibleAuthoredMessages,
+      chatSession.authoredPlaybackCompletedIds,
+    )
+    if (playbackIds.length === 0) return
+    var firstMessage = chatMessageById(rounds, playbackIds[0])
+    var firstDelay = chatPlaybackInitialDelayMs(firstMessage, 0)
+    resetChatFlowAdvanceDeadline()
+    chatSession.flowGeneratedPlayback = {
+      runKey:'authored:' + String(chatSession.actionPersistenceKey || '') + ':' + playbackIds[0],
+      ids:playbackIds,
+      index:firstDelay > 0 ? -1 : 0,
+      authoredPlayback:true,
+    }
   }
 
   function messageActionIsComplete(message) {
@@ -10035,6 +10171,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
     }
     ensureReaderChatMessageIds(rounds)
     hydratePersistedChatChoices(rounds)
+    startUnsequencedAuthoredPlayback(rounds)
     var visibleMessageIds = flowVisibleMessageIds()
     var storyEffectOrderChanged = false
     for (var storyRoundIndex = 0; storyRoundIndex < rounds.length; storyRoundIndex++) {
@@ -11023,9 +11160,18 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       }, remainingDelay)
     }
 
+    function markAuthoredPlaybackMessageComplete(messageId) {
+      if (chatSession.flowGeneratedPlayback?.authoredPlayback !== true) return
+      var normalizedMessageId = String(messageId)
+      var message = findFlowPlaybackMessage(normalizedMessageId)
+      if (!message) return
+      chatSession.authoredPlaybackCompletedIds.add(normalizedMessageId)
+    }
+
     function finishCurrentChatFlowMessage(messageId) {
       chatSession.flowTextProgress.delete(String(messageId))
       chatSession.flowTypedMessageIds.add(String(messageId))
+      markAuthoredPlaybackMessageComplete(messageId)
       var completedMessage = findFlowPlaybackMessage(messageId)
       if (completedMessage && messageRequiresAction(completedMessage) && !messageActionIsComplete(completedMessage)) {
         updateActiveChoicePlayback(chatSession.flowGeneratedPlayback, {
@@ -11091,6 +11237,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       if (!streamsText || !stream) {
         chatSession.flowTextProgress.delete(String(messageId))
         chatSession.flowTypedMessageIds.add(String(messageId))
+        markAuthoredPlaybackMessageComplete(messageId)
         if (messageRequiresAction(message) && !messageActionIsComplete(message)) {
           setChoiceAvailability(false)
           return
