@@ -438,6 +438,37 @@ test("an unsequenced reply branch also honors the first follow-up bubble delay",
   await waitFor(() => document.querySelector("#chatMsgArea")?.textContent.includes("那我说了"))
 })
 
+test("phone export dialog updates its branch mode controls and restores them after an export error", async t => {
+  installDom(t)
+  const work = storyWork()
+  work.id = "reader-export-dialog-branch-mode"
+  work.phoneData.chats = []
+  localStorage.setItem("moirain_recent", JSON.stringify([{ id:work.id, title:work.title, type:work.type, importedAt:Date.now() }]))
+  localStorage.setItem(`moirain_work_${work.id}`, JSON.stringify(work))
+  await import(`../reader/reader.js?export-dialog-branch-mode=${Date.now()}-${Math.random()}`)
+  document.querySelector('[data-tab="library"]').click()
+  document.querySelector(".rd-recent-item").click()
+  document.querySelector('[data-tab="custom"]').click()
+  document.querySelector('[data-reader-phone-control="export"]').click()
+
+  const inputs = Array.from(document.querySelectorAll('input[name="readerPhoneExportBranchMode"]'))
+  const exportButton = document.getElementById("cuModalSave")
+  assert.equal(inputs.find(input => input.value === "current").checked, true)
+  assert.equal(exportButton.textContent, "导出当前阅读分支")
+
+  const allInput = inputs.find(input => input.value === "all")
+  allInput.checked = true
+  allInput.dispatchEvent(new Event("change", { bubbles:true }))
+  assert.equal(exportButton.textContent, "导出所有选项分支")
+
+  exportButton.click()
+  assert.equal(inputs.every(input => input.disabled), true)
+  await waitFor(() => document.getElementById("readerPhoneExportProgress")?.dataset.state === "error")
+  assert.equal(inputs.every(input => !input.disabled), true)
+  assert.equal(exportButton.disabled, false)
+  assert.equal(exportButton.textContent, "导出所有选项分支")
+})
+
 test("exporting chat snapshots cannot apply a future contact update to live reading state", async t => {
   installDom(t)
   const work = storyWork()

@@ -16,6 +16,64 @@ test("reader customization exposes one accessible all-content image export actio
   assert.match(readerCss, /\.rd-phone-export-failures/)
 })
 
+test("phone export dialog offers accessible current and all-branch modes", () => {
+  assert.match(readerSource, /<fieldset class="rd-phone-export-modes">/)
+  assert.match(readerSource, /<legend>聊天回复分支<\/legend>/)
+  assert.match(readerSource, /name="readerPhoneExportBranchMode" value="current" checked/)
+  assert.match(readerSource, /<strong>当前阅读分支<\/strong><small>按你现在已经选择的聊天回复导出，速度更快。<\/small>/)
+  assert.match(readerSource, /name="readerPhoneExportBranchMode" value="all"/)
+  assert.match(readerSource, /<strong>所有选项分支<\/strong><small>每个聊天的可达回复路线分别成图、各自分页；最多 64 条。<\/small>/)
+  assert.match(readerSource, /非聊天模块仍各导出一次/)
+})
+
+test("phone export mode is read once, passed through, and restored after busy state", () => {
+  const dialogStart = readerSource.indexOf("function openReaderPhoneExportDialog(")
+  const dialogEnd = readerSource.indexOf("function renderPhoneOwnerHome", dialogStart)
+  const dialogSource = readerSource.slice(dialogStart, dialogEnd)
+
+  assert.match(dialogSource, /querySelectorAll\(['"]input\[name="readerPhoneExportBranchMode"\]['"]\)/)
+  assert.match(dialogSource, /addEventListener\(['"]change['"]/)
+  assert.match(dialogSource, /导出当前阅读分支/)
+  assert.match(dialogSource, /导出所有选项分支/)
+  assert.match(dialogSource, /var branchMode = [^\n]+\.value === ['"]all['"] \? ['"]all['"] : ['"]current['"]/)
+  assert.match(dialogSource, /exportReaderPhoneContentImages\(\{\s*branchMode:branchMode,/)
+  assert.match(dialogSource, /modeInputs\.forEach\(function\(input\) \{ input\.disabled = true \}\)/)
+  assert.match(dialogSource, /finally \{[\s\S]*modeInputs\.forEach\(function\(input\) \{ input\.disabled = false \}\)/)
+})
+
+test("all-mode branch labels are masked after the lazy export module loads and before naming", () => {
+  assert.doesNotMatch(readerSource, /from ['"]\.\/phone-content-export\.js['"]/)
+  assert.match(readerSource, /var phoneExportBranchLabel = phoneContentExport\.phoneExportBranchLabel/)
+  assert.match(readerSource, /var maskedPhoneExportBranchLabel = function\(path, zeroBasedIndex, total\) \{[\s\S]*phoneExportBranchLabel\(path, zeroBasedIndex, total, \{ maskValues:maskValues \}\)/)
+  assert.match(readerSource, /readerPhoneExportJobs\(pd, exportFrame, \{[\s\S]*phoneExportBranchLabel:maskedPhoneExportBranchLabel/)
+
+  const plannerStart = readerSource.indexOf("function readerPhoneExportJobs(")
+  const plannerEnd = readerSource.indexOf("function readerPhoneExportAnimationFrame(", plannerStart)
+  const plannerSource = readerSource.slice(plannerStart, plannerEnd)
+  assert.match(plannerSource, /phoneExportBranchLabel\(branch\.path, branchIndex, branchResult\.branches\.length\)/)
+  assert.match(plannerSource, /itemLabel:branchLabel \? branchLabel \+ ['"]-['"] \+ chatLabel : chatLabel/)
+
+  const exportStart = readerSource.indexOf("async function exportReaderPhoneContentImages(")
+  const progressStart = readerSource.indexOf("options.onProgress({ phase:'render'", exportStart)
+  const namingCallStart = readerSource.indexOf("readerPhoneExportUniqueBaseName(job", exportStart)
+  assert.ok(plannerStart < progressStart)
+  assert.ok(plannerStart < namingCallStart)
+
+  const uniqueStart = readerSource.indexOf("function readerPhoneExportUniqueBaseName(")
+  const namingEnd = readerSource.indexOf("function readerPhoneExportJobs", uniqueStart)
+  const namingSource = readerSource.slice(uniqueStart, namingEnd)
+  assert.match(namingSource, /unicodeSafeItemLabel:Array\.isArray\(descriptor\.branchPath\) && descriptor\.branchPath\.length > 0/)
+})
+
+test("branch mode cards cover checked, keyboard focus, disabled, and reduced motion states", () => {
+  assert.match(readerCss, /\.rd-phone-export-modes/)
+  assert.match(readerCss, /\.rd-phone-export-mode/)
+  assert.match(readerCss, /\.rd-phone-export-mode:has\(input:checked\)/)
+  assert.match(readerCss, /\.rd-phone-export-mode:has\(input:focus-visible\)/)
+  assert.match(readerCss, /\.rd-phone-export-mode:has\(input:disabled\)/)
+  assert.match(readerCss, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.rd-phone-export-mode/)
+})
+
 test("reader export workflow covers every authored phone content surface", () => {
   assert.match(readerSource, /capturePhonePanelPages/)
   assert.match(readerSource, /createPhoneContentArchive/)
@@ -73,6 +131,88 @@ test("static export uses detached moments and forum sessions", () => {
   const forumEnd = readerSource.indexOf("function openReaderForumAccountDialog", forumStart)
   const forumSource = readerSource.slice(forumStart, forumEnd)
   assert.match(forumSource, /phoneChoiceSession = exportMode\s*\? cloneReaderPhoneChoiceSessionForExport\(livePhoneChoiceSession\)/)
+})
+
+test("all-branch chat jobs inject detached selection snapshots before capture", () => {
+  assert.match(
+    readerSource,
+    /enumeratePhoneStoryChatChoiceBranches/,
+  )
+  assert.match(
+    readerSource,
+    /openReaderChat\(exportFrame, _work, pd, chat, chatIndex, undefined, \{\s*exportMode:true,\s*exportChoiceSelections:branch\.selections,?\s*\}\)/,
+  )
+  assert.match(
+    readerSource,
+    /runtimeOptions\?\.exportChoiceSelections instanceof Map[\s\S]*phoneChoiceSession\.phoneChoiceSelections = new Map\(runtimeOptions\.exportChoiceSelections\)[\s\S]*phoneChoiceSession\.phonePendingChoicePlaybacks = new Map\(\)/,
+  )
+})
+
+test("static chat visibility is evaluated against the export session map", () => {
+  const chatStart = readerSource.indexOf("function openReaderChat(")
+  const chatEnd = readerSource.indexOf("// ---- Forum post viewer ----", chatStart)
+  const chatSource = readerSource.slice(chatStart, chatEnd)
+  const visibilityCalls = [...chatSource.matchAll(/readerPhoneStoryItemVisible\(w,\s*[^,]+,\s*pd(?:,\s*[^)]+)?\)/g)]
+
+  assert.ok(visibilityCalls.length >= 6, "the chat renderer should have all known visibility gates")
+  for (const call of visibilityCalls) {
+    assert.match(call[0], /phoneChoiceSession\.phoneChoiceSelections/)
+  }
+  assert.match(
+    readerSource,
+    /function readerPhoneStoryItemVisible\(work, item, phoneData, selections\)[\s\S]*selections === undefined[\s\S]*selectedPhoneStoryChoiceIds\(selections\)/,
+  )
+})
+
+test("all-branch planning enforces the global chat job safety limit", () => {
+  assert.match(readerSource, /PHONE_EXPORT_MAX_CHAT_BRANCHES\s*=\s*64/)
+  assert.match(readerSource, /function readerPhoneExportJobs\(pd, exportFrame, options\)/)
+  assert.match(readerSource, /branchMode\s*===\s*['"]all['"]/)
+  assert.match(
+    readerSource,
+    /throw new Error\(['"]可导出的消息选项分支超过 64 条，请减少选项后重试，或改用“当前阅读分支”。['"]\)/,
+  )
+  assert.match(readerSource, /readerPhoneExportJobs\(pd, exportFrame, options\)/)
+})
+
+test("current branch planning does not initialize the live choice session", () => {
+  const start = readerSource.indexOf("function readerPhoneExportJobs(")
+  const end = readerSource.indexOf("function readerPhoneExportAnimationFrame(", start)
+  const plannerSource = readerSource.slice(start, end)
+  assert.match(
+    plannerSource,
+    /var liveSelections = null\s+if \(branchMode === ['"]all['"]\) \{\s+liveSelections = readerPhoneChoiceSession\(_work\)\.phoneChoiceSelections\s+\}/,
+  )
+})
+
+test("authored playback pruning also reads its supplied session snapshot", () => {
+  const start = readerSource.indexOf("function readerAuthoredPlaybackMessageIsVisible(")
+  const end = readerSource.indexOf("function invalidateHiddenReaderAuthoredPlayback(", start)
+  const helperSource = readerSource.slice(start, end)
+  assert.match(
+    helperSource,
+    /readerPhoneStoryItemVisible\(work, message, phoneData, session\.phoneChoiceSelections\)/,
+  )
+})
+
+test("reader export rechecks cancellation around archive creation and before download", () => {
+  const exportStart = readerSource.indexOf("async function exportReaderPhoneContentImages(")
+  const exportEnd = readerSource.indexOf("function openReaderPhoneExportDialog(", exportStart)
+  const exportSource = readerSource.slice(exportStart, exportEnd)
+  const archiveCall = exportSource.indexOf("await createPhoneContentArchive(files)")
+  const checks = [...exportSource.matchAll(/readerPhoneExportThrowIfAborted\(options\?\.signal\)/g)].map(match => match.index)
+
+  assert.ok(archiveCall >= 0)
+  assert.ok(checks.some(index => index < archiveCall), "cancellation should be checked before archiving")
+  assert.ok(checks.some(index => index > archiveCall), "cancellation should be checked after archiving")
+
+  const dialogStart = readerSource.indexOf("function openReaderPhoneExportDialog(")
+  const dialogEnd = readerSource.indexOf("function renderPhoneOwnerHome", dialogStart)
+  const dialogSource = readerSource.slice(dialogStart, dialogEnd)
+  assert.match(
+    dialogSource,
+    /readerPhoneExportThrowIfAborted\(controller\.signal\)\s+downloadBlob\(result\.blob, result\.filename\)/,
+  )
 })
 
 test("phone screenshot dependencies are production dependencies", () => {

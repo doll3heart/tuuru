@@ -456,6 +456,219 @@ export function prunePhoneStoryChoiceSelections(phoneData, selections) {
   return normalized
 }
 
+export function enumeratePhoneStoryChatChoiceBranches(
+  phoneData,
+  chatIndex,
+  currentSelections,
+  options = {},
+) {
+  const maxBranches = Number.isInteger(options?.maxBranches) && options.maxBranches >= 0
+    ? options.maxBranches
+    : 64
+  const maxStates = Number.isInteger(options?.maxStates) && options.maxStates >= 0
+    ? options.maxStates
+    : 10_000
+  const chats = items(phoneData?.chats)
+  const chat = chats[chatIndex]
+  const chatPersistenceKey = phoneStoryChatSelectionScope(chat, chatIndex, phoneData)
+  const messageEntries = phoneStoryMessageEntries(phoneData)
+  const ownerCounts = ownerMessageIdCounts(messageEntries)
+  const selectionKeyCounts = new Map()
+  for (const entry of messageEntries) {
+    const selectionKey = choiceSelectionKeyForEntry(entry, ownerCounts)
+    if (!selectionKey) continue
+    selectionKeyCounts.set(selectionKey, (selectionKeyCounts.get(selectionKey) || 0) + 1)
+  }
+  const normalizedRounds = items(chat?.rounds).map(function(round) {
+    return items(round?.messages).slice()
+  })
+  const legacyMessages = items(chat?.messages)
+  if (normalizedRounds.length === 0) {
+    if (legacyMessages.length > 0) normalizedRounds.push(legacyMessages.slice())
+  } else if (legacyMessages.length > 0) {
+    normalizedRounds[normalizedRounds.length - 1].push(...legacyMessages)
+  }
+
+  const targetOwnerIdentities = []
+  const owners = []
+  normalizedRounds.forEach(function(roundMessages, roundIndex) {
+    roundMessages.forEach(function(message, messageIndex) {
+      if (items(message?.choices).length === 0) return
+      const selectionKey = choiceSelectionKeyForEntry({
+        chatPersistenceKey,
+        message,
+      }, ownerCounts)
+      if (!selectionKey || selectionKeyCounts.get(selectionKey) !== 1) return
+      targetOwnerIdentities.push({
+        selectionKey,
+        ownerMessageId:message.id,
+      })
+      const choiceIdCounts = new Map()
+      items(message?.choices).forEach(function(choice) {
+        if (!exactId(choice?.id)) return
+        choiceIdCounts.set(choice.id, (choiceIdCounts.get(choice.id) || 0) + 1)
+      })
+      const choices = []
+      items(message?.choices).forEach(function(choice, choiceIndex) {
+        if (
+          !exactId(choice?.id)
+          || choiceIdCounts.get(choice.id) !== 1
+        ) return
+        choices.push({
+          choice,
+          choiceId:choice.id,
+          choiceIndex,
+          label:plainText(choice.text || choice.replyText),
+        })
+      })
+      if (choices.length === 0) return
+      owners.push({
+        message,
+        roundIndex,
+        messageIndex,
+        selectionKey,
+        ownerMessageId:message.id,
+        ownerOrder:owners.length,
+        choices,
+        conditionValid:phoneStoryItemHasValidConditionReferences(phoneData, message),
+      })
+    })
+  })
+
+  const baseline = normalizedSelectionMap(currentSelections)
+  for (const owner of targetOwnerIdentities) {
+    baseline.delete(owner.selectionKey)
+    if (owner.selectionKey === owner.ownerMessageId || !baseline.has(owner.ownerMessageId)) continue
+    const savedChoiceId = baseline.get(owner.ownerMessageId)
+    const matchingEntries = messageEntries.filter(function(entry) {
+      return entry.message?.id === owner.ownerMessageId
+        && items(entry.message?.choices).filter(choice => choice?.id === savedChoiceId).length === 1
+    })
+    if (
+      matchingEntries.length === 1
+      && matchingEntries[0].chatPersistenceKey === chatPersistenceKey
+    ) baseline.delete(owner.ownerMessageId)
+  }
+
+  function fullSelections(targetSelections) {
+    const combined = new Map(baseline)
+    for (const owner of owners) {
+      const choiceId = targetSelections.get(owner.selectionKey)
+      if (exactId(choiceId)) combined.set(owner.selectionKey, choiceId)
+    }
+    return prunePhoneStoryChoiceSelections(phoneData, combined)
+  }
+
+  function targetSelectionsFrom(selections) {
+    const target = new Map()
+    for (const owner of owners) {
+      const choiceId = selections.get(owner.selectionKey)
+      if (exactId(choiceId)) target.set(owner.selectionKey, choiceId)
+    }
+    return target
+  }
+
+  function targetPairs(selections) {
+    const pairs = []
+    for (const owner of owners) {
+      const choiceId = selections.get(owner.selectionKey)
+      if (exactId(choiceId)) pairs.push([owner.selectionKey, choiceId])
+    }
+    return pairs
+  }
+
+  function ownerBlockedByEndedRound(owner, selections) {
+    for (const earlierOwner of owners) {
+      if (earlierOwner.roundIndex !== owner.roundIndex) continue
+      if (earlierOwner.messageIndex >= owner.messageIndex) continue
+      const selectedChoiceId = selections.get(earlierOwner.selectionKey)
+      if (!exactId(selectedChoiceId)) continue
+      const selectedChoice = earlierOwner.choices.find(entry => entry.choiceId === selectedChoiceId)
+      if (selectedChoice?.choice?.endRound === true) return true
+    }
+    return false
+  }
+
+  function nextReachableOwner(selections) {
+    const selectedChoiceIds = selectedPhoneStoryChoiceIds(selections)
+    return owners.find(function(owner) {
+      return owner.conditionValid
+        && phoneStoryItemIsVisible(owner.message, selectedChoiceIds)
+        && !selections.has(owner.selectionKey)
+        && !ownerBlockedByEndedRound(owner, selections)
+    }) || null
+  }
+
+  function terminalBranch(selections) {
+    const path = []
+    for (const owner of owners) {
+      const choiceId = selections.get(owner.selectionKey)
+      if (!exactId(choiceId)) continue
+      const selectedChoice = owner.choices.find(entry => entry.choiceId === choiceId)
+      if (!selectedChoice) continue
+      path.push({
+        selectionKey:owner.selectionKey,
+        ownerMessageId:owner.ownerMessageId,
+        ownerOrder:owner.ownerOrder,
+        choiceId,
+        choiceIndex:selectedChoice.choiceIndex,
+        label:selectedChoice.label,
+      })
+    }
+    const key = JSON.stringify(path.map(step => [step.selectionKey, step.choiceId]))
+    return { key, selections:new Map(selections), path }
+  }
+
+  const initialSelections = targetSelectionsFrom(fullSelections(new Map()))
+  const initialSignature = JSON.stringify(targetPairs(initialSelections))
+  const stack = [{ targetSelections:initialSelections, signature:initialSignature }]
+  const seenStates = new Set([initialSignature])
+  const terminalKeys = new Set()
+  const branches = []
+  let statesVisited = 0
+  let truncated = false
+  let reason = null
+
+  while (stack.length > 0) {
+    if (statesVisited >= maxStates) {
+      truncated = true
+      reason = "state-limit"
+      break
+    }
+    const state = stack.pop()
+    statesVisited += 1
+    const selections = fullSelections(state.targetSelections)
+    const owner = nextReachableOwner(selections)
+    if (!owner) {
+      const branch = terminalBranch(selections)
+      if (terminalKeys.has(branch.key)) continue
+      terminalKeys.add(branch.key)
+      if (branches.length >= maxBranches) {
+        truncated = true
+        reason = "branch-limit"
+        break
+      }
+      branches.push(branch)
+      continue
+    }
+
+    for (let index = owner.choices.length - 1; index >= 0; index -= 1) {
+      const choice = owner.choices[index]
+      const candidate = new Map(state.targetSelections)
+      candidate.set(owner.selectionKey, choice.choiceId)
+      const pruned = fullSelections(candidate)
+      if (pruned.get(owner.selectionKey) !== choice.choiceId) continue
+      const nextTarget = targetSelectionsFrom(pruned)
+      const signature = JSON.stringify(targetPairs(nextTarget))
+      if (seenStates.has(signature)) continue
+      seenStates.add(signature)
+      stack.push({ targetSelections:nextTarget, signature })
+    }
+  }
+
+  return { branches, truncated, reason, statesVisited }
+}
+
 export function phoneStoryMessageBlockedByEndedRound(phoneData, messageId, selections, options) {
   if (!exactId(messageId)) return false
   const requestedChatPersistenceKey = typeof options?.chatPersistenceKey === "string"

@@ -136,6 +136,7 @@ import {
   resolvePhoneReadingFlowStep,
 } from '../js/phone-reading-flow.js'
 import {
+  enumeratePhoneStoryChatChoiceBranches,
   phoneStoryChatSelectionScope,
   phoneStoryChoiceSelectionKey,
   phoneStoryItemHasValidConditionReferences,
@@ -260,6 +261,7 @@ import {
 
 // ---- helpers ----
 const READER_DEFAULT_APP_ICON_SURFACE = '#f0f0f0'
+const PHONE_EXPORT_MAX_CHAT_BRANCHES = 64
 const readerLayerHistory = createReaderLayerHistory(window)
 
 function esc(s) {
@@ -823,10 +825,13 @@ function readerPhoneStoryChoiceIds(work) {
   return selectedPhoneStoryChoiceIds(readerPhoneChoiceSession(work).phoneChoiceSelections)
 }
 
-function readerPhoneStoryItemVisible(work, item, phoneData) {
-  var storyData = phoneData || (work && work.type === 'phone' ? work.phoneData : null)
+function readerPhoneStoryItemVisible(work, item, phoneData, selections) {
+  var storyData = phoneData || (work?.type === 'phone' ? work.phoneData : null)
   if (!phoneStoryItemHasValidConditionReferences(storyData, item)) return false
-  return phoneStoryItemIsVisible(item, readerPhoneStoryChoiceIds(work))
+  var selectedChoiceIds = selections === undefined
+    ? readerPhoneStoryChoiceIds(work)
+    : selectedPhoneStoryChoiceIds(selections)
+  return phoneStoryItemIsVisible(item, selectedChoiceIds)
 }
 
 function readerChatChoiceRunPlaybackIds(entry) {
@@ -1432,7 +1437,7 @@ function clearReaderAuthoredPlaybackMessageRuntime(chatSession, messageId) {
 }
 
 function readerAuthoredPlaybackMessageIsVisible(work, phoneData, session, chatSession, message) {
-  if (!message || !readerPhoneStoryItemVisible(work, message, phoneData)) return false
+  if (!message || !readerPhoneStoryItemVisible(work, message, phoneData, session.phoneChoiceSelections)) return false
   return !phoneStoryMessageBlockedByEndedRound(
     phoneData,
     String(message.id || ''),
@@ -8700,7 +8705,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
 
   function openInlineForumPost(postId, trigger) {
     var post = (pd.forumPosts || []).find(function(item) { return String(item.id) === String(postId) })
-    if (!post || !readerPhoneStoryItemVisible(w, post, pd)) return
+    if (!post || !readerPhoneStoryItemVisible(w, post, pd, phoneChoiceSession.phoneChoiceSelections)) return
     var previous = frame.querySelector('.rd-inline-forum-pip')
     if (previous) previous.remove()
     var postIdentity = resolveReaderContactIdentity(pd, post.contactId, { surface:'forum', aliasId:post.aliasId, authoredName:post.contactName, authoredAvatar:post.contactAvatar, authoredIpLocation:post.contactIpLocation })
@@ -8794,6 +8799,10 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
   var phoneChoiceSession = exportMode
     ? cloneReaderPhoneChoiceSessionForExport(livePhoneChoiceSession)
     : livePhoneChoiceSession
+  if (exportMode && runtimeOptions?.exportChoiceSelections instanceof Map) {
+    phoneChoiceSession.phoneChoiceSelections = new Map(runtimeOptions.exportChoiceSelections)
+    phoneChoiceSession.phonePendingChoicePlaybacks = new Map()
+  }
   var authoredPhoneData = readerPhoneData(w?.phoneData)
   var authoredChats = Array.isArray(authoredPhoneData?.chats) ? authoredPhoneData.chats : []
   var authoredChatMatches = ch?.id == null
@@ -9038,7 +9047,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           if (endedRoundGeneratedIds && !endedRoundGeneratedIds.has(String(message.id))) {
             break
           }
-          if (!readerPhoneStoryItemVisible(w, message, pd)) continue
+          if (!readerPhoneStoryItemVisible(w, message, pd, phoneChoiceSession.phoneChoiceSelections)) continue
           var playbackMessageIndex = unsequencedPlaybackIds.indexOf(String(message.id))
           if (playbackMessageIndex >= 0 && playbackMessageIndex > unsequencedPlayback.index) {
             if (
@@ -9109,7 +9118,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
 
   function isMessageVisible(message, visibleIds) {
     return (!visibleIds || visibleIds.has(String(message && message.id)))
-      && readerPhoneStoryItemVisible(w, message, pd)
+      && readerPhoneStoryItemVisible(w, message, pd, phoneChoiceSession.phoneChoiceSelections)
       && !phoneStoryMessageBlockedByEndedRound(
         pd,
         String(message?.id || ''),
@@ -9656,7 +9665,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           || message?.failed === true
           || message?.deliveryState === 'failed'
           || message?.deliveryState === 'recalled'
-          || !readerPhoneStoryItemVisible(w, message, pd)
+          || !readerPhoneStoryItemVisible(w, message, pd, phoneChoiceSession.phoneChoiceSelections)
         ) return false
         var sourceKey = entry?.generatedSourceKeys?.get?.(String(messageId))
         var effectKey = readerPhoneChoiceStoryEffectKey(
@@ -9711,7 +9720,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
       for (var messageIndex = startMessageIndex; messageIndex < messages.length; messageIndex++) {
         var message = messages[messageIndex]
         if (message?.id == null || generatedIdSet.has(String(message.id))) continue
-        if (!readerPhoneStoryItemVisible(w, message, pd)) continue
+        if (!readerPhoneStoryItemVisible(w, message, pd, phoneChoiceSession.phoneChoiceSelections)) continue
         if (phoneStoryMessageBlockedByEndedRound(
           pd,
           String(message.id),
@@ -10500,7 +10509,7 @@ function openReaderChat(frame, w, pd, ch, chatIndex, flowStep, runtimeOptions) {
           var linkActionState = messageActionLabel(msg, messageActionIsComplete(msg))
           var explicitAppTarget = Boolean(msg.targetApp)
           var linkedInlineForumPost = !explicitAppTarget && msg.forumPostId && (pd.forumPosts || []).find(function(post) { return String(post.id) === String(msg.forumPostId) })
-          var inlineForumPost = linkedInlineForumPost && readerPhoneStoryItemVisible(w, linkedInlineForumPost, pd)
+          var inlineForumPost = linkedInlineForumPost && readerPhoneStoryItemVisible(w, linkedInlineForumPost, pd, phoneChoiceSession.phoneChoiceSelections)
           if (explicitAppTarget && chatAppTargetEntry) {
             h += '<button type="button" class="chat-link-card rd-chat-deep-link" data-chat-deep-link="' + escapeHtmlAttribute(msg.id) + '" data-target-app="' + escapeHtmlAttribute(chatAppTarget.appType) + '" data-target-item="' + escapeHtmlAttribute(chatAppTarget.itemId) + '" data-target-contact="' + escapeHtmlAttribute(chatAppTarget.contactId) + '"><span class="chat-story-card-kicker">' + esc(chatAppTargetEntry.detail) + '</span><strong>' + esc(msg.linkTitle || chatAppTargetEntry.label) + '</strong><span>点击进入对应 App</span>' + (linkActionState ? '<small class="chat-action-state' + (messageActionIsComplete(msg) ? ' is-complete' : '') + '" data-message-action-state="' + escapeHtmlAttribute(msg.id) + '">' + esc(linkActionState) + '</small>' : '') + '</button>'
           } else if (explicitAppTarget) {
@@ -13450,28 +13459,74 @@ function readerPhoneExportUniqueBaseName(descriptor, usedNames, maskValues, file
     workTitle:maskPhoneExportText(_work?.title || '作品', maskValues),
     moduleLabel:maskPhoneExportText(descriptor.moduleLabel, maskValues),
     itemLabel:maskPhoneExportText(descriptor.itemLabel, maskValues),
+    unicodeSafeItemLabel:Array.isArray(descriptor.branchPath) && descriptor.branchPath.length > 0,
   })
   var count = (usedNames.get(baseName) || 0) + 1
   usedNames.set(baseName, count)
   return count === 1 ? baseName : baseName + '-' + count
 }
 
-function readerPhoneExportJobs(pd, exportFrame) {
+export function readerPhoneExportJobs(pd, exportFrame, options) {
   var jobs = []
   var exportNavigation = { exportMode:true, exportFrame:exportFrame }
   var contacts = Array.isArray(pd.contacts) ? pd.contacts : []
   var chats = orderedChats(pd.chats || [])
+  var branchMode = options?.branchMode === 'all' ? 'all' : 'current'
+  var phoneExportBranchLabel = options?.phoneExportBranchLabel
+  var liveSelections = null
+  if (branchMode === 'all') {
+    liveSelections = readerPhoneChoiceSession(_work).phoneChoiceSelections
+  }
+  var alternateChatJobCount = 0
+  function throwChatBranchLimitError() {
+    throw new Error('可导出的消息选项分支超过 64 条，请减少选项后重试，或改用“当前阅读分支”。')
+  }
   chats.forEach(function(chat) {
     var chatIndex = (pd.chats || []).indexOf(chat)
     var contact = chat.type === 'group'
       ? null
       : contacts.find(function(candidate) { return String(candidate.id) === String(chat.contactIds?.[0]) })
-    jobs.push({
-      moduleLabel:'消息',
-      itemLabel:chat.type === 'group' ? (chat.groupName || '群聊') : (contact?.name || '未知联系人'),
-      render:function() {
-        openReaderChat(exportFrame, _work, pd, chat, chatIndex, undefined, {exportMode:true})
-      },
+    var chatLabel = chat.type === 'group' ? (chat.groupName || '群聊') : (contact?.name || '未知联系人')
+    if (branchMode === 'current') {
+      jobs.push({
+        moduleLabel:'消息',
+        itemLabel:chatLabel,
+        render:function() {
+          openReaderChat(exportFrame, _work, pd, chat, chatIndex, undefined, {exportMode:true})
+        },
+      })
+      return
+    }
+
+    var branchResult = enumeratePhoneStoryChatChoiceBranches(
+      pd,
+      chatIndex,
+      liveSelections,
+      { maxBranches:PHONE_EXPORT_MAX_CHAT_BRANCHES },
+    )
+    alternateChatJobCount += branchResult.branches.length
+    if (
+      branchResult.truncated === true
+      || branchResult.reason === 'state-limit'
+      || alternateChatJobCount > PHONE_EXPORT_MAX_CHAT_BRANCHES
+    ) throwChatBranchLimitError()
+    branchResult.branches.forEach(function(branch, branchIndex) {
+      var branchLabel = typeof phoneExportBranchLabel === 'function'
+        ? phoneExportBranchLabel(branch.path, branchIndex, branchResult.branches.length)
+        : ''
+      jobs.push({
+        moduleLabel:'消息',
+        itemLabel:branchLabel ? branchLabel + '-' + chatLabel : chatLabel,
+        branchPath:branch.path,
+        branchIndex:branchIndex,
+        branchTotal:branchResult.branches.length,
+        render:function() {
+          openReaderChat(exportFrame, _work, pd, chat, chatIndex, undefined, {
+            exportMode:true,
+            exportChoiceSelections:branch.selections,
+          })
+        },
+      })
     })
   })
 
@@ -13586,13 +13641,24 @@ function readerPhoneExportAnimationFrame() {
   })
 }
 
+function readerPhoneExportThrowIfAborted(signal) {
+  if (!signal?.aborted) return
+  if (typeof DOMException === 'function') throw new DOMException('已取消图片导出', 'AbortError')
+  var error = new Error('已取消图片导出')
+  error.name = 'AbortError'
+  throw error
+}
+
 async function exportReaderPhoneContentImages(options) {
   if (!_work?.phoneData) throw new Error('当前作品没有可导出的小手机内容')
+  readerPhoneExportThrowIfAborted(options?.signal)
   var phoneContentExport = await loadPhoneContentExport()
+  readerPhoneExportThrowIfAborted(options?.signal)
   var capturePhonePanelPages = phoneContentExport.capturePhonePanelPages
   var createPhoneContentArchive = phoneContentExport.createPhoneContentArchive
   var phoneExportArchiveName = phoneContentExport.phoneExportArchiveName
   var phoneExportBaseName = phoneContentExport.phoneExportBaseName
+  var phoneExportBranchLabel = phoneContentExport.phoneExportBranchLabel
   var maskPhoneExportText = phoneContentExport.maskPhoneExportText
   var placeholderMaskValues = phoneContentExport.placeholderMaskValues
   var pd = readerPhoneDataWithStoryState(_work.phoneData)
@@ -13612,12 +13678,18 @@ async function exportReaderPhoneContentImages(options) {
   var failures = []
   var usedNames = new Map()
   var maskValues = placeholderMaskValues(_work.placeholders || [], _work.readerPhValues || {})
+  var maskedPhoneExportBranchLabel = function(path, zeroBasedIndex, total) {
+    return phoneExportBranchLabel(path, zeroBasedIndex, total, { maskValues:maskValues })
+  }
 
   try {
-    var jobs = readerPhoneExportJobs(pd, exportFrame)
+    var jobs = readerPhoneExportJobs(pd, exportFrame, {
+      branchMode:options?.branchMode,
+      phoneExportBranchLabel:maskedPhoneExportBranchLabel,
+    })
     if (!jobs.length) throw new Error('当前作品还没有可导出的消息、帖子或记录')
     for (var jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
-      if (options?.signal?.aborted) throw new DOMException('已取消图片导出', 'AbortError')
+      readerPhoneExportThrowIfAborted(options?.signal)
       var job = jobs[jobIndex]
       if (typeof options?.onProgress === 'function') {
         options.onProgress({ phase:'render', current:jobIndex + 1, total:jobs.length, label:job.moduleLabel + ' · ' + job.itemLabel, files:files.length })
@@ -13637,6 +13709,7 @@ async function exportReaderPhoneContentImages(options) {
             }
           },
         })
+        readerPhoneExportThrowIfAborted(options?.signal)
         files.push.apply(files, pages)
       } catch (error) {
         if (error?.name === 'AbortError') throw error
@@ -13648,14 +13721,17 @@ async function exportReaderPhoneContentImages(options) {
     exportShell.remove()
   }
 
+  readerPhoneExportThrowIfAborted(options?.signal)
   if (!files.length) throw new Error(failures[0]?.message || '没有成功生成任何小手机图片')
   if (typeof options?.onProgress === 'function') {
     options.onProgress({ phase:'archive', current:files.length, total:files.length, label:'正在整理 ZIP', files:files.length })
   }
+  readerPhoneExportThrowIfAborted(options?.signal)
   var blob = await createPhoneContentArchive(files)
+  readerPhoneExportThrowIfAborted(options?.signal)
   return {
     blob:blob,
-    filename:phoneExportArchiveName(maskPhoneExportText(_work.title, maskValues)),
+    filename:phoneExportArchiveName(maskPhoneExportText(_work.title, maskValues), options?.branchMode),
     files:files,
     failures:failures,
   }
@@ -13669,7 +13745,11 @@ function openReaderPhoneExportDialog(returnFocus) {
   var body = '<div class="rd-phone-export-intro">'
   body += '<span class="rd-phone-export-mark" aria-hidden="true">PNG</span><div><strong>一次整理成可发布的图片包</strong><p>消息、动态、论坛、备忘录、相册、浏览记录、购物与联系人会按内容分别生成 PNG；过长内容自动分页。</p></div></div>'
   body += '<div class="rd-phone-export-privacy"><span aria-hidden="true">▖▜▖▗</span><p><strong>读者信息自动打码</strong><br>读者填写的名字等占位符内容和读者本人头像不会出现在导出图片中；NPC 与角色头像保持原样。</p></div>'
-  body += '<p class="rd-phone-export-note">图片将打包为一个 ZIP，文件名采用“作品名-模块-内容名”。外链图片若禁止跨站读取，导出时可能显示为空白。</p>'
+  body += '<p class="rd-phone-export-note">图片将打包为一个 ZIP，文件名采用“作品名-模块-内容名”。外链图片若禁止跨站读取，导出时可能显示为空白；选择所有选项分支时，非聊天模块仍各导出一次。</p>'
+  body += '<fieldset class="rd-phone-export-modes"><legend>聊天回复分支</legend>'
+  body += '<label class="rd-phone-export-mode"><input type="radio" name="readerPhoneExportBranchMode" value="current" checked><span><strong>当前阅读分支</strong><small>按你现在已经选择的聊天回复导出，速度更快。</small></span></label>'
+  body += '<label class="rd-phone-export-mode"><input type="radio" name="readerPhoneExportBranchMode" value="all"><span><strong>所有选项分支</strong><small>每个聊天的可达回复路线分别成图、各自分页；最多 64 条。</small></span></label>'
+  body += '</fieldset>'
   body += '<div class="rd-phone-export-progress" id="readerPhoneExportProgress" role="status" aria-live="polite"><span class="rd-phone-export-progress-label">准备就绪</span><span class="rd-phone-export-progress-count">尚未开始</span><span class="rd-phone-export-progress-track"><span></span></span></div>'
   body += '<details class="rd-phone-export-failures" id="readerPhoneExportFailures" hidden><summary>查看未导出的项目</summary><ul></ul></details>'
   var modal = openCuModal('导出小手机图片', body, null, returnFocus)
@@ -13682,10 +13762,22 @@ function openReaderPhoneExportDialog(returnFocus) {
   var progressBar = progress?.querySelector('.rd-phone-export-progress-track span')
   var failureDetails = modal.querySelector('#readerPhoneExportFailures')
   var failureList = failureDetails?.querySelector('ul')
+  var modeInputs = Array.from(modal.querySelectorAll('input[name="readerPhoneExportBranchMode"]'))
   var controller = null
   var busy = false
-  exportButton.textContent = '导出全部内容'
   cancelButton.textContent = '关闭'
+
+  function updateExportButtonLabel() {
+    var selectedMode = modeInputs.find(function(input) { return input.checked })
+    exportButton.textContent = selectedMode?.value === 'all'
+      ? '导出所有选项分支'
+      : '导出当前阅读分支'
+  }
+
+  modeInputs.forEach(function(input) {
+    input.addEventListener('change', updateExportButtonLabel)
+  })
+  updateExportButtonLabel()
 
   function updateProgress(event) {
     if (!progress || !event) return
@@ -13710,16 +13802,23 @@ function openReaderPhoneExportDialog(returnFocus) {
   }
   exportButton.onclick = async function() {
     if (busy) return
+    var branchMode = modeInputs.find(function(input) { return input.checked })?.value === 'all' ? 'all' : 'current'
     busy = true
     controller = new AbortController()
     exportButton.disabled = true
+    modeInputs.forEach(function(input) { input.disabled = true })
     exportButton.textContent = '正在生成…'
     cancelButton.textContent = '取消导出'
     progress.dataset.state = 'render'
     if (failureDetails) failureDetails.hidden = true
     if (failureList) failureList.replaceChildren()
     try {
-      var result = await exportReaderPhoneContentImages({ signal:controller.signal, onProgress:updateProgress })
+      var result = await exportReaderPhoneContentImages({
+        branchMode:branchMode,
+        signal:controller.signal,
+        onProgress:updateProgress,
+      })
+      readerPhoneExportThrowIfAborted(controller.signal)
       downloadBlob(result.blob, result.filename)
       progress.dataset.state = result.failures.length ? 'warning' : 'done'
       if (progressLabel) progressLabel.textContent = result.failures.length
@@ -13747,7 +13846,8 @@ function openReaderPhoneExportDialog(returnFocus) {
       busy = false
       controller = null
       exportButton.disabled = false
-      exportButton.textContent = '重新导出全部内容'
+      modeInputs.forEach(function(input) { input.disabled = false })
+      updateExportButtonLabel()
       cancelButton.textContent = '关闭'
     }
   }

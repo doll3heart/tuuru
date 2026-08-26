@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  enumeratePhoneStoryChatChoiceBranches,
   normalizePhoneStoryDisplayCondition,
   phoneStoryChatSelectionScope,
   phoneStoryChoiceCatalog,
@@ -14,6 +15,277 @@ import {
   prunePhoneStoryChoiceSelections,
   selectedPhoneStoryChoiceIds,
 } from "../js/phone-story-state.js"
+
+test("phone story chat branch enumeration returns one empty route without choices", () => {
+  const currentSelections = new Map([["outside-owner", "outside-choice"]])
+  const phoneData = {
+    chats:[{ id:"chat-a", rounds:[{ messages:[{ id:"message-a", text:"Hello" }] }] }],
+  }
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, currentSelections)
+
+  assert.equal(result.truncated, false)
+  assert.equal(result.reason, null)
+  assert.equal(result.statesVisited, 1)
+  assert.equal(result.branches.length, 1)
+  assert.equal(result.branches[0].key, "[]")
+  assert.deepEqual(result.branches[0].path, [])
+  assert.deepEqual(result.branches[0].selections, new Map())
+})
+
+test("phone story chat branch enumeration finds conditional sequential terminal routes", () => {
+  const phoneData = {
+    chats:[{
+      id:"chat-a",
+      rounds:[{
+        id:"round-a",
+        messages:[
+          { id:"owner-a", choices:[
+            { id:"choice-a", text:"Open" },
+            { id:"choice-b", text:"Stop", endRound:true },
+          ] },
+          {
+            id:"owner-next",
+            visibleAfterChoiceId:"choice-a",
+            choices:[{ id:"choice-next", text:"Continue" }],
+          },
+        ],
+      }, {
+        id:"round-b",
+        messages:[{ id:"plain-message", text:"Later" }],
+      }],
+    }],
+  }
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map(), {
+    maxBranches:64,
+    maxStates:10_000,
+  })
+
+  assert.equal(result.truncated, false)
+  assert.deepEqual(
+    result.branches.map(branch => branch.path.map(step => step.choiceId)),
+    [["choice-a", "choice-next"], ["choice-b"]],
+  )
+  assert.deepEqual(result.branches[0].path, [
+    {
+      selectionKey:"owner-a",
+      ownerMessageId:"owner-a",
+      ownerOrder:0,
+      choiceId:"choice-a",
+      choiceIndex:0,
+      label:"Open",
+    },
+    {
+      selectionKey:"owner-next",
+      ownerMessageId:"owner-next",
+      ownerOrder:1,
+      choiceId:"choice-next",
+      choiceIndex:0,
+      label:"Continue",
+    },
+  ])
+})
+
+test("phone story chat branch enumeration combines sequential unconditional owners", () => {
+  const phoneData = {
+    chats:[{ rounds:[{ messages:[
+      { id:"owner-a", choices:[{ id:"a-1" }, { id:"a-2" }] },
+      { id:"owner-b", choices:[{ id:"b-1" }, { id:"b-2" }] },
+    ] }] }],
+  }
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map())
+
+  assert.deepEqual(result.branches.map(branch => branch.path.map(step => step.choiceId)), [
+    ["a-1", "b-1"],
+    ["a-1", "b-2"],
+    ["a-2", "b-1"],
+    ["a-2", "b-2"],
+  ])
+})
+
+test("phone story chat branch enumeration hides malformed and dangling conditional owners", () => {
+  const phoneData = {
+    chats:[{ rounds:[{ messages:[
+      { id:"root", choices:[{ id:"root-choice", text:"Root" }] },
+      {
+        id:"valid-dependent",
+        visibleAfterChoiceId:"root-choice",
+        choices:[{ id:"dependent-choice", text:"Valid" }],
+      },
+      {
+        id:"dangling-dependent",
+        visibleAfterChoiceId:"missing-choice",
+        choices:[{ id:"dangling-choice", text:"Dangling" }],
+      },
+      {
+        id:"malformed-dependent",
+        displayCondition:{ all:[{ anyChoiceIds:[] }] },
+        choices:[{ id:"malformed-choice", text:"Malformed" }],
+      },
+    ] }] }],
+  }
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map())
+
+  assert.deepEqual(
+    result.branches.map(branch => branch.path.map(step => step.choiceId)),
+    [["root-choice", "dependent-choice"]],
+  )
+})
+
+test("an ending choice skips only later owners in its normalized round", () => {
+  const phoneData = {
+    chats:[{
+      rounds:[
+        { id:"round-a", messages:[{
+          id:"owner-end",
+          choices:[{ id:"choice-end", endRound:true }],
+        }] },
+        { id:"round-b", messages:[{
+          id:"owner-next-round",
+          choices:[{ id:"choice-next-round", endRound:true }],
+        }] },
+      ],
+      messages:[{
+        id:"legacy-last-round-owner",
+        choices:[{ id:"legacy-choice" }],
+      }],
+    }],
+  }
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map())
+
+  assert.deepEqual(
+    result.branches.map(branch => branch.path.map(step => step.choiceId)),
+    [["choice-end", "choice-next-round"]],
+  )
+})
+
+test("phone story chat branch enumeration uses scoped keys and preserves outside selections", () => {
+  const phoneData = {
+    chats:[
+      { id:"chat-a", rounds:[{ messages:[{
+        id:"shared-owner",
+        choices:[{ id:"choice-a" }],
+      }] }] },
+      { id:"chat-b", rounds:[{ messages:[{
+        id:"shared-owner",
+        choices:[{ id:"choice-b" }],
+      }] }] },
+    ],
+  }
+  const keyA = phoneStoryChoiceSelectionKey(phoneData, "chat-id:chat-a", "shared-owner")
+  const keyB = phoneStoryChoiceSelectionKey(phoneData, "chat-id:chat-b", "shared-owner")
+  const currentSelections = new Map([[keyA, "choice-a"], [keyB, "choice-b"]])
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, currentSelections)
+
+  assert.deepEqual(result.branches[0].path.map(step => step.selectionKey), [keyA])
+  assert.deepEqual(result.branches[0].selections, new Map([
+    [keyB, "choice-b"],
+    [keyA, "choice-a"],
+  ]))
+})
+
+test("phone story chat branch enumeration permits cross-owner choice id reuse", () => {
+  const phoneData = {
+    chats:[
+      { messages:[{
+        id:"owner",
+        choices:[
+          { text:"Missing" },
+          { id:"duplicate", text:"First" },
+          { id:"duplicate", text:"Second" },
+          { id:"reused-choice", text:"Stop", endRound:true },
+          { id:"valid", text:"Valid" },
+        ],
+      }, {
+        id:"later-owner",
+        choices:[{ id:"later-choice", text:"Later" }],
+      }] },
+      { messages:[{
+        id:"other-owner",
+        choices:[{ id:"reused-choice", text:"Reused elsewhere" }],
+      }] },
+    ],
+  }
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map())
+
+  assert.deepEqual(result.branches.map(branch => branch.path.map(step => step.choiceId)), [
+    ["reused-choice"],
+    ["valid", "later-choice"],
+  ])
+})
+
+test("phone story chat branch enumeration preserves outside selections until each route is pruned", () => {
+  const phoneData = {
+    chats:[
+      { id:"chat-a", messages:[{
+        id:"target-owner",
+        choices:[{ id:"opens-outside" }, { id:"closes-outside" }],
+      }] },
+      { id:"chat-b", messages:[{
+        id:"outside-owner",
+        visibleAfterChoiceId:"opens-outside",
+        choices:[{ id:"outside-choice" }],
+      }] },
+    ],
+  }
+  const currentSelections = new Map([
+    ["target-owner", "closes-outside"],
+    ["outside-owner", "outside-choice"],
+  ])
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, currentSelections)
+
+  assert.equal(result.branches[0].selections.get("outside-owner"), "outside-choice")
+  assert.equal(result.branches[1].selections.has("outside-owner"), false)
+})
+
+test("phone story chat branch enumeration reports branch and state overflow", () => {
+  const phoneData = {
+    chats:[{ messages:[{
+      id:"owner",
+      choices:[{ id:"choice-a" }, { id:"choice-b" }],
+    }] }],
+  }
+
+  const branchLimited = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map(), {
+    maxBranches:1,
+  })
+  assert.equal(branchLimited.truncated, true)
+  assert.equal(branchLimited.reason, "branch-limit")
+  assert.equal(branchLimited.branches.length, 1)
+
+  const stateLimited = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, new Map(), {
+    maxStates:1,
+  })
+  assert.equal(stateLimited.truncated, true)
+  assert.equal(stateLimited.reason, "state-limit")
+  assert.equal(stateLimited.statesVisited, 1)
+})
+
+test("phone story chat branch enumeration never mutates inputs and returns detached maps", () => {
+  const phoneData = {
+    chats:[{ messages:[{
+      id:"owner",
+      choices:[{ id:"choice-a", text:"A" }, { id:"choice-b", text:"B" }],
+    }] }],
+  }
+  const originalData = structuredClone(phoneData)
+  const currentSelections = new Map([["owner", "choice-b"]])
+  const originalSelections = new Map(currentSelections)
+
+  const result = enumeratePhoneStoryChatChoiceBranches(phoneData, 0, currentSelections)
+  result.branches[0].selections.set("owner", "changed")
+
+  assert.deepEqual(phoneData, originalData)
+  assert.deepEqual(currentSelections, originalSelections)
+  assert.equal(result.branches[1].selections.get("owner"), "choice-b")
+})
 
 test("phone story choices form one stable cross-App catalog", () => {
   const phoneData = {

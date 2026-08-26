@@ -2141,6 +2141,57 @@ body.rd-theme-gray .article-meta { color: #333; }
 }
 .rd-phone-export-privacy p { margin: 0; }
 .rd-phone-export-note { margin: 12px 0; }
+.rd-phone-export-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+}
+.rd-phone-export-modes legend {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  color: var(--c-text);
+  font-size: .74rem;
+  font-weight: 700;
+}
+.rd-phone-export-mode {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+.rd-phone-export-mode input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--c-primary-hover);
+}
+.rd-phone-export-mode span { min-width: 0; }
+.rd-phone-export-mode strong,
+.rd-phone-export-mode small { display: block; }
+.rd-phone-export-mode strong { color: var(--c-text); font-size: .72rem; line-height: 1.35; }
+.rd-phone-export-mode small { margin-top: 3px; color: var(--c-text2); font-size: .63rem; line-height: 1.5; }
+.rd-phone-export-mode:has(input:checked) {
+  border-color: var(--c-primary-hover);
+  background: color-mix(in srgb, var(--c-primary-soft) 58%, var(--c-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-primary-hover) 42%, transparent);
+}
+.rd-phone-export-mode:has(input:focus-visible) {
+  outline: 2px solid var(--c-primary-hover);
+  outline-offset: 2px;
+}
+.rd-phone-export-mode:has(input:disabled) {
+  opacity: .5;
+  cursor: not-allowed;
+}
 .rd-phone-export-progress {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2192,7 +2243,12 @@ body.rd-theme-gray .article-meta { color: #333; }
 .rd-phone-export-failures li + li { margin-top: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
+  .rd-phone-export-mode,
   .rd-phone-export-progress-track span { transition: none; }
+}
+
+@media (max-width: 520px) {
+  .rd-phone-export-modes { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Phone frame styles (from editor, needed for preview) */

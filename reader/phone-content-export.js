@@ -5,6 +5,10 @@ const PHONE_EXPORT_MOSAIC = "▖▜▖▗"
 const PHONE_EXPORT_WIDTH = 360
 const PHONE_EXPORT_PAGE_HEIGHT = 1600
 const PHONE_EXPORT_PIXEL_RATIO = 2
+const PHONE_EXPORT_ASSET_TIMEOUT = 2500
+const PHONE_EXPORT_FONT_TIMEOUT = 1800
+const PHONE_EXPORT_BRANCH_STEP_LABEL_LENGTH = 12
+const PHONE_EXPORT_CHAT_FONT_FAMILY = 'ui-monospace, "SFMono-Regular", Consolas, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", monospace'
 const TRANSPARENT_IMAGE = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
 const PHONE_EXPORT_READER_AVATAR_SELECTORS = [
   ".rd-reader-chat-avatar",
@@ -14,6 +18,11 @@ const PHONE_EXPORT_READER_AVATAR_SELECTORS = [
 ].join(",")
 const PHONE_EXPORT_BREAK_SELECTORS = [
   ".chat-msg",
+  ".rd-chat-message",
+  ".rd-chat-time",
+  ".rd-chat-system",
+  ".rd-call-card",
+  ".rd-chat-story-event",
   ".rd-system-message",
   ".rd-moment-card",
   ".rd-thread-comment",
@@ -26,6 +35,19 @@ const PHONE_EXPORT_BREAK_SELECTORS = [
   ".shop-item",
   ".rd-contact-entry",
 ].join(",")
+const PHONE_EXPORT_EAGER_LAYOUT_SELECTORS = [
+  ".rd-chat-message",
+  ".rd-chat-time",
+  ".rd-post-card",
+  ".rd-memo-note",
+  ".rd-gallery-photo",
+  ".rd-browser-entry",
+].join(",")
+const PHONE_EXPORT_IGNORED_SELECTORS = [
+  ".chat-composer",
+  ".rd-thread-choice-controls",
+  ".rd-thread-choice-reselect",
+].join(",")
 
 function stringValues(value) {
   if (Array.isArray(value)) return value.flatMap(stringValues)
@@ -34,28 +56,55 @@ function stringValues(value) {
   return text ? [text] : []
 }
 
-export function safePhoneExportSegment(value, fallback = "未命名") {
+function truncatePhoneExportSegmentByCodePoint(value, maximumLength = 80) {
+  let truncated = ""
+  for (const character of String(value || "")) {
+    if (truncated.length + character.length > maximumLength) break
+    truncated += character
+  }
+  return truncated
+}
+
+export function safePhoneExportSegment(value, fallback = "未命名", options = {}) {
   const safeFallback = String(fallback || "未命名").trim() || "未命名"
   const normalized = String(value || "")
     .replace(/[\u0000-\u001f\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, " ")
     .replace(/-+/g, "-")
     .replace(/^[\s.-]+|[\s.-]+$/g, "")
-    .slice(0, 80)
-    .trim()
-  return normalized || safeFallback
+  const shortened = options?.unicodeSafeTruncation === true
+    ? truncatePhoneExportSegmentByCodePoint(normalized)
+    : normalized.slice(0, 80)
+  return shortened.trim() || safeFallback
 }
 
-export function phoneExportBaseName({ workTitle, moduleLabel, itemLabel } = {}) {
+export function phoneExportBaseName({ workTitle, moduleLabel, itemLabel, unicodeSafeItemLabel = false } = {}) {
   return [
     safePhoneExportSegment(workTitle, "作品"),
     safePhoneExportSegment(moduleLabel, "小手机"),
-    safePhoneExportSegment(itemLabel, "全部"),
+    safePhoneExportSegment(itemLabel, "全部", { unicodeSafeTruncation:unicodeSafeItemLabel === true }),
   ].join("-")
 }
 
-export function phoneExportArchiveName(workTitle) {
-  return `${safePhoneExportSegment(workTitle, "作品")}-小手机图片.zip`
+export function phoneExportBranchLabel(path, zeroBasedIndex, total, options = {}) {
+  if (!Array.isArray(path) || !path.length) return ""
+  const branchNumber = Math.max(0, Number.parseInt(zeroBasedIndex, 10) || 0) + 1
+  const branchDigits = Math.max(2, String(Math.max(branchNumber, Number.parseInt(total, 10) || 0)).length)
+  const branchPrefix = `分支${String(branchNumber).padStart(branchDigits, "0")}`
+  const steps = path.map(step => {
+    const ownerOrdinal = Math.max(0, Number.parseInt(step?.ownerOrder, 10) || 0) + 1
+    const choiceOrdinal = Math.max(0, Number.parseInt(step?.choiceIndex, 10) || 0) + 1
+    const readableLabel = Array.from(maskPhoneExportText(step?.label, options?.maskValues).replace(/\s+/g, " ").trim())
+      .slice(0, PHONE_EXPORT_BRANCH_STEP_LABEL_LENGTH)
+      .join("")
+    return `选项${ownerOrdinal}.${choiceOrdinal}-${safePhoneExportSegment(readableLabel, "未命名", { unicodeSafeTruncation:true })}`
+  })
+  return safePhoneExportSegment(`${branchPrefix}-${steps.join("→")}`, branchPrefix, { unicodeSafeTruncation:true })
+}
+
+export function phoneExportArchiveName(workTitle, branchMode = "current") {
+  const modeLabel = branchMode === "all" ? "全部分支" : ""
+  return `${safePhoneExportSegment(workTitle, "作品")}-小手机${modeLabel}图片.zip`
 }
 
 export function placeholderMaskValues(placeholders, readerValues = {}) {
@@ -184,6 +233,96 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError()
 }
 
+async function waitForExportLayout(ownerDocument, signal) {
+  const ownerWindow = ownerDocument?.defaultView
+  const schedule = typeof ownerWindow?.requestAnimationFrame === "function"
+    ? ownerWindow.requestAnimationFrame.bind(ownerWindow)
+    : callback => {
+        const enqueue = typeof ownerWindow?.queueMicrotask === "function"
+          ? ownerWindow.queueMicrotask.bind(ownerWindow)
+          : queueMicrotask
+        enqueue(callback)
+      }
+  await new Promise(resolve => schedule(() => schedule(resolve)))
+  throwIfAborted(signal)
+}
+
+function settleExportAsset(start, signal, timeoutMs = PHONE_EXPORT_ASSET_TIMEOUT) {
+  throwIfAborted(signal)
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timer
+    let stop
+
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer)
+        timer = undefined
+      }
+      signal?.removeEventListener("abort", onAbort)
+      if (typeof stop === "function") {
+        const currentStop = stop
+        stop = undefined
+        currentStop()
+      }
+    }
+    const finish = (result, error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (error) reject(error)
+      else resolve(result)
+    }
+    const onAbort = () => finish(undefined, abortError())
+
+    signal?.addEventListener("abort", onAbort, { once:true })
+    timer = setTimeout(() => finish("timeout"), timeoutMs)
+    if (settled && timer !== undefined) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+    try {
+      const currentStop = start(
+        result => finish(result),
+        error => finish(undefined, error),
+      )
+      if (typeof currentStop === "function") {
+        if (settled) currentStop()
+        else stop = currentStop
+      }
+    } catch (error) {
+      finish(undefined, error)
+    }
+  })
+}
+
+function settleExportPromise(operation, signal, timeoutMs) {
+  return settleExportAsset(resolve => {
+    Promise.resolve()
+      .then(operation)
+      .then(
+        () => resolve("load"),
+        () => resolve("error"),
+      )
+  }, signal, timeoutMs)
+}
+
+function stabilizeFailedExportImage(image) {
+  const rect = image.getBoundingClientRect?.()
+  const width = Number(rect?.width)
+  const height = Number(rect?.height)
+  image.style.setProperty("box-sizing", "border-box", "important")
+  if (Number.isFinite(width)) {
+    image.style.setProperty("width", `${width}px`, "important")
+  }
+  if (Number.isFinite(height)) {
+    image.style.setProperty("height", `${height}px`, "important")
+  }
+  image.removeAttribute("srcset")
+  image.removeAttribute("sizes")
+  image.setAttribute("src", TRANSPARENT_IMAGE)
+}
+
 function forceExportLayout(panel) {
   panel.classList.add("rd-phone-export-panel")
   panel.style.setProperty("position", "relative", "important")
@@ -197,6 +336,13 @@ function forceExportLayout(panel) {
   panel.style.setProperty("min-height", "644px", "important")
   panel.style.setProperty("overflow", "visible", "important")
 
+  for (const chatShell of [
+    ...(panel.matches?.(".chat-author-shell") ? [panel] : []),
+    ...panel.querySelectorAll(".chat-author-shell"),
+  ]) {
+    chatShell.style.setProperty("font-family", PHONE_EXPORT_CHAT_FONT_FAMILY, "important")
+  }
+
   for (const element of panel.querySelectorAll(".rd-phone-app-body, .chat-msg-area, .cu-body, .rd-forum-detail-scroll")) {
     element.style.setProperty("height", "auto", "important")
     element.style.setProperty("max-height", "none", "important")
@@ -204,8 +350,17 @@ function forceExportLayout(panel) {
     element.style.setProperty("overflow", "visible", "important")
     element.style.setProperty("flex", "none", "important")
   }
-  for (const element of panel.querySelectorAll(".chat-composer, .rd-thread-choice-controls, .rd-thread-choice-reselect")) {
+  for (const element of panel.querySelectorAll(PHONE_EXPORT_EAGER_LAYOUT_SELECTORS)) {
+    element.style.setProperty("content-visibility", "visible", "important")
+    element.style.setProperty("contain-intrinsic-size", "none", "important")
+  }
+  for (const element of panel.querySelectorAll(PHONE_EXPORT_IGNORED_SELECTORS)) {
     element.dataset.phoneExportIgnore = "true"
+    element.style.setProperty("display", "none", "important")
+  }
+  for (const image of panel.querySelectorAll("img")) {
+    image.setAttribute("loading", "eager")
+    image.setAttribute("decoding", "sync")
   }
 }
 
@@ -213,19 +368,29 @@ async function waitForExportAssets(root, signal) {
   throwIfAborted(signal)
   const ownerDocument = root.ownerDocument
   if (ownerDocument?.fonts?.ready) {
-    await Promise.race([
-      ownerDocument.fonts.ready.catch(() => undefined),
-      new Promise(resolve => setTimeout(resolve, 1800)),
-    ])
+    await settleExportPromise(() => ownerDocument.fonts.ready, signal, PHONE_EXPORT_FONT_TIMEOUT)
   }
-  const pending = [...root.querySelectorAll("img")].map(image => {
-    if (image.complete) return Promise.resolve()
-    return new Promise(resolve => {
-      const finish = () => resolve()
-      image.addEventListener("load", finish, { once:true })
-      image.addEventListener("error", finish, { once:true })
-      setTimeout(finish, 2500)
-    })
+  const pending = [...root.querySelectorAll("img")].map(async image => {
+    image.setAttribute("loading", "eager")
+    const loadResult = image.complete
+      ? (image.naturalWidth > 0 ? "load" : "error")
+      : await settleExportAsset(resolve => {
+          const onLoad = () => resolve("load")
+          const onError = () => resolve("error")
+          image.addEventListener("load", onLoad, { once:true })
+          image.addEventListener("error", onError, { once:true })
+          return () => {
+            image.removeEventListener("load", onLoad)
+            image.removeEventListener("error", onError)
+          }
+        }, signal)
+    if (loadResult === "error" || loadResult === "timeout") {
+      stabilizeFailedExportImage(image)
+      return
+    }
+    if (typeof image.decode === "function" && image.complete && image.naturalWidth > 0) {
+      await settleExportPromise(() => image.decode(), signal, PHONE_EXPORT_ASSET_TIMEOUT)
+    }
   })
   await Promise.all(pending)
   throwIfAborted(signal)
@@ -233,9 +398,17 @@ async function waitForExportAssets(root, signal) {
 
 function exportBreakpoints(panel) {
   const rootRect = panel.getBoundingClientRect()
-  return [...panel.querySelectorAll(PHONE_EXPORT_BREAK_SELECTORS)].map(element => {
+  const ownerWindow = panel.ownerDocument?.defaultView
+  return [...panel.querySelectorAll(PHONE_EXPORT_BREAK_SELECTORS)].flatMap(element => {
     const rect = element.getBoundingClientRect()
-    return Math.ceil(rect.bottom - rootRect.top)
+    const marginBottom = typeof ownerWindow?.getComputedStyle === "function"
+      ? Math.max(0, Number.parseFloat(ownerWindow.getComputedStyle(element).marginBottom) || 0)
+      : 0
+    const points = [Math.ceil(rect.bottom - rootRect.top + marginBottom)]
+    if (!element.parentElement?.closest?.(PHONE_EXPORT_BREAK_SELECTORS)) {
+      points.push(Math.ceil(rect.top - rootRect.top))
+    }
+    return points
   }).filter(point => point > 0)
 }
 
@@ -244,6 +417,25 @@ function copyPhoneFrameVariables(sourcePanel, viewport) {
   if (!sourceFrame) return
   const frameStyle = sourceFrame.getAttribute("style")
   if (frameStyle) viewport.setAttribute("style", frameStyle)
+}
+
+function exportViewportBorderSize(viewport) {
+  const ownerWindow = viewport?.ownerDocument?.defaultView
+  const style = typeof ownerWindow?.getComputedStyle === "function"
+    ? ownerWindow.getComputedStyle(viewport)
+    : null
+  const pixels = property => Math.max(0, Number.parseFloat(style?.getPropertyValue(property)) || 0)
+  return {
+    inline:Math.ceil(pixels("border-left-width") + pixels("border-right-width")),
+    block:Math.ceil(pixels("border-top-width") + pixels("border-bottom-width")),
+  }
+}
+
+function exportCloneStyleProperties(ownerDocument) {
+  const ownerWindow = ownerDocument?.defaultView
+  if (typeof ownerWindow?.getComputedStyle !== "function") return undefined
+  const style = ownerWindow.getComputedStyle(ownerDocument.documentElement)
+  return Array.from(style).filter(property => property !== "height" && property !== "block-size")
 }
 
 export async function capturePhonePanelPages(sourcePanel, options = {}) {
@@ -268,40 +460,50 @@ export async function capturePhonePanelPages(sourcePanel, options = {}) {
   viewport.className = "phone-frame reader-phone-css-scope rd-phone-export-viewport"
   copyPhoneFrameVariables(sourcePanel, viewport)
   viewport.style.setProperty("position", "relative", "important")
+  viewport.style.setProperty("box-sizing", "border-box", "important")
   viewport.style.setProperty("width", `${PHONE_EXPORT_WIDTH}px`, "important")
   viewport.style.setProperty("min-height", "0", "important")
   viewport.style.setProperty("margin", "0", "important")
   viewport.style.setProperty("overflow", "hidden", "important")
   const clone = maskPhoneExportClone(sourcePanel, maskValues)
   forceExportLayout(clone)
+  clone.style.setProperty("width", "100%", "important")
   viewport.appendChild(clone)
   stage.appendChild(viewport)
   ownerDocument.body.appendChild(stage)
 
   try {
     await waitForExportAssets(clone, signal)
+    await waitForExportLayout(ownerDocument, signal)
+    const viewportBorder = exportViewportBorderSize(viewport)
     const measuredHeight = Math.max(
       644,
       Math.ceil(clone.scrollHeight || clone.getBoundingClientRect().height || 0),
     )
-    const windows = phoneExportPageWindows(measuredHeight, maximumPageHeight, exportBreakpoints(clone))
+    const contentPageHeight = Math.max(320, Math.ceil(Number(maximumPageHeight) || PHONE_EXPORT_PAGE_HEIGHT) - viewportBorder.block)
+    const windows = phoneExportPageWindows(measuredHeight, contentPageHeight, exportBreakpoints(clone))
+    const includeStyleProperties = exportCloneStyleProperties(ownerDocument)
     const files = []
     for (const window of windows) {
       throwIfAborted(signal)
-      viewport.style.setProperty("height", `${window.height}px`, "important")
+      const outputHeight = window.height + viewportBorder.block
+      viewport.style.setProperty("height", `${outputHeight}px`, "important")
       clone.style.setProperty("transform", `translateY(-${window.top}px)`, "important")
       clone.style.setProperty("transform-origin", "top left", "important")
+      await waitForExportLayout(ownerDocument, signal)
       const blob = await rasterize(viewport, {
         width:PHONE_EXPORT_WIDTH,
-        height:window.height,
+        height:outputHeight,
         pixelRatio,
         cacheBust:true,
         includeQueryParams:true,
         skipAutoScale:true,
         imagePlaceholder:TRANSPARENT_IMAGE,
         backgroundColor:"#fffafa",
+        includeStyleProperties,
         filter:node => !node?.dataset?.phoneExportIgnore,
       })
+      throwIfAborted(signal)
       if (!blob) throw new Error("浏览器没有生成 PNG 图片")
       const pageSuffix = window.total > 1 ? `-${String(window.page).padStart(2, "0")}` : ""
       files.push({ filename:`${baseName}${pageSuffix}.png`, blob })
