@@ -367,36 +367,10 @@ test("reader appearance package imports only visuals and preserves personal read
   document.querySelector('[data-tab="custom"]').click()
   document.querySelector('[data-reader-phone-control="reading"]').click()
 
-  assert.ok(document.querySelector("[data-reader-appearance-export]"))
+  assert.equal(document.querySelector("[data-reader-appearance-export]"), null)
   assert.ok(document.querySelector("[data-reader-appearance-import]"))
-  assert.match(document.querySelector(".reader-appearance-transfer").textContent, /不会包含昵称 \/ ID、头像、简介、作品、书架、密码或阅读记录/)
+  assert.match(document.querySelector(".reader-appearance-transfer").textContent, /不会替换昵称 \/ ID、头像、简介、作品、书架、密码或阅读记录/)
   assert.match(document.querySelector(".reader-appearance-transfer").textContent, /个人主页顶部图/)
-
-  let downloadedBlob = null
-  let downloadedName = ""
-  const originalUrl = globalThis.URL
-  const originalAnchorClick = dom.window.HTMLAnchorElement.prototype.click
-  globalThis.URL = {
-    createObjectURL(blob) {
-      downloadedBlob = blob
-      return "blob:reader-appearance-package"
-    },
-    revokeObjectURL() {},
-  }
-  dom.window.HTMLAnchorElement.prototype.click = function() {
-    downloadedName = this.download
-  }
-  t.after(() => {
-    globalThis.URL = originalUrl
-    dom.window.HTMLAnchorElement.prototype.click = originalAnchorClick
-  })
-  document.querySelector("[data-reader-appearance-export]").click()
-  const exported = await downloadedBlob.text()
-  assert.equal(downloadedName, "Tuuru-读者美化包.json")
-  assert.equal(exported.includes("PRIVATE_PHONE_ID"), false)
-  assert.equal(exported.includes("PRIVATE_PROFILE_AVATAR"), false)
-  assert.equal(exported.includes("PRIVATE_WORK_ID"), false)
-  assert.equal(exported.includes("data:image/png;base64,b2xkLWNvdmVy"), true)
 
   document.querySelector("[data-reader-appearance-import]").click()
 

@@ -10,6 +10,12 @@
 /reader/index.html
   Cache-Control: public, no-cache, must-revalidate
 
+/author-phone-render
+  Cache-Control: public, no-cache, must-revalidate
+
+/author-phone-render.html
+  Cache-Control: public, no-cache, must-revalidate
+
 /sw.js
   Cache-Control: public, no-cache, must-revalidate
 

@@ -135,7 +135,7 @@ function readBlobText(blob) {
   })
 }
 
-test("bookshelf reader data panel exports a private package and previews before merging import", async t => {
+test("bookshelf reader data panel offers import only and previews before merging", async t => {
   installDom(t)
   seedCurrentReaderData()
   let downloadedBlob = null
@@ -166,10 +166,10 @@ test("bookshelf reader data panel exports a private package and previews before 
   assert.equal(panel.hidden, false)
   assert.match(panel.textContent, /不包含.*作品|作品.*不包含/s)
   assert.match(panel.textContent, /图片/)
-  document.querySelector("[data-reader-data-export]").click()
-  assert.equal(downloadedName, "Tuuru-reader-data.json")
-  const exported = await readBlobText(downloadedBlob)
-  assert.doesNotMatch(exported, /PRIVATE WORK BODY|private-work-password|YXZhdGFy|YXJ0aWNsZQ/)
+  assert.equal(document.querySelector("[data-reader-data-export]"), null)
+  assert.equal(document.activeElement, document.querySelector("[data-reader-data-import]"))
+  assert.equal(downloadedName, "")
+  assert.equal(downloadedBlob, null)
 
   selectBackupFile(incomingPackage())
   await waitForFileRead()

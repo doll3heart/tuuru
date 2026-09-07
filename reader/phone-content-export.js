@@ -1,5 +1,7 @@
 import { toBlob } from "html-to-image"
 import { Zip, ZipPassThrough } from "fflate"
+import { inlinePhoneExportImages } from "./phone-export-assets.js"
+import { waitForPhoneExportLayout } from "./phone-export-layout.js"
 
 const PHONE_EXPORT_MOSAIC = "▖▜▖▗"
 const PHONE_EXPORT_WIDTH = 360
@@ -164,6 +166,15 @@ export function maskPhoneExportClone(source, maskValues) {
     throw new TypeError("需要可复制的小手机内容节点")
   }
   const clone = source.cloneNode(true)
+  const originalImages = [...source.querySelectorAll("img")]
+  for (const [index, image] of [...clone.querySelectorAll("img")].entries()) {
+    const selectedSource = originalImages[index]?.currentSrc
+    if (selectedSource) {
+      image.setAttribute("src", selectedSource)
+      image.removeAttribute("srcset")
+      image.removeAttribute("sizes")
+    }
+  }
   const ownerDocument = clone.ownerDocument || source.ownerDocument
   const NodeFilterObject = ownerDocument?.defaultView?.NodeFilter || globalThis.NodeFilter
   if (ownerDocument && NodeFilterObject) {
@@ -231,20 +242,6 @@ function abortError() {
 
 function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError()
-}
-
-async function waitForExportLayout(ownerDocument, signal) {
-  const ownerWindow = ownerDocument?.defaultView
-  const schedule = typeof ownerWindow?.requestAnimationFrame === "function"
-    ? ownerWindow.requestAnimationFrame.bind(ownerWindow)
-    : callback => {
-        const enqueue = typeof ownerWindow?.queueMicrotask === "function"
-          ? ownerWindow.queueMicrotask.bind(ownerWindow)
-          : queueMicrotask
-        enqueue(callback)
-      }
-  await new Promise(resolve => schedule(() => schedule(resolve)))
-  throwIfAborted(signal)
 }
 
 function settleExportAsset(start, signal, timeoutMs = PHONE_EXPORT_ASSET_TIMEOUT) {
@@ -435,7 +432,60 @@ function exportCloneStyleProperties(ownerDocument) {
   const ownerWindow = ownerDocument?.defaultView
   if (typeof ownerWindow?.getComputedStyle !== "function") return undefined
   const style = ownerWindow.getComputedStyle(ownerDocument.documentElement)
-  return Array.from(style).filter(property => property !== "height" && property !== "block-size")
+  // Keep measured dimensions. Dropping heights makes stylesheet-sized images,
+  // avatars and headers reflow when the clone loses the document stylesheets.
+  // Font sizes are already inlined exactly below: html-to-image otherwise
+  // floors every pixel font size and subtracts 0.1px during its style copy.
+  return Array.from(style).filter(property => property !== "font-size")
+}
+
+function preserveExportRasterStyles(root) {
+  const ownerWindow = root.ownerDocument?.defaultView
+  if (typeof ownerWindow?.getComputedStyle !== "function") return
+  // Read before writing so freezing an ancestor cannot change a descendant's
+  // inherited values. Only the disposable export tree is touched.
+  const snapshots = [root, ...root.querySelectorAll("*")].filter(element => element.style).map(element => {
+    const style = ownerWindow.getComputedStyle(element)
+    const fontSize = style.getPropertyValue("font-size")
+    // html-to-image deep-clones SVG children without decorating them. Their
+    // stylesheet fill/stroke/opacity (e.g. voice waves) would otherwise vanish.
+    const properties = element.ownerSVGElement ? Array.from(style) : ["font-size"]
+    const values = properties.map(property => [property, style.getPropertyValue(property)])
+    const pseudoFonts = []
+    // Real browser CSSOM supports pseudo styles; DOM-only test environments
+    // without CSS do not. Generated text may use a different size than its host.
+    if (ownerWindow.CSS && !element.ownerSVGElement) {
+      for (const pseudo of ["::before", "::after"]) {
+        const pseudoStyle = ownerWindow.getComputedStyle(element, pseudo)
+        const content = pseudoStyle.getPropertyValue("content")
+        const size = pseudoStyle.getPropertyValue("font-size")
+        if (content && content !== "none" && content !== "normal" && size && size !== fontSize) {
+          pseudoFonts.push({ pseudo, size })
+        }
+      }
+    }
+    return { element, values, pseudoFonts }
+  })
+  const pseudoRules = []
+  for (const [index, { element, values, pseudoFonts }] of snapshots.entries()) {
+    for (const [property, value] of values) {
+      if (value) element.style.setProperty(property, value, "important")
+    }
+    if (pseudoFonts.length) {
+      element.setAttribute("data-phone-export-font", String(index))
+      for (const { pseudo, size } of pseudoFonts) {
+        pseudoRules.push(`[data-phone-export-font="${index}"]${pseudo}{font-size:${size}!important}`)
+      }
+    }
+  }
+  if (pseudoRules.length) {
+    // The dependency's pseudo-element serializer shares the same property list,
+    // so carry the omitted font sizes in clone-local rules (including root pseudos).
+    const stylesheet = root.ownerDocument.createElement("style")
+    stylesheet.setAttribute("data-phone-export-fonts", "")
+    stylesheet.textContent = pseudoRules.join("\n")
+    root.appendChild(stylesheet)
+  }
 }
 
 export async function capturePhonePanelPages(sourcePanel, options = {}) {
@@ -447,6 +497,7 @@ export async function capturePhonePanelPages(sourcePanel, options = {}) {
     pixelRatio = PHONE_EXPORT_PIXEL_RATIO,
     signal,
     rasterize = toBlob,
+    layoutScheduler,
     onPage,
   } = options
   throwIfAborted(signal)
@@ -473,8 +524,11 @@ export async function capturePhonePanelPages(sourcePanel, options = {}) {
   ownerDocument.body.appendChild(stage)
 
   try {
+    const pendingImages = inlinePhoneExportImages(viewport, { signal })
+    if (pendingImages) await pendingImages
     await waitForExportAssets(clone, signal)
-    await waitForExportLayout(ownerDocument, signal)
+    await waitForPhoneExportLayout(ownerDocument, signal, layoutScheduler)
+    preserveExportRasterStyles(viewport)
     const viewportBorder = exportViewportBorderSize(viewport)
     const measuredHeight = Math.max(
       644,
@@ -490,7 +544,7 @@ export async function capturePhonePanelPages(sourcePanel, options = {}) {
       viewport.style.setProperty("height", `${outputHeight}px`, "important")
       clone.style.setProperty("transform", `translateY(-${window.top}px)`, "important")
       clone.style.setProperty("transform-origin", "top left", "important")
-      await waitForExportLayout(ownerDocument, signal)
+      await waitForPhoneExportLayout(ownerDocument, signal, layoutScheduler)
       const blob = await rasterize(viewport, {
         width:PHONE_EXPORT_WIDTH,
         height:outputHeight,

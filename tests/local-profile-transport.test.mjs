@@ -21,7 +21,7 @@ function database(works = [], collections) {
   return JSON.stringify({ version: 1, works, contacts: [], groups: [], ...(collections ? { collections } : {}) })
 }
 
-test("local profile package round-trips author works, author settings, and reader data", () => {
+test("new author profile packages exclude all reader data without changing storage", () => {
   const source = new MemoryStorage({
     tuuru_works: database([{ id: "author-1", type: "article", title: "作品", nodes: [], chapters: [] }]),
     tuuru_theme: "tuuru",
@@ -31,15 +31,22 @@ test("local profile package round-trips author works, author settings, and reade
     tuuru_article_author_notes: JSON.stringify({ version: 1, works: { "author-1": { outline:"PRIVATE_OUTLINE" } } }),
     moirain_profile: JSON.stringify({ readerId: "小雨" }),
     moirain_work_reader1: JSON.stringify({ id: "reader1", type: "phone", title: "读者作品" }),
+    moirain_readerLibrary: "PRIVATE_PROGRESS_SENTINEL",
+    moirain_phoneCustom: "PRIVATE_CUSTOM_SENTINEL",
+    moirain_readerSettings: "PRIVATE_READER_SETTINGS_SENTINEL",
     unrelated_secret: "must-not-export",
   })
 
+  const before = [...source.map]
   const raw = serializeLocalProfile(source, new Date("2026-07-22T12:00:00.000Z"))
   const inspected = inspectLocalProfile(raw)
   assert.equal(inspected.ok, true)
   assert.equal(inspected.profile.format, LOCAL_PROFILE_FORMAT)
   assert.equal(inspected.summary.authorWorkCount, 1)
-  assert.equal(inspected.summary.readerEntryCount, 2)
+  assert.equal(inspected.summary.readerEntryCount, 0)
+  assert.deepEqual([...source.map], before)
+  assert.deepEqual(inspected.profile.readerEntries, {})
+  assert.doesNotMatch(raw, /moirain_|小雨|读者作品|PRIVATE_PROGRESS_SENTINEL|PRIVATE_CUSTOM_SENTINEL|PRIVATE_READER_SETTINGS_SENTINEL/)
   assert.equal(raw.includes("unrelated_secret"), false)
   assert.equal(raw.includes("tuuru_article_editor_view"), true)
   assert.equal(raw.includes("tuuru_article_author_notes"), true)
@@ -47,9 +54,9 @@ test("local profile package round-trips author works, author settings, and reade
   const target = new MemoryStorage({ tuuru_works: database([]) })
   const result = mergeLocalProfile(target, inspected.profile)
   assert.equal(result.importedAuthorWorks, 1)
-  assert.equal(result.importedReaderEntries, 2)
-  assert.equal(JSON.parse(target.getItem("moirain_profile")).readerId, "小雨")
-  assert.equal(JSON.parse(target.getItem("moirain_work_reader1")).title, "读者作品")
+  assert.equal(result.importedReaderEntries, 0)
+  assert.equal(target.getItem("moirain_profile"), null)
+  assert.equal(target.getItem("moirain_work_reader1"), null)
   assert.equal(JSON.parse(target.getItem("tuuru_author_npc_packs")).packs[0].name, "论坛路人")
   assert.equal(JSON.parse(target.getItem("tuuru_article_editor_view")).works["author-1"].editorTextColor, "#5a3344")
   assert.equal(JSON.parse(target.getItem("tuuru_article_author_notes")).works["author-1"].outline, "PRIVATE_OUTLINE")
@@ -76,7 +83,13 @@ test("local profile import preserves conflicts and remaps conflicting work ids",
     moirain_work_same: JSON.stringify({ id: "same", type: "article", title: "导入阅读作品" }),
   })
 
-  const profile = inspectLocalProfile(serializeLocalProfile(source, new Date("2026-07-22T12:00:00.000Z"))).profile
+  // Explicit historical fixture: new exports intentionally omit reader entries.
+  const profile = inspectLocalProfile(JSON.stringify({
+    format:LOCAL_PROFILE_FORMAT,version:1,exportedAt:"2026-07-22T12:00:00.000Z",
+    database:{collections:[],...JSON.parse(source.getItem("tuuru_works"))},
+    authorSettings:source.getItem("tuuru_theme") ? {tuuru_theme:source.getItem("tuuru_theme")} : {},
+    readerEntries:Object.fromEntries([...source.map].filter(([key])=>key.startsWith("moirain_"))),
+  })).profile
   const result = mergeLocalProfile(target, profile)
   const works = JSON.parse(target.getItem("tuuru_works")).works
   assert.equal(works.length, 2)
@@ -99,7 +112,13 @@ test("local profile import remaps author and reader collection members with conf
     moirain_work_same: JSON.stringify({ id: "same", type: "article", title: "导入阅读作品" }),
     moirain_collections: JSON.stringify([collection]),
   })
-  const profile = inspectLocalProfile(serializeLocalProfile(source, new Date("2026-07-22T12:00:00.000Z"))).profile
+  // Explicit historical fixture: new exports intentionally omit reader entries.
+  const profile = inspectLocalProfile(JSON.stringify({
+    format:LOCAL_PROFILE_FORMAT,version:1,exportedAt:"2026-07-22T12:00:00.000Z",
+    database:{collections:[],...JSON.parse(source.getItem("tuuru_works"))},
+    authorSettings:source.getItem("tuuru_theme") ? {tuuru_theme:source.getItem("tuuru_theme")} : {},
+    readerEntries:Object.fromEntries([...source.map].filter(([key])=>key.startsWith("moirain_"))),
+  })).profile
   mergeLocalProfile(target, profile)
 
   const authorDatabase = JSON.parse(target.getItem("tuuru_works"))

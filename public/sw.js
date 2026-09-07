@@ -5,6 +5,7 @@ const BUILD_ASSETS = /* tuuru-build-assets */ []
 const APP_SHELL = [
   "/",
   "/reader/",
+  "/author-phone-render.html",
   "/manifest.webmanifest",
   "/icons/tuuru-rabbit-v2-192.png",
   "/icons/tuuru-rabbit-v2-512.png",

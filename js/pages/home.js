@@ -6,6 +6,7 @@ import { orderedWorks } from "../work-order.js"
 import { getWorkCollections } from "../data.js"
 import { modal, showToast } from "../app.js"
 import { downloadBlob } from "../download.js"
+import { readAuthorPhoneExportSnapshot } from "../author-phone-snapshot.js"
 import { recordExport } from "../export-history.js"
 import { createWorkArtifact } from "../work-export.js"
 import { startLocalLibraryRestore } from "../library-restore-ui.js"
@@ -68,7 +69,7 @@ export function renderHome(){
           <a class="btn btn-sm btn-outline" href="#/exports">导出中心</a>
           <button class="btn btn-sm btn-outline" onclick="backupLibrary(this)" aria-label="备份全部作品" title="包含密码、私密内容、编辑设置与作者配置，仅下载到本机"><span class="library-action-label library-action-label-long">备份全部</span><span class="library-action-label library-action-label-short" aria-hidden="true">备份</span></button>
           <button class="btn btn-sm btn-outline" id="backupInspectBtn" onclick="restoreLibraryBackup()" aria-label="检查或恢复备份" title="检查备份并可在确认后替换整个本地创作库；所有操作仅在当前浏览器内完成"><span class="library-action-label library-action-label-long">检查 / 恢复</span><span class="library-action-label library-action-label-short" aria-hidden="true">恢复</span></button>
-          <button class="btn btn-sm btn-outline" onclick="openLocalProfileTransfer()" aria-label="导出或导入作者端和读者端本地数据" title="把作者创作库、写作设置和读者端本地信息打包迁移到其他浏览器"><span class="library-action-label library-action-label-long">整机搬家</span><span class="library-action-label library-action-label-short" aria-hidden="true">搬家</span></button>
+          <button class="btn btn-sm btn-outline" onclick="openLocalProfileTransfer()" aria-label="导出或导入作者创作库和写作习惯" title="把作者创作库和写作习惯打包迁移到其他浏览器；旧版包仍可导入"><span class="library-action-label library-action-label-long">作者搬家</span><span class="library-action-label library-action-label-short" aria-hidden="true">搬家</span></button>
         </div>
         <button type="button" class="btn btn-sm btn-outline library-manage-button" onclick="openLibraryManage()">管理</button>
       </div>
@@ -685,7 +686,7 @@ window.openLibraryManage = function() {
     + '<section><span class="library-manage-label">本地数据</span>'
     + '<button type="button" class="library-manage-row" data-library-backup><strong>备份全部</strong><span>下载当前作者创作库</span></button>'
     + '<button type="button" class="library-manage-row" data-library-restore><strong>检查 / 恢复</strong><span>检查备份并按确认恢复</span></button>'
-    + '<button type="button" class="library-manage-row" data-library-transfer><strong>整机搬家</strong><span>迁移作者端与读者端本地数据</span></button></section>'
+    + '<button type="button" class="library-manage-row" data-library-transfer><strong>作者搬家</strong><span>迁移作者创作库与写作习惯</span></button></section>'
     + '<p class="library-manage-note">以上操作都只读取当前设备的数据，不会上传作品。</p>'
     + '</div>'
   var overlay = modal('管理创作库', body, '')
@@ -725,12 +726,12 @@ window.restoreLibraryBackup = function() {
 window.openLocalProfileTransfer = function() {
   var selectedProfile = null
   var body = '<div class="local-profile-transfer">'
-    + '<p>搬家包同时包含作者创作库、写作习惯，以及当前浏览器的读者作品、阅读资料与小手机个性化设置。</p>'
-    + '<p class="local-profile-warning">文件可能含密码、私密内容和读者资料，请只保存在可信设备，不要公开分享。</p>'
+    + '<p>作者搬家包只包含作者创作库与写作习惯，不包含读者作品、阅读资料或个性化设置。已有旧版搬家包仍可导入恢复。</p>'
+    + '<p class="local-profile-warning">文件可能含作者密码和私密创作内容，请只保存在可信设备，不要公开分享。</p>'
     + '<label class="btn btn-sm btn-outline local-profile-file">选择搬家包<input id="localProfileFile" type="file" accept="application/json,.json"></label>'
     + '<div id="localProfileSummary" class="local-profile-summary" role="status" aria-live="polite">导入时会合并数据；同 ID 的不同作品会另存，已有个人设置不会被静默覆盖。</div>'
     + '</div>'
-  var ov = modal('作者端＋读者端整机搬家', body,
+  var ov = modal('作者搬家', body,
     '<button id="localProfileExport" class="btn btn-primary btn-sm">导出搬家包</button><button id="localProfileImport" class="btn btn-outline btn-sm" disabled>确认导入</button><button id="localProfileCancel" class="btn btn-ghost btn-sm">关闭</button>')
   var fileInput = ov.querySelector('#localProfileFile')
   var summary = ov.querySelector('#localProfileSummary')
@@ -742,7 +743,7 @@ window.openLocalProfileTransfer = function() {
       var json = serializeLocalProfile(localStorage, exportedAt)
       downloadBlob(new Blob([json], { type:'application/json;charset=utf-8' }),
         'tuuru-local-profile-' + exportedAt.toISOString().replace(/[:.]/g, '-') + '.json')
-      showToast('整机搬家包下载已发起，请妥善保管', 'success')
+      showToast('作者搬家包下载已发起，请妥善保管', 'success')
     } catch (error) {
       summary.textContent = '导出失败：' + (error instanceof Error ? error.message : '未知错误')
     }
@@ -774,7 +775,7 @@ window.openLocalProfileTransfer = function() {
       summary.textContent = '导入完成：新增 ' + result.importedAuthorWorks + ' 篇作者作品、'
         + result.importedReaderEntries + ' 项读者端数据；保留 ' + result.preservedConflicts + ' 项现有冲突数据。'
       importButton.disabled = true
-      showToast('整机搬家包已合并，正在刷新', 'success')
+      showToast('作者搬家包已合并，正在刷新', 'success')
       setTimeout(function() { location.reload() }, 500)
     } catch (error) {
       summary.textContent = '导入失败，原数据未清空：' + (error instanceof Error ? error.message : '未知错误')
@@ -856,6 +857,8 @@ window.openWorkExport = function(id) {
     return null
   }
   window.closeWorkMenu?.(id)
+  var phoneExportAvailable = false
+  try { phoneExportAvailable = Boolean(readAuthorPhoneExportSnapshot(id).work.phoneData) } catch (_) {}
   var body = '<div class="work-export-sheet">'
     + '<div class="work-export-summary"><strong>' + escHtml(work.title || '未命名作品') + '</strong>'
     + '<span>所有文件都在当前设备生成，Tuuru 不会上传作品。</span></div>'
@@ -866,6 +869,7 @@ window.openWorkExport = function(id) {
     + '<div class="work-export-actions">'
     + '<button type="button" class="btn btn-outline" data-work-download>下载 .tuuru</button>'
     + '<button type="button" class="btn btn-outline" data-work-png>生成加密 PNG</button>'
+    + (phoneExportAvailable ? '<button type="button" class="btn btn-outline" data-work-phone-images>小手机图片</button>' : '')
     + '</div>'
     + '<a class="work-export-history-link" href="#/exports">查看导出记录</a>'
     + '</div>'
@@ -874,6 +878,19 @@ window.openWorkExport = function(id) {
   overlay.querySelector('.modal')?.classList.add('work-export-dialog')
   var downloadButton = overlay.querySelector('[data-work-download]')
   var pngButton = overlay.querySelector('[data-work-png]')
+  overlay.querySelector('[data-work-phone-images]')?.addEventListener('click', async function(event) {
+    var button = event.currentTarget
+    button.disabled = true
+    try {
+      var phoneExport = await import('../author-phone-export-ui.js')
+      if (!overlay.isConnected) return
+      readAuthorPhoneExportSnapshot(id).assertCurrent()
+      overlay.closeModal?.('phone-images')
+      phoneExport.openAuthorPhoneExportDialog(id, {modal:modal, showToast:showToast, returnFocus:button})
+    } catch (error) {
+      showToast(error?.message || '小手机图片导出加载失败，请重试', 'error')
+    } finally { button.disabled = false }
+  })
   downloadButton.onclick = async function() {
     var result = await window.expWork(id, downloadButton)
     if (result === 'downloaded') overlay.closeModal?.('completed')

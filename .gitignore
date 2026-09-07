@@ -1,4 +1,5 @@
 node_modules/
+artifacts/phone-export-browser/
 .worktrees/
 .vite/
 dist/

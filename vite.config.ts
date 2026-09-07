@@ -20,6 +20,7 @@ export default defineConfig({
       input: {
         main: path.resolve(projectRoot, 'index.html'),
         reader: path.resolve(projectRoot, 'reader/index.html'),
+        authorPhoneRender: path.resolve(projectRoot, 'author-phone-render.html'),
       },
     },
   },

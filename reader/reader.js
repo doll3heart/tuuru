@@ -136,7 +136,6 @@ import {
   resolvePhoneReadingFlowStep,
 } from '../js/phone-reading-flow.js'
 import {
-  enumeratePhoneStoryChatChoiceBranches,
   phoneStoryChatSelectionScope,
   phoneStoryChoiceSelectionKey,
   phoneStoryItemHasValidConditionReferences,
@@ -172,17 +171,14 @@ import { createFeedbackCenter } from '../js/interaction-feedback.js'
 import { refreshReorderedContent } from '../js/reorder-motion.js'
 import { WORK_COLLECTION_BUNDLE_TYPE } from '../js/work-collections.js'
 import { inspectReaderCollectionBundle, installReaderCollection } from './work-collection-import.js'
-import { downloadBlob } from '../js/download.js'
 import {
   READER_APPEARANCE_PACKAGE_MAX_BYTES,
   inspectReaderAppearancePackage,
-  serializeReaderAppearancePackage,
 } from './appearance-package.js'
 import {
   READER_DATA_PACKAGE_MAX_BYTES,
   inspectReaderDataPackage,
   mergeReaderDataPackage,
-  serializeReaderDataPackage,
 } from './reader-data-package.js'
 import {
   installReaderCacheWithRescue,
@@ -261,7 +257,8 @@ import {
 
 // ---- helpers ----
 const READER_DEFAULT_APP_ICON_SURFACE = '#f0f0f0'
-const PHONE_EXPORT_MAX_CHAT_BRANCHES = 64
+const authorPhoneRenderDocument = document.documentElement.hasAttribute('data-author-phone-render')
+var authorPhoneRenderCustom = null
 const readerLayerHistory = createReaderLayerHistory(window)
 
 function esc(s) {
@@ -278,6 +275,14 @@ function readerAppName(app) {
 
 function readerCustomIconUrl(value) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function readerPhoneImageCssUrl(value) {
+  // Escape CSS string syntax here; the complete style attribute is HTML-escaped
+  // once by its caller. HTML-escaping the URL here corrupts signed query strings.
+  return 'url("' + String(value).replace(/["\\\n\r\f]/g, function(character) {
+    return '\\' + character.charCodeAt(0).toString(16) + ' '
+  }) + '")'
 }
 
 function focusReaderAppIcon(root, type) {
@@ -1726,9 +1731,11 @@ function renderEditorPreviewError(message) {
 
 // ---- localStorage helpers ----
 function lsGet(key) {
+  if (authorPhoneRenderDocument) return null
   try { return JSON.parse(localStorage.getItem('moirain_' + key)) } catch(e) { return null }
 }
 function lsSet(key, val) {
+  if (authorPhoneRenderDocument) return
   localStorage.setItem('moirain_' + key, JSON.stringify(val))
 }
 
@@ -1751,10 +1758,12 @@ function tryReaderStorageWrite(write) {
 }
 
 function getReaderLibraryState() {
+  if (authorPhoneRenderDocument) return {books:[], identities:[], collections:[]}
   return readReaderLibrary(localStorage)
 }
 
 function commitReaderLibraryState(library) {
+  if (authorPhoneRenderDocument) return false
   var saved = writeReaderLibrary(localStorage, library)
   if (!saved) warnReaderStorageFailure()
   return saved
@@ -3042,11 +3051,10 @@ function installReaderDataPackage(candidate) {
 function readerDataPanelMarkup() {
   return '<section id="rdReaderDataPanel" class="rd-reader-data-panel" data-reader-data-panel aria-labelledby="rdReaderDataTitle"' +
     (_readerDataPanelOpen ? '' : ' hidden') + '>' +
-    '<div class="rd-reader-data-intro"><div><h3 id="rdReaderDataTitle">阅读数据备份</h3>' +
-    '<p>备份阅读进度、身份组、占位符、书签和便携外观设置。</p></div>' +
+    '<div class="rd-reader-data-intro"><div><h3 id="rdReaderDataTitle">恢复阅读数据</h3>' +
+    '<p>从旧备份恢复阅读进度、身份组、占位符、书签和便携外观设置。</p></div>' +
     '<p class="rd-reader-data-private">不包含作品正文、密码、图片、头像、字体或缓存。</p></div>' +
     '<div class="rd-reader-data-actions">' +
-    '<button type="button" class="rd-reader-data-action primary" data-reader-data-export>导出备份</button>' +
     '<button type="button" class="rd-reader-data-action" data-reader-data-import>选择备份</button>' +
     '<input type="file" data-reader-data-file accept=".json,application/json" hidden>' +
     '</div>' +
@@ -4013,23 +4021,8 @@ function bindReaderDataPanel(root) {
     toggle.setAttribute('aria-expanded', _readerDataPanelOpen ? 'true' : 'false')
     panel.hidden = !_readerDataPanelOpen
     if (_readerDataPanelOpen) {
-      var firstAction = panel.querySelector('[data-reader-data-export]')
+      var firstAction = panel.querySelector('[data-reader-data-import]')
       if (firstAction) firstAction.focus()
-    }
-  }
-
-  var exportButton = panel.querySelector('[data-reader-data-export]')
-  if (exportButton) exportButton.onclick = function() {
-    try {
-      var serialized = serializeReaderDataPackage(currentReaderDataPackageInput())
-      downloadBlob(
-        new Blob([serialized], {type:'application/json;charset=utf-8'}),
-        'Tuuru-reader-data.json',
-        {urlApi:window.URL},
-      )
-      setStatus('备份已导出；作品、密码与图片未包含在内。')
-    } catch (error) {
-      setStatus(error && error.message ? error.message : '阅读数据导出失败。')
     }
   }
 
@@ -4595,7 +4588,7 @@ function renderReaderStorageRescue(work, root, serialized, loadOptions) {
       continueButton.disabled = false
       status.textContent = result.rollbackOk
         ? '空间仍然不足，刚才选择的正文缓存已经恢复。请再多选一些后重试。'
-        : '空间仍然不足，且部分正文缓存未能恢复；请先导出阅读数据备份。'
+        : '空间仍然不足，且部分正文缓存未能恢复；请保留原作品文件，再检查本地存储空间。'
       return
     }
     closeReaderImportDialog({restoreFocus:false})
@@ -5273,11 +5266,10 @@ function saveReaderSettings(data) {
 
 function readerAppearancePackageTransferMarkup() {
   return '<section class="reader-appearance-transfer" aria-labelledby="readerAppearanceTransferTitle">' +
-    '<div class="rs-group-heading"><span id="readerAppearanceTransferTitle">美化包</span><small>文章、手机与 App 外观可一起分享</small></div>' +
-    '<p>仅包含外观设置。不会包含昵称 / ID、头像、简介、作品、书架、密码或阅读记录；组件便签也只留在本机。</p>' +
-    '<p class="reader-appearance-transfer-assets">会包含你主动设置的壁纸、个人主页顶部图、字体、图标和桌面组件外观；分享前请确认这些素材适合公开。</p>' +
+    '<div class="rs-group-heading"><span id="readerAppearanceTransferTitle">导入美化包</span><small>恢复文章、手机与 App 外观</small></div>' +
+    '<p>导入已有美化包只更新外观设置，不会替换昵称 / ID、头像、简介、作品、书架、密码或阅读记录。</p>' +
+    '<p class="reader-appearance-transfer-assets">可恢复包内的壁纸、个人主页顶部图、字体、图标和桌面组件外观；组件便签只留在本机。</p>' +
     '<div class="reader-appearance-transfer-actions">' +
-    '<button type="button" class="rs-action-btn" data-reader-appearance-export>导出美化包</button>' +
     '<button type="button" class="rs-action-btn subtle" data-reader-appearance-import>导入美化包</button>' +
     '</div><p class="reader-appearance-transfer-status" role="status" aria-live="polite"></p></section>'
 }
@@ -5336,25 +5328,9 @@ function installReaderAppearancePackage(raw) {
 }
 
 function bindReaderAppearancePackageTransfer(root, options) {
-  var exportButton = root.querySelector('[data-reader-appearance-export]')
   var importButton = root.querySelector('[data-reader-appearance-import]')
   var status = root.querySelector('.reader-appearance-transfer-status')
   var callbacks = options || {}
-  if (exportButton) exportButton.onclick = function() {
-    try {
-      var serialized = serializeReaderAppearancePackage({
-        article: getReaderSettings(),
-        phone: getPhoneCustom(),
-      })
-      downloadBlob(
-        new Blob([serialized], { type:'application/json;charset=utf-8' }),
-        'Tuuru-读者美化包.json',
-      )
-      if (status) status.textContent = '已导出；个人资料与阅读数据未包含在内。'
-    } catch (error) {
-      if (status) status.textContent = error && error.message ? error.message : '美化包导出失败'
-    }
-  }
   if (importButton) importButton.onclick = function() {
     var input = document.createElement('input')
     input.type = 'file'
@@ -7581,7 +7557,7 @@ function buildPhoneHTML(pd, custom, watermark, flowStep) {
   readerBgStyle += ';--phone-time-color:' + sanitizeCssColor(skin.timeColor || '#ffffff')
   readerBgStyle += ';--phone-notification-top:' + (skin.showDynamicIsland === false ? 10 : 36) + 'px'
   if (skin.wallpaperType === 'image' && skin.wallpaperImage) {
-    readerBgStyle += ';background-image:url(' + esc(skin.wallpaperImage) + ');background-size:cover;background-position:center'
+    readerBgStyle += ';background-image:' + readerPhoneImageCssUrl(skin.wallpaperImage) + ';background-size:cover;background-position:center'
   }
   h += '<div class="phone-frame reader-phone-css-scope' + (usesDefaultWallpaper ? ' phone-default-wallpaper' : '') + '" style="' + escapeHtmlAttribute(readerBgStyle) + '">'
   h += renderWorkWatermark(watermark, 'phone')
@@ -7766,7 +7742,7 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
     activeContactIndex = hasRequestedContact ? requestedContactIndex : 0
   }
   var activeContact = activeContactIndex >= 0 ? contacts[activeContactIndex] : null
-  var activeSlot = _work && _work.id ? readerActiveSlot(savedReaderBook(_work.id)) : null
+  var activeSlot = !authorPhoneRenderDocument && _work && _work.id ? readerActiveSlot(savedReaderBook(_work.id)) : null
   var approvedContactId = activeSlot && activeSlot.phoneAccess
     ? activeSlot.phoneAccess[type]
     : ''
@@ -11930,6 +11906,7 @@ function normalizePhoneCustom(candidate) {
 }
 
 function getPhoneCustom() {
+  if (authorPhoneRenderDocument) return normalizePhoneCustom(authorPhoneRenderCustom)
   return normalizePhoneCustom(lsGet('phoneCustom'))
 }
 
@@ -11986,7 +11963,7 @@ function renderPhonePreview(ct, options) {
   var frameBgStyle = 'width:360px;--phone-bg:' + sanitizeCssColor(ct.wallpaper || '#eee6e7') + ';--phone-radius:' + (ct.borderRadius ?? 18) + 'px;--phone-font:' + ct.fontFamily + ';--phone-fontsize:' + (ct.fontSize || 12) + 'px;--phone-frame:' + sanitizeCssColor(ct.frameColor || '#8f7b81')
   frameBgStyle += ';--phone-icon-radius:' + (ct.iconBorderRadius ?? 6) + 'px;--phone-material-opacity:' + (ct.materialOpacity ?? 65) + '%;--phone-time-color:' + sanitizeCssColor(ct.timeColor || '#ffffff')
   if (ct.wallpaperType === 'image' && ct.wallpaperImage) {
-    frameBgStyle += ';background-image:url(' + esc(ct.wallpaperImage) + ');background-size:cover;background-position:center'
+    frameBgStyle += ';background-image:' + readerPhoneImageCssUrl(ct.wallpaperImage) + ';background-size:cover;background-position:center'
   }
   h += '<div class="phone-frame ' + escapeHtmlAttribute(scopeClass) + ((ct.wallpaper || '#eee6e7').toLowerCase() === '#eee6e7' && ct.wallpaperType !== 'image' ? ' phone-default-wallpaper' : '') + '" style="' + escapeHtmlAttribute(frameBgStyle) + '">'
   if (ct.showDynamicIsland !== false) {
@@ -13426,432 +13403,6 @@ function cuSliderRow(label, id, min, max, step, val, unit) {
 
 // Per-app appearance editor UI lives in reader-appearance-workbench.js.
 
-function readerPhoneExportContactTargets(pd, items) {
-  var contacts = Array.isArray(pd?.contacts) ? pd.contacts : []
-  var itemList = Array.isArray(items) ? items : []
-  if (!contacts.length) return itemList.length ? [{ contactIndex:undefined, contact:null, label:'全部' }] : []
-  return contacts.map(function(contact, contactIndex) {
-    return {
-      contactIndex:contactIndex,
-      contact:contact,
-      label:String(contact?.name || '未命名').trim() || '未命名',
-      count:itemList.filter(function(item) { return String(item?.contactId || '') === String(contact?.id || '') }).length,
-    }
-  }).filter(function(target) { return target.count > 0 })
-}
-
-let phoneContentExportPromise = null
-
-function loadPhoneContentExport() {
-  if (!phoneContentExportPromise) {
-    phoneContentExportPromise = import('./phone-content-export.js').catch(function(error) {
-      phoneContentExportPromise = null
-      throw error
-    })
-  }
-  return phoneContentExportPromise
-}
-
-function readerPhoneExportUniqueBaseName(descriptor, usedNames, maskValues, filenameHelpers) {
-  var phoneExportBaseName = filenameHelpers.phoneExportBaseName
-  var maskPhoneExportText = filenameHelpers.maskPhoneExportText
-  var baseName = phoneExportBaseName({
-    workTitle:maskPhoneExportText(_work?.title || '作品', maskValues),
-    moduleLabel:maskPhoneExportText(descriptor.moduleLabel, maskValues),
-    itemLabel:maskPhoneExportText(descriptor.itemLabel, maskValues),
-    unicodeSafeItemLabel:Array.isArray(descriptor.branchPath) && descriptor.branchPath.length > 0,
-  })
-  var count = (usedNames.get(baseName) || 0) + 1
-  usedNames.set(baseName, count)
-  return count === 1 ? baseName : baseName + '-' + count
-}
-
-export function readerPhoneExportJobs(pd, exportFrame, options) {
-  var jobs = []
-  var exportNavigation = { exportMode:true, exportFrame:exportFrame }
-  var contacts = Array.isArray(pd.contacts) ? pd.contacts : []
-  var chats = orderedChats(pd.chats || [])
-  var branchMode = options?.branchMode === 'all' ? 'all' : 'current'
-  var phoneExportBranchLabel = options?.phoneExportBranchLabel
-  var liveSelections = null
-  if (branchMode === 'all') {
-    liveSelections = readerPhoneChoiceSession(_work).phoneChoiceSelections
-  }
-  var alternateChatJobCount = 0
-  function throwChatBranchLimitError() {
-    throw new Error('可导出的消息选项分支超过 64 条，请减少选项后重试，或改用“当前阅读分支”。')
-  }
-  chats.forEach(function(chat) {
-    var chatIndex = (pd.chats || []).indexOf(chat)
-    var contact = chat.type === 'group'
-      ? null
-      : contacts.find(function(candidate) { return String(candidate.id) === String(chat.contactIds?.[0]) })
-    var chatLabel = chat.type === 'group' ? (chat.groupName || '群聊') : (contact?.name || '未知联系人')
-    if (branchMode === 'current') {
-      jobs.push({
-        moduleLabel:'消息',
-        itemLabel:chatLabel,
-        render:function() {
-          openReaderChat(exportFrame, _work, pd, chat, chatIndex, undefined, {exportMode:true})
-        },
-      })
-      return
-    }
-
-    var branchResult = enumeratePhoneStoryChatChoiceBranches(
-      pd,
-      chatIndex,
-      liveSelections,
-      { maxBranches:PHONE_EXPORT_MAX_CHAT_BRANCHES },
-    )
-    alternateChatJobCount += branchResult.branches.length
-    if (
-      branchResult.truncated === true
-      || branchResult.reason === 'state-limit'
-      || alternateChatJobCount > PHONE_EXPORT_MAX_CHAT_BRANCHES
-    ) throwChatBranchLimitError()
-    branchResult.branches.forEach(function(branch, branchIndex) {
-      var branchLabel = typeof phoneExportBranchLabel === 'function'
-        ? phoneExportBranchLabel(branch.path, branchIndex, branchResult.branches.length)
-        : ''
-      jobs.push({
-        moduleLabel:'消息',
-        itemLabel:branchLabel ? branchLabel + '-' + chatLabel : chatLabel,
-        branchPath:branch.path,
-        branchIndex:branchIndex,
-        branchTotal:branchResult.branches.length,
-        render:function() {
-          openReaderChat(exportFrame, _work, pd, chat, chatIndex, undefined, {
-            exportMode:true,
-            exportChoiceSelections:branch.selections,
-          })
-        },
-      })
-    })
-  })
-
-  if (Array.isArray(pd.moments) && pd.moments.length) {
-    jobs.push({
-      moduleLabel:'动态',
-      itemLabel:'全部动态',
-      render:function() {
-        openReaderApp('messages', undefined, true, undefined, exportNavigation)
-        exportFrame.querySelector('[data-message-section="moments"]')?.click()
-      },
-    })
-  }
-
-  orderedForumPosts(pd.forumPosts || []).forEach(function(post) {
-    var postIndex = (pd.forumPosts || []).indexOf(post)
-    jobs.push({
-      moduleLabel:'论坛',
-      itemLabel:post.title || ('帖子-' + (postIndex + 1)),
-      render:function() {
-        openReaderForumPost(exportFrame, _work, pd, post.id, postIndex, exportNavigation)
-      },
-    })
-  })
-
-  readerPhoneExportContactTargets(pd, pd.memos).forEach(function(target) {
-    jobs.push({
-      moduleLabel:'备忘录',
-      itemLabel:target.label,
-      render:function() {
-        openReaderApp('memo', target.contactIndex, true, undefined, exportNavigation)
-      },
-    })
-  })
-
-  readerPhoneExportContactTargets(pd, (pd.photos || []).concat(pd.albums || [])).forEach(function(target) {
-    jobs.push({
-      moduleLabel:'相册',
-      itemLabel:target.label + '-总览',
-      render:function() {
-        openReaderApp('gallery', target.contactIndex, true, undefined, exportNavigation)
-      },
-    })
-    ;(pd.albums || []).filter(function(album) {
-      return !target.contact || String(album?.contactId || '') === String(target.contact.id || '')
-    }).forEach(function(album, albumIndex) {
-      jobs.push({
-        moduleLabel:'相册',
-        itemLabel:target.label + '-' + (album.name || ('相册-' + (albumIndex + 1))),
-        render:function() {
-          openReaderApp('gallery', target.contactIndex, true, undefined, exportNavigation)
-          var albumButton = exportFrame.querySelectorAll('.rd-album[data-album-index]')[albumIndex]
-          if (albumButton) albumButton.click()
-        },
-      })
-    })
-  })
-
-  readerPhoneExportContactTargets(pd, pd.browserHistory).forEach(function(target) {
-    jobs.push({
-      moduleLabel:'浏览记录',
-      itemLabel:target.label,
-      render:function() {
-        openReaderApp('browser', target.contactIndex, true, undefined, exportNavigation)
-      },
-    })
-  })
-
-  readerPhoneExportContactTargets(pd, pd.shoppingItems).forEach(function(target) {
-    var targetItems = (pd.shoppingItems || []).filter(function(item) {
-      return !target.contact || String(item?.contactId || '') === String(target.contact.id || '')
-    })
-    if (targetItems.some(function(item) { return item.status !== 'order' })) {
-      jobs.push({
-        moduleLabel:'购物',
-        itemLabel:target.label + '-购物车',
-        render:function() {
-          openReaderApp('shopping', target.contactIndex, true, undefined, exportNavigation)
-        },
-      })
-    }
-    if (targetItems.some(function(item) { return item.status === 'order' })) {
-      jobs.push({
-        moduleLabel:'购物',
-        itemLabel:target.label + '-订单',
-        render:function() {
-          openReaderApp('shopping', target.contactIndex, true, undefined, exportNavigation)
-          exportFrame.querySelector('#rdShopOrderTab')?.click()
-        },
-      })
-    }
-  })
-
-  if (contacts.length) {
-    jobs.push({
-      moduleLabel:'联系人',
-      itemLabel:'全部联系人',
-      render:function() {
-        openReaderApp('contacts', undefined, true, undefined, exportNavigation)
-      },
-    })
-  }
-  return jobs
-}
-
-function readerPhoneExportAnimationFrame() {
-  return new Promise(function(resolve) {
-    var schedule = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : function(callback) { setTimeout(callback, 0) }
-    schedule(function() { schedule(resolve) })
-  })
-}
-
-function readerPhoneExportThrowIfAborted(signal) {
-  if (!signal?.aborted) return
-  if (typeof DOMException === 'function') throw new DOMException('已取消图片导出', 'AbortError')
-  var error = new Error('已取消图片导出')
-  error.name = 'AbortError'
-  throw error
-}
-
-async function exportReaderPhoneContentImages(options) {
-  if (!_work?.phoneData) throw new Error('当前作品没有可导出的小手机内容')
-  readerPhoneExportThrowIfAborted(options?.signal)
-  var phoneContentExport = await loadPhoneContentExport()
-  readerPhoneExportThrowIfAborted(options?.signal)
-  var capturePhonePanelPages = phoneContentExport.capturePhonePanelPages
-  var createPhoneContentArchive = phoneContentExport.createPhoneContentArchive
-  var phoneExportArchiveName = phoneContentExport.phoneExportArchiveName
-  var phoneExportBaseName = phoneContentExport.phoneExportBaseName
-  var phoneExportBranchLabel = phoneContentExport.phoneExportBranchLabel
-  var maskPhoneExportText = phoneContentExport.maskPhoneExportText
-  var placeholderMaskValues = phoneContentExport.placeholderMaskValues
-  var pd = readerPhoneDataWithStoryState(_work.phoneData)
-  var rc = getPhoneCustom()
-  var exportShell = document.createElement('div')
-  exportShell.className = 'rd-phone-export-render-shell'
-  exportShell.setAttribute('aria-hidden', 'true')
-  exportShell.innerHTML = buildPhoneHTML(pd, rc, _work.watermark)
-  document.body.insertBefore(exportShell, document.body.firstChild)
-  var exportFrame = exportShell.querySelector('.phone-frame')
-  if (!exportFrame) {
-    exportShell.remove()
-    throw new Error('小手机导出画布创建失败')
-  }
-  var previousLocation = _readerPhoneLocation
-  var files = []
-  var failures = []
-  var usedNames = new Map()
-  var maskValues = placeholderMaskValues(_work.placeholders || [], _work.readerPhValues || {})
-  var maskedPhoneExportBranchLabel = function(path, zeroBasedIndex, total) {
-    return phoneExportBranchLabel(path, zeroBasedIndex, total, { maskValues:maskValues })
-  }
-
-  try {
-    var jobs = readerPhoneExportJobs(pd, exportFrame, {
-      branchMode:options?.branchMode,
-      phoneExportBranchLabel:maskedPhoneExportBranchLabel,
-    })
-    if (!jobs.length) throw new Error('当前作品还没有可导出的消息、帖子或记录')
-    for (var jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
-      readerPhoneExportThrowIfAborted(options?.signal)
-      var job = jobs[jobIndex]
-      if (typeof options?.onProgress === 'function') {
-        options.onProgress({ phase:'render', current:jobIndex + 1, total:jobs.length, label:job.moduleLabel + ' · ' + job.itemLabel, files:files.length })
-      }
-      try {
-        job.render()
-        await readerPhoneExportAnimationFrame()
-        var panel = exportFrame.querySelector('.rd-phone-app-panel, .rd-forum-detail')
-        if (!panel) throw new Error('模块没有生成可截图的内容')
-        var pages = await capturePhonePanelPages(panel, {
-          baseName:readerPhoneExportUniqueBaseName(job, usedNames, maskValues, { phoneExportBaseName:phoneExportBaseName, maskPhoneExportText:maskPhoneExportText }),
-          maskValues:maskValues,
-          signal:options?.signal,
-          onPage:function(page) {
-            if (typeof options?.onProgress === 'function') {
-              options.onProgress({ phase:'capture', current:jobIndex + 1, total:jobs.length, label:job.moduleLabel + ' · ' + job.itemLabel, page:page.page, pages:page.total, files:files.length + page.page })
-            }
-          },
-        })
-        readerPhoneExportThrowIfAborted(options?.signal)
-        files.push.apply(files, pages)
-      } catch (error) {
-        if (error?.name === 'AbortError') throw error
-        failures.push({ label:job.moduleLabel + ' · ' + job.itemLabel, message:error?.message || '生成失败' })
-      }
-    }
-  } finally {
-    _readerPhoneLocation = previousLocation
-    exportShell.remove()
-  }
-
-  readerPhoneExportThrowIfAborted(options?.signal)
-  if (!files.length) throw new Error(failures[0]?.message || '没有成功生成任何小手机图片')
-  if (typeof options?.onProgress === 'function') {
-    options.onProgress({ phase:'archive', current:files.length, total:files.length, label:'正在整理 ZIP', files:files.length })
-  }
-  readerPhoneExportThrowIfAborted(options?.signal)
-  var blob = await createPhoneContentArchive(files)
-  readerPhoneExportThrowIfAborted(options?.signal)
-  return {
-    blob:blob,
-    filename:phoneExportArchiveName(maskPhoneExportText(_work.title, maskValues), options?.branchMode),
-    files:files,
-    failures:failures,
-  }
-}
-
-function openReaderPhoneExportDialog(returnFocus) {
-  if (!_work?.phoneData) {
-    showReaderToast('请先打开一个包含小手机内容的作品', 'error')
-    return
-  }
-  var body = '<div class="rd-phone-export-intro">'
-  body += '<span class="rd-phone-export-mark" aria-hidden="true">PNG</span><div><strong>一次整理成可发布的图片包</strong><p>消息、动态、论坛、备忘录、相册、浏览记录、购物与联系人会按内容分别生成 PNG；过长内容自动分页。</p></div></div>'
-  body += '<div class="rd-phone-export-privacy"><span aria-hidden="true">▖▜▖▗</span><p><strong>读者信息自动打码</strong><br>读者填写的名字等占位符内容和读者本人头像不会出现在导出图片中；NPC 与角色头像保持原样。</p></div>'
-  body += '<p class="rd-phone-export-note">图片将打包为一个 ZIP，文件名采用“作品名-模块-内容名”。外链图片若禁止跨站读取，导出时可能显示为空白；选择所有选项分支时，非聊天模块仍各导出一次。</p>'
-  body += '<fieldset class="rd-phone-export-modes"><legend>聊天回复分支</legend>'
-  body += '<label class="rd-phone-export-mode"><input type="radio" name="readerPhoneExportBranchMode" value="current" checked><span><strong>当前阅读分支</strong><small>按你现在已经选择的聊天回复导出，速度更快。</small></span></label>'
-  body += '<label class="rd-phone-export-mode"><input type="radio" name="readerPhoneExportBranchMode" value="all"><span><strong>所有选项分支</strong><small>每个聊天的可达回复路线分别成图、各自分页；最多 64 条。</small></span></label>'
-  body += '</fieldset>'
-  body += '<div class="rd-phone-export-progress" id="readerPhoneExportProgress" role="status" aria-live="polite"><span class="rd-phone-export-progress-label">准备就绪</span><span class="rd-phone-export-progress-count">尚未开始</span><span class="rd-phone-export-progress-track"><span></span></span></div>'
-  body += '<details class="rd-phone-export-failures" id="readerPhoneExportFailures" hidden><summary>查看未导出的项目</summary><ul></ul></details>'
-  var modal = openCuModal('导出小手机图片', body, null, returnFocus)
-  modal.querySelector('.cu-modal')?.classList.add('rd-phone-export-dialog')
-  var exportButton = modal.querySelector('#cuModalSave')
-  var cancelButton = modal.querySelector('#cuModalCancel')
-  var progress = modal.querySelector('#readerPhoneExportProgress')
-  var progressLabel = progress?.querySelector('.rd-phone-export-progress-label')
-  var progressCount = progress?.querySelector('.rd-phone-export-progress-count')
-  var progressBar = progress?.querySelector('.rd-phone-export-progress-track span')
-  var failureDetails = modal.querySelector('#readerPhoneExportFailures')
-  var failureList = failureDetails?.querySelector('ul')
-  var modeInputs = Array.from(modal.querySelectorAll('input[name="readerPhoneExportBranchMode"]'))
-  var controller = null
-  var busy = false
-  cancelButton.textContent = '关闭'
-
-  function updateExportButtonLabel() {
-    var selectedMode = modeInputs.find(function(input) { return input.checked })
-    exportButton.textContent = selectedMode?.value === 'all'
-      ? '导出所有选项分支'
-      : '导出当前阅读分支'
-  }
-
-  modeInputs.forEach(function(input) {
-    input.addEventListener('change', updateExportButtonLabel)
-  })
-  updateExportButtonLabel()
-
-  function updateProgress(event) {
-    if (!progress || !event) return
-    var percent = event.phase === 'archive' ? 100 : Math.max(4, Math.round(event.current / Math.max(1, event.total) * 92))
-    progress.dataset.state = event.phase
-    if (progressLabel) progressLabel.textContent = event.label || '正在生成图片'
-    if (progressCount) {
-      progressCount.textContent = event.phase === 'capture' && event.pages > 1
-        ? event.current + ' / ' + event.total + ' · 第 ' + event.page + ' / ' + event.pages + ' 页'
-        : event.current + ' / ' + event.total
-    }
-    if (progressBar) progressBar.style.width = percent + '%'
-  }
-
-  modal.setReaderBeforeClose(function() {
-    if (busy && controller) controller.abort()
-    return true
-  })
-  cancelButton.onclick = function() {
-    if (busy && controller) controller.abort()
-    modal.closeReaderModal()
-  }
-  exportButton.onclick = async function() {
-    if (busy) return
-    var branchMode = modeInputs.find(function(input) { return input.checked })?.value === 'all' ? 'all' : 'current'
-    busy = true
-    controller = new AbortController()
-    exportButton.disabled = true
-    modeInputs.forEach(function(input) { input.disabled = true })
-    exportButton.textContent = '正在生成…'
-    cancelButton.textContent = '取消导出'
-    progress.dataset.state = 'render'
-    if (failureDetails) failureDetails.hidden = true
-    if (failureList) failureList.replaceChildren()
-    try {
-      var result = await exportReaderPhoneContentImages({
-        branchMode:branchMode,
-        signal:controller.signal,
-        onProgress:updateProgress,
-      })
-      readerPhoneExportThrowIfAborted(controller.signal)
-      downloadBlob(result.blob, result.filename)
-      progress.dataset.state = result.failures.length ? 'warning' : 'done'
-      if (progressLabel) progressLabel.textContent = result.failures.length
-        ? '已导出，' + result.failures.length + ' 项因图片或样式限制跳过'
-        : '图片包已生成并开始下载'
-      if (progressCount) progressCount.textContent = result.files.length + ' 张 PNG'
-      if (progressBar) progressBar.style.width = '100%'
-      if (result.failures.length && failureDetails && failureList) {
-        result.failures.forEach(function(failure) {
-          var item = document.createElement('li')
-          item.textContent = failure.label + '：' + failure.message
-          failureList.appendChild(item)
-        })
-        failureDetails.hidden = false
-      }
-      showReaderToast('已导出 ' + result.files.length + ' 张小手机图片')
-    } catch (error) {
-      var cancelled = error?.name === 'AbortError'
-      progress.dataset.state = cancelled ? 'cancelled' : 'error'
-      if (progressLabel) progressLabel.textContent = cancelled ? '已取消导出' : (error?.message || '图片导出失败')
-      if (progressCount) progressCount.textContent = cancelled ? '没有保存文件' : '请重试'
-      if (progressBar) progressBar.style.width = '0%'
-      if (!cancelled) showReaderToast(error?.message || '小手机图片导出失败', 'error')
-    } finally {
-      busy = false
-      controller = null
-      exportButton.disabled = false
-      modeInputs.forEach(function(input) { input.disabled = false })
-      updateExportButtonLabel()
-      cancelButton.textContent = '关闭'
-    }
-  }
-}
 
 function renderCustomPage() {
   var ct = getPhoneCustom()
@@ -13871,10 +13422,6 @@ function renderCustomPage() {
   h += '<button type="button" class="rd-phone-owner-control" data-reader-phone-control="profile">'
   h += '<span class="rd-phone-owner-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 20c.7-4 2.8-6 6.5-6s5.8 2 6.5 6"/></svg></span>'
   h += '<span><strong>个人信息</strong><small>昵称、头像与封面</small></span>'
-  h += '</button>'
-  h += '<button type="button" class="rd-phone-owner-control" data-reader-phone-control="export">'
-  h += '<span class="rd-phone-owner-control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v11"/><path d="m8 10 4 4 4-4"/><path d="M5 16v4h14v-4"/></svg></span>'
-  h += '<span><strong>图片导出</strong><small>全部内容 · 自动打码</small></span>'
   h += '</button>'
   h += '</div>'
   h += '<div style="display:flex;justify-content:center;padding:10px 0">'
@@ -14061,7 +13608,6 @@ document.addEventListener('click', async function(e) {
     if (ownerControl.dataset.readerPhoneControl === 'reading') openReaderSettingsPanel(ownerControl)
     if (ownerControl.dataset.readerPhoneControl === 'appearance') await openReaderPhoneAppearance(ownerControl)
     if (ownerControl.dataset.readerPhoneControl === 'profile') await openReaderProfileAppearance(ownerControl)
-    if (ownerControl.dataset.readerPhoneControl === 'export') openReaderPhoneExportDialog(ownerControl)
     return
   }
   // Walk up the DOM tree to find .rd-app-icon inside #tabCustom
@@ -14081,7 +13627,59 @@ document.addEventListener('click', async function(e) {
 })
 
 // ---- Init ----
+// Render-only surface. Normal reader pages never receive a parent-owned context.
+export function createAuthorPhoneRenderSurface(context) {
+  if (!authorPhoneRenderDocument || window.parent === window ||
+      window.frameElement?.__tuuruAuthorPhoneRenderContext !== context) {
+    throw new Error('作品渲染需要作者上下文')
+  }
+  context.assertCurrent()
+  _work = JSON.parse(JSON.stringify(context.work))
+  _work.readerPhValues = {}
+  _readerPersistenceEnabled = false
+  _editorPreviewMode = true
+  resetReaderPhoneChoiceSession(_work)
+  resetReaderPhoneFlowSession(_work)
+  // Only established authored skin fields override defaults. Per-App reader
+  // settings, custom CSS, reader fonts and reader identity are never inherited.
+  var defaults = readerPhoneCustomDefaults()
+  var skin = _work.phoneData.skin || {}
+  authorPhoneRenderCustom = {}
+  ;['wallpaper','wallpaperType','wallpaperImage','topBgImage','frameColor','borderRadius',
+    'fontFamily','fontSize','showDynamicIsland','dynamicIslandStyle','showHomeIndicator',
+    'showAppLabels','showIconShadow','iconBorderRadius','materialOpacity','timeColor'].forEach(function(key) {
+    authorPhoneRenderCustom[key] = skin[key] === undefined ? defaults[key] : skin[key]
+  })
+  var pd = readerPhoneDataWithStoryState(_work.phoneData)
+  var root = document.getElementById('app')
+  root.innerHTML = buildPhoneHTML(pd, getPhoneCustom(), _work.watermark)
+  var frame = root.querySelector('.phone-frame')
+  if (!frame) throw new Error('作品小手机渲染失败')
+  var navigation = {exportMode:true,exportFrame:frame}
+  return {
+    phoneData:pd,
+    frame:frame,
+    renderChat:function(chat,index,selections) {
+      context.assertCurrent()
+      openReaderChat(frame,_work,pd,chat,index,undefined,{
+        exportMode:true,
+        exportChoiceSelections:selections ? new Map(selections) : undefined,
+      })
+    },
+    renderForum:function(postId,index) {
+      context.assertCurrent()
+      openReaderForumPost(frame,_work,pd,postId,index,navigation)
+    },
+    renderApp:function(type,contactIndex) {
+      context.assertCurrent()
+      openReaderApp(type,contactIndex,true,undefined,navigation)
+    },
+    dispose:function() { root.replaceChildren() },
+  }
+}
+
 function startReader() {
+  if (authorPhoneRenderDocument) return
   var preview = prepareEditorPreview()
   _editorPreviewMode = preview.preview
   if (!preview.preview) {

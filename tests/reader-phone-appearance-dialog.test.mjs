@@ -88,7 +88,7 @@ test("phone appearance workbench previews drafts live and saves only on confirma
   assert.ok(dialog)
   assert.equal(dialog.getAttribute("role"), "dialog")
   assert.ok(document.querySelector(".reader-phone-css-preview-scope"))
-  assert.ok(dialog.querySelector("[data-reader-appearance-export]"))
+  assert.equal(dialog.querySelector("[data-reader-appearance-export]"), null)
   assert.ok(dialog.querySelector("[data-reader-appearance-import]"))
   assert.ok(dialog.querySelector('[data-appearance-page="preview"]'))
   assert.ok(dialog.querySelector('[data-appearance-page="controls"]'))

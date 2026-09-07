@@ -306,7 +306,7 @@ test("capture keeps the phone frame border outside every content page slice", as
   ])
 })
 
-test("capture lets the rasterized clone recalculate content-driven block heights", async () => {
+test("capture preserves computed heights for stylesheet-sized cards, headers and avatars", async () => {
   const dom = new JSDOM(`<!doctype html><html style="height:100px;block-size:100px;color:red"><body><div class="phone-frame">
     <section class="rd-phone-app-panel">content</section>
   </div></body></html>`)
@@ -321,8 +321,8 @@ test("capture lets the rasterized clone recalculate content-driven block heights
 
   assert.ok(Array.isArray(includedProperties))
   assert.ok(includedProperties.includes("color"))
-  assert.equal(includedProperties.includes("height"), false)
-  assert.equal(includedProperties.includes("block-size"), false)
+  assert.equal(includedProperties.includes("height"), true)
+  assert.equal(includedProperties.includes("block-size"), true)
 })
 
 test("capture gives chat clones an explicit CJK fallback font without mutating the live panel", async () => {
@@ -343,6 +343,85 @@ test("capture gives chat clones an explicit CJK fallback font without mutating t
   assert.match(exportedFont, /PingFang SC/)
   assert.match(exportedFont, /Microsoft YaHei/)
   assert.match(exportedFont, /Noto Sans SC/)
+})
+
+test("capture preserves exact fractional font sizes without the rasterizer rounding them down", async () => {
+  const dom = new JSDOM(`<!doctype html><html style="font-size:16px"><head><style>
+    .phone-frame { font-size:16px }
+    .sample-copy, .sample-copy span { font-size:13.5px }
+  </style></head><body><div class="phone-frame"><section class="rd-phone-app-panel">
+    <p class="sample-copy">中文 Mixed 123<span>nested</span></p>
+  </section></div></body></html>`)
+  const source = dom.window.document.querySelector(".rd-phone-app-panel")
+  const before = source.outerHTML
+  await capturePhonePanelPages(source, {
+    rasterize:async (viewport, options) => {
+      assert.equal(options.includeStyleProperties.includes("font-size"), false)
+      assert.equal(viewport.querySelector(".sample-copy").style.fontSize, "13.5px")
+      assert.equal(viewport.querySelector(".sample-copy span").style.fontSize, "13.5px")
+      assert.equal(viewport.style.fontSize, "16px")
+      return new dom.window.Blob(["png"], { type:"image/png" })
+    },
+  })
+  assert.equal(source.outerHTML, before)
+  dom.window.close()
+})
+
+test("capture retains stylesheet paint and geometry inside deep-cloned SVG icons", async () => {
+  const dom = new JSDOM(`<!doctype html><head><style>
+    .sample-wave rect { fill:rgb(120, 130, 140); opacity:.4; transform:translateY(2px) }
+  </style></head><body><div class="phone-frame"><section class="rd-phone-app-panel">
+    <svg class="sample-wave" width="30" height="20"><rect x="1" y="2" width="3" height="10"/></svg>
+  </section></div></body>`)
+  const source = dom.window.document.querySelector(".rd-phone-app-panel")
+  const before = source.outerHTML
+  await capturePhonePanelPages(source, {
+    rasterize:async viewport => {
+      const rect = viewport.querySelector("svg rect")
+      assert.equal(rect.style.fill, "rgb(120, 130, 140)")
+      assert.equal(rect.style.opacity, "0.4")
+      assert.equal(rect.style.transform, "translateY(2px)")
+      assert.equal(rect.getAttribute("width"), "3")
+      return new dom.window.Blob(["png"], { type:"image/png" })
+    },
+  })
+  assert.equal(source.outerHTML, before)
+  dom.window.close()
+})
+
+test("capture preserves independent pseudo-element font sizes in the exported clone", async () => {
+  const dom = new JSDOM(`<!doctype html><body><section class="rd-phone-app-panel">
+    <div class="chat-bubble" style="font-size:13px">text</div>
+  </section></body>`)
+  const source = dom.window.document.querySelector(".rd-phone-app-panel")
+  const before = source.outerHTML
+  const computedStyle = dom.window.getComputedStyle.bind(dom.window)
+  // JSDOM cannot resolve pseudo styles; supply only this browser boundary.
+  dom.window.CSS = {}
+  dom.window.getComputedStyle = (element, pseudo) => {
+    if (!pseudo) return computedStyle(element)
+    const style = dom.window.document.createElement("span").style
+    style.content = element.matches(".chat-bubble, .rd-phone-export-viewport") ? '"label"' : "none"
+    style.fontSize = pseudo === "::before" ? "8px" : "9px"
+    return style
+  }
+  await capturePhonePanelPages(source, {
+    rasterize:async viewport => {
+      const bubble = viewport.querySelector(".chat-bubble")
+      const key = bubble.getAttribute("data-phone-export-font")
+      assert.ok(key)
+      const stylesheet = viewport.querySelector("style[data-phone-export-fonts]")
+      assert.ok(stylesheet)
+      assert.ok(stylesheet.textContent.includes(`[data-phone-export-font="${key}"]::before{font-size:8px!important}`))
+      assert.ok(stylesheet.textContent.includes(`[data-phone-export-font="${key}"]::after{font-size:9px!important}`))
+      const rootKey = viewport.getAttribute("data-phone-export-font")
+      assert.ok(stylesheet.textContent.includes(`[data-phone-export-font="${rootKey}"]::before{font-size:8px!important}`))
+      assert.equal(viewport.firstElementChild.classList.contains("rd-phone-app-panel"), true)
+      return new dom.window.Blob(["png"], { type:"image/png" })
+    },
+  })
+  assert.equal(source.outerHTML, before)
+  dom.window.close()
 })
 
 test("capture constrains every direct chat timeline breakpoint selector independently", async () => {
@@ -525,6 +604,9 @@ test("capture settles load, error, and timeout image waits with complete cleanup
       const removedImageListeners = []
       const addedSignalListeners = []
       const removedSignalListeners = []
+      const liveSignalListeners = new Map()
+      const layoutSignalListeners = []
+      let layoutFrames = 0
       const boxSizingCalls = []
       let eventScheduled = false
       let placeholderLoaded = false
@@ -557,11 +639,18 @@ test("capture settles load, error, and timeout image waits with complete cleanup
         return originalRemoveEventListener.call(this, type, listener, options)
       }
       controller.signal.addEventListener = function(type, listener, options) {
-        addedSignalListeners.push(type)
+        const record = {type,listener}
+        assert.equal(liveSignalListeners.has(listener),false,'listener was registered twice')
+        addedSignalListeners.push(record)
+        liveSignalListeners.set(listener,record)
         return originalSignalAddEventListener(type, listener, options)
       }
       controller.signal.removeEventListener = function(type, listener, options) {
-        removedSignalListeners.push(type)
+        const record = liveSignalListeners.get(listener)
+        assert.ok(record,'removed unknown or already-removed abort listener')
+        assert.equal(record.type,type,'removed listener with different event type')
+        removedSignalListeners.push(record)
+        liveSignalListeners.delete(listener)
         return originalSignalRemoveEventListener(type, listener, options)
       }
       globalThis.setTimeout = (callback, delay) => {
@@ -577,6 +666,19 @@ test("capture settles load, error, and timeout image waits with complete cleanup
       try {
         await capturePhonePanelPages(panel, {
           signal:controller.signal,
+          layoutScheduler:{requestAnimationFrame(callback) {
+            // One image wait finishes before two separate two-frame layout
+            // waits. Identify each active layout listener, not just its count.
+            if(layoutFrames % 2 === 0) {
+              assert.equal(liveSignalListeners.size,1)
+              const record=[...liveSignalListeners.values()][0]
+              assert.notEqual(record,addedSignalListeners[0],'image listener leaked into layout')
+              layoutSignalListeners.push(record)
+            }
+            layoutFrames++
+            queueMicrotask(callback)
+            return layoutFrames
+          }},
           rasterize:async viewport => {
             const cloneImage = viewport.querySelector("img")
             assert.equal(cloneImage.getAttribute("loading"), "eager")
@@ -605,8 +707,14 @@ test("capture settles load, error, and timeout image waits with complete cleanup
         })
         assert.deepEqual(addedImageListeners.sort(), ["error", "load"])
         assert.deepEqual(removedImageListeners.sort(), ["error", "load"])
-        assert.deepEqual(addedSignalListeners, ["abort"])
-        assert.deepEqual(removedSignalListeners, ["abort"])
+        assert.equal(layoutFrames,4)
+        assert.equal(layoutSignalListeners.length,2)
+        assert.equal(addedSignalListeners[0].type,'abort','image wait must install an abort listener')
+        assert.deepEqual(addedSignalListeners,[addedSignalListeners[0],...layoutSignalListeners])
+        assert.equal(new Set(addedSignalListeners.map(record=>record.listener)).size,3,'image and layout waits must have distinct listeners')
+        assert.ok(addedSignalListeners.every(record=>record.type==='abort'))
+        assert.deepEqual(removedSignalListeners,addedSignalListeners,'every exact registered listener must be removed')
+        assert.equal(liveSignalListeners.size,0,'capture leaked an active abort listener')
         assert.equal(timers.length, 1)
         assert.deepEqual(clearedTimers, timers)
         assert.equal(dom.window.document.querySelector(".rd-phone-export-stage"), null)

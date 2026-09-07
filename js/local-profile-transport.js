@@ -66,7 +66,9 @@ export function serializeLocalProfile(storage = localStorage, exportedAt = new D
     exportedAt: canonicalTimestamp(exportedAt),
     database,
     authorSettings: collectEntries(storage, key => AUTHOR_SETTING_KEYS.has(key)),
-    readerEntries: collectEntries(storage, key => key.startsWith(READER_PREFIX)),
+    // New packages contain authored data only. Keep the field so historical
+    // packages remain importable without changing their format version.
+    readerEntries: {},
   }
   return JSON.stringify(profile, null, 2)
 }

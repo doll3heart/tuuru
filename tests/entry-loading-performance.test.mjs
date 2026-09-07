@@ -24,9 +24,11 @@ test("MediaPipe loads only when the fallback detector is needed", () => {
   assert.match(cameraSource, /import\(\s*["']@mediapipe\/tasks-vision["']\s*\)/)
 })
 
-test("phone-content export loads only when exporting", () => {
+test("phone-content export loads only in author orchestration", async () => {
   assert.doesNotMatch(readerSource, /^\s*import\s+(?:[\s\S]*?\s+from\s+)?["']\.\/phone-content-export\.js["']/m)
-  assert.match(readerSource, /import\(\s*["']\.\/phone-content-export\.js["']\s*\)/)
+  assert.doesNotMatch(readerSource, /phone-content-export\.js/)
+  const authorSource = await readFile(new URL("../js/author-phone-export.js", import.meta.url), "utf8")
+  assert.ok(authorSource.includes("import('../reader/phone-content-export.js')"))
 })
 
 test("reader appearance workbench loads only after its controls are activated", () => {

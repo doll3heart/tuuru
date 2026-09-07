@@ -160,6 +160,8 @@ test("package keeps the exact browser-lock script alongside approved runtime dep
     test: "node --test",
     preview: "vite preview --config vite.config.ts",
     "test:locks:browser": "node scripts/serve-lock-harness.mjs --port 4177 --timeout 180000",
+    "test:phone-export:browser": "node scripts/run-phone-export-browser.mjs",
+    "verify:phone-export": "npm run verify && npm run test:phone-export:browser",
   })
   assert.deepEqual(packageJson.dependencies, {
     "@mediapipe/tasks-vision": "^0.10.35",
@@ -170,6 +172,9 @@ test("package keeps the exact browser-lock script alongside approved runtime dep
   assert.deepEqual(packageJson.devDependencies, {
     "@types/node": "^24.13.3",
     jsdom: "^27.0.1",
+    pixelmatch: "7.2.0",
+    playwright: "1.63.0",
+    pngjs: "7.0.0",
     typescript: "~5.7.0",
     vite: "^6.0.0",
   })
