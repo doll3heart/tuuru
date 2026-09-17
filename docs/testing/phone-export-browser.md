@@ -21,6 +21,33 @@ Windows WebKit 首先发现离屏 iframe 不执行动画帧，导致作者导出
 
 ## 运行
 
+### 短文字序列化回归（2026-09-17）
+
+```sh
+npm run test:phone-export:text
+node scripts/run-phone-export-text-browser.mjs --browser=chromium
+node scripts/run-phone-export-text-browser.mjs --browser=webkit
+```
+
+`npm run test:phone-export:text -- --browser=webkit` 也可传参；若 Windows PowerShell/npm 输出的实际脚本命令丢失了参数，使用上面的直接 Node 命令，并确认 `report.json` 的 `engine`。结果与 ZIP、序列化 SVG、原生副本截图、真实 PNG 和差异图保存在 `artifacts/phone-export-browser/text-*/`，成功时也保留。
+
+`npm run verify:phone-export` 和现有 `.github/workflows/phone-export-browser.yml` 已加入这项 Chromium 短文字回归；CI 路径触发条件涵盖新 runner、测试及共享样例。原有 `test:phone-export:browser` 的参数与场景保持不变。
+
+此回归仍从作者首页的作品菜单进入真实导出，只写测试 `tuuru_works`，不开放读者导出。两侧短句包括 `……？`、`是不小心按错了吗？`、`你真的考虑清楚了吗？`、`我在资料室里等你`、`还是说...要我过去找你？`、`你好`、`你好。`、英文和 emoji，并穿插多行、引用、图片。作者 iframe 文档分别施加 CSS zoom 0.9 / 1 / 1.1 / 1.25；另外两项分数字号和两项皮肤属于仅测试服务器注入的渲染压力，不是新增作者功能。启用 reduced-motion，覆盖全局极短 CSS transition 对约束测量的影响。
+
+测试专用 Vite 观察器调用真实 `toSvg`，在无 zoom 的干净页面重新挂载其 `foreignObject`，检查实际序列化文本非空、内容、行数、字体、气泡约束和每行边界，再将这个副本的原生截图与实际下载 ZIP 中的 PNG 比较。不会把缩放后的源 DOM 尺寸误当成最终 PNG 尺寸。局部像素检查包含紧贴气泡的区域及下方 16px 溢出条带，沿用 1% 整页、2.5% 局部、0.15 颜色差阈值。负向对照把一个真实字形大小的像素块移动到气泡下方：它必须通过整页阈值，却被局部检查拒绝。
+
+修复只在一次性导出树上将纯文字气泡的像素边框盒约束转换为内容盒约束（包括皮肤最小高度），再将新布局的内容宽度向上取整为指定 `min-width`。固定的内联像素尺寸保留，图片/语音/SVG/媒体气泡和其他卡片不变；精确字号仍由既有流程保留。仅这些副本文字气泡禁用 transition-property，避免转换值短暂插值导致分页测量失真。正常编辑器、阅读器样式、内容与分页策略没有改变。
+
+本地验证记录：
+
+- 修复前 Chromium `text-lvZl0d`：真实作者短句在 zoom 1.1 / 1.25 的序列化副本中由 1 行变成 2 行，命令退出 1。
+- 修复后 Chromium `text-z4J696`：8/8 场景、18 张实际 PNG、文字几何与字形溢出负向对照通过，退出 0。
+- Windows WebKit `text-soL326`：8 场景、18 张 PNG 全部完成，序列化文字几何和负向对照通过；最终 PNG 保真仍未通过，整页差异约 1.06%–2.63%，另有皮肤局部溢出条带 3.02%。命令如实退出 1，未放宽阈值，不能称 WebKit/Safari 全部通过。
+- 原有独立皮肤检查：`run-uPohX1`（full-skin，3 张 PNG）与 `run-zKdJGH`（slice-skin，9 张 PNG / 3 路线）通过，包括原有分页和三个负向对照。
+
+CSS zoom 是本地已证明的触发条件，不代表已确认反馈设备开启了缩放。反馈来源设备未知；上述 Playwright 测试不是实际 iPad/iPhone Safari 验收。旧的 Windows WebKit 文字/阴影栅格差异仍是独立的兼容性缺口。
+
 首次安装（CI / Linux 用 `npx playwright install --with-deps chromium`）：
 
 ```sh

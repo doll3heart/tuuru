@@ -2,6 +2,7 @@ import { toBlob } from "html-to-image"
 import { Zip, ZipPassThrough } from "fflate"
 import { inlinePhoneExportImages } from "./phone-export-assets.js"
 import { waitForPhoneExportLayout } from "./phone-export-layout.js"
+import { stabilizePhoneExportTextBoxes } from "./phone-export-text-layout.js"
 
 const PHONE_EXPORT_MOSAIC = "▖▜▖▗"
 const PHONE_EXPORT_WIDTH = 360
@@ -528,6 +529,7 @@ export async function capturePhonePanelPages(sourcePanel, options = {}) {
     if (pendingImages) await pendingImages
     await waitForExportAssets(clone, signal)
     await waitForPhoneExportLayout(ownerDocument, signal, layoutScheduler)
+    stabilizePhoneExportTextBoxes(viewport)
     preserveExportRasterStyles(viewport)
     const viewportBorder = exportViewportBorderSize(viewport)
     const measuredHeight = Math.max(
