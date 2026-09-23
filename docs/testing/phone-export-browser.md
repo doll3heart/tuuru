@@ -23,13 +23,15 @@ Windows WebKit 首先发现离屏 iframe 不执行动画帧，导致作者导出
 
 ### Linux CI 文字抗锯齿对齐（2026-09-24）
 
-两个 Chromium 验收 runner 共用测试专用启动配置 `browser-options.mjs`，通过 `--disable-lcd-text` 使用灰度文字抗锯齿，并通过 `--font-render-hinting=none` 统一 headless 的字形微调策略。Linux 原生截图的彩色 LCD 笔画边缘、不同缩放环境的 hinting 会与 SVG/canvas 导出图产生差异；启动参数同时写入 `report.json` 以便追溯。此配置不进入生产包，不修改作者字体、字号、排版或导出器，也不传给 WebKit。
+两个 Chromium 验收 runner 共用测试专用启动配置 `browser-options.mjs`，通过 `--disable-lcd-text` 使用灰度文字抗锯齿，并通过 `--disable-font-subpixel-positioning` 对齐不同缩放环境下的文字定位策略。启动参数同时写入 `report.json` 以便追溯。此配置不进入生产包，不修改作者字体、字号、排版或导出器，也不传给 WebKit。
 
 本项仍须在临时验证分支完成 Linux 回归后才能确认关闭 CI 故障。原有 1% 整页、2.5% 局部、0.15 颜色阈值及破坏性负向对照保持不变。
 
 本地 Windows Chromium 验证：15/15 定向 Node 测试通过；`run-gEZHfT` 四场景 / 22 张 PNG、三个负向对照通过，全部单页像素差为 0；`text-rYzgdP` 八场景 / 18 张 PNG 及字形溢出负向对照通过。22 张核心场景的实际导出 PNG 与修改前 `run-oqTYWH` 逐一 SHA-256 相同，改变的是参考截图的文字绘制方式，而不是导出内容。
 
 仅灰度抗锯齿的首次 Linux 试验（930e9b4 / run 35891487232）仍失败：整页差异由 2.38% 降至 2.01%，系统事件局部由 4.86% 降至 4.46%；22 张实际导出图也与修改前完全相同。因此不能仅凭 Windows 通过宣称解决；后续单独加入无 hinting 设置进行远端验证。机制参考 Chromium 的 [Linux 字体参数实现](https://raw.githubusercontent.com/chromium/chromium/main/ui/gfx/font_render_params_linux.cc) 与 [headless hinting 开关](https://chromium.googlesource.com/chromium/src/+/e1b855d4545dc4fff19cee500d7ce105126f3bd2)。
+
+无 hinting 试验（8734abf / run 35892339478）也未解决，未保留该参数。分阶段诊断（35cbe16 / run 35892929659）证明两张聊天页 native→serialized 均 0%，serialized→PNG 分别 1.972% / 0.802%。首次灰度试验中的系统事件字形仅向下偏移 2 个输出像素，平移对照可达到完全一致。因此下一项独立实验回到灰度基线，仅增加禁止按设备缩放启用字体子像素定位的开关；仍须等 Linux 验证，不预先认定通过。
 
 ### 短文字序列化回归（2026-09-17）
 

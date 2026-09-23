@@ -37,7 +37,7 @@ Run 35888318787 at 4eaf6d2 fails identically to run 35236430657 at 1ad67ec. Its 
 
 ```js
 assert.deepEqual(phoneExportBrowserOptions('chromium'), {
-  headless: true, args: ['--disable-lcd-text', '--font-render-hinting=none'],
+  headless: true, args: ['--disable-lcd-text', '--disable-font-subpixel-positioning'],
 })
 assert.deepEqual(phoneExportBrowserOptions('webkit'), { headless: true })
 ```
@@ -49,7 +49,7 @@ Run: `node --test tests/phone-export-browser-assertions.test.mjs` (missing modul
 ```js
 export function phoneExportBrowserOptions(engine) {
   return engine === 'chromium'
-    ? { headless: true, args: ['--disable-lcd-text', '--font-render-hinting=none'] }
+    ? { headless: true, args: ['--disable-lcd-text', '--disable-font-subpixel-positioning'] }
     : { headless: true }
 }
 // Each runner imports the function and uses:
@@ -76,3 +76,5 @@ git diff --check
 930e9b4's Linux run 35891487232 disproves LCD antialiasing as the complete explanation: native text loses colored edges, but page/region differences remain (2.01% / 4.46%). Actual PNG bytes remain identical to 4eaf6d2 for all 22 pages. Chromium's Linux font implementation selects hinting/subpixel positioning using device scale factor. The second single-variable experiment adds `--font-render-hinting=none` (headless's documented override). Verify the updated assertion RED, then run the 15 targeted tests and desktop-current locally before repeating the full Linux workflow. No thresholds or production styles change.
 
 8734abf's Linux run 35892339478 also fails (1.97% page / 4.68% event region). Stop adjusting launch flags. Add optional test-only `__phoneExportSerializedProbe` in `browser-tests/phone-export/probe.mjs` and collect, for desktop-current's first two pages, the real serialized SVG, its re-mounted native screenshot/geometry, and native-to-clone / clone-to-export mismatch ratios in `scripts/run-phone-export-browser.mjs`. The original acceptance comparisons and thresholds remain active. Extend the observer unit test, run it plus desktop-current locally, and push only the diagnostic commit to the same temporary branch. This is boundary instrumentation, not a third claimed fix.
+
+35cbe16's diagnostics (run 35892929659): original native→serialized native 0% for both pages, serialized→PNG 1.972% / 0.802%. On the grayscale-only artifact the event crop matches exactly after shifting the native reference sampling by -2 output pixels in Y (MSE 0). Independent source review identifies Linux's DSF-dependent `subpixel_positioning` branch. Remove the unsuccessful no-hinting override, return to the known grayscale-only baseline, and vary only `--disable-font-subpixel-positioning`. Re-run focused assertions plus desktop-current and then the full remote workflow; do not promote if its outcome fails.
