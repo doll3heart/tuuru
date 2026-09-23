@@ -37,7 +37,7 @@ Run 35888318787 at 4eaf6d2 fails identically to run 35236430657 at 1ad67ec. Its 
 
 ```js
 assert.deepEqual(phoneExportBrowserOptions('chromium'), {
-  headless: true, args: ['--disable-lcd-text'],
+  headless: true, args: ['--disable-lcd-text', '--font-render-hinting=none'],
 })
 assert.deepEqual(phoneExportBrowserOptions('webkit'), { headless: true })
 ```
@@ -49,7 +49,7 @@ Run: `node --test tests/phone-export-browser-assertions.test.mjs` (missing modul
 ```js
 export function phoneExportBrowserOptions(engine) {
   return engine === 'chromium'
-    ? { headless: true, args: ['--disable-lcd-text'] }
+    ? { headless: true, args: ['--disable-lcd-text', '--font-render-hinting=none'] }
     : { headless: true }
 }
 // Each runner imports the function and uses:
@@ -67,6 +67,10 @@ node scripts/run-phone-export-text-browser.mjs
 git diff --check
 ```
 
-- [ ] Create `codex/phone-export-ci-raster-20260924`, commit only the files listed above plus this plan, and push only that branch. Do not create a PR, merge, or deploy production.
+- [x] Create `codex/phone-export-ci-raster-20260924`, commit only the files listed above plus this plan, and push only that branch. Do not create a PR, merge, or deploy production.
 - [ ] Inspect the new GitHub run through completion, including the previously skipped short-text step. If any check fails, inspect its actual images and revise the hypothesis.
 - [ ] Document verified local/remote outcomes and remaining real-Safari limitations; keep evidence in ignored artifacts. Report results and stop before production merge/deployment.
+
+## Hypothesis refinement
+
+930e9b4's Linux run 35891487232 disproves LCD antialiasing as the complete explanation: native text loses colored edges, but page/region differences remain (2.01% / 4.46%). Actual PNG bytes remain identical to 4eaf6d2 for all 22 pages. Chromium's Linux font implementation selects hinting/subpixel positioning using device scale factor. The second single-variable experiment adds `--font-render-hinting=none` (headless's documented override). Verify the updated assertion RED, then run the 15 targeted tests and desktop-current locally before repeating the full Linux workflow. No thresholds or production styles change.
