@@ -102,11 +102,26 @@ test('bounds a hung response body and aborts its underlying request', async () =
   f.dom.window.close()
 })
 
-test('bounds a hung decode and cleans the temporary decoder', async () => {
+test('bounds a hung decode and cleans the temporary decoder', { timeout:5000 }, async t => {
   const f = fixture('<img src="https://images.test/valid.png">')
   let decoder
-  f.window.HTMLImageElement.prototype.decode = function () { decoder = this; return new Promise(() => {}) }
-  await assert.rejects(inlinePhoneExportImages(f.clone, { timeoutMs:25 }), { name:'PhoneExportImageError' })
+  let enteredDecode, expireDeadline
+  const decoding = new Promise(resolve => { enteredDecode = resolve })
+  const nativeSetTimeout = globalThis.setTimeout
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+    if (delay !== 25) return nativeSetTimeout(callback, delay, ...args)
+    expireDeadline = () => callback(...args)
+    return 0
+  })
+  f.window.HTMLImageElement.prototype.decode = function () {
+    decoder = this
+    enteredDecode()
+    return new Promise(() => {})
+  }
+  const pending = inlinePhoneExportImages(f.clone, { timeoutMs:25 })
+  await decoding
+  expireDeadline()
+  await assert.rejects(pending, { name:'PhoneExportImageError' })
   assert.equal(decoder.hasAttribute('src'), false)
   f.dom.window.close()
 })

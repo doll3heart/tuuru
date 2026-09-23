@@ -364,6 +364,17 @@ test("phone reading positions are bounded and legacy progress remains compatible
   assert.equal(readerBook(invalid, "work-a").progress.readingPosition, null)
 })
 
+test("optional moment liked IDs normalize, deduplicate, and disappear when empty", () => {
+  let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
+  library = saveReaderProgress(library, "work-a", {
+    kind:"phone", flowIndex:0,
+    momentLikedIds:["moment-a", "moment-a", "", " padded ", 17, "moment-b", "x".repeat(501)],
+  }, 110)
+  assert.deepEqual(readerBook(library, "work-a").progress.momentLikedIds, ["moment-a", "moment-b"])
+  library = saveReaderProgress(library, "work-a", { kind:"phone", flowIndex:0, momentLikedIds:[] }, 120)
+  assert.equal(readerBook(library, "work-a").progress.momentLikedIds, undefined)
+})
+
 test("phone action responses retain long semantic keys and more than two hundred answers", () => {
   let library = rememberReaderWork(emptyReaderLibrary(), work({ type:"phone" }), 100)
   const messageActionResponses = Object.fromEntries(

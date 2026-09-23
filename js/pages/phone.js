@@ -5637,18 +5637,110 @@ function openMessagesEditor(frame, wid, pd) {
     var moment = moments.find(function(item) { return String(item.id) === String(momentId) })
     var comment = moment && Array.isArray(moment.comments) ? moment.comments[commentIndex] : null
     if (!comment) return
+    var target = comment
     var ov = modal('编辑动态评论',
       '<div class="form-group"><label class="form-label" for="momentCommentText">内容</label><textarea id="momentCommentText" class="form-textarea" style="min-height:70px" placeholder="输入 @ 可选择提及对象">' + esc(comment.content || comment.text || '') + '</textarea></div>' +
       '<div class="form-group"><label class="form-label" for="momentCommentTime">显示日期与时间（可选）</label><input id="momentCommentTime" class="form-input" value="' + escAttr(comment.time || '') + '" placeholder="留空则不显示"></div>',
       '<button id="momentCommentSave" class="btn btn-primary btn-sm">保存</button><button id="momentCommentCancel" class="btn btn-ghost btn-sm">取消</button>')
     ov.querySelector('#momentCommentSave').onclick = function() {
-      comment.content = ov.querySelector('#momentCommentText').value.trim()
-      comment.time = ov.querySelector('#momentCommentTime').value.trim()
+      if (!moment.comments.includes(target)) { showModalInlineError(ov, ov.querySelector('#momentCommentText'), '这条评论已不存在'); return }
+      target.content = ov.querySelector('#momentCommentText').value.trim()
+      target.time = ov.querySelector('#momentCommentTime').value.trim()
       saveData()
       ov.remove()
       renderMessages()
     }
     ov.querySelector('#momentCommentCancel').onclick = function() { ov.remove() }
+  }
+
+  function momentCommentName(comment) {
+    var contact = contacts.find(function(item) { return String(item.id) === String(comment.contactId) })
+    return contact ? contact.name : comment.contactName || '用户'
+  }
+
+  function momentLikeNames(moment) {
+    if (!Array.isArray(moment.likes)) return []
+    return moment.likes.map(function(like) {
+      var contactId = typeof like === 'string' ? like : like && like.contactId
+      var contact = contacts.find(function(item) { return String(item.id) === String(contactId) })
+      return contact ? contact.name : typeof like === 'string' ? like : like && like.name || ''
+    }).filter(Boolean)
+  }
+
+  function openMomentReply(moment, target) {
+    var senderOptions = contacts.map(function(c) { return '<option value="' + escAttr(c.id) + '">' + esc(c.name) + '</option>' }).join('')
+    var ov = modal(target ? '回复评论' : '回复动态',
+      '<div class="form-group"><textarea id="mrContent" class="form-textarea" placeholder="回复内容；输入 @ 可选择提及对象" style="min-height:60px"></textarea></div>' +
+      '<div class="form-group"><label class="form-label">回复身份</label><select id="mrSender" class="form-select">' + senderOptions + '</select></div>' +
+      '<div class="form-group"><label class="form-label" for="mrTime">显示日期与时间（可选）</label><input id="mrTime" class="form-input" value="' + escAttr(new Date().toLocaleString()) + '"></div>',
+      '<button id="mrSave" class="btn btn-primary btn-sm">发送</button><button id="mrCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.querySelector('#mrSave').onclick = function() {
+      var content = ov.querySelector('#mrContent').value.trim()
+      if (!content) { showModalInlineError(ov, ov.querySelector('#mrContent'), '请填写回复内容'); return }
+      if (!moments.includes(moment)) { showModalInlineError(ov, ov.querySelector('#mrContent'), '这条动态已不存在'); return }
+      if (target && (!Array.isArray(moment.comments) || !moment.comments.includes(target))) {
+        showModalInlineError(ov, ov.querySelector('#mrContent'), '回复对象已不存在，请重新选择'); return
+      }
+      if (target && target.id && moment.comments.filter(function(item) { return String(item.id) === String(target.id) }).length !== 1) {
+        showModalInlineError(ov, ov.querySelector('#mrContent'), '回复对象 ID 重复，请先修正数据'); return
+      }
+      if (target && !target.id) {
+        var newTargetId = uid()
+        while (moment.comments.some(function(item) { return String(item.id) === String(newTargetId) })) newTargetId = uid()
+        target.id = newTargetId
+      }
+      var senderId = ov.querySelector('#mrSender').value
+      var sender = contacts.find(function(item) { return String(item.id) === String(senderId) })
+      var reply = { id: uid(), contactId: senderId, contactName: sender ? sender.name : '', content: content, time: ov.querySelector('#mrTime').value.trim() }
+      if (target) Object.assign(reply, { replyToCommentId: target.id, replyToContactId: target.contactId, replyToName: momentCommentName(target) })
+      moment.comments = moment.comments || []
+      moment.comments.push(reply)
+      saveData(); ov.remove(); renderMessages()
+    }
+    ov.querySelector('#mrCancel').onclick = function() { ov.remove() }
+  }
+
+  function deleteMomentComment(moment, target) {
+    var ov = modal('删除动态评论', '<p>确定删除这条评论？其他评论和回复会保留。</p>',
+      '<button id="momentCommentDeleteConfirm" class="btn btn-primary btn-sm">删除</button><button id="momentCommentDeleteCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.querySelector('#momentCommentDeleteConfirm').onclick = function() {
+      var index = Array.isArray(moment.comments) ? moment.comments.indexOf(target) : -1
+      if (!moments.includes(moment) || index < 0) { showModalInlineError(ov, ov.querySelector('#momentCommentDeleteConfirm'), '这条评论已不存在'); return }
+      moment.comments.splice(index, 1)
+      saveData(); ov.remove(); renderMessages()
+    }
+    ov.querySelector('#momentCommentDeleteCancel').onclick = function() { ov.remove() }
+  }
+
+  function editMomentLikes(moment) {
+    var existing = momentLikeNames(moment)
+    function knownLikeContactId(like) {
+      var id = typeof like === 'string' ? like : like && like.contactId
+      if (id != null && String(id) !== '') {
+        var idContact = contacts.find(function(item) { return String(item.id) === String(id) })
+        if (idContact) return String(idContact.id)
+        if (typeof like !== 'string') return null
+      }
+      var name = typeof like === 'string' ? like : like && like.name
+      var contact = contacts.find(function(item) { return item.name === name })
+      return contact ? String(contact.id) : null
+    }
+    var choices = contacts.map(function(contact) {
+      return '<label class="forum-id-opt"><input type="checkbox" data-moment-like-contact="' + escAttr(contact.id) + '"' +
+        (Array.isArray(moment.likes) && moment.likes.some(function(item) { return knownLikeContactId(item) === String(contact.id) }) ? ' checked' : '') +
+        '><span>' + esc(contact.name) + '</span></label>'
+    }).join('')
+    var ov = modal('编辑动态点赞', '<div class="form-group">选择点赞的联系人</div>' + choices +
+      (existing.length ? '<p class="moment-likes-legacy">当前：' + esc(existing.join('、')) + '</p>' : ''),
+      '<button id="momentLikesSave" class="btn btn-primary btn-sm">保存</button><button id="momentLikesCancel" class="btn btn-ghost btn-sm">取消</button>')
+    ov.querySelector('#momentLikesSave').onclick = function() {
+      if (!moments.includes(moment)) { showModalInlineError(ov, ov.querySelector('#momentLikesSave'), '这条动态已不存在'); return }
+      var checked = Array.from(ov.querySelectorAll('[data-moment-like-contact]:checked')).map(function(input) { return input.dataset.momentLikeContact })
+      var unknownLegacy = Array.isArray(moment.likes) ? moment.likes.filter(function(item) { return !knownLikeContactId(item) }) : []
+      moment.likes = unknownLegacy.concat(checked)
+      saveData(); ov.remove(); renderMessages()
+    }
+    ov.querySelector('#momentLikesCancel').onclick = function() { ov.remove() }
   }
 
   function getChatName(ch) {
@@ -5731,7 +5823,7 @@ function openMessagesEditor(frame, wid, pd) {
       h += '<button class="btn btn-sm btn-outline" id="msgAddMoment">+ 发布</button>'
       h += '</div>'
       if (moments.length === 0) h += '<div class="pf-empty">暂无动态</div>'
-      moments.forEach(function(m) {
+      moments.forEach(function(m, mi) {
         var c = contacts.find(function(x) { return x.id === m.contactId })
         var momentAvatar = contactAvatar(c, 'messages')
         var momentAvatarStyle = momentAvatar
@@ -5750,12 +5842,16 @@ function openMessagesEditor(frame, wid, pd) {
         if (mComments.length > 0) {
           h += '<div class="forum-replies" style="margin:4px 0;padding:4px 8px;background:var(--c-surface2);border-left:2px solid var(--c-primary)">'
           mComments.forEach(function(mc, mci) {
-            var mcContact = contacts.find(function(x) { return x.id === mc.contactId })
+            var actorName = momentCommentName(mc)
+            var target = mc.replyToCommentId && mComments.find(function(item) { return String(item.id) === String(mc.replyToCommentId) })
+            var targetName = target ? momentCommentName(target) : (contacts.find(function(item) { return String(item.id) === String(mc.replyToContactId) })?.name || mc.replyToName || '')
             h += '<div class="forum-reply-item" style="font-size:.7rem;line-height:1.5;padding:2px 0">'
-            h += '<span class="forum-reply-name" style="color:var(--c-primary-hover);font-weight:500">' + esc(mcContact ? mcContact.name : mc.contactName || '用户') + '</span>：'
-            h += '<span>' + renderAuthorMentionText(mc.content || '', momentMentionNames) + '</span>'
+            h += '<span class="forum-reply-name" style="color:var(--c-primary-hover);font-weight:500">' + esc(actorName) + (mc.replyToCommentId && targetName ? ' 回复 ' + esc(targetName) : '') + '</span>：'
+            h += '<span class="moment-comment-content">' + renderAuthorMentionText(mc.content || '', momentMentionNames) + '</span>'
             h += ' <span class="forum-comment-time" style="font-size:.6rem;color:var(--c-text2)">' + esc(mc.time || '') + '</span>'
             h += '<button type="button" class="moment-comment-edit-btn" data-moment-comment-edit="' + escAttr(m.id) + '" data-moment-comment-index="' + mci + '">编辑</button>'
+            h += '<button type="button" class="moment-comment-action" data-moment-comment-reply="' + mi + '" data-moment-comment-index="' + mci + '" aria-label="回复' + escAttr(actorName) + '">回复</button>'
+            h += '<button type="button" class="moment-comment-action" data-moment-comment-delete="' + mi + '" data-moment-comment-index="' + mci + '" aria-label="删除' + escAttr(actorName) + '的评论">删除</button>'
             h += '<button class="moment-choice-edit-btn" data-moment-id="' + m.id + '" data-moment-ci="' + mci + '" style="margin-left:4px;border:none;background:transparent;color:var(--c-text2);cursor:pointer;font-size:.6rem" title="添加选项">+</button>'
             h += '</div>'
             if (mc.choices && mc.choices.length > 0) {
@@ -5768,8 +5864,12 @@ function openMessagesEditor(frame, wid, pd) {
           })
           h += '</div>'
         }
-        h += '<div class="moment-actions" style="display:flex;gap:16px;font-size:.75rem;color:var(--c-text2);padding-top:6px;border-top:1px solid var(--c-border)">'
-        h += '<span class="moment-reply-btn" data-moment-reply="' + m.id + '" style="cursor:pointer">回复</span>'
+        var likeNames = momentLikeNames(m)
+        var likeCount = Array.isArray(m.likes) ? m.likes.length : (Number.isFinite(m.likes) && m.likes >= 0 ? m.likes : 0)
+        h += '<div class="moment-likes">点赞 ' + likeCount + (likeNames.length ? ' · ' + esc(likeNames.join('、')) : '') + '</div>'
+        h += '<div class="moment-actions" style="font-size:.75rem;color:var(--c-text2);padding-top:6px;border-top:1px solid var(--c-border)">'
+        h += '<button type="button" class="moment-reply-btn" data-moment-reply="' + escAttr(m.id) + '">回复</button>'
+        h += '<button type="button" class="moment-like-edit-btn" data-moment-likes-edit="' + mi + '">编辑点赞</button>'
         h += '<button type="button" class="moment-edit-btn" data-moment-edit="' + escapeHtmlAttribute(m.id) + '">编辑</button>'
         h += '</div>'
         h += '<button class="browser-del" style="position:absolute;top:4px;right:4px" data-moment-del="' + m.id + '">x</button>'
@@ -5822,6 +5922,23 @@ function bindMsgEvents() {
       }
     })
 
+    frame.querySelectorAll('[data-moment-comment-reply]').forEach(function(button) {
+      button.onclick = function() {
+        var moment = moments[Number(button.dataset.momentCommentReply)]
+        var target = moment && moment.comments && moment.comments[Number(button.dataset.momentCommentIndex)]
+        if (target) openMomentReply(moment, target)
+      }
+    })
+    frame.querySelectorAll('[data-moment-comment-delete]').forEach(function(button) {
+      button.onclick = function() {
+        var moment = moments[Number(button.dataset.momentCommentDelete)]
+        var target = moment && moment.comments && moment.comments[Number(button.dataset.momentCommentIndex)]
+        if (target) deleteMomentComment(moment, target)
+      }
+    })
+    frame.querySelectorAll('[data-moment-likes-edit]').forEach(function(button) {
+      button.onclick = function() { var moment = moments[Number(button.dataset.momentLikesEdit)]; if (moment) editMomentLikes(moment) }
+    })
     // Moment reply buttons
     var replyBtns = frame.querySelectorAll('[data-moment-reply]')
     replyBtns.forEach(function(b) {
@@ -5829,24 +5946,7 @@ function bindMsgEvents() {
         var mid = b.dataset.momentReply
         var m = moments.find(function(x) { return x.id === mid })
         if (!m) return
-        var senderOptions = contacts.map(function(c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>' }).join('')
-        var ov = modal('回复动态',
-          '<div class="form-group"><textarea id="mrContent" class="form-textarea" placeholder="回复内容；输入 @ 可选择提及对象" style="min-height:60px"></textarea></div>' +
-          '<div class="form-group"><label class="form-label">回复身份</label><select id="mrSender" class="form-select">' + senderOptions + '</select></div>' +
-          '<div class="form-group"><label class="form-label" for="mrTime">显示日期与时间（可选）</label><input id="mrTime" class="form-input" value="' + escAttr(new Date().toLocaleString()) + '"></div>',
-          '<button id="mrSave" class="btn btn-primary btn-sm">发送</button><button id="mrCancel" class="btn btn-ghost btn-sm">取消</button>')
-        ov.querySelector('#mrSave').onclick = function() {
-          var content = ov.querySelector('#mrContent').value.trim()
-          if (!content) return
-          var senderId = ov.querySelector('#mrSender').value
-          var sc = contacts.find(function(x) { return x.id === senderId })
-          m.comments = m.comments || []
-          m.comments.push({ id: uid(), contactId: senderId, contactName: sc ? sc.name : '', content: content, time: ov.querySelector('#mrTime').value.trim() })
-          saveData()
-          ov.remove()
-          renderMessages()
-        }
-        ov.querySelector('#mrCancel').onclick = function() { ov.remove() }
+        openMomentReply(m, null)
       }
     })
 

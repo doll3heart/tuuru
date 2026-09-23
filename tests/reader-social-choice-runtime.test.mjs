@@ -215,6 +215,37 @@ test("a social choice without reader text keeps reselection on its first follow-
   assert.ok(document.querySelector('.rd-thread-choice-option[data-thread-scope="moment"]'))
 })
 
+test("reader moment likes toggle locally and authored reply targets render safely", async t => {
+  const work = socialChoiceWork()
+  const moment = work.phoneData.moments[0]
+  moment.likes = ['沈岚']
+  moment.content = '第一行\n\n<script>literal</script>'
+  moment.comments[1].replyToCommentId = 'moment-owner'
+  moment.comments[1].replyToContactId = 'contact-1'
+  moment.comments[1].replyToName = '旧名'
+  await openSeededPhone(t, work)
+  const original = localStorage.getItem(`moirain_work_${work.id}`)
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('[data-message-section="moments"]').click()
+  assert.match(document.querySelector('.rd-thread-comment[data-thread-item-id="moment-authored-tail"] .rd-thread-comment-meta').textContent, /沈岚\s*回复\s*沈岚/)
+  assert.equal(document.querySelector('.rd-moment-content').textContent, moment.content)
+  assert.equal(document.querySelector('.rd-moment-content script'), null)
+  const like = document.querySelector('[data-moment-like]')
+  assert.equal(like.getAttribute('aria-pressed'), 'false')
+  like.click()
+  assert.equal(document.querySelector('[data-moment-like]').getAttribute('aria-pressed'), 'true')
+  assert.match(document.querySelector('.rd-moment-likes').textContent, /2/)
+  assert.deepEqual(JSON.parse(localStorage.getItem('moirain_readerLibrary')).books.find(book => book.id === work.id).progress.momentLikedIds, ['moment-1'])
+  document.querySelector('.rd-back-btn').click()
+  document.querySelector('[data-app-type="messages"]').click()
+  document.querySelector('[data-message-section="moments"]').click()
+  assert.equal(document.querySelector('[data-moment-like]').getAttribute('aria-pressed'), 'true')
+  document.querySelector('[data-moment-like]').click()
+  assert.equal(document.querySelector('[data-moment-like]').getAttribute('aria-pressed'), 'false')
+  assert.match(document.querySelector('.rd-moment-likes').textContent, /1/)
+  assert.equal(localStorage.getItem(`moirain_work_${work.id}`), original)
+})
+
 test("a social image choice previews and sends the same image", async t => {
   const work = socialChoiceWork()
   const imageUrl = "data:image/png;base64,c29jaWFsLWNob2ljZQ=="

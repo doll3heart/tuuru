@@ -201,6 +201,125 @@ test("moment comments can author and edit mentions with their display time", asy
   }
 })
 
+test("moment actions target replies, delete exactly one comment, and edit likes", async () => {
+  const fixture = await openApp("moment-interactions", "messages")
+  const { draft, overlay } = fixture
+  try {
+    overlay.querySelector("#msgTabMoments").click()
+    assert.ok(overlay.querySelector('[data-moment-comment-delete]'))
+    assert.ok(overlay.querySelector('[data-moment-comment-reply]'))
+    assert.ok(overlay.querySelector('[data-moment-likes-edit]'))
+    overlay.querySelector('[data-moment-comment-reply]').click()
+    document.querySelector('#mrSender').value = 'contact-2'
+    document.querySelector('#mrContent').value = '第二行\n\n<script>literal</script>'
+    document.querySelector('#mrSave').click()
+    const moment = draft.snapshot().phoneData.moments[0]
+    const savedReply = moment.comments[1]
+    assert.equal(savedReply.replyToCommentId, 'moment-comment-a')
+    assert.equal(savedReply.replyToContactId, 'contact-1')
+    const replyRow = [...overlay.querySelectorAll('.forum-reply-item')][1]
+    assert.match(replyRow.textContent, /白榆\s*回复\s*林澈/)
+    assert.equal(replyRow.querySelector('.moment-comment-content').textContent, '第二行\n\n<script>literal</script>')
+    assert.equal(replyRow.querySelector('script'), null)
+
+    overlay.querySelector('[data-moment-comment-delete]').click()
+    document.querySelector('#momentCommentDeleteCancel').click()
+    assert.equal(draft.snapshot().phoneData.moments[0].comments.length, 2)
+    overlay.querySelector('[data-moment-comment-delete]').click()
+    document.querySelector('#momentCommentDeleteConfirm').click()
+    assert.deepEqual(draft.snapshot().phoneData.moments[0].comments, [savedReply])
+    assert.match(overlay.querySelector('.forum-reply-item').textContent, /白榆\s*回复\s*林澈/)
+
+    overlay.querySelector('[data-moment-likes-edit]').click()
+    document.querySelector('#momentLikesCancel').click()
+    assert.equal(draft.snapshot().phoneData.moments[0].likes, undefined)
+    overlay.querySelector('[data-moment-likes-edit]').click()
+    document.querySelector('[data-moment-like-contact="contact-2"]').checked = true
+    document.querySelector('#momentLikesSave').click()
+    assert.match(overlay.querySelector('.moment-likes').textContent, /白榆/)
+  } finally { closeFixture(fixture) }
+})
+
+test("targeting an ID-less legacy comment assigns an ID only when saved", async () => {
+  const data = makePhoneData()
+  delete data.moments[0].comments[0].id
+  const fixture = await openApp("moment-legacy-target", "messages", data)
+  try {
+    fixture.overlay.querySelector('#msgTabMoments').click()
+    fixture.overlay.querySelector('[data-moment-comment-reply]').click()
+    document.querySelector('#mrCancel').click()
+    assert.equal(fixture.draft.snapshot().phoneData.moments[0].comments[0].id, undefined)
+    fixture.overlay.querySelector('[data-moment-comment-reply]').click()
+    document.querySelector('#mrContent').value = '旧评论回复'
+    document.querySelector('#mrSave').click()
+    const [target, reply] = fixture.draft.snapshot().phoneData.moments[0].comments
+    assert.ok(target.id)
+    assert.equal(reply.replyToCommentId, target.id)
+  } finally { closeFixture(fixture) }
+})
+
+test("duplicate comment IDs never redirect a pending edit or deletion", async () => {
+  const data = makePhoneData()
+  data.moments[0].comments.push({ id:"moment-comment-a", contactId:"contact-2", content:"sibling", time:"later" })
+  const fixture = await openApp("moment-duplicate-target", "messages", data)
+  try {
+    fixture.overlay.querySelector('#msgTabMoments').click()
+    const edit = fixture.overlay.querySelectorAll('[data-moment-comment-edit]')[1]
+    edit.click()
+    document.querySelector('#momentCommentText').value = 'edited sibling'
+    document.querySelector('#momentCommentSave').click()
+    assert.equal(fixture.draft.snapshot().phoneData.moments[0].comments[0].content, '记得带伞。')
+    assert.equal(fixture.draft.snapshot().phoneData.moments[0].comments[1].content, 'edited sibling')
+    fixture.overlay.querySelectorAll('[data-moment-comment-delete]')[1].click()
+    document.querySelector('#momentCommentDeleteConfirm').click()
+    assert.equal(fixture.draft.snapshot().phoneData.moments[0].comments.length, 1)
+    assert.equal(fixture.draft.snapshot().phoneData.moments[0].comments[0].content, '记得带伞。')
+  } finally { closeFixture(fixture) }
+})
+
+test("moment likes editor selects known object entries and preserves unknown objects", async () => {
+  const data = makePhoneData()
+  data.moments[0].likes = [
+    { contactId:"contact-1", note:"known" },
+    { contactId:"deleted-contact", note:"orphan" },
+    { name:"旧友", note:"legacy" },
+    '陌生人',
+  ]
+  const fixture = await openApp("moment-object-likes", "messages", data)
+  try {
+    fixture.overlay.querySelector('#msgTabMoments').click()
+    fixture.overlay.querySelector('[data-moment-likes-edit]').click()
+    assert.equal(document.querySelector('[data-moment-like-contact="contact-1"]').checked, true)
+    document.querySelector('#momentLikesCancel').click()
+    assert.deepEqual(fixture.draft.snapshot().phoneData.moments[0].likes, data.moments[0].likes)
+    fixture.overlay.querySelector('[data-moment-likes-edit]').click()
+    document.querySelector('[data-moment-like-contact="contact-1"]').checked = false
+    document.querySelector('[data-moment-like-contact="contact-2"]').checked = true
+    document.querySelector('#momentLikesSave').click()
+    const saved = fixture.draft.snapshot().phoneData.moments[0].likes
+    assert.deepEqual(saved, [data.moments[0].likes[1], data.moments[0].likes[2], '陌生人', 'contact-2'])
+    assert.doesNotMatch(fixture.overlay.querySelector('.moment-likes').textContent, /林澈/)
+  } finally { closeFixture(fixture) }
+})
+
+test("moment likes prefer explicit contact IDs over stale object names", async () => {
+  const data = makePhoneData()
+  data.moments[0].likes = [
+    { contactId:"contact-2", name:"林澈" },
+    { contactId:"deleted-contact", name:"林澈" },
+  ]
+  const fixture = await openApp("moment-like-id-priority", "messages", data)
+  try {
+    fixture.overlay.querySelector('#msgTabMoments').click()
+    fixture.overlay.querySelector('[data-moment-likes-edit]').click()
+    assert.equal(document.querySelector('[data-moment-like-contact="contact-2"]').checked, true)
+    assert.equal(document.querySelector('[data-moment-like-contact="contact-1"]').checked, false)
+    document.querySelector('[data-moment-like-contact="contact-2"]').checked = false
+    document.querySelector('#momentLikesSave').click()
+    assert.deepEqual(fixture.draft.snapshot().phoneData.moments[0].likes, [data.moments[0].likes[1]])
+  } finally { closeFixture(fixture) }
+})
+
 test("a newly published moment can reopen the same form and keep its attached data", async () => {
   const fixture = await openApp("moment-reopen-editor", "messages")
   const { draft, overlay } = fixture

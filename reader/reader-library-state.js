@@ -15,6 +15,7 @@ const MAX_BOOKMARKS = 30
 const MAX_PATH_LENGTH = 256
 const MAX_TEXT_LENGTH = 500
 const MAX_PHONE_CHOICE_SELECTIONS = 1000
+const MAX_MOMENT_LIKED_IDS = 1000
 const MAX_PHONE_STORY_EFFECT_KEY_LENGTH = 4096
 
 function ownData(record, key) {
@@ -34,6 +35,19 @@ function exactId(value) {
     && value.length > 0
     && value.length <= MAX_TEXT_LENGTH
     && value.trim() === value
+}
+
+function normalizedMomentLikedIds(value) {
+  if (!Array.isArray(value)) return []
+  const ids = []
+  const seen = new Set()
+  for (const id of value) {
+    if (!exactId(id) || seen.has(id)) continue
+    ids.push(id)
+    seen.add(id)
+    if (ids.length >= MAX_MOMENT_LIKED_IDS) break
+  }
+  return ids
 }
 
 function text(value, fallback = "") {
@@ -863,6 +877,7 @@ function normalizedProgress(value) {
       ownData(value, "phonePendingChoicePlaybacks"),
       phoneChoiceSelectionState.selections,
     )
+    const momentLikedIds = normalizedMomentLikedIds(ownData(value, "momentLikedIds"))
     return {
       kind:"phone",
       flowIndex:Number.isInteger(flowIndex) && flowIndex >= 0 ? Math.min(flowIndex, 10_000) : 0,
@@ -871,6 +886,7 @@ function normalizedProgress(value) {
       contactFriendships,
       contactFriendshipSources,
       phoneChoiceSelections:phoneChoiceSelectionState.selections,
+      ...(momentLikedIds.length ? { momentLikedIds } : {}),
       ...(phoneChoiceSelectionState.explicitOrder
         ? { phoneChoiceSelectionOrder:phoneChoiceSelectionState.order }
         : {}),

@@ -5419,6 +5419,7 @@ body.rd-interactive-scene-active {
   font-size: .76rem;
   line-height: 1.65;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
   user-select: text;
 }
 .rd-moment-images { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; margin: 0 0 9px; }
@@ -5445,6 +5446,7 @@ body.rd-interactive-scene-active {
   font-size: .7rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
   user-select: text;
 }
 .rd-thread-choice-list { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
@@ -5470,6 +5472,9 @@ body.rd-interactive-scene-active {
   border-radius: 2px;
   background: var(--phone-system-surface-soft);
 }
+.rd-moment-likes { display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:5px 0 9px;color:var(--phone-system-muted);font-size:.64rem;overflow-wrap:anywhere; }
+.rd-moment-likes button { border:1px solid var(--phone-system-border);background:var(--phone-system-surface);color:var(--phone-system-primary);font:inherit;cursor:pointer;padding:4px 7px; }
+.rd-moment-likes button:focus-visible { outline:2px solid var(--phone-system-primary);outline-offset:2px; }
 .rd-thread-comment-content:empty { display: none; }
 .rd-thread-comment-image { display: block; width: min(100%, 220px); max-height: 180px; margin-top: 5px; border-radius: 3px; object-fit: contain; background: var(--phone-system-surface-soft); }
 .rd-choice-label { display: block; min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }

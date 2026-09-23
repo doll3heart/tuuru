@@ -725,6 +725,7 @@ function resetReaderPhoneChoiceSession(work) {
   _readerPhoneChoiceSession = {
     workId: String(work && work.id || ''),
     moments: null,
+    momentLikedIds: new Set(),
     momentChoiceRuns: new Map(),
     chats: new Map(),
     forumPosts: new Map(),
@@ -754,6 +755,7 @@ function readerPhoneChoiceSession(work) {
   if (!(_readerPhoneChoiceSession.friendRequestResponses instanceof Map)) {
     _readerPhoneChoiceSession.friendRequestResponses = new Map()
   }
+  if (!(_readerPhoneChoiceSession.momentLikedIds instanceof Set)) _readerPhoneChoiceSession.momentLikedIds = new Set()
   if (!(_readerPhoneChoiceSession.contactCardResponses instanceof Map)) {
     _readerPhoneChoiceSession.contactCardResponses = new Map()
   }
@@ -803,6 +805,7 @@ function cloneReaderPhoneChoiceSessionForExport(session) {
       ? null
       : cloneReaderThreadItems(session?.moments || []),
     momentChoiceRuns:new Map(session?.momentChoiceRuns || []),
+    momentLikedIds:new Set(),
     chats:new Map(),
     forumPosts:new Map(),
     storyContactOverrides:new Map(session?.storyContactOverrides || []),
@@ -1811,6 +1814,7 @@ function saveCurrentReaderProgress() {
       contactRemarks:Object.fromEntries(phoneChoiceSession.contactRemarks),
       phoneChoiceSelections:Object.fromEntries(phoneChoiceSession.phoneChoiceSelections),
       phoneChoiceSelectionOrder:Array.from(phoneChoiceSession.phoneChoiceSelections.keys()),
+      momentLikedIds:Array.from(phoneChoiceSession.momentLikedIds),
       phoneStoryEffectOrder:Array.isArray(phoneChoiceSession.phoneStoryEffectOrder)
         ? phoneChoiceSession.phoneStoryEffectOrder.slice()
         : [],
@@ -5068,6 +5072,7 @@ function loadWork(work, options) {
     var phoneFlow = readerPhoneFlowSession(work)
     phoneFlow.index = Math.min(rememberedBook.progress.flowIndex, phoneFlow.sequence.length)
     var phoneChoices = readerPhoneChoiceSession(work)
+    ;(rememberedBook.progress.momentLikedIds || []).forEach(function(id) { phoneChoices.momentLikedIds.add(id) })
     Object.entries(rememberedBook.progress.friendRequestResponses || {}).forEach(function(entry) {
       phoneChoices.friendRequestResponses.set(entry[0], entry[1])
     })
@@ -8028,13 +8033,32 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
       .concat(readerPlaceholderMentionNames())
       .filter(Boolean)
 
+    function momentActorName(comment) {
+      if (comment && (comment.contactId === 'self' || comment.senderId === 'self')) return readerThreadDisplayName(pd, rc)
+      var identity = resolveReaderContactIdentity(pd, comment && comment.contactId, { surface:'messages', authoredName:comment && comment.contactName || '' })
+      return String(identity.name || comment && comment.contactName || '角色')
+    }
+
+    function momentAuthoredLikeNames(moment) {
+      if (!Array.isArray(moment.likes)) return []
+      return moment.likes.map(function(like) {
+        var id = typeof like === 'string' ? like : like && like.contactId
+        var contact = contacts.find(function(item) { return String(item.id) === String(id) })
+        return contact ? contact.name : typeof like === 'string' ? like : like && like.name || ''
+      }).filter(Boolean)
+    }
+
     function renderMomentComment(moment, comment) {
       var containerKey = String(moment.id)
       var isReader = comment && (comment.contactId === 'self' || comment.senderId === 'self')
-      var name = String(comment && comment.contactName || (isReader ? readerThreadDisplayName(pd, rc) : '角色')).trim() || (isReader ? '我' : '角色')
+      var name = momentActorName(comment).trim() || (isReader ? '我' : '角色')
+      var target = comment && comment.replyToCommentId && Array.isArray(moment.comments)
+        ? moment.comments.find(function(item) { return String(item.id) === String(comment.replyToCommentId) }) : null
+      var targetName = target ? momentActorName(target) : (comment && comment.replyToCommentId
+        ? (contacts.find(function(item) { return String(item.id) === String(comment.replyToContactId) })?.name || comment.replyToName || '') : '')
       var content = String(comment && (comment.content != null ? comment.content : comment.text) || '')
       var h = '<div class="rd-thread-comment' + (isReader ? ' is-reader' : '') + '" data-thread-item-id="' + escapeHtmlAttribute(String(comment.id)) + '">'
-      h += '<div class="rd-thread-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + '</span>'
+      h += '<div class="rd-thread-comment-meta"><span class="rd-thread-comment-name">' + esc(name) + (targetName ? ' 回复 ' + esc(targetName) : '') + '</span>'
       if (shouldShowPhoneTimestamp(pd, comment.time)) h += '<time>' + esc(comment.time) + '</time>'
       h += '</div>'
       h += '<div class="rd-thread-comment-content">' + renderReaderMentionText(content, momentMentionNames) + '</div>'
@@ -8090,6 +8114,12 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
           h += '</span>'
           h += '<span><strong>' + esc(momentName) + '</strong>' + (shouldShowPhoneTimestamp(pd, moment.time) ? '<time>' + esc(moment.time) + '</time>' : '') + '</span></header>'
           h += '<div class="rd-moment-content">' + renderReaderMentionText(moment.content || '', momentMentionNames) + '</div>'
+          var authoredLikeNames = momentAuthoredLikeNames(moment)
+          var authoredLikeCount = Array.isArray(moment.likes) ? moment.likes.length : (Number.isFinite(moment.likes) && moment.likes >= 0 ? moment.likes : 0)
+          var liked = !exportMode && phoneChoiceSession.momentLikedIds.has(String(moment.id))
+          h += '<div class="rd-moment-likes"><span>点赞 ' + (authoredLikeCount + (liked ? 1 : 0)) + (authoredLikeNames.length ? ' · ' + esc(authoredLikeNames.join('、')) : '') + '</span>'
+          if (!exportMode) h += '<button type="button" data-moment-like="' + escapeHtmlAttribute(String(moment.id)) + '" aria-pressed="' + String(liked) + '" aria-label="' + (liked ? '取消点赞' : '点赞') + '">' + (liked ? '已赞' : '点赞') + '</button>'
+          h += '</div>'
           if (Array.isArray(moment.images) && moment.images.length > 0) {
             h += '<div class="rd-moment-images">'
             moment.images.forEach(function(image) {
@@ -8129,6 +8159,18 @@ function openReaderApp(type, contactIndex, connectionConfirmed, flowStep, naviga
         })
         return
       }
+
+      phoneFrame.querySelectorAll('[data-moment-like]').forEach(function(button) {
+        button.onclick = function() {
+          var id = String(button.dataset.momentLike)
+          if (!moments.some(function(item) { return String(item.id) === id })) return
+          if (phoneChoiceSession.momentLikedIds.has(id)) phoneChoiceSession.momentLikedIds.delete(id)
+          else phoneChoiceSession.momentLikedIds.add(id)
+          saveCurrentReaderProgress()
+          renderMessagesHome('moments')
+          Array.from(phoneFrame.querySelectorAll('[data-moment-like]')).find(function(item) { return item.dataset.momentLike === id })?.focus()
+        }
+      })
 
       phoneFrame.querySelectorAll('.rd-thread-choice-option[data-thread-scope="moment"]').forEach(function(button) {
         button.onclick = function() {
