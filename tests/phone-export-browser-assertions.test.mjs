@@ -93,6 +93,8 @@ test('browser observer wraps only the real exporter import and fails loudly if t
   assert.match(instrumented, /Missing browser export observer/)
   assert.match(instrumented, /node.ownerDocument.defaultView/)
   assert.match(instrumented, /ownerWindow.__phoneExportBeforeRaster\(\)/)
+  assert.match(instrumented, /typeof ownerWindow.__phoneExportSerializedProbe === 'function'/)
+  assert.match(instrumented, /__phoneExportSerializedProbe\(await diagnosticSvg\(node, options\)\)/)
   assert.throws(() => plugin.transform('changed', '/reader/phone-content-export.js'), /no longer matches/)
 })
 

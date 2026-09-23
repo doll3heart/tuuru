@@ -18,11 +18,14 @@ export function exportProbePlugin() {
       if (!filename.endsWith('/reader/phone-content-export.js')) return
       const original = 'import { toBlob } from "html-to-image"'
       if (!source.includes(original)) throw new Error('Export probe no longer matches the real html-to-image import')
-      return source.replace(original, `import { toBlob as realToBlob } from "html-to-image"
+      return source.replace(original, `import { toBlob as realToBlob, toSvg as diagnosticSvg } from "html-to-image"
 async function toBlob(node, options) {
   const ownerWindow = node.ownerDocument.defaultView
   if (typeof ownerWindow.__phoneExportBeforeRaster !== 'function') throw new Error('Missing browser export observer')
   await ownerWindow.__phoneExportBeforeRaster()
+  if (typeof ownerWindow.__phoneExportSerializedProbe === 'function') {
+    await ownerWindow.__phoneExportSerializedProbe(await diagnosticSvg(node, options))
+  }
   return realToBlob(node, options)
 }`)
     },

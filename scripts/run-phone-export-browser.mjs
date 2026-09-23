@@ -96,6 +96,34 @@ async function runCase(scenario) {
   }, { work, library, seed:authorFixtureSeed(work), rendererStress, readerPoison:readerPoisonWork(work) })
   await context.addInitScript(installExportStorageGuard)
 
+  // Diagnostic only: distinguish style-copy drift from SVG-image painting on
+  // the two desktop chat pages. Keep the original native-vs-export oracle.
+  if (scenario.name === 'desktop-current') await page.exposeBinding('__phoneExportSerializedProbe', async (_source, serialized) => {
+    if (captures.length > 2) return
+    const ordinal = String(captures.length).padStart(2, '0')
+    const capture = captures.at(-1)
+    const clonePage = await context.newPage()
+    try {
+      await clonePage.setContent('<body style="margin:0;background:#fffafa"></body>')
+      await clonePage.evaluate(async serialized => {
+        const svg = new DOMParser().parseFromString(decodeURIComponent(serialized.split(',')[1]), 'image/svg+xml')
+        document.body.appendChild(document.importNode(svg.querySelector('foreignObject').firstElementChild, true))
+        await document.fonts.ready
+        await Promise.all([...document.images].map(image => image.decode()))
+      }, serialized)
+      const reference = await readFile(capture.referencePath)
+      const cloneBytes = await clonePage.locator('.rd-phone-export-viewport').screenshot()
+      const cloned = compareRaster(cloneBytes, reference, capture.geometry)
+      capture.serializedNative = cloneBytes
+      result.serializationDiagnostics ||= []
+      result.serializationDiagnostics.push({ ordinal, nativeToClone:cloned.ratio, regions:cloned.regions,
+        cloneGeometry:await clonePage.evaluate(measureExportPage) })
+      await writeFile(path.join(directory, `${ordinal}-serialized.svg`), decodeURIComponent(serialized.split(',')[1]))
+      await writeFile(path.join(directory, `${ordinal}-serialized-native.png`), cloneBytes)
+      console.log(`DIAGNOSTIC ${scenario.name}/${ordinal}: native-to-serialized ${(cloned.ratio * 100).toFixed(3)}%`)
+    } finally { await clonePage.close() }
+  })
+
   await page.exposeBinding('__phoneExportBeforeRaster', async ({ frame }) => {
     assert.notEqual(frame, page.mainFrame(), 'observer must originate in the captured DOM frame')
     assert.match(frame.url(), /author-phone-render\.html/)
@@ -246,6 +274,11 @@ async function runCase(scenario) {
       const ordinal = String(index + 1).padStart(2, '0')
       await writeFile(path.join(directory, `${ordinal}-export.png`), bytes)
       const raster = compareRaster(bytes, await readFile(referencePath), geometry)
+      if (captures[index].serializedNative) {
+        const cloned = compareRaster(bytes, captures[index].serializedNative, geometry)
+        result.serializationDiagnostics[index].cloneToExport = cloned.ratio
+        console.log(`DIAGNOSTIC ${scenario.name}/${ordinal}: serialized-to-export ${(cloned.ratio * 100).toFixed(3)}%`)
+      }
       await writeFile(path.join(directory, `${ordinal}-diff.png`), raster.diff)
       const pageResult = { filename, ...geometry, mismatch:raster.ratio, regions:raster.regions }
       result.pages.push(pageResult)
