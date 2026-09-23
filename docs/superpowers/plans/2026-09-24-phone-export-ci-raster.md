@@ -1,0 +1,72 @@
+# Phone export CI raster parity implementation plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Diagnose and correct the Linux Chromium export comparison failure without hiding image defects.
+
+**Architecture:** Keep the production exporter and raster oracle unchanged. Use shared test-only browser launch options to make native screenshot text use grayscale antialiasing, as the SVG/canvas export does; prove this hypothesis on an isolated GitHub branch before claiming resolution.
+
+**Tech Stack:** Node test runner, Playwright Chromium/WebKit, Vite, pixelmatch, GitHub Actions.
+
+## Global Constraints
+
+- No production deployment or merge; the user authorized a temporary verification branch only.
+- Keep page mismatch <= 1%, message mismatch <= 2.5%, pixelmatch threshold 0.15.
+- Preserve geometry, pagination, privacy, cancellation, and damaged-image negative controls.
+- Do not modify production UI, fonts, or exporter behavior for a test-environment difference.
+- If Linux still fails, retain artifacts and return to diagnosis rather than widening thresholds.
+
+## Evidence
+
+Run 35888318787 at 4eaf6d2 fails identically to run 35236430657 at 1ad67ec. Its native screenshots have colored text-edge pixels while actual exports have grayscale edges. Local Windows Chromium 153.0.8010.12 passes all four core scenarios. Both environments use that same Chromium revision. This supports an antialiasing hypothesis but remote verification is still required.
+
+### Task 1: Normalize only the test browser's text antialiasing
+
+**Files:**
+- Create: `browser-tests/phone-export/browser-options.mjs`
+- Modify: `scripts/run-phone-export-browser.mjs`
+- Modify: `scripts/run-phone-export-text-browser.mjs`
+- Test: `tests/phone-export-browser-assertions.test.mjs`
+- Document: `docs/testing/phone-export-browser.md`
+
+**Interfaces:**
+- Consumes: runner engine string `chromium` or `webkit`.
+- Produces: `phoneExportBrowserOptions(engine)` returning Playwright launch options.
+
+- [x] Add unit assertions and verify RED before adding the module:
+
+```js
+assert.deepEqual(phoneExportBrowserOptions('chromium'), {
+  headless: true, args: ['--disable-lcd-text'],
+})
+assert.deepEqual(phoneExportBrowserOptions('webkit'), { headless: true })
+```
+
+Run: `node --test tests/phone-export-browser-assertions.test.mjs` (missing module failure expected).
+
+- [x] Add the shared implementation; use it in both runners and record launch options in both reports:
+
+```js
+export function phoneExportBrowserOptions(engine) {
+  return engine === 'chromium'
+    ? { headless: true, args: ['--disable-lcd-text'] }
+    : { headless: true }
+}
+// Each runner imports the function and uses:
+const launchOptions = phoneExportBrowserOptions(engine)
+browser = await ({ chromium, webkit }[engine]).launch(launchOptions)
+report.launchOptions = launchOptions
+```
+
+- [x] Verify both unit and real downloaded-image tests, with unchanged oracles:
+
+```sh
+node --test tests/phone-export-browser-assertions.test.mjs tests/phone-export-text-layout.test.mjs
+node scripts/run-phone-export-browser.mjs --keep-artifacts
+node scripts/run-phone-export-text-browser.mjs
+git diff --check
+```
+
+- [ ] Create `codex/phone-export-ci-raster-20260924`, commit only the files listed above plus this plan, and push only that branch. Do not create a PR, merge, or deploy production.
+- [ ] Inspect the new GitHub run through completion, including the previously skipped short-text step. If any check fails, inspect its actual images and revise the hypothesis.
+- [ ] Document verified local/remote outcomes and remaining real-Safari limitations; keep evidence in ignored artifacts. Report results and stop before production merge/deployment.

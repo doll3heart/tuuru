@@ -10,6 +10,7 @@ import { CASES, buildFixture, authorFixtureSeed, readerPoisonWork } from '../bro
 import { EDGE_CASES, EDGE_IMAGE_QUERY, buildEdgeFixture, isExpectedCorsDiagnostic, loadFixtureFont, startEdgeAssetServer } from '../browser-tests/phone-export/edge-fixture.mjs'
 import { assertOversizedPagination } from '../browser-tests/phone-export/edge-assertions.mjs'
 import { exportProbePlugin, measureExportPage } from '../browser-tests/phone-export/probe.mjs'
+import { phoneExportBrowserOptions } from '../browser-tests/phone-export/browser-options.mjs'
 import { assertGeometry, assertPagination, compareRaster, assertRaster } from '../browser-tests/phone-export/assertions.mjs'
 import { emptyReaderLibrary, rememberReaderWork, saveReaderProgress } from '../reader/reader-library-state.js'
 import { openAuthorExport, installExportStorageGuard, assertReaderBoundaries, assertAuthorCancellation, assertAuthorMasking } from '../browser-tests/phone-export/author-workflow.mjs'
@@ -360,7 +361,9 @@ try {
     fixtureFont = await loadFixtureFont()
     report.fixtureFont = fixtureFont.filename
   }
-  browser = await ({ chromium, webkit }[engine]).launch({ headless:true })
+  const launchOptions = phoneExportBrowserOptions(engine)
+  browser = await ({ chromium, webkit }[engine]).launch(launchOptions)
+  report.launchOptions = launchOptions
   report.browserVersion = browser.version()
   report.contractFailures = []
   for (const [name,verify] of Object.entries({readerBoundaries:assertReaderBoundaries,cancellation:assertAuthorCancellation,masking:assertAuthorMasking})) {

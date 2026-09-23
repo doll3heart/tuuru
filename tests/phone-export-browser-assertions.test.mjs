@@ -7,9 +7,18 @@ import { PNG } from 'pngjs'
 import { assertGeometry, assertPagination, compareRaster, assertRaster } from '../browser-tests/phone-export/assertions.mjs'
 import { buildFixture, CASES } from '../browser-tests/phone-export/fixture.mjs'
 import { exportProbePlugin } from '../browser-tests/phone-export/probe.mjs'
+import { phoneExportBrowserOptions } from '../browser-tests/phone-export/browser-options.mjs'
 
 const row = (id, y, height = 30) => ({ id, x:10, y, width:100, height, contents:[], bubbles:[] })
 const geometry = rows => ({ width:360, height:650, top:0, contentHeight:644, panelHeight:644, panelOffset:0, rows, images:[] })
+
+test('native PNG references use grayscale Chromium text without changing WebKit options', () => {
+  assert.deepEqual(phoneExportBrowserOptions('chromium'), { headless:true, args:['--disable-lcd-text'] })
+  assert.deepEqual(phoneExportBrowserOptions('webkit'), { headless:true })
+  const changed = phoneExportBrowserOptions('chromium')
+  changed.args.push('--unrelated')
+  assert.deepEqual(phoneExportBrowserOptions('chromium').args, ['--disable-lcd-text'])
+})
 
 test('browser oracle rejects displaced cards and overlapping rows, including rows without bubbles', () => {
   const a = row('text', 20), b = row('transfer', 70)

@@ -21,6 +21,14 @@ Windows WebKit 首先发现离屏 iframe 不执行动画帧，导致作者导出
 
 ## 运行
 
+### Linux CI 文字抗锯齿对齐（2026-09-24）
+
+两个 Chromium 验收 runner 共用测试专用启动配置 `browser-options.mjs`，通过 `--disable-lcd-text` 让原生参考截图使用与 SVG/canvas PNG 相同的灰度文字抗锯齿。Linux 原生截图的彩色 LCD 笔画边缘会与导出图产生系统性差异；启动参数同时写入 `report.json` 以便追溯。此配置不进入生产包，不修改作者字体、字号、排版或导出器，也不传给 WebKit。
+
+本项仍须在临时验证分支完成 Linux 回归后才能确认关闭 CI 故障。原有 1% 整页、2.5% 局部、0.15 颜色阈值及破坏性负向对照保持不变。
+
+本地 Windows Chromium 验证：15/15 定向 Node 测试通过；`run-gEZHfT` 四场景 / 22 张 PNG、三个负向对照通过，全部单页像素差为 0；`text-rYzgdP` 八场景 / 18 张 PNG 及字形溢出负向对照通过。22 张核心场景的实际导出 PNG 与修改前 `run-oqTYWH` 逐一 SHA-256 相同，改变的是参考截图的文字绘制方式，而不是导出内容。
+
 ### 短文字序列化回归（2026-09-17）
 
 ```sh

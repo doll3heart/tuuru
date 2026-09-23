@@ -9,6 +9,7 @@ import { PNG } from 'pngjs'
 import { authorFixtureSeed } from '../browser-tests/phone-export/fixture.mjs'
 import { openAuthorExport, installExportStorageGuard } from '../browser-tests/phone-export/author-workflow.mjs'
 import { exportProbePlugin } from '../browser-tests/phone-export/probe.mjs'
+import { phoneExportBrowserOptions } from '../browser-tests/phone-export/browser-options.mjs'
 import { compareRaster, assertRaster } from '../browser-tests/phone-export/assertions.mjs'
 import { buildTextFixture, measureTextBoxes } from '../browser-tests/phone-export/text-fixture.mjs'
 
@@ -91,7 +92,9 @@ function assertGlyphControl(reference, geometry) {
 
 try {
   await server.listen()
-  browser = await ({ chromium, webkit })[engine].launch({ headless:true })
+  const launchOptions = phoneExportBrowserOptions(engine)
+  browser = await ({ chromium, webkit })[engine].launch(launchOptions)
+  report.launchOptions = launchOptions
   for (const scenario of scenarios) {
     const directory = path.join(output, scenario.name)
     await mkdir(directory)
