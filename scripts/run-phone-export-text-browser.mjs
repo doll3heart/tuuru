@@ -12,6 +12,7 @@ import { exportProbePlugin } from '../browser-tests/phone-export/probe.mjs'
 import { phoneExportBrowserOptions } from '../browser-tests/phone-export/browser-options.mjs'
 import { compareRaster, assertRaster } from '../browser-tests/phone-export/assertions.mjs'
 import { buildTextFixture, measureTextBoxes } from '../browser-tests/phone-export/text-fixture.mjs'
+import { verifyExportZoomIsolation } from '../browser-tests/phone-export/zoom-contract.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const args = process.argv.slice(2)
@@ -20,6 +21,7 @@ const engine = args[0]?.slice(10) || 'chromium'
 const scenarios = [0.9, 1, 1.1, 1.25].map(zoom => ({ name:`authored-zoom-${zoom}`, zoom }))
 scenarios.push({ name:'fractional-font-zoom-0.9', zoom:0.9, fractional:true },
   { name:'fractional-font-zoom-1.1', zoom:1.1, fractional:true },
+  { name:'nested-zoom-fractional-font', zoom:1.1, bodyZoom:0.9, fractional:true },
   { name:'full-skin-zoom-1.1', zoom:1.1, skin:'full' },
   { name:'slice-skin-zoom-0.9', zoom:0.9, skin:'slice' })
 const artifacts = path.join(root, 'artifacts/phone-export-browser')
@@ -47,6 +49,8 @@ async function toBlob(node, options) {
 let browser
 
 function assertTextGeometry(live, clone, expected) {
+  assert.equal(live.width, 360, 'ancestor zoom changed the export layout width')
+  assert.equal(clone.width, 360, 'serialized viewport width changed')
   assert.equal(clone.bubbles.length, expected.length, 'missing text bubbles')
   assert.equal(live.bubbles.length, expected.length, 'missing source text bubbles')
   for (const [index, bubble] of clone.bubbles.entries()) {
@@ -95,6 +99,8 @@ try {
   const launchOptions = phoneExportBrowserOptions(engine)
   browser = await ({ chromium, webkit })[engine].launch(launchOptions)
   report.launchOptions = launchOptions
+  report.zoomContracts = await verifyExportZoomIsolation(browser, `http://127.0.0.1:${server.httpServer.address().port}/`)
+  console.log(`PASSED export zoom isolation: ${report.zoomContracts} ancestor combinations`)
   for (const scenario of scenarios) {
     const directory = path.join(output, scenario.name)
     await mkdir(directory)
@@ -107,13 +113,16 @@ try {
     try {
       const page = await context.newPage(), captures = [], errors = []
       page.on('pageerror', error => errors.push(error.message))
-      await context.addInitScript(({ seed, zoom, rendererStress }) => {
+      await context.addInitScript(({ seed, zoom, bodyZoom, rendererStress }) => {
         if (window.top === window) for (const [key, value] of Object.entries(seed)) localStorage.setItem(key, value)
         else {
           window.__phoneExportRendererStress = rendererStress
-          document.addEventListener('DOMContentLoaded', () => { document.documentElement.style.zoom = String(zoom) })
+          document.addEventListener('DOMContentLoaded', () => {
+            document.documentElement.style.zoom = String(zoom)
+            if (bodyZoom) document.body.style.zoom = String(bodyZoom)
+          })
         }
-      }, { seed:authorFixtureSeed(work), zoom:scenario.zoom, rendererStress })
+      }, { seed:authorFixtureSeed(work), zoom:scenario.zoom, bodyZoom:scenario.bodyZoom, rendererStress })
       await context.addInitScript(installExportStorageGuard)
       await page.exposeBinding('__phoneExportTextProbe', async ({ frame }, serialized) => {
         assert.match(frame.url(), /author-phone-render\.html/u)

@@ -417,6 +417,31 @@ function copyPhoneFrameVariables(sourcePanel, viewport) {
   if (frameStyle) viewport.setAttribute("style", frameStyle)
 }
 
+function isolateExportStageZoom(stage) {
+  const ownerWindow = stage.ownerDocument?.defaultView
+  if (typeof ownerWindow?.getComputedStyle !== "function") return
+  let ancestorZoom = 1
+  for (let ancestor = stage.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const value = ownerWindow.getComputedStyle(ancestor).getPropertyValue("zoom").trim()
+    const zoom = Number.parseFloat(value) / (value.endsWith("%") ? 100 : 1)
+    if (Number.isFinite(zoom) && zoom > 0) ancestorZoom *= zoom
+  }
+  // The SVG includes only viewport, not its document ancestors. Measure at the
+  // same scale it will use: otherwise CSS zoom rounds glyph advances/used
+  // widths differently and a copied fixed-height text box can gain a line.
+  // Keep this compensation OUTSIDE viewport so it is not serialized again.
+  if (Number.isFinite(ancestorZoom) && ancestorZoom > 0) {
+    const inverse = 1 / ancestorZoom
+    stage.style.setProperty("zoom", String(inverse), "important")
+    // Nested zoom multiplication can round just below 1 in the browser's
+    // float layout scale (e.g. 110% × 90%). Avoid losing a layout subpixel.
+    const effectiveZoom = stage.currentCSSZoom
+    if (Number.isFinite(effectiveZoom) && effectiveZoom > 0 && effectiveZoom < 1) {
+      stage.style.setProperty("zoom", String(inverse / effectiveZoom), "important")
+    }
+  }
+}
+
 function exportViewportBorderSize(viewport) {
   const ownerWindow = viewport?.ownerDocument?.defaultView
   const style = typeof ownerWindow?.getComputedStyle === "function"
@@ -525,6 +550,7 @@ export async function capturePhonePanelPages(sourcePanel, options = {}) {
   ownerDocument.body.appendChild(stage)
 
   try {
+    isolateExportStageZoom(stage)
     const pendingImages = inlinePhoneExportImages(viewport, { signal })
     if (pendingImages) await pendingImages
     await waitForExportAssets(clone, signal)
