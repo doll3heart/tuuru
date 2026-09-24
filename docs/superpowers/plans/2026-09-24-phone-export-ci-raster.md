@@ -68,8 +68,8 @@ git diff --check
 ```
 
 - [x] Create `codex/phone-export-ci-raster-20260924`, commit only the files listed above plus this plan, and push only that branch. Do not create a PR, merge, or deploy production.
-- [ ] Inspect the new GitHub run through completion, including the previously skipped short-text step. If any check fails, inspect its actual images and revise the hypothesis.
-- [ ] Document verified local/remote outcomes and remaining real-Safari limitations; keep evidence in ignored artifacts. Report results and stop before production merge/deployment.
+- [x] Inspect the new GitHub run through completion, including the previously skipped short-text step. If any check fails, inspect its actual images and revise the hypothesis.
+- [x] Document verified local/remote outcomes and remaining real-Safari limitations; keep evidence in ignored artifacts. Report results and stop before production merge/deployment.
 
 ## Hypothesis refinement
 
@@ -91,5 +91,12 @@ git diff --check
 
 - [x] RED: real-browser capture contracts with five html/body zoom combinations require 360px layout, untouched ancestors/source/child zoom and stage cleanup. JSDOM discards the `zoom` property, so use native browser contracts rather than mocking CSS. Removing the fix produced width 324 versus 360 (`text-ARtGML`). Add browser assertions `live.width === 360` and `clone.width === 360` alongside all existing strict text/containment checks.
 - [x] GREEN: immediately after appending the disposable stage, multiply positive finite computed CSS zoom values of its ancestors (default 1; percentages converted to ratios), then set only `stage.style.zoom = String(1 / ancestorZoom)` with important priority. Do this before assets/layout/measurement. Avoid changing viewport or its authored descendants. The 110% × 90% contract additionally exposed effective float scale 0.9999999403953552 (359.984375px); where `currentCSSZoom` is available, one correction `inverse / effectiveZoom` prevents underscaling. Add an actual nested-zoom fractional-font PNG scenario; do not relax width or text assertions.
-- [ ] Run focused capture/text/oracle tests, full Node tests at concurrency 4, build, and both Windows browser suites. The real Linux failure above is the end-to-end RED evidence; re-run full GitHub workflow on the temporary branch for GREEN. Keep every geometry, raster, storage, privacy, cancellation, pagination and negative-control assertion.
-- [ ] Review the diff and results, document the exact tested commit/run and remaining real-device limitation, then stop before merge/deployment.
+- [x] Run focused capture/text/oracle tests, full Node tests at concurrency 4, build, and both Windows browser suites. The real Linux failure above is the end-to-end RED evidence; re-run full GitHub workflow on the temporary branch for GREEN. Keep every geometry, raster, storage, privacy, cancellation, pagination and negative-control assertion.
+- [x] Review the diff and results, document the exact tested commit/run and remaining real-device limitation, then stop before merge/deployment.
+
+## Verified outcome
+
+- Code commit `92ea50745945f080b6a3e7120b445e1b8f2c5c35`, Linux run [35896561481](https://github.com/doll3heart/tuuru/actions/runs/35896561481), job 107301822615: completed/success. All 15 CI unit assertions; four core cases / 22 PNG (0%); five zoom contracts; nine text cases / 20 PNG; privacy/cancellation/masking and all negative controls pass.
+- Windows: 46 focused unit tests pass; 2504/2504 full Node tests pass; production build passes. `text-TV7SFc`: five contracts, nine cases / 20 PNG, all mismatch 0%, glyph-spill control passes. Independent read-only review found no P1/P2 issue.
+- Only the temporary `codex/phone-export-ci-raster-20260924` branch was pushed. Production Git branch still `4eaf6d2`, Cloudflare production still `46ccb3bd-fabf-401f-ae09-42f9fc8e1937`. No PR, merge or deployment.
+- Real Safari remains unverified; historical Windows WebKit raster fidelity gaps are not claimed fixed. Older engines without `currentCSSZoom` receive basic ancestor zoom normalization but not the compound float precision correction.

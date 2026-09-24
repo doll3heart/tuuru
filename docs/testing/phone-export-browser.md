@@ -25,7 +25,7 @@ Windows WebKit 首先发现离屏 iframe 不执行动画帧，导致作者导出
 
 两个 Chromium 验收 runner 共用测试专用启动配置 `browser-options.mjs`，通过 `--disable-lcd-text` 使用灰度文字抗锯齿，并通过 `--disable-font-subpixel-positioning` 对齐不同缩放环境下的文字定位策略。启动参数同时写入 `report.json` 以便追溯。此配置不进入生产包，不修改作者字体、字号、排版或导出器，也不传给 WebKit。
 
-本项仍须在临时验证分支完成 Linux 回归后才能确认关闭 CI 故障。原有 1% 整页、2.5% 局部、0.15 颜色阈值及破坏性负向对照保持不变。
+本项已在临时验证分支完成 Linux 回归，最新通过记录见下方。原有 1% 整页、2.5% 局部、0.15 颜色阈值及破坏性负向对照保持不变。
 
 本地 Windows Chromium 验证：15/15 定向 Node 测试通过；`run-gEZHfT` 四场景 / 22 张 PNG、三个负向对照通过，全部单页像素差为 0；`text-rYzgdP` 八场景 / 18 张 PNG 及字形溢出负向对照通过。22 张核心场景的实际导出 PNG 与修改前 `run-oqTYWH` 逐一 SHA-256 相同，改变的是参考截图的文字绘制方式，而不是导出内容。
 
@@ -43,7 +43,11 @@ Windows WebKit 首先发现离屏 iframe 不执行动画帧，导致作者导出
 
 新增五组真实浏览器缩放隔离契约，以及第九个实际 PNG 场景（html 1.1 × body 0.9 + 分数字号），短文字套件现为九场景 / 20 张 PNG。检查导出前后视口均为 360px，保留所有行数、字体、文字边界、像素阈值和字形溢出负向对照。撤掉修复的新契约会报 324px ≠ 360px，证明没有空跑。
 
-Windows 核心套件 `run-VGMrFp` 四场景 / 22 张 PNG、三个负向对照通过，所有像素差异 0%；46 项导出相关 Node 测试通过，全量 Node 2504/2504 通过。完整 Linux 流程仍需用新提交复验。这里只覆盖 CSS 祖先缩放，不等同于浏览器页面缩放、CSS transform 或真实 iPad Safari 验收；未合并、未部署正式站。
+Windows 核心最终套件 `run-J5OsNE` 四场景 / 22 张 PNG、三个负向对照通过，所有像素差异 0%；短文字最终 `text-TV7SFc` 五项缩放契约、九场景 / 20 张 PNG 与字形溢出对照通过，所有像素差异 0%。46 项导出相关 Node 测试通过，全量 Node 2504/2504 通过，生产构建通过。
+
+Linux 最终提交 `92ea507` 的 [GitHub run 35896561481](https://github.com/doll3heart/tuuru/actions/runs/35896561481) 为 **completed / success**：15 项 CI 单元断言、四核心场景 / 22 张 PNG（全部 0%）、五项缩放契约、九短文字场景 / 20 张 PNG 全部通过，权限、取消、打码及所有负向对照保留并通过。仅推送临时分支；正式分支仍为 `4eaf6d2`，Cloudflare 生产部署仍为 `46ccb3bd-fabf-401f-ae09-42f9fc8e1937`。
+
+这里只覆盖 CSS 祖先缩放，不等同于浏览器页面缩放、CSS transform 或真实 iPad Safari 验收；历史 Windows WebKit 保真缺口未宣称修复。未创建 PR、未合并、未部署正式站。
 
 ### 短文字序列化回归（2026-09-17）
 
